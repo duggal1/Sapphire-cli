@@ -1,0 +1,8 @@
+./catwalk.go
+./config.go
+./copilot.go
+./hyper.go
+./init.go
+./load.go
+./provider.go
+./resolve.go

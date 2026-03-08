@@ -1,0 +1,7 @@
+./interface.go
+./pattern_interfaces.go
+./tables.go
+./tsdocument-changes.go
+./tsjson.go
+./tsprotocol.go
+./uri.go

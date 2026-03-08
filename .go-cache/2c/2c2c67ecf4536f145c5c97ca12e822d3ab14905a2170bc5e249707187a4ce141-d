@@ -1,0 +1,3 @@
+./aliases.go
+./clientsecret.go
+./realtime.go

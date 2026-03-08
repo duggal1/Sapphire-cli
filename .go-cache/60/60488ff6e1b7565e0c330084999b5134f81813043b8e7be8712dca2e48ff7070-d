@@ -1,0 +1,8 @@
+./arith.go
+./braces.go
+./doc.go
+./environ.go
+./expand.go
+./expand_nonwindows.go
+./param.go
+./valuekind_string.go

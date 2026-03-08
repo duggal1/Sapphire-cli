@@ -1,0 +1,3 @@
+./client.go
+./pkg.go
+./provider.go

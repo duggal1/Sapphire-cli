@@ -1,0 +1,4 @@
+./file.go
+./gunzip.go
+./gzip.go
+./options.go

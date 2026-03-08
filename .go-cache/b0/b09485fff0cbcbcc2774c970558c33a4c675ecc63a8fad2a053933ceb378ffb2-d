@@ -1,0 +1,8 @@
+./agent.go
+./agent_tool.go
+./agentic_fetch_tool.go
+./coordinator.go
+./errors.go
+./event.go
+./loop_detection.go
+./prompts.go

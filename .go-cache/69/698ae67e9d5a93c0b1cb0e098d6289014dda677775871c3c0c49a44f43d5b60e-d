@@ -1,0 +1,10 @@
+./alignreader.go
+./alignwriter.go
+./archivereader.go
+./buffer.go
+./cached.go
+./lazy.go
+./null.go
+./progress.go
+./reader.go
+./uio.go

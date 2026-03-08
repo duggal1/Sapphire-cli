@@ -1,0 +1,9 @@
+./errors.go
+./find.go
+./findbypointer.go
+./get.go
+./jsonpointer.go
+./struct.go
+./types.go
+./util.go
+./validate.go

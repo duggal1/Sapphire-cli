@@ -1,0 +1,432 @@
+// Package chat provides UI components and message items for the chat interface.
+package chat
+
+// MessageItem is the primary interface for all chat message components.
+
+import (
+	"fmt"
+	"image"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/charmbracelet/sapphire/internal/message"
+	"github.com/charmbracelet/sapphire/internal/ui/anim"
+	"github.com/charmbracelet/sapphire/internal/ui/attachments"
+	"github.com/charmbracelet/sapphire/internal/ui/common"
+	"github.com/charmbracelet/sapphire/internal/ui/list"
+	"github.com/charmbracelet/sapphire/internal/ui/styles"
+)
+
+// MessageLeftPaddingTotal is the total width that is taken up by the border +
+// padding. We also cap the width so text is readable to the maxTextWidth(120).
+const MessageLeftPaddingTotal = 2
+
+// maxTextWidth is the maximum width text messages can be
+const maxTextWidth = 120
+
+// Identifiable is an interface for items that can provide a unique identifier.
+type Identifiable interface {
+	ID() string
+}
+
+// Animatable is an interface for items that support animation.
+type Animatable interface {
+	StartAnimation() tea.Cmd
+	Animate(msg anim.StepMsg) tea.Cmd
+}
+
+// Expandable is an interface for items that can be expanded or collapsed.
+type Expandable interface {
+	// ToggleExpanded toggles the expanded state of the item. It returns
+	// whether the item is now expanded.
+	ToggleExpanded() bool
+}
+
+// KeyEventHandler is an interface for items that can handle key events.
+type KeyEventHandler interface {
+	HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd)
+}
+
+// MessageItem represents a [message.Message] item that can be displayed in the
+// UI and be part of a [list.List] identifiable by a unique ID.
+type MessageItem interface {
+	list.Item
+	list.RawRenderable
+	Identifiable
+}
+
+// HighlightableMessageItem is a message item that supports highlighting.
+type HighlightableMessageItem interface {
+	MessageItem
+	list.Highlightable
+}
+
+// FocusableMessageItem is a message item that supports focus.
+type FocusableMessageItem interface {
+	MessageItem
+	list.Focusable
+}
+
+// SendMsg represents a message to send a chat message.
+type SendMsg struct {
+	Text        string
+	Attachments []message.Attachment
+}
+
+type highlightableMessageItem struct {
+	startLine   int
+	startCol    int
+	endLine     int
+	endCol      int
+	highlighter list.Highlighter
+}
+
+var _ list.Highlightable = (*highlightableMessageItem)(nil)
+
+// isHighlighted returns true if the item has a highlight range set.
+func (h *highlightableMessageItem) isHighlighted() bool {
+	return h.startLine != -1 || h.endLine != -1
+}
+
+// renderHighlighted highlights the content if necessary.
+func (h *highlightableMessageItem) renderHighlighted(content string, width, height int) string {
+	if !h.isHighlighted() {
+		return content
+	}
+	area := image.Rect(0, 0, width, height)
+	return list.Highlight(content, area, h.startLine, h.startCol, h.endLine, h.endCol, h.highlighter)
+}
+
+// SetHighlight implements list.Highlightable.
+func (h *highlightableMessageItem) SetHighlight(startLine int, startCol int, endLine int, endCol int) {
+	// Adjust columns for the style's left inset (border + padding) since we
+	// highlight the content only.
+	offset := MessageLeftPaddingTotal
+	h.startLine = startLine
+	h.startCol = max(0, startCol-offset)
+	h.endLine = endLine
+	if endCol >= 0 {
+		h.endCol = max(0, endCol-offset)
+	} else {
+		h.endCol = endCol
+	}
+}
+
+// Highlight implements list.Highlightable.
+func (h *highlightableMessageItem) Highlight() (startLine int, startCol int, endLine int, endCol int) {
+	return h.startLine, h.startCol, h.endLine, h.endCol
+}
+
+func defaultHighlighter(sty *styles.Styles) *highlightableMessageItem {
+	return &highlightableMessageItem{
+		startLine:   -1,
+		startCol:    -1,
+		endLine:     -1,
+		endCol:      -1,
+		highlighter: list.ToHighlighter(sty.TextSelection),
+	}
+}
+
+// cachedMessageItem caches rendered message content to avoid re-rendering.
+//
+// This should be used by any message that can store a cached version of its render. e.x user,assistant... and so on
+//
+// THOUGHT(kujtim): we should consider if its efficient to store the render for different widths
+// the issue with that could be memory usage
+type cachedMessageItem struct {
+	// rendered is the cached rendered string
+	rendered string
+	// width and height are the dimensions of the cached render
+	width  int
+	height int
+}
+
+// getCachedRender returns the cached render if it exists for the given width.
+func (c *cachedMessageItem) getCachedRender(width int) (string, int, bool) {
+	if c.width == width && c.rendered != "" {
+		return c.rendered, c.height, true
+	}
+	return "", 0, false
+}
+
+// setCachedRender sets the cached render.
+func (c *cachedMessageItem) setCachedRender(rendered string, width, height int) {
+	c.rendered = rendered
+	c.width = width
+	c.height = height
+}
+
+// clearCache clears the cached render.
+func (c *cachedMessageItem) clearCache() {
+	c.rendered = ""
+	c.width = 0
+	c.height = 0
+}
+
+// focusableMessageItem is a base struct for message items that can be focused.
+type focusableMessageItem struct {
+	focused bool
+}
+
+// SetFocused implements MessageItem.
+func (f *focusableMessageItem) SetFocused(focused bool) {
+	f.focused = focused
+}
+
+// AssistantInfoID returns a stable ID for assistant info items.
+func AssistantInfoID(messageID string) string {
+	return fmt.Sprintf("%s:assistant-info", messageID)
+}
+
+// AssistantInfoItem renders model info and response time after assistant completes.
+type AssistantInfoItem struct {
+	*cachedMessageItem
+
+	id                  string
+	message             *message.Message
+	sty                 *styles.Styles
+	cfg                 *config.Config
+	lastUserMessageTime time.Time
+}
+
+// NewAssistantInfoItem creates a new AssistantInfoItem.
+func NewAssistantInfoItem(sty *styles.Styles, message *message.Message, cfg *config.Config, lastUserMessageTime time.Time) MessageItem {
+	return &AssistantInfoItem{
+		cachedMessageItem:   &cachedMessageItem{},
+		id:                  AssistantInfoID(message.ID),
+		message:             message,
+		sty:                 sty,
+		cfg:                 cfg,
+		lastUserMessageTime: lastUserMessageTime,
+	}
+}
+
+// ID implements MessageItem.
+func (a *AssistantInfoItem) ID() string {
+	return a.id
+}
+
+// RawRender implements MessageItem.
+func (a *AssistantInfoItem) RawRender(width int) string {
+	innerWidth := max(0, width-MessageLeftPaddingTotal)
+	return a.renderContent(innerWidth)
+}
+
+// Render implements MessageItem.
+func (a *AssistantInfoItem) Render(width int) string {
+	prefix := a.sty.Chat.Message.SectionHeader.Render()
+	lines := strings.Split(a.RawRender(width), "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (a *AssistantInfoItem) renderContent(width int) string {
+	finish := a.message.FinishPart()
+	if finish == nil {
+		return ""
+	}
+
+	// 1. Model Header with Capitalization Fixes
+	modelName := a.message.Model
+	// Handle well-known naming conventions (Gemini, GPT, etc.)
+	if strings.Contains(strings.ToLower(modelName), "gemini") {
+		// Clean up hyphenated names: gemini-2.5-flash -> Gemini 2.5 Flash
+		parts := strings.Split(modelName, "-")
+		for i, part := range parts {
+			if strings.ToLower(part) == "gemini" {
+				parts[i] = "Gemini"
+			} else {
+				parts[i] = strings.Title(part)
+			}
+		}
+		modelName = strings.Join(parts, " ")
+	} else if strings.HasPrefix(strings.ToLower(modelName), "gpt") {
+		modelName = "GPT" + modelName[3:]
+	}
+
+	if strings.Contains(strings.ToLower(modelName), "customtool") || strings.Contains(strings.ToLower(modelName), "custom tool") {
+		effort := ""
+		if f := a.message.FinishPart(); f != nil && f.ThinkingEffort != "" {
+			effort = " Reasoning " + strings.Title(strings.ToLower(f.ThinkingEffort))
+		}
+		modelName = "Gemini 3.1 Pro Coding Optimized" + effort
+	}
+
+	providerDisplay := ""
+	if a.message.Provider != "" {
+		p := strings.ToLower(a.message.Provider)
+		if p == "google" || p == "gemini" {
+			providerDisplay = "Google Gemini"
+		} else {
+			providerDisplay = strings.Title(a.message.Provider)
+		}
+	}
+
+	// Handle Thinking Mode {high/low} or {on/off}
+	effort := finish.ThinkingEffort
+	if effort == "" && finish.ThoughtsTokens > 0 {
+		// If thoughts were produced but no effort level recorded (e.g. Gemini 2.5 Flash)
+		if a.cfg != nil {
+			if agentCfg, ok := a.cfg.Agents[config.AgentCoder]; ok {
+				if modelCfg, ok := a.cfg.Models[agentCfg.Model]; ok {
+					effort = modelCfg.ReasoningEffort
+				}
+			}
+		}
+		if effort == "" {
+			effort = "on"
+		}
+	}
+
+	if effort != "" {
+		modelName = fmt.Sprintf("%s{%s}", modelName, effort)
+	}
+
+	headerText := modelName
+	if providerDisplay != "" {
+		headerText = fmt.Sprintf("%s via %s", modelName, providerDisplay)
+	}
+
+	// Calculate a reasonable width for the separator
+	sepWidth := width
+	if sepWidth > 80 {
+		sepWidth = 80
+	}
+
+	modelHeader := a.sty.Base.Foreground(lipgloss.Color("244")).Render(headerText)
+
+	// Separator line
+	sep := a.sty.Base.Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", sepWidth))
+
+	// Data line: 2.3s · 420 tok/s · 2ms · 40k in · 1.5k out · 16k cached
+	duration := float64(finish.EndTimeMs-finish.StartTimeMs) / 1000.0
+	// Fallback to finish time duration if performance metrics weren't captured
+	if duration <= 0 && finish.Time > 0 {
+		duration = time.Unix(finish.Time, 0).Sub(a.lastUserMessageTime).Seconds()
+	}
+	if duration < 0 {
+		duration = 0
+	}
+
+	parts := []string{
+		fmt.Sprintf("%.1fs", duration),
+	}
+
+	if finish.TokensPerSecond > 0 {
+		parts = append(parts, fmt.Sprintf("%.0f tok/s", finish.TokensPerSecond))
+	}
+
+	if finish.AvgLatencyMs > 0 {
+		parts = append(parts, fmt.Sprintf("%.0fms", finish.AvgLatencyMs))
+	}
+
+	if finish.PromptTokens > 0 {
+		parts = append(parts, formatUsageTokens(finish.PromptTokens)+" in")
+	}
+
+	if finish.CompletionTokens > 0 {
+		parts = append(parts, formatUsageTokens(finish.CompletionTokens)+" out")
+	}
+
+	if finish.CachedTokens > 0 {
+		parts = append(parts, formatUsageTokens(finish.CachedTokens)+" cached")
+	}
+
+	if finish.ThoughtsTokens > 0 {
+		parts = append(parts, formatUsageTokens(finish.ThoughtsTokens)+" thoughts")
+	}
+
+	dot := a.sty.Base.Foreground(lipgloss.Color("240")).Render(" · ")
+	dataLine := a.sty.Base.Foreground(lipgloss.Color("244")).Render(strings.Join(parts, dot))
+
+	content := fmt.Sprintf("%s\n%s\n%s", modelHeader, sep, dataLine)
+	return common.Section(a.sty, content, width)
+}
+
+func formatUsageTokens(n int64) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000.0)
+	}
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000.0)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+// cappedMessageWidth returns the maximum width for message content for readability.
+func cappedMessageWidth(availableWidth int) int {
+	return min(availableWidth-MessageLeftPaddingTotal, maxTextWidth)
+}
+
+// ExtractMessageItems extracts [MessageItem]s from a [message.Message]. It
+// returns all parts of the message as [MessageItem]s.
+//
+// For assistant messages with tool calls, pass a toolResults map to link results.
+// Use BuildToolResultMap to create this map from all messages in a session.
+func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult) []MessageItem {
+	switch msg.Role {
+	case message.User:
+		r := attachments.NewRenderer(
+			sty.Attachments.Normal,
+			sty.Attachments.Deleting,
+			sty.Attachments.Image,
+			sty.Attachments.Text,
+		)
+		return []MessageItem{NewUserMessageItem(sty, msg, r)}
+	case message.Assistant:
+		var items []MessageItem
+		if ShouldRenderAssistantMessage(msg) {
+			items = append(items, NewAssistantMessageItem(sty, msg))
+		}
+		for _, tc := range msg.ToolCalls() {
+			var result *message.ToolResult
+			if tr, ok := toolResults[tc.ID]; ok {
+				result = &tr
+			}
+			items = append(items, NewToolMessageItem(
+				sty,
+				msg.ID,
+				tc,
+				result,
+				msg.FinishReason() == message.FinishReasonCanceled,
+			))
+		}
+		return items
+	}
+	return []MessageItem{}
+}
+
+// ShouldRenderAssistantMessage determines if an assistant message should be rendered
+//
+// In some cases the assistant message only has tools so we do not want to render an
+// empty message.
+func ShouldRenderAssistantMessage(msg *message.Message) bool {
+	content := strings.TrimSpace(msg.Content().Text)
+	thinking := strings.TrimSpace(msg.ReasoningContent().Thinking)
+	isError := msg.FinishReason() == message.FinishReasonError
+	isCancelled := msg.FinishReason() == message.FinishReasonCanceled
+	hasToolCalls := len(msg.ToolCalls()) > 0
+	return !hasToolCalls || content != "" || thinking != "" || msg.IsThinking() || isError || isCancelled
+}
+
+// BuildToolResultMap creates a map of tool call IDs to their results from a list of messages.
+// Tool result messages (role == message.Tool) contain the results that should be linked
+// to tool calls in assistant messages.
+func BuildToolResultMap(messages []*message.Message) map[string]message.ToolResult {
+	resultMap := make(map[string]message.ToolResult)
+	for _, msg := range messages {
+		if msg.Role == message.Tool {
+			for _, result := range msg.ToolResults() {
+				if result.ToolCallID != "" {
+					resultMap[result.ToolCallID] = result
+				}
+			}
+		}
+	}
+	return resultMap
+}

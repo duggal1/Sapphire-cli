@@ -1,0 +1,7 @@
+./bleve_compat.go
+./iterator.go
+./joiners.go
+./reader.go
+./seek.go
+./splitfunc.go
+./trie.go

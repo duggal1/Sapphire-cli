@@ -1,0 +1,5 @@
+./chroma.go
+./diffview.go
+./split.go
+./style.go
+./util.go

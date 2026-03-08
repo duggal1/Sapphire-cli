@@ -13,7 +13,7 @@ import (
 
 const (
 	// MaxBackgroundJobs is the maximum number of concurrent background jobs allowed
-	MaxBackgroundJobs = 50
+	MaxBackgroundJobs = 120
 	// CompletedJobRetentionMinutes is how long to keep completed jobs before auto-cleanup (8 hours)
 	CompletedJobRetentionMinutes = 8 * 60
 )
@@ -199,13 +199,13 @@ func (bs *BackgroundShell) GetOutput() (stdout string, stderr string, done bool,
 func (bs *BackgroundShell) GetOutputSince(stdoutCursor, stderrCursor int) (stdout string, newStdoutCursor int, stdoutMissed bool, stderr string, newStderrCursor int, stderrMissed bool, done bool, err error) {
 	stdout, newStdoutCursor, stdoutMissed = bs.stdout.ReadSince(stdoutCursor)
 	stderr, newStderrCursor, stderrMissed = bs.stderr.ReadSince(stderrCursor)
-	
+
 	select {
 	case <-bs.done:
 		// Ensure any unwritten strings are captured if we are done
 		bs.stdout.Flush()
 		bs.stderr.Flush()
-		
+
 		// If flush added lines we need to re-read
 		if bs.stdout.totalWritten > newStdoutCursor {
 			var extraStdout string
@@ -223,17 +223,16 @@ func (bs *BackgroundShell) GetOutputSince(stdoutCursor, stderrCursor int) (stdou
 			}
 			stderr += extraStderr
 		}
-		
+
 		done = true
 		err = bs.exitErr
 	default:
 		done = false
 		err = nil
 	}
-	
+
 	return
 }
-
 
 // IsDone checks if the background shell has finished execution.
 func (bs *BackgroundShell) IsDone() bool {

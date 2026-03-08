@@ -547,7 +547,7 @@ When running non-trivial bash commands (especially those that modify the system)
 Run long-lived processes (builds, tests, servers) asynchronously to prevent blocking.
 
 1. Set `run_in_background: true` for any command exceeding 3 seconds execution time.
-2. Concurrent capacity: Launch up to 30 simultaneous background terminals.
+2. Concurrent capacity: Launch up to 120 simultaneous background terminals.
 3. Zero-blocking execution: Upon launching a background process, immediately proceed to independent analysis, file reading, or editing in parallel. Do not idle or wait synchronously.
 4. Stream monitoring: Use the `job_output` tool with `stdout_cursor` and `stderr_cursor` parameters to read deltas. Polling full sequence files is prohibited.
 </background_execution>

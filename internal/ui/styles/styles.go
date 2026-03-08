@@ -89,8 +89,9 @@ type Styles struct {
 	}
 
 	// Panels
-	PanelMuted lipgloss.Style
-	PanelBase  lipgloss.Style
+	PanelMuted  lipgloss.Style
+	PanelBase   lipgloss.Style
+	PanelPadded lipgloss.Style
 
 	// Line numbers for code blocks
 	LineNumber lipgloss.Style
@@ -331,6 +332,7 @@ type Styles struct {
 		ResourceName            lipgloss.Style
 		ResourceSize            lipgloss.Style
 		MediaType               lipgloss.Style
+		SkillTag                lipgloss.Style
 	}
 
 	// Dialog styles
@@ -1149,6 +1151,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	// panels
 	s.PanelMuted = s.Muted.Background(bgBaseLighter)
 	s.PanelBase = lipgloss.NewStyle().Background(bgBase)
+	s.PanelPadded = lipgloss.NewStyle().Padding(1, 2)
 
 	// code line number
 	s.LineNumber = lipgloss.NewStyle().Foreground(fgMuted).Background(bgBase).PaddingRight(1).PaddingLeft(1)
@@ -1233,6 +1236,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.ResourceName = base
 	s.Tool.MediaType = base
 	s.Tool.ResourceSize = base.Foreground(fgMuted)
+	s.Tool.SkillTag = base.Bold(true).Padding(0, 1).Background(secondary).Foreground(bgBase)
 
 	// Buttons
 	s.ButtonFocus = lipgloss.NewStyle().Foreground(white).Background(secondary)

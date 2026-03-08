@@ -57,7 +57,7 @@ var lsDescription []byte
 
 // NewLsTool creates a tool for listing files and subdirectories in a tree structure.
 func NewLsTool(permissions permission.Service, workingDir string, lsConfig config.ToolLs) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		LSToolName,
 		string(lsDescription),
 		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

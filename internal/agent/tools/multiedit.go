@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/diff"
@@ -105,9 +107,6 @@ func NewMultiEditTool(
 				return fantasy.NewTextErrorResponse("maximum of 25 parallel file edits allowed per call"), nil
 			}
 
-			var wg sync.WaitGroup
-			var mu sync.Mutex
-
 			type fileResult struct {
 				filePath string
 				output   string
@@ -115,35 +114,33 @@ func NewMultiEditTool(
 				meta     MultiEditResponseMetadata
 			}
 
+			g, groupCtx := errgroup.WithContext(ctx)
 			results := make([]fileResult, len(params.FileEdits))
 
 			for i, fileEdit := range params.FileEdits {
-				wg.Add(1)
-				go func(idx int, fe FileEdit) {
-					defer wg.Done()
-
+				idx, fe := i, fileEdit
+				g.Go(func() error {
 					if fe.FilePath == "" {
 						results[idx] = fileResult{err: fmt.Errorf("file_path is required")}
-						return
+						return nil
 					}
 
 					if len(fe.Edits) == 0 {
 						results[idx] = fileResult{filePath: fe.FilePath, err: fmt.Errorf("at least one edit operation is required")}
-						return
+						return nil
 					}
 
 					fe.FilePath = filepathext.SmartJoin(workingDir, fe.FilePath)
 
 					if err := validateEdits(fe.Edits); err != nil {
 						results[idx] = fileResult{filePath: fe.FilePath, err: err}
-						return
+						return nil
 					}
+
+					editCtx := editContext{groupCtx, permissions, files, filetracker, workingDir}
 
 					var response fantasy.ToolResponse
 					var err error
-
-					editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
-
 					if fe.Edits[0].OldString == "" {
 						response, err = processMultiEditWithCreation(editCtx, fe, call)
 					} else {
@@ -152,19 +149,18 @@ func NewMultiEditTool(
 
 					if err != nil {
 						results[idx] = fileResult{filePath: fe.FilePath, err: err}
-						return
+						return nil
 					}
 
 					if response.IsError {
 						results[idx] = fileResult{filePath: fe.FilePath, err: fmt.Errorf("%s", response.Content)}
-						return
+						return nil
 					}
 
-					mu.Lock()
+					// LSP notifications and diagnostics are now parallelized.
 					notifyLSPs(ctx, lspManager, fe.FilePath)
 					text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 					text += getDiagnostics(fe.FilePath, lspManager)
-					mu.Unlock()
 
 					var meta MultiEditResponseMetadata
 					if response.Metadata != "" {
@@ -172,16 +168,18 @@ func NewMultiEditTool(
 					}
 
 					results[idx] = fileResult{filePath: fe.FilePath, output: text, meta: meta}
-				}(i, fileEdit)
+					return nil
+				})
 			}
 
-			wg.Wait()
+			_ = g.Wait()
 
 			var finalOutput strings.Builder
 			var allErrors []string
 			var finalMeta MultiEditResponseMetadata
 
-			for _, res := range results {
+			// Use Go 1.26 iterators to process results
+			for res := range slices.Values(results) {
 				if res.err != nil {
 					allErrors = append(allErrors, fmt.Sprintf("%s: %s", res.filePath, res.err.Error()))
 					continue
@@ -203,13 +201,11 @@ func NewMultiEditTool(
 				}
 				finalMeta.Files = append(finalMeta.Files, fileMeta)
 
-				// Accumulate total stats
 				finalMeta.Additions += res.meta.Additions
 				finalMeta.Removals += res.meta.Removals
 				finalMeta.EditsApplied += res.meta.EditsApplied
 				finalMeta.EditsFailed = append(finalMeta.EditsFailed, res.meta.EditsFailed...)
 
-				// Keep legacy fields for single-file compatibility (use first file)
 				if finalMeta.OldContent == "" && finalMeta.NewContent == "" {
 					finalMeta.OldContent = res.meta.OldContent
 					finalMeta.NewContent = res.meta.NewContent
@@ -415,10 +411,17 @@ func processMultiEditExistingFile(edit editContext, params FileEdit, call fantas
 
 	// Check if content actually changed
 	if oldContent == currentContent {
-		// If we have failed edits, report them
+		// If we have failed edits, report them with specific details and hints
 		if len(failedEdits) > 0 {
+			var errMsgs []string
+			for _, fe := range failedEdits {
+				errMsgs = append(errMsgs, fmt.Sprintf("Edit #%d failed: %v", fe.Index, fe.Error))
+			}
+			fullError := fmt.Sprintf("OPERATIONAL FAILURE: no changes made - all %d edit(s) failed.\n\n%s\n\nPrecision violation. You MUST re-read the file(s) to establish character-perfect ground truth before retrying.",
+				len(failedEdits), strings.Join(errMsgs, "\n"))
+
 			return fantasy.WithResponseMetadata(
-				fantasy.NewTextErrorResponse(fmt.Sprintf("OPERATIONAL FAILURE: no changes made - all %d edit(s) failed. Precision violation. You MUST re-read the file(s) to establish character-perfect ground truth before retrying.", len(failedEdits))),
+				fantasy.NewTextErrorResponse(fullError),
 				MultiEditResponseMetadata{
 					EditsApplied: 0,
 					EditsFailed:  failedEdits,
@@ -512,28 +515,85 @@ func processMultiEditExistingFile(edit editContext, params FileEdit, call fantas
 	), nil
 }
 
+// detectEscapeConfusion checks if the user is trying to match control characters but the file contains literal escapes.
+func detectEscapeConfusion(content, oldString string) string {
+	var issues []string
+
+	// Check for literal newlines
+	if strings.Contains(oldString, "\n") {
+		literalNewline := strings.ReplaceAll(oldString, "\n", "\\n")
+		if strings.Contains(content, literalNewline) {
+			issues = append(issues, "The target file contains literal '\\n' strings. Your `old_string` uses actual newline bytes (0x0A). Match '\\n' exactly.")
+		}
+	}
+
+	// Check for literal tabs
+	if strings.Contains(oldString, "\t") {
+		literalTab := strings.ReplaceAll(oldString, "\t", "\\t")
+		if strings.Contains(content, literalTab) {
+			issues = append(issues, "The target file contains literal '\\t' strings. Your `old_string` uses actual tab bytes (0x09). Match '\\t' exactly.")
+		}
+	}
+
+	if len(issues) > 0 {
+		return "\n\nCRITICAL HINT: " + strings.Join(issues, " ") + " Establish ground truth via `agentic_view` and match the EXACT characters shown."
+	}
+	return ""
+}
+
 func applyEditToContent(content string, edit MultiEditOperation) (string, error) {
 	if edit.OldString == "" && edit.NewString == "" {
 		return content, nil
 	}
 
+	hint := detectEscapeConfusion(content, edit.OldString)
+
+	newContent, err := tryApplyEdit(content, edit)
+	if err == nil {
+		return newContent, nil
+	}
+
+	// Staff Engineer Logic: Auto-remediation for literal escape confusion.
+	// If the match failed but it's clearly an escape confusion issue,
+	// try to match with literalized escapes.
+	fuzzyEdit := edit
+	if strings.Contains(edit.OldString, "\n") {
+		fuzzyEdit.OldString = strings.ReplaceAll(fuzzyEdit.OldString, "\n", "\\n")
+		fuzzyEdit.NewString = strings.ReplaceAll(fuzzyEdit.NewString, "\n", "\\n")
+	}
+	if strings.Contains(edit.OldString, "\t") {
+		fuzzyEdit.OldString = strings.ReplaceAll(fuzzyEdit.OldString, "\t", "\\t")
+		fuzzyEdit.NewString = strings.ReplaceAll(fuzzyEdit.NewString, "\t", "\\t")
+	}
+
+	if fuzzyEdit.OldString != edit.OldString {
+		fuzzyContent, fuzzyErr := tryApplyEdit(content, fuzzyEdit)
+		if fuzzyErr == nil {
+			slog.Warn("Applied fuzzy escape edit due to newline/tab confusion", "file", edit.OldString)
+			return fuzzyContent, nil
+		}
+	}
+
+	return "", fmt.Errorf("%w%s", err, hint)
+}
+
+func tryApplyEdit(content string, edit MultiEditOperation) (string, error) {
 	if edit.OldString == "" {
-		return "", fmt.Errorf("old_string cannot be empty for content replacement")
+		return "", fmt.Errorf("old_string cannot be empty")
 	}
 
 	var newContent string
-	var replacementCount int
 
 	if edit.ReplaceAll {
 		newContent = strings.ReplaceAll(content, edit.OldString, edit.NewString)
-		replacementCount = strings.Count(content, edit.OldString)
+		replacementCount := strings.Count(content, edit.OldString)
 		if replacementCount == 0 {
-			return "", fmt.Errorf("CRITICAL FAILURE: old_string not found. Character-perfect match required. Re-read file to establish ground truth")
+			return "", fmt.Errorf("CRITICAL FAILURE: old_string not found. Character-perfect match required")
 		}
 	} else {
 		index := strings.Index(content, edit.OldString)
 		if index == -1 {
-			return "", fmt.Errorf("CRITICAL FAILURE: old_string not found. Character-perfect match required. Re-read file to establish ground truth")
+			return "", fmt.Errorf("CRITICAL FAILURE: old_string not found. Character-perfect match required")
 		}
 
 		lastIndex := strings.LastIndex(content, edit.OldString)
@@ -542,7 +602,6 @@ func applyEditToContent(content string, edit MultiEditOperation) (string, error)
 		}
 
 		newContent = content[:index] + edit.NewString + content[index+len(edit.OldString):]
-		replacementCount = 1
 	}
 
 	return newContent, nil

@@ -145,9 +145,6 @@ func (a *AssistantMessageItem) Render(width int) string {
 // renderMessageContent renders the message content including thinking, main content, and finish reason.
 func (a *AssistantMessageItem) renderMessageContent(width int) string {
 	var messageParts []string
-	if skill := a.renderSkillContext(width); skill != "" {
-		messageParts = append(messageParts, skill)
-	}
 
 	if bgContext := a.renderBackgroundContext(width); bgContext != "" {
 		messageParts = append(messageParts, bgContext)
@@ -184,47 +181,9 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 	return strings.Join(messageParts, "\n")
 }
 
-func (a *AssistantMessageItem) renderSkillContext(width int) string {
-	skillContext := a.message.SkillContext()
-	if skillContext == nil || len(skillContext.Skills) == 0 {
-		return ""
-	}
-
-	skillNameStr := formatSkillNames(skillContext.Skills)
-	if !strings.HasSuffix(strings.ToLower(skillNameStr), "skill") && !strings.HasSuffix(strings.ToLower(skillNameStr), "skills") {
-		skillNameStr += " skill"
-	}
-
-	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
-	isFinished := a.message.IsFinished()
-
-	if hasContent || isFinished {
-		// Static completed state: skill has been read
-		label := "✓ Read " + skillNameStr
-		return a.sty.Muted.Render(label)
-	}
-
-	// Animated shimmer: skill is currently being read
-	dotsCount := (a.skillFrame / 4) % 4
-	dots := strings.Repeat(".", dotsCount)
-	label := "Reading " + skillNameStr + dots
-
-	label = styles.ApplyBoldForegroundGradShifted(
-		a.sty,
-		label,
-		a.skillFrame,
-		a.sty.Primary,
-		a.sty.Secondary,
-		a.sty.Tertiary,
-		a.sty.Secondary,
-	)
-
-	return label
-}
-
 func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
 	bgManager := shell.GetBackgroundShellManager()
-	count := len(bgManager.List())
+	count := bgManager.RunningCount()
 	if count == 0 {
 		return ""
 	}
@@ -355,10 +314,9 @@ func (a *AssistantMessageItem) isSpinning() bool {
 }
 
 func (a *AssistantMessageItem) hasAnimatedContext() bool {
-	hasSkill := a.message.SkillContext() != nil
-	hasBg := len(shell.GetBackgroundShellManager().List()) > 0
+	hasBg := shell.GetBackgroundShellManager().RunningCount() > 0
 	isThinking := a.message.IsThinking()
-	return (hasSkill || hasBg || isThinking) && !a.message.IsFinished()
+	return (hasBg || isThinking) && !a.message.IsFinished()
 }
 
 // SetMessage is used to update the underlying message.
@@ -370,27 +328,6 @@ func (a *AssistantMessageItem) SetMessage(message *message.Message) tea.Cmd {
 		return a.StartAnimation()
 	}
 	return nil
-}
-
-func formatSkillNames(skills []string) string {
-	names := make([]string, 0, len(skills))
-	for _, skill := range skills {
-		if skill == "SKILLNAME" {
-			continue
-		}
-		// Convert "frontend" -> "Frontend", "back-end" -> "Back End"
-		parts := strings.Split(strings.ReplaceAll(skill, "-", " "), " ")
-		for i, p := range parts {
-			if len(p) > 0 {
-				parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
-			}
-		}
-		names = append(names, strings.Join(parts, " "))
-	}
-	if len(names) == 0 {
-		return "Skill"
-	}
-	return strings.Join(names, " + ")
 }
 
 // ToggleExpanded toggles the expanded state of the thinking box.

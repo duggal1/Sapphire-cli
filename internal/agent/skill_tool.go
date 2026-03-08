@@ -19,7 +19,7 @@ type LoadSkillParams struct {
 }
 
 func (c *coordinator) loadSkillTool(_ context.Context) (fantasy.AgentTool, error) {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		tools.LoadSkillToolName,
 		string(loadSkillToolDescription),
 		func(ctx context.Context, params LoadSkillParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

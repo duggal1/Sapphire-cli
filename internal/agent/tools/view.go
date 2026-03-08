@@ -284,6 +284,7 @@ func NewViewTool(
 						output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)", params.Offset+len(strings.Split(content, "\n")))
 					}
 					output += "\n</file>\n"
+					output += detectLiteralEscapes(content)
 					output += getDiagnostics(fullPath, lspManager)
 
 					mu.Lock()
@@ -509,4 +510,27 @@ func isInSkillsPath(filePath string, skillsPaths []string) bool {
 	}
 
 	return false
+}
+
+// detectLiteralEscapes warns the agent if the file contains literal '\n' or '\t'
+// which often leads to 'old_string' match failures.
+func detectLiteralEscapes(content string) string {
+	var warnings []string
+	if strings.Contains(content, "\\n") {
+		warnings = append(warnings, "This file contains literal '\\n' sequences. If you try to match these with a real newline in `old_string`, it will fail. Match the literal '\\n' exactly.")
+	}
+	if strings.Contains(content, "\\t") {
+		warnings = append(warnings, "This file contains literal '\\t' sequences. If you try to match these with a real tab in `old_string`, it will fail. Match the literal '\\t' exactly.")
+	}
+
+	if len(warnings) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n<file_encoding_warning>\n")
+		for _, w := range warnings {
+			sb.WriteString("WARNING: " + w + "\n")
+		}
+		sb.WriteString("</file_encoding_warning>\n")
+		return sb.String()
+	}
+	return ""
 }

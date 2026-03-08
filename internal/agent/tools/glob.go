@@ -33,7 +33,7 @@ type GlobResponseMetadata struct {
 
 // NewGlobTool creates a new tool for finding files that match specific glob patterns.
 func NewGlobTool(workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		GlobToolName,
 		string(globDescription),
 		func(ctx context.Context, params GlobParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

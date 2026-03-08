@@ -20,6 +20,9 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+
+	// LoadSkillToolName is the name of the tool used to load skills.
+	LoadSkillToolName = "load_skill"
 )
 
 // getContextValue is a generic helper that retrieves a typed value from context.

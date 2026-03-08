@@ -35,6 +35,7 @@ type Skill struct {
 	Instructions  string            `yaml:"-" json:"instructions"`
 	Path          string            `yaml:"-" json:"path"`
 	SkillFilePath string            `yaml:"-" json:"skill_file_path"`
+	IsInternal    bool              `yaml:"-" json:"is_internal"`
 }
 
 // Validate checks if the skill meets spec requirements.

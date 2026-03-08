@@ -189,7 +189,7 @@ func blockFuncs() []shell.BlockFunc {
 }
 
 func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelName string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		BashToolName,
 		string(bashDescription(attribution, modelName)),
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

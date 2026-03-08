@@ -99,14 +99,20 @@ func notifyLSPs(
 
 	manager.Start(ctx, filepath)
 
+	var wg sync.WaitGroup
 	for client := range manager.Clients().Seq() {
 		if !client.HandlesFile(filepath) {
 			continue
 		}
-		_ = client.OpenFileOnDemand(ctx, filepath)
-		_ = client.NotifyChange(ctx, filepath)
-		client.WaitForDiagnostics(ctx, 5*time.Second)
+		wg.Add(1)
+		go func(c *lsp.Client) {
+			defer wg.Done()
+			_ = c.OpenFileOnDemand(ctx, filepath)
+			_ = c.NotifyChange(ctx, filepath)
+			c.WaitForDiagnostics(ctx, 2*time.Second) // Reduced from 5s for faster concurrency
+		}(client)
 	}
+	wg.Wait()
 }
 
 func getDiagnostics(filePath string, manager *lsp.Manager) string {

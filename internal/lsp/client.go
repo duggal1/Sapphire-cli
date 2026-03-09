@@ -558,6 +558,28 @@ func (c *Client) FindReferences(ctx context.Context, filepath string, line, char
 	defer cancel()
 
 	// NOTE: line and character should be 0-based.
-	// See: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#position
 	return c.client.FindReferences(ctx, filepath, line-1, character-1, includeDeclaration)
+}
+
+// RequestHover requests hover information at the given position.
+func (c *Client) RequestHover(ctx context.Context, filepath string, line, character int) (string, error) {
+	if err := c.OpenFileOnDemand(ctx, filepath); err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	res, err := c.client.RequestHover(ctx, filepath, protocol.Position{
+		Line:      uint32(line),
+		Character: uint32(character),
+	})
+	if err != nil {
+		return "", err
+	}
+	if res == nil {
+		return "", nil
+	}
+
+	return res.Contents.Value, nil
 }

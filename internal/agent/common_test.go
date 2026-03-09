@@ -15,6 +15,7 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/x/vcr"
+	"github.com/charmbracelet/sapphire/internal/agent/memory"
 	"github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
@@ -40,6 +41,7 @@ type fakeEnv struct {
 	history     history.Service
 	filetracker *filetracker.Service
 	lspClients  *csync.Map[string, *lsp.Client]
+	memory      memory.MemoryService
 }
 
 type builderFunc func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error)
@@ -135,6 +137,7 @@ func testEnv(t *testing.T) fakeEnv {
 		history,
 		&filetrackerService,
 		lspClients,
+		memory.NewMemoryService(q, conn),
 	}
 }
 
@@ -153,7 +156,19 @@ func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPro
 			DefaultMaxTokens: 10000,
 		},
 	}
-	agent := NewSessionAgent(SessionAgentOptions{largeModel, smallModel, "", systemPrompt, false, false, true, env.sessions, env.messages, tools})
+	agent := NewSessionAgent(SessionAgentOptions{
+		LargeModel:           largeModel,
+		SmallModel:           smallModel,
+		SystemPromptPrefix:   "",
+		SystemPrompt:         systemPrompt,
+		IsSubAgent:           false,
+		DisableAutoSummarize: false,
+		IsYolo:               true,
+		Sessions:             env.sessions,
+		Messages:             env.messages,
+		Tools:                tools,
+		Memory:               env.memory,
+	})
 	return agent
 }
 

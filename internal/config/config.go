@@ -718,6 +718,8 @@ func allToolNames() []string {
 		"glob",
 		"grep",
 		"ls",
+		"recall_memory",
+		"save_memory",
 		"sourcegraph",
 		"todos",
 		"view",

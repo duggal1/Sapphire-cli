@@ -55,7 +55,7 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 
 	a.anim = anim.New(anim.Settings{
 		ID:          a.ID(),
-		Size:        15,
+		Size:        18, // Longer scrambled rune block
 		GradColors:  []color.Color{sty.Primary, sty.Secondary, sty.Tertiary},
 		LabelColor:  sty.FgBase,
 		CycleColors: true,
@@ -284,12 +284,9 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 	}
 	return strings.TrimSuffix(result, "\n")
 }
-
 func (a *AssistantMessageItem) renderSpinning() string {
 	if a.message.IsThinking() {
-		return a.renderThinkingShimmer(0) // width not needed for text shimmer
-	} else if a.message.IsSummaryMessage {
-		a.anim.SetLabel("Summarizing")
+		return a.renderThinkingShimmer(0) + " " + a.anim.Render()
 	}
 	return a.anim.Render()
 }

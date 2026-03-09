@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,13 +21,16 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/agent/hyper"
+	"github.com/charmbracelet/sapphire/internal/agent/memory"
 	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/charmbracelet/sapphire/internal/db"
 	"github.com/charmbracelet/sapphire/internal/filetracker"
 	"github.com/charmbracelet/sapphire/internal/history"
 	"github.com/charmbracelet/sapphire/internal/log"
 	"github.com/charmbracelet/sapphire/internal/lsp"
+	pmem "github.com/charmbracelet/sapphire/internal/memory"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/oauth/copilot"
 	"github.com/charmbracelet/sapphire/internal/permission"
@@ -71,6 +75,9 @@ type coordinator struct {
 	history     history.Service
 	filetracker filetracker.Service
 	lspManager  *lsp.Manager
+	memory      memory.MemoryService
+	indexer     *Indexer
+	pmem        *pmem.System
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -99,6 +106,7 @@ func NewCoordinator(
 	history history.Service,
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
+	conn *sql.DB,
 ) (Coordinator, error) {
 	c := &coordinator{
 		cfg:         cfg,
@@ -108,7 +116,25 @@ func NewCoordinator(
 		history:     history,
 		filetracker: filetracker,
 		lspManager:  lspManager,
+		memory:      memory.NewMemoryService(db.New(conn), conn),
 		agents:      make(map[string]SessionAgent),
+	}
+	c.indexer = NewIndexer(cfg.WorkingDir(), lspManager, c.memory)
+	go c.indexer.Start(ctx)
+
+	// Initialize persistent memory system (optional, requires Gemini API key).
+	apiKey := c.resolveGeminiAPIKey()
+	if apiKey != "" {
+		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
+			ExtractionModel: "gemini-2.0-flash",
+			APIKey:          apiKey,
+			DataDir:         cfg.Options.DataDirectory,
+			ProjectRoot:     cfg.WorkingDir(),
+		})
+		if pmemErr == nil && pmemSys != nil {
+			c.pmem = pmemSys
+			slog.Debug("Persistent memory system initialized")
+		}
 	}
 
 	// Initialize embedding-based skill retrieval.
@@ -725,16 +751,18 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, 
 
 	largeProviderCfg, _ := c.cfg.Providers.Get(large.ModelCfg.Provider)
 	result := NewSessionAgent(SessionAgentOptions{
-		large,
-		small,
-		largeProviderCfg.SystemPromptPrefix,
-		"",
-		isSubAgent,
-		c.cfg.Options.DisableAutoSummarize,
-		c.permissions.SkipRequests(),
-		c.sessions,
-		c.messages,
-		nil,
+		LargeModel:           large,
+		SmallModel:           small,
+		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:         "",
+		IsSubAgent:           isSubAgent,
+		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
+		IsYolo:               c.permissions.SkipRequests(),
+		Sessions:             c.sessions,
+		Messages:             c.messages,
+		Tools:                nil,
+		Memory:               c.memory,
+		Pmem:                 c.pmem,
 	})
 
 	// Use a local WaitGroup for sub-agents to ensure initialization finishes before returning.
@@ -815,6 +843,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewGlobTool(c.cfg.WorkingDir()),
+		tools.NewMemoryQueryTool(c.memory),
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Tools.Grep),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
@@ -823,6 +852,14 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		tools.NewViewTool(tools.AgenticViewToolName, c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir(), maxConcurrent, c.cfg.Options.SkillsPaths...),
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 	)
+
+	// Add persistent memory tools (recall_memory, save_memory).
+	if c.pmem != nil {
+		allTools = append(allTools,
+			pmem.NewRecallTool(c.pmem.Store),
+			pmem.NewSaveTool(c.pmem.Store),
+		)
+	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.LSP) > 0 || c.cfg.Options.AutoLSP == nil || *c.cfg.Options.AutoLSP {

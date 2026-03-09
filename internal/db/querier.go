@@ -12,19 +12,23 @@ type Querier interface {
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	CreateStructuredSummary(ctx context.Context, arg CreateStructuredSummaryParams) (StructuredSummary, error)
 	DeleteFile(ctx context.Context, id string) error
 	DeleteMessage(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
 	GetAverageResponseTime(ctx context.Context) (int64, error)
+	GetCodebaseKnowledgeByFilePath(ctx context.Context, filePath string) ([]CodebaseKnowledge, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
 	GetHourDayHeatmap(ctx context.Context) ([]GetHourDayHeatmapRow, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
+	GetProjectConstitution(ctx context.Context, id string) (ProjectConstitution, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
+	GetStructuredSummaryBySessionID(ctx context.Context, sessionID string) (StructuredSummary, error)
 	GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error)
 	GetTotalStats(ctx context.Context) (GetTotalStatsRow, error)
 	GetUsageByDay(ctx context.Context) ([]GetUsageByDayRow, error)
@@ -44,6 +48,8 @@ type Querier interface {
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
+	UpsertCodebaseKnowledge(ctx context.Context, arg UpsertCodebaseKnowledgeParams) (CodebaseKnowledge, error)
+	UpsertProjectConstitution(ctx context.Context, arg UpsertProjectConstitutionParams) (ProjectConstitution, error)
 }
 
 var _ Querier = (*Queries)(nil)

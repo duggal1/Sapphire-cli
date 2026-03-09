@@ -12,6 +12,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,10 +33,12 @@ import (
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/sapphire/internal/agent/hyper"
+	"github.com/charmbracelet/sapphire/internal/agent/memory"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/csync"
+	pmem "github.com/charmbracelet/sapphire/internal/memory"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/permission"
 	"github.com/charmbracelet/sapphire/internal/session"
@@ -114,6 +117,8 @@ type sessionAgent struct {
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
+	memory         memory.MemoryService
+	pmem           *pmem.System
 }
 
 type SessionAgentOptions struct {
@@ -127,6 +132,8 @@ type SessionAgentOptions struct {
 	Sessions             session.Service
 	Messages             message.Service
 	Tools                []fantasy.AgentTool
+	Memory               memory.MemoryService
+	Pmem                 *pmem.System
 }
 
 // NewSessionAgent initializes a new session-based AI agent with the provided configuration options.
@@ -146,6 +153,8 @@ func NewSessionAgent(
 		isYolo:               opts.IsYolo,
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
+		memory:               opts.Memory,
+		pmem:                 opts.Pmem,
 	}
 }
 
@@ -237,6 +246,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	defer a.activeRequests.Del(call.SessionID)
 
 	history, files := a.preparePrompt(msgs, call.Prompt, call.Attachments...)
+	history = a.injectTieredMemory(ctx, history, call.SessionID)
 
 	startTime := time.Now()
 	a.eventPromptSent(call.SessionID)
@@ -402,6 +412,22 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
+			
+			if a.pmem != nil {
+				var rawInput string
+				for _, tc := range currentAssistant.ToolCalls() {
+					if tc.ID == result.ToolCallID {
+						rawInput = tc.Input
+						break
+					}
+				}
+				outStr := toolResult.Content
+				if toolResult.IsError {
+					outStr = "ERROR: " + outStr
+				}
+				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), result.ToolName, rawInput, outStr)
+			}
+
 			_, createMsgErr := a.messages.Create(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
@@ -483,6 +509,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				} else {
 					threshold = int64(float64(cw) * smallContextWindowRatio)
 				}
+				
+				// 65% Context Window Pre-Compaction Checkpoint
+				if cw > 0 && float64(tokens) >= float64(cw)*0.65 {
+					if a.pmem.ShouldRunCheckpoint() {
+						a.pmem.MarkCheckpointDone()
+						_ = a.pmem.RunPreCompactionCheckpoint(ctx, call.SessionID, "20")
+					}
+				}
+
 				if cw > 0 && (remaining <= threshold) && !a.disableAutoSummarize {
 					shouldSummarize = true
 					return true
@@ -635,7 +670,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return ErrSessionBusy
 	}
 
-	// Copy mutable fields under lock to avoid races with SetModels.
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
 
@@ -648,7 +682,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 	if len(msgs) == 0 {
-		// Nothing to summarize.
 		return nil
 	}
 
@@ -659,7 +692,8 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	defer a.activeRequests.Del(sessionID)
 	defer cancel()
 
-	agent := fantasy.NewAgent(largeModel.Model,
+	// 1. Narrative Summary (for UI/Human)
+	narrativeAgent := fantasy.NewAgent(largeModel.Model,
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 	)
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
@@ -673,8 +707,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	}
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
-
-	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
+	narrativeResp, err := narrativeAgent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
 		ProviderOptions: opts,
@@ -689,56 +722,50 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			summaryMessage.AppendReasoningContent(text)
 			return a.messages.Update(genCtx, summaryMessage)
 		},
-		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
-			// Handle anthropic signature.
-			if anthropicData, ok := reasoning.ProviderMetadata["anthropic"]; ok {
-				if signature, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok && signature.Signature != "" {
-					summaryMessage.AppendReasoningSignature(signature.Signature)
-				}
-			}
-			summaryMessage.FinishThinking()
-			return a.messages.Update(genCtx, summaryMessage)
-		},
 		OnTextDelta: func(id, text string) error {
 			summaryMessage.AppendContent(text)
 			return a.messages.Update(genCtx, summaryMessage)
 		},
 	})
 	if err != nil {
-		isCancelErr := errors.Is(err, context.Canceled)
-		if isCancelErr {
-			// User cancelled summarize we need to remove the summary message.
-			deleteErr := a.messages.Delete(ctx, summaryMessage.ID)
-			return deleteErr
+		if errors.Is(err, context.Canceled) {
+			_ = a.messages.Delete(ctx, summaryMessage.ID)
 		}
 		return err
 	}
-
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, summaryMessage)
-	if err != nil {
-		return err
-	}
+	_ = a.messages.Update(genCtx, summaryMessage)
 
-	var openrouterCost *float64
-	for _, step := range resp.Steps {
-		stepCost := a.openrouterCost(step.ProviderMetadata)
-		if stepCost != nil {
-			newCost := *stepCost
-			if openrouterCost != nil {
-				newCost += *openrouterCost
+	// 2. Structured Extraction (for tiered memory)
+	structuredAgent := fantasy.NewAgent(largeModel.Model,
+		fantasy.WithSystemPrompt(string(structuredSummaryPromptTmpl)),
+	)
+	structuredResp, err := structuredAgent.Stream(genCtx, fantasy.AgentStreamCall{
+		Prompt:          "Extract current session state to JSON.",
+		Messages:        aiMsgs,
+		ProviderOptions: opts,
+	})
+	if err == nil {
+		var data memory.StructuredSummaryData
+		jsonStr := structuredResp.Response.Content.Text()
+		// Basic JSON extraction from markdown if model wraps it in blocks.
+		if start := strings.Index(jsonStr, "{"); start != -1 {
+			if end := strings.LastIndex(jsonStr, "}"); end != -1 {
+				jsonStr = jsonStr[start : end+1]
 			}
-			openrouterCost = &newCost
+		}
+		if err := json.Unmarshal([]byte(jsonStr), &data); err == nil {
+			_ = a.memory.CreateStructuredSummary(ctx, sessionID, data)
+		} else {
+			slog.Warn("Failed to unmarshal structured summary", "error", err, "raw", jsonStr)
 		}
 	}
 
-	a.updateSessionUsage(largeModel, &currentSession, resp.TotalUsage, openrouterCost)
-
-	// Just in case, get just the last usage info.
-	usage := resp.Response.Usage
+	a.updateSessionUsage(largeModel, &currentSession, narrativeResp.TotalUsage, nil)
 	currentSession.SummaryMessageID = summaryMessage.ID
-	currentSession.CompletionTokens = usage.OutputTokens
-	currentSession.PromptTokens = 0
+	if a.pmem != nil {
+		a.pmem.ResetCheckpointState()
+	}
 	_, err = a.sessions.Save(genCtx, currentSession)
 	return err
 }
@@ -922,6 +949,38 @@ If any one of the four conditions is false, execute the full protocol without ex
 	}
 
 	return history, files
+}
+
+func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string) []fantasy.Message {
+	// Tier 1: Hot Memory - Project Constitution
+	// Always injected first.
+	constitution, err := a.memory.GetProjectConstitution(ctx, "default")
+	if err == nil && constitution != "" {
+		history = append([]fantasy.Message{
+			fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
+		}, history...)
+	}
+
+	// Tier 2: Warm Memory - Latest Structured Summary
+	// Rebuilt per-turn to maintain semantic continuity across compaction events.
+	summary, err := a.memory.GetStructuredSummary(ctx, sessionID)
+	if err == nil && summary != nil {
+		rawData, _ := json.MarshalIndent(summary, "", "  ")
+		history = append([]fantasy.Message{
+			fantasy.NewSystemMessage("## LATEST STRUCTURED STATE (Tier 2 Warm Memory)\n" + string(rawData)),
+		}, history...)
+	}
+
+	if a.pmem != nil {
+		pmemInjection := a.pmem.BuildContextInjection(ctx)
+		if pmemInjection != "" {
+			history = append([]fantasy.Message{
+				fantasy.NewSystemMessage(pmemInjection),
+			}, history...)
+		}
+	}
+
+	return history
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {

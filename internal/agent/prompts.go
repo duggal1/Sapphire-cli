@@ -17,6 +17,9 @@ var taskPromptTmpl []byte
 //go:embed templates/initialize.md.tpl
 var initializePromptTmpl []byte
 
+//go:embed templates/structured_summary.md
+var structuredSummaryPromptTmpl []byte
+
 // coderPrompt creates a new prompt specifically tailored for the coding agent.
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	systemPrompt, err := prompt.NewPrompt("coder", string(coderPromptTmpl), opts...)

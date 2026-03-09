@@ -8,6 +8,18 @@ import (
 	"database/sql"
 )
 
+type CodebaseKnowledge struct {
+	ID            string         `json:"id"`
+	FilePath      string         `json:"file_path"`
+	SymbolName    string         `json:"symbol_name"`
+	SymbolType    string         `json:"symbol_type"`
+	Signature     sql.NullString `json:"signature"`
+	Documentation sql.NullString `json:"documentation"`
+	LocationRange sql.NullString `json:"location_range"`
+	UpdatedAt     int64          `json:"updated_at"`
+	CreatedAt     int64          `json:"created_at"`
+}
+
 type File struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
@@ -31,10 +43,17 @@ type Message struct {
 	IsSummaryMessage int64          `json:"is_summary_message"`
 }
 
+type ProjectConstitution struct {
+	ID        string `json:"id"`
+	Content   string `json:"content"`
+	UpdatedAt int64  `json:"updated_at"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 type ReadFile struct {
 	SessionID string `json:"session_id"`
 	Path      string `json:"path"`
-	ReadAt    int64  `json:"read_at"` // Unix timestamp when file was last read
+	ReadAt    int64  `json:"read_at"`
 }
 
 type Session struct {
@@ -49,4 +68,12 @@ type Session struct {
 	CreatedAt        int64          `json:"created_at"`
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
+}
+
+type StructuredSummary struct {
+	ID          string `json:"id"`
+	SessionID   string `json:"session_id"`
+	SummaryData string `json:"summary_data"`
+	UpdatedAt   int64  `json:"updated_at"`
+	CreatedAt   int64  `json:"created_at"`
 }

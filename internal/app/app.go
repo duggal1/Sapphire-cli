@@ -59,6 +59,7 @@ type App struct {
 	History     history.Service
 	Permissions permission.Service
 	FileTracker filetracker.Service
+	Conn        *sql.DB
 
 	AgentCoordinator agent.Coordinator
 
@@ -104,6 +105,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		Permissions: permission.NewPermissionService(cfg.WorkingDir(), skipPermissionsRequests, allowedTools),
 		FileTracker: filetracker.NewService(q),
 		LSPManager:  lsp.NewManager(cfg),
+		Conn:        conn,
 
 		globalCtx: ctx,
 
@@ -133,7 +135,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		slog.Warn("No agent configuration found")
 		return app, nil
 	}
-	if err := app.InitCoderAgent(ctx); err != nil {
+	if err := app.InitCoderAgent(ctx, conn); err != nil {
 		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 	}
 
@@ -500,7 +502,7 @@ func setupSubscriber[T any](
 }
 
 // InitCoderAgent initializes the coding-specialized agent and its coordinator with all necessary service dependencies.
-func (app *App) InitCoderAgent(ctx context.Context) error {
+func (app *App) InitCoderAgent(ctx context.Context, conn *sql.DB) error {
 	coderAgentCfg := app.config.Agents[config.AgentCoder]
 	if coderAgentCfg.ID == "" {
 		return fmt.Errorf("coder agent configuration is missing")
@@ -515,6 +517,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.History,
 		app.FileTracker,
 		app.LSPManager,
+		conn,
 	)
 	if err != nil {
 		slog.Error("Failed to create coder agent", "err", err)

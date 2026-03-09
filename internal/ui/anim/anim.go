@@ -1,4 +1,4 @@
-// Package anim provides an animated spinner.
+// Package anim provides an animated scrambled spinner.
 package anim
 
 import (
@@ -19,16 +19,16 @@ import (
 )
 
 const (
-	fps           = 60
-	initialChar   = '█'
+	fps           = 20
+	initialChar   = '.'
 	labelGap      = " "
 	labelGapWidth = 1
 
 	// Periods of ellipsis animation speed in steps.
 	//
-	// If the FPS is 60 (16.67 milliseconds) this means that the ellipsis will
-	// change every 24 frames (400 milliseconds).
-	ellipsisAnimSpeed = 24
+	// If the FPS is 20 (50 milliseconds) this means that the ellipsis will
+	// change every 8 frames (400 milliseconds).
+	ellipsisAnimSpeed = 8
 
 	// The maximum amount of time that can pass before a character appears.
 	// This is used to create a staggered entrance effect.
@@ -37,24 +37,21 @@ const (
 	// Number of frames to prerender for the animation. After this number
 	// of frames, the animation will loop. This only applies when color
 	// cycling is disabled.
-	prerenderedFrames = 30
+	prerenderedFrames = 10
 
 	// Default number of cycling chars.
 	defaultNumCyclingChars = 10
 )
 
-// Shimmer runes for gradient shimmer effect (defined as var, not const).
-var shimmerRunes = []rune{'▓', '▒', '░', '█'}
-
 // Default colors for gradient.
 var (
-	defaultGradColorA = color.RGBA{R: 0xff, G: 0, B: 0, A: 0xff}
-	defaultGradColorB = color.RGBA{R: 0, G: 0, B: 0xff, A: 0xff}
+	defaultGradColorA = color.RGBA{R: 0xff, G: 0x88, B: 0x00, A: 0xff} // Orange
+	defaultGradColorB = color.RGBA{R: 0xff, G: 0x33, B: 0x00, A: 0xff} // Reddish-orange
 	defaultLabelColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 )
 
 var (
-	availableRunes = []rune("█")
+	availableRunes = []rune("0123456789abcdefABCDEF~!@#$£€%^&*()+=_")
 	ellipsisFrames = []string{".", "..", "...", ""}
 )
 
@@ -165,69 +162,68 @@ func New(opts Settings) *Anim {
 			a.width += labelGapWidth + lipgloss.Width(opts.Label)
 		}
 
-	// Render the label
-	a.renderLabel(opts.Label)
+		// Render the label
+		a.renderLabel(opts.Label)
 
-	// Pre-generate gradient.
-	stops := append([]color.Color{}, opts.GradColors...)
-	if opts.CycleColors {
-		stops = append(stops, opts.GradColors[0])
-	}
-	ramp := makeGradientRamp(a.width*2, stops...)
-	numFrames := a.width * 2
-
-	// Pre-render initial characters.
-	a.initialFrames = make([][]string, numFrames)
-	offset := 0
-	for i := range a.initialFrames {
-		a.initialFrames[i] = make([]string, a.width+labelGapWidth+a.labelWidth)
-		for j := range a.initialFrames[i] {
-			if j+offset >= len(ramp) {
-				continue // skip if we run out of colors
-			}
-
-			var c color.Color
-			if j <= a.cyclingCharWidth {
-				c = ramp[(j+offset)%len(ramp)]
-			} else {
-				c = opts.LabelColor
-			}
-
-			// Also prerender the initial character with Lip Gloss to avoid
-			// processing in the render loop.
-			a.initialFrames[i][j] = lipgloss.NewStyle().
-				Foreground(c).
-				Render(string(initialChar))
+		// Pre-generate gradient.
+		var ramp []color.Color
+		numFrames := prerenderedFrames
+		if opts.CycleColors {
+			ramp = makeGradientRamp(a.width*3, opts.GradColors[0], opts.GradColors[1], opts.GradColors[0], opts.GradColors[1])
+			numFrames = a.width * 2
+		} else {
+			ramp = makeGradientRamp(a.width, opts.GradColors[0], opts.GradColors[1])
 		}
-		offset++
-	}
 
-	// Prerender shimmer frames for the animation.
-	// Creates a smooth wave-like shimmer effect using gradient blocks.
-	a.cyclingFrames = make([][]string, numFrames)
-	for i := range a.cyclingFrames {
-		a.cyclingFrames[i] = make([]string, a.width)
-		for j := range a.cyclingFrames[i] {
-			if j >= len(ramp) {
-				continue
+		// Pre-render initial characters.
+		a.initialFrames = make([][]string, numFrames)
+		offset := 0
+		for i := range a.initialFrames {
+			a.initialFrames[i] = make([]string, a.width+labelGapWidth+a.labelWidth)
+			for j := range a.initialFrames[i] {
+				if j+offset >= len(ramp) {
+					continue // skip if we run out of colors
+				}
+
+				var c color.Color
+				if j <= a.cyclingCharWidth {
+					c = ramp[j+offset]
+				} else {
+					c = opts.LabelColor
+				}
+
+				// Also prerender the initial character with Lip Gloss to avoid
+				// processing in the render loop.
+				a.initialFrames[i][j] = lipgloss.NewStyle().
+					Foreground(c).
+					Render(string(initialChar))
 			}
-
-			// Create smooth shimmer wave using position-based pattern
-			// This creates a flowing gradient effect instead of random scrambling
-			wavePhase := float64(i+j) / float64(numFrames) * 2 * 3.14159
-			shimmerIndex := int(wavePhase*4) % len(shimmerRunes)
-			if shimmerIndex < 0 {
-				shimmerIndex += len(shimmerRunes)
+			if opts.CycleColors {
+				offset++
 			}
-			r := shimmerRunes[shimmerIndex]
-
-			// Also prerender the color with Lip Gloss here to avoid processing
-			// in the render loop.
-			a.cyclingFrames[i][j] = lipgloss.NewStyle().
-				Foreground(ramp[(j+i)%len(ramp)]).
-				Render(string(r))
 		}
-	}
+
+		// Prerender scrambled rune frames for the animation.
+		a.cyclingFrames = make([][]string, numFrames)
+		offset = 0
+		for i := range a.cyclingFrames {
+			a.cyclingFrames[i] = make([]string, a.width)
+			for j := range a.cyclingFrames[i] {
+				if j+offset >= len(ramp) {
+					continue // skip if we run out of colors
+				}
+
+				// Also prerender the color with Lip Gloss here to avoid processing
+				// in the render loop.
+				r := availableRunes[rand.IntN(len(availableRunes))]
+				a.cyclingFrames[i][j] = lipgloss.NewStyle().
+					Foreground(ramp[j+offset]).
+					Render(string(r))
+			}
+			if opts.CycleColors {
+				offset++
+			}
+		}
 
 		// Cache the results
 		labelSlice := make([]string, a.label.Len())

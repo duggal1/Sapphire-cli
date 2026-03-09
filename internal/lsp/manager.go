@@ -72,6 +72,16 @@ func (s *Manager) Clients() *csync.Map[string, *Client] {
 	return s.clients
 }
 
+// GetClientFor returns the first LSP client that handles the given file path.
+func (s *Manager) GetClientFor(filePath string) (*Client, bool) {
+	for _, client := range s.clients.Seq2() {
+		if client.HandlesFile(filePath) {
+			return client, true
+		}
+	}
+	return nil, false
+}
+
 // SetCallback sets a callback that is invoked when a new LSP
 // client is successfully started. This allows the coordinator to add LSP tools.
 func (s *Manager) SetCallback(cb func(name string, client *Client)) {

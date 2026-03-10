@@ -13,6 +13,7 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+third_party/fantasy/
 
 # Go workspace file
 go.work
@@ -51,3 +52,5 @@ manpages/
 completions/crush.*sh
 .prettierignore
 .task
+.go-cache/
+.sapphire/

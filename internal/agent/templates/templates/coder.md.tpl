@@ -380,9 +380,16 @@ Diagnostics (lint/typecheck) included in tool output.
 {{.AvailSkillXML}}
 
 <skills_usage>
-When a user task matches a skill's description, read the skill's SKILL.md file to get full instructions.
-Skills are activated by reading their location path. Follow the skill's instructions to complete the task.
-If a skill mentions scripts, references, or assets, they are placed in the same folder as the skill itself (e.g., scripts/, references/, assets/ subdirectories within the skill's folder).
+Skill activation is mandatory when a task matches a skill. Use the available skills list above.
+
+Rules:
+1. **Frontend/UI work** → load `frontend` immediately.
+2. **AWS requests** (deploy, infra, AWS services) → load `aws` immediately.
+3. **Google Cloud requests** (GCP, Cloud Run/Functions, Vertex, BigQuery, Firestore) → load `google-cloud` immediately.
+4. **Complex multi-step reasoning** → load `sequential-thinking` before acting.
+5. **Advanced Git** (rebase, bisect, reflog, submodules, recovery, history rewrite, hooks, LFS) → load `git`. For basic add/commit/push, do not load it.
+
+Always read the skill’s SKILL.md before acting and follow its workflow exactly. If a skill mentions scripts, references, or assets, they are located next to the SKILL.md (e.g., scripts/, references/, assets/).
 </skills_usage>
 {{end}}
 

@@ -23,6 +23,24 @@ Platform: {{.Platform}}
 Date: {{.Date}}
 </env>
 
+{{- if .AvailSkillXML}}
+
+{{.AvailSkillXML}}
+
+<skills_usage>
+Skill activation is mandatory when a task matches a skill. Use the available skills list above.
+
+Rules:
+1. **Frontend/UI work** → load `frontend` immediately.
+2. **AWS requests** (deploy, infra, AWS services) → load `aws` immediately.
+3. **Google Cloud requests** (GCP, Cloud Run/Functions, Vertex, BigQuery, Firestore) → load `google-cloud` immediately.
+4. **Complex multi-step reasoning** → load `sequential-thinking` before acting.
+5. **Advanced Git** (rebase, bisect, reflog, submodules, recovery, history rewrite, hooks, LFS) → load `git`. For basic add/commit/push, do not load it.
+
+Always read the skill’s SKILL.md before acting and follow its workflow exactly. If a skill mentions scripts, references, or assets, they are located next to the SKILL.md (e.g., scripts/, references/, assets/).
+</skills_usage>
+{{end}}
+
 <uncertainty_protocol>
 Any task involving post-cutoff technologies, versions, or APIs: execute `agentic_fetch` before responding.
 Declaring any feature or version non-existent before executing `agentic_fetch` is prohibited.

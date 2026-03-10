@@ -17,6 +17,8 @@ import (
 	"github.com/charmbracelet/sapphire/internal/skills"
 )
 
+const gitPromptTimeout = 750 * time.Millisecond
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
 	name       string
@@ -207,20 +209,23 @@ func isGitRepo(dir string) bool {
 }
 
 func getGitStatus(ctx context.Context, dir string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, gitPromptTimeout)
+	defer cancel()
+
 	sh := shell.NewShell(&shell.Options{
 		WorkingDir: dir,
 	})
 	branch, err := getGitBranch(ctx, sh)
 	if err != nil {
-		return "", err
+		return "", nil
 	}
 	status, err := getGitStatusSummary(ctx, sh)
 	if err != nil {
-		return "", err
+		return branch, nil
 	}
 	commits, err := getGitRecentCommits(ctx, sh)
 	if err != nil {
-		return "", err
+		return branch + status, nil
 	}
 	return branch + status + commits, nil
 }
@@ -238,11 +243,15 @@ func getGitBranch(ctx context.Context, sh *shell.Shell) (string, error) {
 }
 
 func getGitStatusSummary(ctx context.Context, sh *shell.Shell) (string, error) {
-	out, _, err := sh.Exec(ctx, "git status --short 2>/dev/null | head -20")
+	out, _, err := sh.Exec(ctx, "git status --short --untracked-files=no 2>/dev/null")
 	if err != nil {
 		return "", nil
 	}
-	out = strings.TrimSpace(out)
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) > 20 {
+		lines = lines[:20]
+	}
+	out = strings.TrimSpace(strings.Join(lines, "\n"))
 	if out == "" {
 		return "Status: clean\n", nil
 	}
@@ -250,7 +259,7 @@ func getGitStatusSummary(ctx context.Context, sh *shell.Shell) (string, error) {
 }
 
 func getGitRecentCommits(ctx context.Context, sh *shell.Shell) (string, error) {
-	out, _, err := sh.Exec(ctx, "git log --oneline -n 3 2>/dev/null")
+	out, _, err := sh.Exec(ctx, "git log --oneline --no-decorate -n 3 2>/dev/null")
 	if err != nil || out == "" {
 		return "", nil
 	}

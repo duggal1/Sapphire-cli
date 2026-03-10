@@ -138,6 +138,8 @@ type UI struct {
 	sessionFileReads []string
 
 	lastUserMessageTime int64
+	requestStartedAt    time.Time
+	requestCompletedAt  time.Time
 
 	// The width and height of the terminal in cells.
 	width  int
@@ -186,6 +188,9 @@ type UI struct {
 
 	// Chat components
 	chat *Chat
+
+	// assistantFooter holds the single live assistant metadata/timer footer.
+	assistantFooter *chat.AssistantInfoItem
 
 	// onboarding state
 	onboarding struct {
@@ -269,11 +274,17 @@ func New(com *common.Common) *UI {
 			com.Styles.Attachments.Deleting,
 			com.Styles.Attachments.Image,
 			com.Styles.Attachments.Text,
+			com.Styles.Attachments.PasteBlock,
+			com.Styles.Attachments.PasteSelected,
 		),
 		attachments.Keymap{
-			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
-			DeleteAll:  keyMap.Editor.DeleteAllAttachments,
-			Escape:     keyMap.Editor.Escape,
+			DeleteMode:          keyMap.Editor.AttachmentDeleteMode,
+			DeleteAll:           keyMap.Editor.DeleteAllAttachments,
+			TogglePasteEdit:     keyMap.Editor.PasteBlockEditMode,
+			PastePrev:           keyMap.Editor.PasteBlockPrev,
+			PasteNext:           keyMap.Editor.PasteBlockNext,
+			DeleteSelectedPaste: keyMap.Editor.PasteBlockDelete,
+			Escape:              keyMap.Editor.Escape,
 		},
 	)
 
@@ -508,6 +519,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
+			if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.Payload.ID {
+				m.assistantFooter = nil
+				m.updateLayoutAndSize()
+			}
 		}
 		// start the spinner if there is a new message
 		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
@@ -520,6 +535,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
+		if !m.isAgentBusy() {
+			m.completeRequestTimer()
+		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
 	case pubsub.Event[app.LSPEvent]:
@@ -701,6 +719,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.chat.Animate(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+			if m.assistantFooter != nil && msg.ID == m.assistantFooter.ID() {
+				if cmd := m.assistantFooter.Animate(msg); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 			if m.chat.Follow() {
 				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -790,6 +813,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	var cmds []tea.Cmd
+	if !m.isAgentBusy() {
+		m.requestStartedAt = time.Time{}
+		m.requestCompletedAt = time.Time{}
+	}
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
 	for i := range msgs {
@@ -802,6 +829,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 
 	// Add messages to chat with linked tool results
 	items := make([]chat.MessageItem, 0, len(msgs)*2)
+	m.assistantFooter = nil
 	for _, msg := range msgPtrs {
 		switch msg.Role {
 		case message.User:
@@ -809,9 +837,8 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		case message.Assistant:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
-			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-				items = append(items, infoItem)
+			if cmd := m.setAssistantFooter(msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		default:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
@@ -832,11 +859,62 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
+	m.updateLayoutAndSize()
 	if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	m.chat.SelectLast()
 	return tea.Sequence(cmds...)
+}
+
+func (m *UI) setAssistantFooter(msg *message.Message) tea.Cmd {
+	if msg == nil || msg.Role != message.Assistant {
+		return nil
+	}
+
+	start := time.Unix(m.lastUserMessageTime, 0)
+	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
+		m.assistantFooter.SetMessage(msg)
+		m.assistantFooter.SetLastUserMessageTime(start)
+		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+		return nil
+	}
+
+	m.assistantFooter = chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), start).(*chat.AssistantInfoItem)
+	m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+	return m.assistantFooter.StartAnimation()
+}
+
+func (m *UI) startRequestTimer() {
+	if !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+		return
+	}
+	m.requestStartedAt = time.Now()
+	m.requestCompletedAt = time.Time{}
+	if m.assistantFooter != nil {
+		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+	}
+}
+
+func (m *UI) completeRequestTimer() {
+	if m.requestStartedAt.IsZero() || !m.requestCompletedAt.IsZero() {
+		return
+	}
+	m.requestCompletedAt = time.Now()
+	if m.assistantFooter != nil {
+		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+	}
+}
+
+func (m *UI) refreshModelStateDialogs() {
+	if dia := m.dialog.Dialog(dialog.CommandsID); dia != nil {
+		if commands, ok := dia.(*dialog.Commands); ok {
+			commands.Refresh()
+		}
+	}
+	if m.dialog.ContainsDialog(dialog.ReasoningID) {
+		m.dialog.CloseDialog(dialog.ReasoningID)
+	}
 }
 
 // loadNestedToolCalls recursively loads nested tool calls for agent/agentic_fetch tools.
@@ -933,18 +1011,16 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
+		hadFooter := m.assistantFooter != nil
+		if cmd := m.setAssistantFooter(&msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if !hadFooter && m.assistantFooter != nil {
+			m.updateLayoutAndSize()
+		}
 		if m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
-			}
-		}
-		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(infoItem)
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
 			}
 		}
 	case message.Tool:
@@ -997,21 +1073,14 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			assistantItem.SetMessage(&msg)
 		}
 	}
+	if cmd := m.setAssistantFooter(&msg); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
 	// if the message of the assistant does not have any  response just tool calls we need to remove it
 	if !shouldRenderAssistant && len(msg.ToolCalls()) > 0 && existingItem != nil {
 		m.chat.RemoveMessage(msg.ID)
-		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem != nil {
-			m.chat.RemoveMessage(chat.AssistantInfoID(msg.ID))
-		}
-	}
-
-	if shouldRenderAssistant && msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
-			newInfoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(newInfoItem)
-		}
 	}
 
 	var items []chat.MessageItem
@@ -1237,33 +1306,52 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleCompactMode:
 		cmds = append(cmds, m.toggleCompactMode())
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionTogglePasteBlocks:
+		cmds = append(cmds, func() tea.Msg {
+			enabled := !m.com.Config().Options.TUI.PasteBlocks
+			if err := m.com.Config().SetPasteBlocks(enabled); err != nil {
+				return util.ReportError(err)()
+			}
+			if enabled {
+				return util.NewInfoMsg("Paste blocks enabled")
+			}
+			return util.NewInfoMsg("Paste blocks disabled")
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionTogglePills:
 		if cmd := m.togglePillsExpanded(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleThinking:
+		cfg := m.com.Config()
+		if cfg == nil {
+			cmds = append(cmds, util.ReportError(errors.New("configuration not found")))
+			break
+		}
+
+		agentCfg, ok := cfg.Agents[config.AgentCoder]
+		if !ok {
+			cmds = append(cmds, util.ReportError(errors.New("agent configuration not found")))
+			break
+		}
+
+		currentModel := cfg.Models[agentCfg.Model]
+		currentModel.Think = !currentModel.Think
+		if err := cfg.UpdatePreferredModel(agentCfg.Model, currentModel); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if err := m.com.App.UpdateAgentModel(context.TODO()); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshModelStateDialogs()
+		status := "disabled"
+		if currentModel.Think {
+			status = "enabled"
+		}
 		cmds = append(cmds, func() tea.Msg {
-			cfg := m.com.Config()
-			if cfg == nil {
-				return util.ReportError(errors.New("configuration not found"))()
-			}
-
-			agentCfg, ok := cfg.Agents[config.AgentCoder]
-			if !ok {
-				return util.ReportError(errors.New("agent configuration not found"))()
-			}
-
-			currentModel := cfg.Models[agentCfg.Model]
-			currentModel.Think = !currentModel.Think
-			if err := cfg.UpdatePreferredModel(agentCfg.Model, currentModel); err != nil {
-				return util.ReportError(err)()
-			}
-			m.com.App.UpdateAgentModel(context.TODO())
-			status := "disabled"
-			if currentModel.Think {
-				status = "enabled"
-			}
 			return util.NewInfoMsg("Thinking mode " + status)
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -1308,23 +1396,32 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		if err := cfg.UpdatePreferredModel(msg.ModelType, msg.Model); err != nil {
+		selectedModel := msg.Model
+		if catwalkModel := cfg.GetModel(selectedModel.Provider, selectedModel.Model); catwalkModel != nil {
+			selectedModel = config.NormalizeSelectedModelForModel(catwalkModel, selectedModel)
+		}
+
+		if err := cfg.UpdatePreferredModel(msg.ModelType, selectedModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		} else if _, ok := cfg.Models[config.SelectedModelTypeSmall]; !ok {
 			// Ensure small model is set is unset.
 			smallModel := m.com.App.GetDefaultSmallModel(providerID)
+			if catwalkModel := cfg.GetModel(smallModel.Provider, smallModel.Model); catwalkModel != nil {
+				smallModel = config.NormalizeSelectedModelForModel(catwalkModel, smallModel)
+			}
 			if err := cfg.UpdatePreferredModel(config.SelectedModelTypeSmall, smallModel); err != nil {
 				cmds = append(cmds, util.ReportError(err))
 			}
 		}
 
+		if err := m.com.App.UpdateAgentModel(context.TODO()); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshModelStateDialogs()
+
 		cmds = append(cmds, func() tea.Msg {
-			if err := m.com.App.UpdateAgentModel(context.TODO()); err != nil {
-				return util.ReportError(err)
-			}
-
-			modelMsg := fmt.Sprintf("%s model changed to %s", msg.ModelType, msg.Model.Model)
-
+			modelMsg := fmt.Sprintf("%s model changed to %s", msg.ModelType, selectedModel.Model)
 			return util.NewInfoMsg(modelMsg)
 		})
 
@@ -1357,16 +1454,22 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
+		model := cfg.GetModelByType(agentCfg.Model)
 		currentModel := cfg.Models[agentCfg.Model]
-		currentModel.ReasoningEffort = msg.Effort
+		currentModel = config.ApplyReasoningSelection(model, currentModel, msg.Effort)
 		if err := cfg.UpdatePreferredModel(agentCfg.Model, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
 
+		if err := m.com.App.UpdateAgentModel(context.TODO()); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.refreshModelStateDialogs()
+
 		cmds = append(cmds, func() tea.Msg {
-			m.com.App.UpdateAgentModel(context.TODO())
-			return util.NewInfoMsg("Reasoning effort set to " + msg.Effort)
+			return util.NewInfoMsg("Reasoning set to " + msg.Effort)
 		})
 		m.dialog.CloseDialog(dialog.ReasoningID)
 	case dialog.ActionPermissionResponse:
@@ -1916,6 +2019,9 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 
 		m.chat.Draw(scr, layout.main)
+		if layout.assistantFooter.Dy() > 0 && m.assistantFooter != nil {
+			uv.NewStyledString(m.assistantFooter.Render(layout.assistantFooter.Dx())).Draw(scr, layout.assistantFooter)
+		}
 		if layout.pills.Dy() > 0 && m.pillsView != "" {
 			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
@@ -2071,6 +2177,13 @@ func (m *UI) ShortHelp() []key.Binding {
 			binds = append(binds,
 				k.Editor.Newline,
 			)
+			if m.attachments.HasPasteBlocks() {
+				if m.attachments.EditingPasteBlocks() {
+					binds = append(binds, k.Editor.PasteBlockNext, k.Editor.PasteBlockDelete)
+				} else {
+					binds = append(binds, k.Editor.PasteBlockEditMode)
+				}
+			}
 		case uiFocusMain:
 			binds = append(binds,
 				k.Chat.UpDown,
@@ -2109,6 +2222,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	help := k.Help
 	help.SetHelp("ctrl+g", "less")
 	hasAttachments := len(m.attachments.List()) > 0
+	hasPasteBlocks := m.attachments.HasPasteBlocks()
 	hasSession := m.hasSession()
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
@@ -2173,6 +2287,24 @@ func (m *UI) FullHelp() [][]key.Binding {
 					},
 				)
 			}
+			if hasPasteBlocks {
+				if m.attachments.EditingPasteBlocks() {
+					binds = append(binds,
+						[]key.Binding{
+							k.Editor.PasteBlockEditMode,
+							k.Editor.PasteBlockPrev,
+							k.Editor.PasteBlockNext,
+							k.Editor.PasteBlockDelete,
+						},
+					)
+				} else {
+					binds = append(binds,
+						[]key.Binding{
+							k.Editor.PasteBlockEditMode,
+						},
+					)
+				}
+			}
 		case uiFocusMain:
 			binds = append(binds,
 				[]key.Binding{
@@ -2221,6 +2353,24 @@ func (m *UI) FullHelp() [][]key.Binding {
 						k.Editor.Escape,
 					},
 				)
+			}
+			if hasPasteBlocks {
+				if m.attachments.EditingPasteBlocks() {
+					binds = append(binds,
+						[]key.Binding{
+							k.Editor.PasteBlockEditMode,
+							k.Editor.PasteBlockPrev,
+							k.Editor.PasteBlockNext,
+							k.Editor.PasteBlockDelete,
+						},
+					)
+				} else {
+					binds = append(binds,
+						[]key.Binding{
+							k.Editor.PasteBlockEditMode,
+						},
+					)
+				}
 			}
 			binds = append(binds,
 				[]key.Binding{
@@ -2336,6 +2486,30 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 		status: helpRect,
 	}
 
+	layoutChatPanels := func(mainRect uv.Rectangle) {
+		contentRect := mainRect
+		pillsHeight := m.pillsAreaHeight()
+		if pillsHeight > 0 {
+			pillsHeight = min(pillsHeight, mainRect.Dy())
+			chatRect, pillsRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-pillsHeight))
+			contentRect = chatRect
+			uiLayout.pills = pillsRect
+		}
+
+		footerHeight := 0
+		if m.assistantFooter != nil && contentRect.Dy() > 2 {
+			footerHeight = min(3, contentRect.Dy()-1)
+		}
+		if footerHeight > 0 {
+			chatRect, footerRect := layout.SplitVertical(contentRect, layout.Fixed(contentRect.Dy()-footerHeight))
+			uiLayout.main = chatRect
+			uiLayout.assistantFooter = footerRect
+			return
+		}
+
+		uiLayout.main = contentRect
+	}
+
 	// Handle different app states
 	switch m.state {
 	case uiOnboarding, uiInitialize:
@@ -2392,17 +2566,11 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			mainRect, editorRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-editorHeight))
 			mainRect.Max.X -= 1 // Add padding right
 			uiLayout.header = headerRect
-			pillsHeight := m.pillsAreaHeight()
-			if pillsHeight > 0 {
-				pillsHeight = min(pillsHeight, mainRect.Dy())
-				chatRect, pillsRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-pillsHeight))
-				uiLayout.main = chatRect
-				uiLayout.pills = pillsRect
-			} else {
-				uiLayout.main = mainRect
+			layoutChatPanels(mainRect)
+			// Add bottom margin to main when space permits.
+			if uiLayout.main.Dy() > 1 {
+				uiLayout.main.Max.Y -= 1
 			}
-			// Add bottom margin to main
-			uiLayout.main.Max.Y -= 1
 			uiLayout.editor = editorRect
 		} else {
 			// Layout
@@ -2420,17 +2588,11 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			mainRect, editorRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-editorHeight))
 			mainRect.Max.X -= 1 // Add padding right
 			uiLayout.sidebar = sideRect
-			pillsHeight := m.pillsAreaHeight()
-			if pillsHeight > 0 {
-				pillsHeight = min(pillsHeight, mainRect.Dy())
-				chatRect, pillsRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-pillsHeight))
-				uiLayout.main = chatRect
-				uiLayout.pills = pillsRect
-			} else {
-				uiLayout.main = mainRect
+			layoutChatPanels(mainRect)
+			// Add bottom margin to main when space permits.
+			if uiLayout.main.Dy() > 1 {
+				uiLayout.main.Max.Y -= 1
 			}
-			// Add bottom margin to main
-			uiLayout.main.Max.Y -= 1
 			uiLayout.editor = editorRect
 		}
 	}
@@ -2466,6 +2628,9 @@ type uiLayout struct {
 
 	// session details is the area for the session details overlay in compact mode.
 	sessionDetails uv.Rectangle
+
+	// assistantFooter is the persistent assistant metadata footer area.
+	assistantFooter uv.Rectangle
 }
 
 func (m *UI) openEditor(value string) tea.Cmd {
@@ -2774,6 +2939,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	}
 
 	ctx := context.Background()
+	m.startRequestTimer()
 	cmds = append(cmds, func() tea.Msg {
 		for _, path := range m.sessionFileReads {
 			m.com.App.FileTracker.RecordRead(ctx, m.session.ID, path)
@@ -2787,6 +2953,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	cmds = append(cmds, func() tea.Msg {
 		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
 		if err != nil {
+			m.completeRequestTimer()
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
 			if isCancelErr || isPermissionErr {
@@ -3060,24 +3227,6 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		return nil
 	}
 
-	if strings.Count(msg.Content, "\n") > pasteLinesThreshold {
-		return func() tea.Msg {
-			content := []byte(msg.Content)
-			if int64(len(content)) > common.MaxAttachmentSize {
-				return util.ReportWarn("Paste is too big (>5mb)")
-			}
-			name := fmt.Sprintf("paste_%d.txt", m.pasteIdx())
-			mimeBufferSize := min(512, len(content))
-			mimeType := http.DetectContentType(content[:mimeBufferSize])
-			return message.Attachment{
-				FileName: name,
-				FilePath: name,
-				MimeType: mimeType,
-				Content:  content,
-			}
-		}
-	}
-
 	// Attempt to parse pasted content as file paths. If possible to parse,
 	// all files exist and are valid, add as attachments.
 	// Otherwise, paste as text.
@@ -3105,17 +3254,37 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		}
 		return true
 	}
-	if !allExistsAndValid() {
-		var cmd tea.Cmd
-		m.textarea, cmd = m.textarea.Update(msg)
-		return cmd
+	if allExistsAndValid() {
+		var cmds []tea.Cmd
+		for _, path := range paths {
+			cmds = append(cmds, m.handleFilePathPaste(path))
+		}
+		if len(cmds) > 0 {
+			return tea.Batch(cmds...)
+		}
 	}
 
-	var cmds []tea.Cmd
-	for _, path := range paths {
-		cmds = append(cmds, m.handleFilePathPaste(path))
+	if strings.Count(msg.Content, "\n") > pasteLinesThreshold && m.com.Config().Options.TUI.PasteBlocks {
+		return func() tea.Msg {
+			content := []byte(msg.Content)
+			if int64(len(content)) > common.MaxAttachmentSize {
+				return util.ReportWarn("Paste is too big (>5mb)")
+			}
+			name := fmt.Sprintf("paste_%d.txt", m.pasteIdx())
+			mimeBufferSize := min(512, len(content))
+			mimeType := http.DetectContentType(content[:mimeBufferSize])
+			return message.Attachment{
+				FileName: name,
+				FilePath: name,
+				MimeType: mimeType,
+				Content:  content,
+			}
+		}
 	}
-	return tea.Batch(cmds...)
+
+	var cmd tea.Cmd
+	m.textarea, cmd = m.textarea.Update(msg)
+	return cmd
 }
 
 // handleFilePathPaste handles a pasted file path.

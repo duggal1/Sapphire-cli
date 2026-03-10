@@ -15,9 +15,9 @@ import (
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/anim"
 	"github.com/charmbracelet/sapphire/internal/ui/attachments"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
 	"github.com/charmbracelet/sapphire/internal/ui/list"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // MessageLeftPaddingTotal is the total width that is taken up by the border +
@@ -190,6 +190,9 @@ type AssistantInfoItem struct {
 	sty                 *styles.Styles
 	cfg                 *config.Config
 	lastUserMessageTime time.Time
+	requestStartedAt    time.Time
+	requestCompletedAt  time.Time
+	anim                *anim.Anim
 }
 
 // NewAssistantInfoItem creates a new AssistantInfoItem.
@@ -201,7 +204,51 @@ func NewAssistantInfoItem(sty *styles.Styles, message *message.Message, cfg *con
 		sty:                 sty,
 		cfg:                 cfg,
 		lastUserMessageTime: lastUserMessageTime,
+		anim:                anim.New(anim.Settings{ID: AssistantInfoID(message.ID), Size: 1}),
 	}
+}
+
+// StartAnimation implements Animatable.
+func (a *AssistantInfoItem) StartAnimation() tea.Cmd {
+	if !a.shouldAnimate() {
+		return nil
+	}
+	return a.anim.Start()
+}
+
+// Animate implements Animatable.
+func (a *AssistantInfoItem) Animate(msg anim.StepMsg) tea.Cmd {
+	if !a.shouldAnimate() {
+		return nil
+	}
+	a.clearCache()
+	return a.anim.Animate(msg)
+}
+
+// SetMessage updates the underlying assistant message.
+func (a *AssistantInfoItem) SetMessage(msg *message.Message) {
+	a.message = msg
+	a.clearCache()
+}
+
+// SetLastUserMessageTime updates the timer baseline for the assistant footer.
+func (a *AssistantInfoItem) SetLastUserMessageTime(t time.Time) {
+	a.lastUserMessageTime = t
+	a.clearCache()
+}
+
+func (a *AssistantInfoItem) SetRequestTiming(start, end time.Time) {
+	a.requestStartedAt = start
+	a.requestCompletedAt = end
+	a.clearCache()
+}
+
+// MessageID returns the backing assistant message ID.
+func (a *AssistantInfoItem) MessageID() string {
+	if a.message == nil {
+		return ""
+	}
+	return a.message.ID
 }
 
 // ID implements MessageItem.
@@ -227,9 +274,6 @@ func (a *AssistantInfoItem) Render(width int) string {
 
 func (a *AssistantInfoItem) renderContent(width int) string {
 	finish := a.message.FinishPart()
-	if finish == nil {
-		return ""
-	}
 
 	// 1. Model Header with Capitalization Fixes
 	modelName := a.message.Model
@@ -268,8 +312,11 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	}
 
 	// Handle Thinking Mode {high/low} or {on/off}
-	effort := finish.ThinkingEffort
-	if effort == "" && finish.ThoughtsTokens > 0 {
+	effort := ""
+	if finish != nil {
+		effort = finish.ThinkingEffort
+	}
+	if effort == "" && finish != nil && finish.ThoughtsTokens > 0 {
 		// If thoughts were produced but no effort level recorded (e.g. Gemini 2.5 Flash)
 		if a.cfg != nil {
 			if agentCfg, ok := a.cfg.Agents[config.AgentCoder]; ok {
@@ -292,60 +339,92 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 		headerText = fmt.Sprintf("%s via %s", modelName, providerDisplay)
 	}
 
-	// Calculate a reasonable width for the separator
-	sepWidth := width
-	if sepWidth > 80 {
-		sepWidth = 80
-	}
-
+	headerText = ansi.Truncate(headerText, max(0, width), "…")
 	modelHeader := a.sty.Base.Foreground(lipgloss.Color("244")).Render(headerText)
 
-	// Separator line
-	sep := a.sty.Base.Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", sepWidth))
+	sep := a.sty.Base.Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", max(0, width)))
 
-	// Data line: 2.3s · 420 tok/s · 2ms · 40k in · 1.5k out · 16k cached
-	duration := float64(finish.EndTimeMs-finish.StartTimeMs) / 1000.0
-	// Fallback to finish time duration if performance metrics weren't captured
-	if duration <= 0 && finish.Time > 0 {
-		duration = time.Unix(finish.Time, 0).Sub(a.lastUserMessageTime).Seconds()
-	}
-	if duration < 0 {
-		duration = 0
-	}
+	duration := a.renderDurationSeconds(finish)
 
 	parts := []string{
 		fmt.Sprintf("%.1fs", duration),
 	}
 
-	if finish.TokensPerSecond > 0 {
+	if finish != nil && finish.TokensPerSecond > 0 {
 		parts = append(parts, fmt.Sprintf("%.0f tok/s", finish.TokensPerSecond))
 	}
 
-	if finish.AvgLatencyMs > 0 {
+	if finish != nil && finish.AvgLatencyMs > 0 {
 		parts = append(parts, fmt.Sprintf("%.0fms", finish.AvgLatencyMs))
 	}
 
-	if finish.PromptTokens > 0 {
+	if finish != nil && finish.PromptTokens > 0 {
 		parts = append(parts, formatUsageTokens(finish.PromptTokens)+" in")
 	}
 
-	if finish.CompletionTokens > 0 {
+	if finish != nil && finish.CompletionTokens > 0 {
 		parts = append(parts, formatUsageTokens(finish.CompletionTokens)+" out")
 	}
 
-	if finish.CachedTokens > 0 {
+	if finish != nil && finish.CachedTokens > 0 {
 		parts = append(parts, formatUsageTokens(finish.CachedTokens)+" cached")
 	}
 
-	if finish.ThoughtsTokens > 0 {
+	if finish != nil && finish.ThoughtsTokens > 0 {
 		parts = append(parts, formatUsageTokens(finish.ThoughtsTokens)+" thoughts")
 	}
 
 	dot := a.sty.Base.Foreground(lipgloss.Color("240")).Render(" · ")
-	dataLine := a.sty.Base.Foreground(lipgloss.Color("244")).Render(strings.Join(parts, dot))
+	dataText := ansi.Truncate(strings.Join(parts, dot), max(0, width), "…")
+	dataLine := a.sty.Base.Foreground(lipgloss.Color("244")).Render(dataText)
 
-	content := fmt.Sprintf("%s\n%s\n%s", modelHeader, sep, dataLine)
-	return common.Section(a.sty, content, width)
+	return fmt.Sprintf("%s\n%s\n%s", sep, modelHeader, dataLine)
+}
+
+func (a *AssistantInfoItem) renderDurationSeconds(finish *message.Finish) float64 {
+	if !a.requestStartedAt.IsZero() {
+		end := a.requestCompletedAt
+		if end.IsZero() {
+			end = time.Now()
+		}
+		duration := end.Sub(a.requestStartedAt).Seconds()
+		if duration >= 0 {
+			return duration
+		}
+	}
+
+	if finish != nil && finish.EndTimeMs > 0 && finish.StartTimeMs > 0 {
+		duration := float64(finish.EndTimeMs-finish.StartTimeMs) / 1000.0
+		if duration > 0 {
+			return duration
+		}
+	}
+
+	start := a.lastUserMessageTime
+	if start.IsZero() && a.message != nil && a.message.CreatedAt > 0 {
+		start = time.Unix(a.message.CreatedAt, 0)
+	}
+	if start.IsZero() {
+		return 0
+	}
+
+	end := time.Now()
+	if finish != nil && finish.Time > 0 {
+		end = time.Unix(finish.Time, 0)
+	}
+
+	duration := end.Sub(start).Seconds()
+	if duration < 0 {
+		return 0
+	}
+	return duration
+}
+
+func (a *AssistantInfoItem) shouldAnimate() bool {
+	if !a.requestStartedAt.IsZero() && a.requestCompletedAt.IsZero() {
+		return true
+	}
+	return a.message != nil && !a.message.IsFinished()
 }
 
 func formatUsageTokens(n int64) string {
@@ -376,6 +455,8 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			sty.Attachments.Deleting,
 			sty.Attachments.Image,
 			sty.Attachments.Text,
+			sty.Attachments.PasteBlock,
+			sty.Attachments.PasteSelected,
 		)
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:

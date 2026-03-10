@@ -11,6 +11,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.0
 	charm.land/log/v2 v2.0.0-20251110204020-529bb77f35da
 	charm.land/x/vcr v0.1.1
+	cloud.google.com/go/auth v0.18.2
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/PuerkitoBio/goquery v1.11.0
@@ -75,7 +76,6 @@ require (
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.18.2 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.17.0 // indirect

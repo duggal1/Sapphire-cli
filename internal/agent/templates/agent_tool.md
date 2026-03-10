@@ -1,14 +1,16 @@
-Launch a new sub-agent that has access to an expansive set of tools including Agentic View, Agentic Fetch, Bash (with background terminal capability), GlobTool, GrepTool, LS, and standard View. Use the Agent tool to delegate complex search, exploration, and execution tasks.
+Launch a new sub-agent with its own terminal and the same core execution capabilities needed for scoped investigation and implementation. Use the Agent tool when delegation will improve context quality, latency, or independence of verification.
 
 <usage>
-- If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended.
-- You can delegate complex multi-step analysis or codebase exploration.
+- Use this when the task is large, isolated, or noisy enough that keeping it in the main context would reduce quality.
+- Good fits: codebase mapping, dependency tracing, isolated research, independent verification, or parallel workstreams with clear file boundaries.
+- Do not use this for tiny tasks, vague tasks, or work that shares mutable state with another ongoing task.
 </usage>
 
 <usage_notes>
-1. All sub-agents must be spawned and run in parallel. The main agent must launch multiple sub-agents simultaneously when dealing with multiple tasks. No sub-agent should block another — all sub-agents run concurrently. You must never wait for one sub-agent to finish before launching the next. To do this, issue multiple tool calls in a single message.
-2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
-4. The agent's outputs should generally be trusted.
-5. IMPORTANT: Sub-agents have full capability to read files (Agentic View), search the web (Agentic Fetch), run terminal commands (Bash), and modify code (Agentic Edit/Write). Give them clear, scoped boundaries so they don't step on each other's toes when modifying files.
+1. If multiple sub-agents are truly independent, launch them in parallel. If they share files or state, keep the work sequential.
+2. The sub-agent returns one final report to you. The user does not see that report unless you summarize or apply its outcome.
+3. Each invocation is stateless. Write a precise prompt with explicit scope, constraints, deliverables, and success criteria.
+4. Sub-agents can read files, search the web, run terminal commands, and modify code. Give them clear file boundaries so parallel work does not conflict.
+5. Sub-agents cannot spawn sub-agents. Nesting is not allowed.
+6. Verify sub-agent output before relying on it for the final answer.
 </usage_notes>

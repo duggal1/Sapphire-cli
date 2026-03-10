@@ -2,11 +2,16 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -64,7 +69,7 @@ func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := renderGlobOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
 	return joinToolParts(header, body)
 }
 
@@ -129,7 +134,7 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := renderGrepOutput(sty, params.Pattern, params.LiteralText, opts.Result.Content, bodyWidth, opts.ExpandedContent)
 	return joinToolParts(header, body)
 }
 
@@ -189,7 +194,7 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	body := renderListOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
 	return joinToolParts(header, body)
 }
 
@@ -253,4 +258,173 @@ func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
 	return joinToolParts(header, body)
+}
+
+func renderGlobOutput(sty *styles.Styles, content string, width int, expanded bool) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	maxLines := responseContextHeight
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	var out []string
+	for i, line := range lines {
+		if i >= maxLines {
+			break
+		}
+		clean := strings.TrimSpace(line)
+		clean = ansi.Truncate(clean, width, "…")
+		styled := sty.Tool.ListFile.Render(clean)
+		if strings.HasSuffix(clean, "/") {
+			styled = sty.Tool.ListDirectory.Render(clean)
+		}
+		out = append(out, sty.Tool.Body.Render(styled))
+	}
+	if len(lines) > maxLines && !expanded {
+		out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))))
+	}
+	return strings.Join(out, "\n")
+}
+
+func renderListOutput(sty *styles.Styles, content string, width int, expanded bool) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	maxLines := responseContextHeight
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	var out []string
+	for i, line := range lines {
+		if i >= maxLines {
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+			out = append(out, "")
+		case strings.HasPrefix(trimmed, "There are more than") || strings.HasPrefix(trimmed, "The directory tree is shown"):
+			out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(ansi.Truncate(trimmed, width, "…"))))
+		case strings.HasPrefix(trimmed, "- "):
+			out = append(out, renderListTreeLine(sty, line, width))
+		default:
+			out = append(out, sty.Tool.Body.Render(sty.Tool.ListMeta.Render(ansi.Truncate(trimmed, width, "…"))))
+		}
+	}
+	if len(lines) > maxLines && !expanded {
+		out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))))
+	}
+	return strings.Join(out, "\n")
+}
+
+func renderListTreeLine(sty *styles.Styles, line string, width int) string {
+	indentWidth := len(line) - len(strings.TrimLeft(line, " "))
+	indent := strings.Repeat(" ", indentWidth)
+	trimmed := strings.TrimSpace(line)
+	name := strings.TrimPrefix(trimmed, "- ")
+	style := sty.Tool.ListFile
+	if strings.HasSuffix(name, "/") {
+		style = sty.Tool.ListDirectory
+	}
+	if indentWidth == 0 {
+		style = sty.Tool.ListRoot
+	}
+	rendered := indent + style.Render(ansi.Truncate(name, max(0, width-indentWidth), "…"))
+	return sty.Tool.Body.Render(rendered)
+}
+
+var grepLineRE = regexp.MustCompile(`^\s*Line (\d+)(?:, Char (\d+))?: (.*)$`)
+
+func renderGrepOutput(sty *styles.Styles, pattern string, literal bool, content string, width int, expanded bool) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	maxLines := responseContextHeight * 2
+	if expanded {
+		maxLines = len(lines)
+	}
+
+	highlighter := compileGrepHighlighter(pattern, literal)
+	var out []string
+	for i, line := range lines {
+		if i >= maxLines {
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+			out = append(out, "")
+		case strings.HasPrefix(trimmed, "Found "):
+			out = append(out, sty.Tool.Body.Render(sty.Tool.ListMeta.Render(ansi.Truncate(trimmed, width, "…"))))
+		case strings.HasPrefix(trimmed, "(Results are truncated"):
+			out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(ansi.Truncate(trimmed, width, "…"))))
+		case strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "Line "):
+			name := strings.TrimSuffix(trimmed, ":")
+			name = fsext.PrettyPath(filepath.ToSlash(name))
+			out = append(out, "")
+			out = append(out, sty.Tool.Body.Render(sty.Tool.GrepFile.Render(ansi.Truncate(name, width, "…"))))
+		default:
+			if matches := grepLineRE.FindStringSubmatch(trimmed); len(matches) == 4 {
+				lineInfo := "Line " + matches[1]
+				if matches[2] != "" {
+					lineInfo += ", Char " + matches[2]
+				}
+				rendered := sty.Tool.GrepLine.Render(lineInfo) + " " + highlightGrepText(sty, highlighter, matches[3], width-len(lineInfo)-1)
+				out = append(out, sty.Tool.Body.Render(rendered))
+			} else {
+				out = append(out, sty.Tool.Body.Render(sty.Tool.GrepContext.Render(ansi.Truncate(trimmed, width, "…"))))
+			}
+		}
+	}
+	if len(lines) > maxLines && !expanded {
+		out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))))
+	}
+	return strings.Join(out, "\n")
+}
+
+func compileGrepHighlighter(pattern string, literal bool) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	if literal {
+		return regexp.MustCompile(regexp.QuoteMeta(pattern))
+	}
+	rx, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	return rx
+}
+
+func highlightGrepText(sty *styles.Styles, rx *regexp.Regexp, text string, width int) string {
+	text = ansi.Truncate(text, max(0, width), "…")
+	if rx == nil {
+		return sty.Tool.GrepContext.Render(text)
+	}
+	idx := rx.FindAllStringIndex(text, -1)
+	if len(idx) == 0 {
+		return sty.Tool.GrepContext.Render(text)
+	}
+	var b strings.Builder
+	last := 0
+	for _, match := range idx {
+		if match[0] > last {
+			b.WriteString(sty.Tool.GrepContext.Render(text[last:match[0]]))
+		}
+		b.WriteString(sty.Tool.GrepMatch.Render(text[match[0]:match[1]]))
+		last = match[1]
+	}
+	if last < len(text) {
+		b.WriteString(sty.Tool.GrepContext.Render(text[last:]))
+	}
+	return b.String()
 }

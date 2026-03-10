@@ -1,4 +1,4 @@
-// Package agent is the core orchestration layer for Crush AI agents.
+// Package agent is the core orchestration layer for Sapphire AI agents.
 //
 // It provides session-based AI agent functionality for managing
 // conversations, tool execution, and message handling. It coordinates
@@ -17,17 +17,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
@@ -38,6 +39,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/csync"
+	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 	pmem "github.com/charmbracelet/sapphire/internal/memory"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/permission"
@@ -60,6 +62,9 @@ var titlePrompt []byte
 
 //go:embed templates/summary.md
 var summaryPrompt []byte
+
+//go:embed templates/python_capabilities.md
+var pythonCapabilitiesPrompt []byte
 
 // Used to remove <think> tags from generated titles.
 var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
@@ -119,6 +124,9 @@ type sessionAgent struct {
 	activeRequests *csync.Map[string, context.CancelFunc]
 	memory         memory.MemoryService
 	pmem           *pmem.System
+	
+	// Python tool failure tracking - quit after 3 consecutive failures
+	pythonFailures atomic.Int32
 }
 
 type SessionAgentOptions struct {
@@ -158,6 +166,21 @@ func NewSessionAgent(
 	}
 }
 
+func isGeminiCodeExecutionModel(model Model) bool {
+	if !strings.EqualFold(model.ModelCfg.Provider, gemini.Name) &&
+		!strings.EqualFold(model.ModelCfg.Provider, "gemini") &&
+		!strings.EqualFold(model.ModelCfg.Provider, "google-vertex") {
+		return false
+	}
+
+	modelID := strings.ToLower(strings.TrimSpace(model.CatwalkCfg.ID))
+	if modelID == "" {
+		modelID = strings.ToLower(strings.TrimSpace(model.ModelCfg.Model))
+	}
+
+	return strings.HasPrefix(modelID, "gemini")
+}
+
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) {
 		return nil, ErrEmptyPrompt
@@ -165,6 +188,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if call.SessionID == "" {
 		return nil, ErrSessionMissing
 	}
+
+	// Reset Python tool failure counter for new run
+	a.pythonFailures.Store(0)
 
 	// Queue the message if busy
 	if a.IsSessionBusy(call.SessionID) {
@@ -312,6 +338,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				skillSystemMsg := "<active_skill_context>\n" + call.SkillContext + "\n</active_skill_context>"
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(skillSystemMsg))
 			}
+
+			if isGeminiCodeExecutionModel(largeModel) {
+				systemMessages = append(systemMessages, fantasy.NewSystemMessage(string(pythonCapabilitiesPrompt)))
+			}
+
 			if len(systemMessages) > 0 {
 				prepared.Messages = append(systemMessages, prepared.Messages...)
 			}
@@ -359,8 +390,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					currentAssistant.AppendReasoningSignature(reasoning.Signature)
 				}
 			}
-			if googleData, ok := reasoning.ProviderMetadata[google.Name]; ok {
-				if reasoning, ok := googleData.(*google.ReasoningMetadata); ok {
+			if googleData, ok := reasoning.ProviderMetadata[gemini.Name]; ok {
+				if reasoning, ok := googleData.(*gemini.ReasoningMetadata); ok {
 					currentAssistant.AppendThoughtSignature(reasoning.Signature, reasoning.ToolID)
 				}
 			}
@@ -412,7 +443,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
-			
+
+			// Track Python tool failures - quit after 3 consecutive failures
+			if result.ToolName == tools.PythonToolName {
+				if toolResult.IsError || 
+				   strings.Contains(strings.ToLower(toolResult.Content), "error") ||
+				   strings.Contains(strings.ToLower(toolResult.Content), "exception") ||
+				   strings.Contains(strings.ToLower(toolResult.Content), "traceback") {
+					failures := a.pythonFailures.Add(1)
+					if failures >= tools.MaxPythonRetries {
+						slog.Warn("Python tool failed too many times, quitting", "failures", failures, "max", tools.MaxPythonRetries)
+						// Reset counter and return special error to stop agent from retrying
+						a.pythonFailures.Store(0)
+						return fmt.Errorf("python tool failed %d times consecutively (max: %d). Stopping further Python execution attempts. Please review the task and try a different approach.", failures, tools.MaxPythonRetries)
+					}
+				} else {
+					// Success - reset failure counter
+					a.pythonFailures.Store(0)
+				}
+			}
+
 			if a.pmem != nil {
 				var rawInput string
 				for _, tc := range currentAssistant.ToolCalls() {
@@ -509,7 +559,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				} else {
 					threshold = int64(float64(cw) * smallContextWindowRatio)
 				}
-				
+
 				// 65% Context Window Pre-Compaction Checkpoint
 				if cw > 0 && float64(tokens) >= float64(cw)*0.65 {
 					if a.pmem.ShouldRunCheckpoint() {
@@ -854,74 +904,52 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 		if shouldDelegateToSubAgents(prompt) {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`TODO PROTOCOL: EXECUTES BEFORE ANY OTHER ACTION. NO EXCEPTIONS. NO EXEMPTIONS.
+					`Task Planning and Execution Protocol:
+This protocol is mandatory. All multi-step technical tasks must be planned and tracked using the "todos" tool before execution.
 
-STEP 1 — ENUMERATE:
-Read the user request. Extract every verb-object pair that implies an action.
-Each verb-object pair = one todo item.
-Examples: "fix the bug", "add a test", "update the config", "rename the function".
-If the user requests 10 actions, you produce 10 todo items.
-Nesting, bundling, merging, or collapsing multiple actions into one todo item is forbidden.
+PHASE 1: Initialization
+- Enumerate: Extract actionable items from the user request into a mutually exclusive, collectively exhaustive list. 
+- Constraint: One verb-object pair per item. Do not nest or merge independent actions.
+- Action: Invoke the "todos" tool to create the complete list before undertaking any technical operations.
 
-STEP 2 — CREATE:
-Call the "todos" tool exactly once with all items from Step 1.
-Do not write code. Do not read files. Do not call any other tool before this call completes.
+PHASE 2: Execution and Verification Loop
+You must follow this exact loop sequentially for every item on your list:
+1. Claim: Invoke "todos" to mark the current target item as IN_PROGRESS.
+2. Execute: Perform the necessary file reads, edits, or commands to fulfill the item.
+3. Validate: Verify that the implemented changes fulfill the exact requirement.
+4. Close: Invoke "todos" to mark the item as DONE immediately after successful validation.
+5. Synchronize: Re-read your entire "todos" list. Acknowledge your current state and remaining items before starting the next item.
 
-STEP 3 — VERIFY:
-After the "todos" call returns, re-read the original user request.
-Count user-requested actions. Count created todo items.
-If counts do not match exactly, call "todos" again to add missing items.
-Do not proceed to Step 4 until counts match exactly.
+CRITICAL RULE: Blind execution is forbidden. You must never execute action N+1 until action N is verified and explicitly marked DONE in the tracker.
 
-STEP 4 — EXECUTE (STRICT SEQUENTIAL):
-Execute todo items in the exact order they were created.
-Before starting any todo item: call "todos" to mark it as in_progress.
-After completing any todo item and verifying the result: call "todos" to mark it completed.
-Do not start the next todo item until the current item is marked completed.
-Do not mark an item completed before its action is fully executed and its result is verified.
-After every todo item completes, re-read the full todo list before starting the next item.
-If the todo list state does not match expected progress, halt and reconcile before continuing.
-
-TRACKING RULE: The todo list is the single source of truth for task state.
-Every action taken must correspond to an active IN_PROGRESS todo item.
-Taking any action not covered by a todo item is forbidden.
-Completing any action without immediately updating its todo status is forbidden.
-
-SINGLE-ACTION EXEMPTION — skip Steps 1–3 only if ALL four conditions are simultaneously true:
-1. The request contains exactly one verb-object pair.
-2. Execution requires exactly one tool call.
-3. The result requires no verification step.
-4. No file is created, modified, or deleted.
-If any one of the four conditions is false, execute the full protocol without exception.`,
+Exception Clause: Skip this protocol entirely if and only if the task is a single non-destructive read action requiring exactly one tool call.`,
 				),
 			))
 
 			history = append(history, fantasy.NewUserMessage(
-				`<system_reminder>COMPLEXITY DETECTED. EXECUTE THE FOLLOWING IN ORDER. NO DEVIATION.
-
-1. TODO LIST FIRST: Call "todos" immediately. One item per discrete action. Full coverage. No merging. No omissions.
-2. DELEGATE: Launch sub-agents in parallel via "agent" tool. One sub-agent per domain (codebase mapping, dependency tracing, risk isolation, implementation). Sequential execution is forbidden.
-3. EXECUTE IN PARALLEL:
-   - "agentic_view": all multi-file reads (max 250 files).
-   - "agentic_edit": all multi-file writes (max 25 files).
-   - "agentic_fetch": any version, API, or post-cutoff fact. Search immediately. Do not speculate.
-4. TRACK: Mark each todo IN_PROGRESS before starting. Mark DONE only after verified. Re-read todo list after every completed item.</system_reminder>`,
+				`<system_reminder>Complexity Mode Active:
+- Initialize your plan via the "todos" tool immediately.
+- Consider utilizing parallel sub-agents ("agent" tool) for isolating risk, mapping code, or handling distinct implementation phases.
+- Utilize "agentic_view" for bulk reads and "agentic_edit" for bulk writes. 
+- Rely on "agentic_fetch" for retrieving up-to-date external documentation or API specs instead of speculating on versions or syntax.
+- Crucially: Maintain constant synchronization with your "todos" tracker. Mark items IN_PROGRESS when starting and DONE only when verified.</system_reminder>`,
 			))
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`This is a reminder that your todo list is currently empty. If the user's request requires more than 2 steps, you MUST use 'todos' tool to initialize a plan.`,
+					`Your task list is empty. If the incoming request implies multiple sequential steps, you must initialize a plan using the "todos" tool prior to execution.`,
 				),
 			))
 		}
 	} else {
 		history = append(history, fantasy.NewUserMessage(
-			`<system_reminder>SUB-AGENT: EXECUTE ASSIGNED CHUNK AUTONOMOUSLY. NO DEFERRAL. NO CONFIRMATION.
-
-- Multi-file reads: "agentic_view" (max 50 files, parallel).
-- Multi-file writes: "agentic_edit" (max 25 files, parallel).
-- External facts: "agentic_fetch" (search immediately, do not speculate).
-- Complete all resolvable work within this sub-agent. Return only verified results.</system_reminder>`,
+			`<system_reminder>Sub-agent Directive:
+Execute your assigned chunk of the tasks autonomously and efficiently.
+- Multi-file reads: Use "agentic_view" (max 50 files, parallel).
+- External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
+- Code Execution: Use "python" tool for complex computations, data processing, or verification.
+- Shell: Use "bash" for terminal commands and background jobs.
+Resolve your assigned scope independently and return only verified, concise objective results back to the main agent.</system_reminder>`,
 		))
 	}
 	for _, m := range msgs {
@@ -951,14 +979,35 @@ If any one of the four conditions is false, execute the full protocol without ex
 	return history, files
 }
 
-func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string) []fantasy.Message {
+func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string) (retHistory []fantasy.Message) {
+	// Add permanent recovery for any internal panics here.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Caught panic in injectTieredMemory", "error", r)
+			retHistory = history // Safely fallback to original history
+		}
+	}()
+
+	retHistory = history
+
+	// Skip memory injection if memory service is not available
+	// This can happen with sub-agents that don't have memory initialized
+	if a == nil || a.memory == nil {
+		return history
+	}
+
+	// Double-check for typed nil wrapped in interface
+	if val := reflect.ValueOf(a.memory); val.Kind() == reflect.Ptr && val.IsNil() {
+		return history
+	}
+
 	// Tier 1: Hot Memory - Project Constitution
 	// Always injected first.
 	constitution, err := a.memory.GetProjectConstitution(ctx, "default")
 	if err == nil && constitution != "" {
-		history = append([]fantasy.Message{
+		retHistory = append([]fantasy.Message{
 			fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
-		}, history...)
+		}, retHistory...)
 	}
 
 	// Tier 2: Warm Memory - Latest Structured Summary
@@ -966,21 +1015,21 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	summary, err := a.memory.GetStructuredSummary(ctx, sessionID)
 	if err == nil && summary != nil {
 		rawData, _ := json.MarshalIndent(summary, "", "  ")
-		history = append([]fantasy.Message{
+		retHistory = append([]fantasy.Message{
 			fantasy.NewSystemMessage("## LATEST STRUCTURED STATE (Tier 2 Warm Memory)\n" + string(rawData)),
-		}, history...)
+		}, retHistory...)
 	}
 
 	if a.pmem != nil {
 		pmemInjection := a.pmem.BuildContextInjection(ctx)
 		if pmemInjection != "" {
-			history = append([]fantasy.Message{
+			retHistory = append([]fantasy.Message{
 				fantasy.NewSystemMessage(pmemInjection),
-			}, history...)
+			}, retHistory...)
 		}
 	}
 
-	return history
+	return retHistory
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {

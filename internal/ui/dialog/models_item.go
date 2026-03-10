@@ -128,18 +128,18 @@ func (m *ModelItem) Render(width int) string {
 func (m *ModelItem) getReasoningIndicator() string {
 	// Check if this is a Gemini model
 	isGemini := strings.Contains(strings.ToLower(m.model.ID), "gemini")
-	
+
 	if isGemini && m.model.DefaultReasoningEffort != "" {
 		effort := formatReasoningEffort(m.model.DefaultReasoningEffort)
 		return fmt.Sprintf("[%s]", effort)
 	}
-	
+
 	// Also check for other models with reasoning capability
 	if m.model.CanReason && m.model.DefaultReasoningEffort != "" {
 		effort := formatReasoningEffort(m.model.DefaultReasoningEffort)
 		return fmt.Sprintf("[%s]", effort)
 	}
-	
+
 	return ""
 }
 
@@ -156,6 +156,10 @@ func formatReasoningEffort(effort string) string {
 		return "Low"
 	case "minimal":
 		return "Minimal"
+	case "thinking_on":
+		return "Thinking On"
+	case "thinking_off":
+		return "Thinking Off"
 	default:
 		return cases.Title(language.English).String(effort)
 	}
@@ -194,7 +198,7 @@ func renderItemWithReasoning(t ListItemStyles, title string, info string, reason
 	var infoText string
 	var infoWidth int
 	lineWidth := width
-	
+
 	// Add reasoning indicator to info if present
 	if reasoningIndicator != "" {
 		if info != "" {
@@ -203,7 +207,7 @@ func renderItemWithReasoning(t ListItemStyles, title string, info string, reason
 			info = reasoningIndicator
 		}
 	}
-	
+
 	if len(info) > 0 {
 		infoText = fmt.Sprintf(" %s ", info)
 		if focused {

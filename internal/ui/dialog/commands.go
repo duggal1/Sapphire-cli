@@ -404,9 +404,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		model := cfg.GetModelByType(agentCfg.Model)
 		if providerCfg != nil && model != nil && model.CanReason {
 			selectedModel := cfg.Models[agentCfg.Model]
+			reasoningChoices := config.ReasoningChoicesForModel(model)
 
 			// Anthropic models: thinking toggle
-			if model.CanReason && len(model.ReasoningLevels) == 0 {
+			if model.CanReason && len(reasoningChoices) == 0 {
 				status := "Enable"
 				if selectedModel.Think {
 					status = "Disable"
@@ -414,9 +415,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 				commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", status+" Thinking Mode", "", ActionToggleThinking{}))
 			}
 
-			// OpenAI models: reasoning effort dialog
-			if len(model.ReasoningLevels) > 0 {
-				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", "Select Reasoning Effort", "", ActionOpenDialog{
+			if len(reasoningChoices) > 0 {
+				label := "Select Reasoning Effort"
+				if config.IsGemini25Model(model.ID) {
+					label = "Select Thinking Mode"
+				}
+				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", label, "", ActionOpenDialog{
 					DialogID: ReasoningID,
 				}))
 			}
@@ -457,6 +461,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 
 	commands = append(commands,
+		NewCommandItem(c.com.Styles, "toggle_paste_blocks", toggleLabel(c.com.Config().Options.TUI.PasteBlocks, "Paste Blocks"), "", ActionTogglePasteBlocks{}),
 		NewCommandItem(c.com.Styles, "toggle_yolo", "Toggle Yolo Mode", "", ActionToggleYoloMode{}),
 		NewCommandItem(c.com.Styles, "toggle_help", "Toggle Help", "ctrl+g", ActionToggleHelp{}),
 		NewCommandItem(c.com.Styles, "init", "Initialize Project", "", ActionInitializeProject{}),
@@ -464,6 +469,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	)
 
 	return commands
+}
+
+func toggleLabel(enabled bool, noun string) string {
+	if enabled {
+		return "Disable " + noun
+	}
+	return "Enable " + noun
 }
 
 // SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.
@@ -494,4 +506,8 @@ func (a *Commands) StartLoading() tea.Cmd {
 // StopLoading implements [LoadingDialog].
 func (a *Commands) StopLoading() {
 	a.loading = false
+}
+
+func (c *Commands) Refresh() {
+	c.setCommandItems(c.selected)
 }

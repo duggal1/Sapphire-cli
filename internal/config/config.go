@@ -40,12 +40,12 @@ var defaultContextPaths = []string{
 	"CLAUDE.local.md",
 	"GEMINI.md",
 	"gemini.md",
-	"crush.md",
-	"crush.local.md",
-	"Crush.md",
-	"Crush.local.md",
-	"CRUSH.md",
-	"CRUSH.local.md",
+	"sapphire.md",
+	"sapphire.local.md",
+	"Sapphire.md",
+	"Sapphire.local.md",
+	"SAPPHIRE.md",
+	"SAPPHIRE.local.md",
 	"AGENTS.md",
 	"agents.md",
 	"Agents.md",
@@ -201,6 +201,7 @@ type LSPConfig struct {
 type TUIOptions struct {
 	CompactMode bool   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
 	DiffMode    string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
+	PasteBlocks bool   `json:"paste_blocks,omitempty" jsonschema:"description=Automatically convert large pasted text into paste blocks in the TUI,default=false"`
 	// Here we can add themes later or any TUI related options
 	//
 
@@ -234,7 +235,7 @@ const (
 type Attribution struct {
 	TrailerStyle  TrailerStyle `json:"trailer_style,omitempty" jsonschema:"description=Style of attribution trailer to add to commits,enum=none,enum=co-authored-by,enum=assisted-by,default=assisted-by"`
 	CoAuthoredBy  *bool        `json:"co_authored_by,omitempty" jsonschema:"description=Deprecated: use trailer_style instead"`
-	GeneratedWith bool         `json:"generated_with,omitempty" jsonschema:"description=Add Generated with Crush line to commit messages and issues and PRs,default=true"`
+	GeneratedWith bool         `json:"generated_with,omitempty" jsonschema:"description=Add Generated with Sapphire line to commit messages and issues and PRs,default=true"`
 }
 
 // JSONSchemaExtend marks the co_authored_by field as deprecated in the schema.
@@ -253,7 +254,7 @@ type Options struct {
 	Debug                     bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                  bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize      bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	DataDirectory             string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.crush,example=.crush"` // Relative to the cwd
+	DataDirectory             string       `json:"data_directory,omitempty" jsonschema:"description=Directory for storing application data (relative to working directory),default=.sapphire,example=.sapphire"` // Relative to the cwd
 	DisabledTools             []string     `json:"disabled_tools,omitempty" jsonschema:"description=List of built-in tools to disable and hide from the agent,example=bash,example=sourcegraph"`
 	DisableProviderAutoUpdate bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	DisableDefaultProviders   bool         `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled, providers must be fully specified in the config file with base_url, models, and api_key - no merging with defaults occurs,default=false"`
@@ -476,8 +477,129 @@ func (c *Config) SetCompactMode(enabled bool) error {
 	if c.Options == nil {
 		c.Options = &Options{}
 	}
+	if c.Options.TUI == nil {
+		c.Options.TUI = &TUIOptions{}
+	}
 	c.Options.TUI.CompactMode = enabled
 	return c.SetConfigField("options.tui.compact_mode", enabled)
+}
+
+func (c *Config) SetPasteBlocks(enabled bool) error {
+	if c.Options == nil {
+		c.Options = &Options{}
+	}
+	if c.Options.TUI == nil {
+		c.Options.TUI = &TUIOptions{}
+	}
+	c.Options.TUI.PasteBlocks = enabled
+	return c.SetConfigField("options.tui.paste_blocks", enabled)
+}
+
+func IsGemini25Model(modelID string) bool {
+	return strings.HasPrefix(strings.ToLower(modelID), "gemini-2.5")
+}
+
+func IsGemini3Model(modelID string) bool {
+	id := strings.ToLower(modelID)
+	return strings.HasPrefix(id, "gemini-3") || strings.HasPrefix(id, "gemini-3.")
+}
+
+func isGeminiFlashModel(modelID string) bool {
+	return strings.Contains(strings.ToLower(modelID), "flash")
+}
+
+func gemini3ReasoningLevels(modelID string) []string {
+	if isGeminiFlashModel(modelID) {
+		return []string{"minimal", "low", "medium", "high"}
+	}
+	return []string{"low", "medium", "high"}
+}
+
+func normalizeReasoningEffort(effort string, allowed []string, fallback string) string {
+	if effort != "" && slices.Contains(allowed, effort) {
+		return effort
+	}
+	if fallback != "" && slices.Contains(allowed, fallback) {
+		return fallback
+	}
+	if len(allowed) > 0 {
+		return allowed[0]
+	}
+	return ""
+}
+
+func ReasoningChoicesForModel(model *catwalk.Model) []string {
+	if model == nil || !model.CanReason {
+		return nil
+	}
+	if IsGemini25Model(model.ID) {
+		return []string{"thinking_on", "thinking_off"}
+	}
+	if IsGemini3Model(model.ID) {
+		return gemini3ReasoningLevels(model.ID)
+	}
+	return slices.Clone(model.ReasoningLevels)
+}
+
+func CurrentReasoningSelection(model *catwalk.Model, selected SelectedModel) string {
+	if model == nil || !model.CanReason {
+		return ""
+	}
+	if IsGemini25Model(model.ID) {
+		if selected.Think {
+			return "thinking_on"
+		}
+		return "thinking_off"
+	}
+	if IsGemini3Model(model.ID) {
+		choices := ReasoningChoicesForModel(model)
+		return normalizeReasoningEffort(selected.ReasoningEffort, choices, model.DefaultReasoningEffort)
+	}
+	return cmp.Or(selected.ReasoningEffort, model.DefaultReasoningEffort)
+}
+
+func ApplyReasoningSelection(model *catwalk.Model, selected SelectedModel, effort string) SelectedModel {
+	if model == nil {
+		return selected
+	}
+	if IsGemini25Model(model.ID) {
+		selected.ReasoningEffort = ""
+		selected.Think = effort != "thinking_off"
+		return selected
+	}
+	if IsGemini3Model(model.ID) {
+		selected.Think = false
+		choices := ReasoningChoicesForModel(model)
+		selected.ReasoningEffort = normalizeReasoningEffort(effort, choices, model.DefaultReasoningEffort)
+		return selected
+	}
+	selected.Think = false
+	selected.ReasoningEffort = effort
+	return selected
+}
+
+func NormalizeSelectedModelForModel(model *catwalk.Model, selected SelectedModel) SelectedModel {
+	if model == nil {
+		return selected
+	}
+	if IsGemini25Model(model.ID) {
+		selected.ReasoningEffort = ""
+		if !selected.Think {
+			selected.Think = true
+		}
+		return selected
+	}
+	if IsGemini3Model(model.ID) {
+		selected.Think = false
+		choices := ReasoningChoicesForModel(model)
+		selected.ReasoningEffort = normalizeReasoningEffort(selected.ReasoningEffort, choices, model.DefaultReasoningEffort)
+		return selected
+	}
+	selected.Think = false
+	if len(model.ReasoningLevels) > 0 && selected.ReasoningEffort == "" {
+		selected.ReasoningEffort = model.DefaultReasoningEffort
+	}
+	return selected
 }
 
 func (c *Config) Resolve(key string) (string, error) {
@@ -721,12 +843,15 @@ func allToolNames() []string {
 		"recall_memory",
 		"save_memory",
 		"sourcegraph",
+		"python",
 		"todos",
 		"view",
 		"agentic_view",
 		"write",
 		"list_mcp_resources",
 		"read_mcp_resource",
+		"load_skill",
+		"list_skills",
 	}
 }
 
@@ -753,6 +878,13 @@ func filterSlice(data []string, mask []string, include bool) []string {
 func (c *Config) SetupAgents() {
 	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
 
+	taskAllowedTools := make([]string, 0, len(allowedTools))
+	for _, tool := range allowedTools {
+		if tool != "agentic_edit" {
+			taskAllowedTools = append(taskAllowedTools, tool)
+		}
+	}
+
 	agents := map[string]Agent{
 		AgentCoder: {
 			ID:           AgentCoder,
@@ -769,7 +901,7 @@ func (c *Config) SetupAgents() {
 			Description:  "An agent that helps with searching for context and finding implementation details.",
 			Model:        SelectedModelTypeLarge,
 			ContextPaths: c.Options.ContextPaths,
-			AllowedTools: allowedTools, // Enable all tools for sub-agents
+			AllowedTools: taskAllowedTools,
 		},
 	}
 	c.Agents = agents

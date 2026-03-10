@@ -3,6 +3,7 @@ package model
 import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/sapphire/internal/agent"
+	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/ui/common"
 	"github.com/charmbracelet/ultraviolet/layout"
 )
@@ -10,11 +11,20 @@ import (
 // selectedLargeModel returns the currently selected large language model from
 // the agent coordinator, if one exists.
 func (m *UI) selectedLargeModel() *agent.Model {
-	if m.com.App.AgentCoordinator != nil {
-		model := m.com.App.AgentCoordinator.Model()
-		return &model
+	cfg := m.com.Config()
+	selected, ok := cfg.Models[config.SelectedModelTypeLarge]
+	if !ok {
+		return nil
 	}
-	return nil
+	catwalkModel := cfg.GetModel(selected.Provider, selected.Model)
+	if catwalkModel == nil {
+		return nil
+	}
+	model := agent.Model{
+		CatwalkCfg: *catwalkModel,
+		ModelCfg:   selected,
+	}
+	return &model
 }
 
 // landingView renders the landing page view showing the current working

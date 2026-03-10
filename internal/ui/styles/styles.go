@@ -326,6 +326,17 @@ type Styles struct {
 		MCPToolName lipgloss.Style // The mcp tool name
 		MCPArrow    lipgloss.Style // The mcp arrow icon
 
+		// Structured search/list styles
+		ListRoot      lipgloss.Style
+		ListDirectory lipgloss.Style
+		ListFile      lipgloss.Style
+		ListMeta      lipgloss.Style
+		ListHint      lipgloss.Style
+		GrepFile      lipgloss.Style
+		GrepLine      lipgloss.Style
+		GrepMatch     lipgloss.Style
+		GrepContext   lipgloss.Style
+
 		// Images and external resources
 		ResourceLoadedText      lipgloss.Style
 		ResourceLoadedIndicator lipgloss.Style
@@ -434,10 +445,12 @@ type Styles struct {
 
 	// Attachments styles
 	Attachments struct {
-		Normal   lipgloss.Style
-		Image    lipgloss.Style
-		Text     lipgloss.Style
-		Deleting lipgloss.Style
+		Normal        lipgloss.Style
+		Image         lipgloss.Style
+		Text          lipgloss.Style
+		Deleting      lipgloss.Style
+		PasteBlock    lipgloss.Style
+		PasteSelected lipgloss.Style
 	}
 
 	// Pills styles for todo/queue pills
@@ -805,57 +818,61 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(fgSubtle.Hex()),
 				},
 				CommentPreproc: ansi.StylePrimitive{
-					Color: stringPtr(tertiaryHex),
+					Color: stringPtr("#7BC4D6"),
 				},
 				Keyword: ansi.StylePrimitive{
-					Color: stringPtr(green.Hex()),
-				},
-				KeywordReserved: ansi.StylePrimitive{
-					Color: stringPtr(yellowHex),
-				},
-				KeywordNamespace: ansi.StylePrimitive{
-					Color: stringPtr(yellowHex),
-				},
-				KeywordType: ansi.StylePrimitive{
-					Color: stringPtr(yellowHex),
-				},
-				Operator: ansi.StylePrimitive{
 					Color: stringPtr(primaryHex),
 				},
-				Punctuation: ansi.StylePrimitive{
+				KeywordReserved: ansi.StylePrimitive{
 					Color: stringPtr(secondaryHex),
+				},
+				KeywordNamespace: ansi.StylePrimitive{
+					Color: stringPtr(secondaryHex),
+				},
+				KeywordType: ansi.StylePrimitive{
+					Color: stringPtr("#F2B366"),
+				},
+				Operator: ansi.StylePrimitive{
+					Color: stringPtr("#C97A45"),
+				},
+				Punctuation: ansi.StylePrimitive{
+					Color: stringPtr("#B08AE6"),
 				},
 				Name: ansi.StylePrimitive{
 					Color: stringPtr(fgBase.Hex()),
 				},
 				NameBuiltin: ansi.StylePrimitive{
-					Color: stringPtr(tertiaryHex),
+					Color: stringPtr("#7BC4D6"),
 				},
 				NameTag: ansi.StylePrimitive{
 					Color: stringPtr(primaryHex),
 				},
 				NameAttribute: ansi.StylePrimitive{
-					Color: stringPtr(green.Hex()),
+					Color: stringPtr("#F2B366"),
 				},
 				NameClass: ansi.StylePrimitive{
-					Color:     stringPtr(yellowHex),
-					Underline: boolPtr(true),
-					Bold:      boolPtr(true),
+					Color: stringPtr("#7BC4D6"),
+					Bold:  boolPtr(true),
+				},
+				NameConstant: ansi.StylePrimitive{
+					Color: stringPtr("#F29AA5"),
+					Bold:  boolPtr(true),
 				},
 				NameDecorator: ansi.StylePrimitive{
-					Color: stringPtr(tertiaryHex),
+					Color: stringPtr("#B08AE6"),
 				},
 				NameFunction: ansi.StylePrimitive{
-					Color: stringPtr(green.Hex()),
+					Color: stringPtr(charmtone.Guac.Hex()),
+					Bold:  boolPtr(true),
 				},
 				LiteralNumber: ansi.StylePrimitive{
-					Color: stringPtr(yellowHex),
+					Color: stringPtr("#F29AA5"),
 				},
 				LiteralString: ansi.StylePrimitive{
-					Color: stringPtr(green.Hex()),
+					Color: stringPtr("#F2B366"),
 				},
 				LiteralStringEscape: ansi.StylePrimitive{
-					Color: stringPtr(tertiaryHex),
+					Color: stringPtr("#7BC4D6"),
 				},
 				GenericDeleted: ansi.StylePrimitive{
 					Color: stringPtr(red.Hex()),
@@ -864,7 +881,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Italic: boolPtr(true),
 				},
 				GenericInserted: ansi.StylePrimitive{
-					Color: stringPtr(green.Hex()),
+					Color: stringPtr(charmtone.Guac.Hex()),
 				},
 				GenericStrong: ansi.StylePrimitive{
 					Bold: boolPtr(true),
@@ -1061,6 +1078,9 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	s.Diff = diffview.Style{
+		HunkLine: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B")).
+			Background(bgBaseLighter),
 		DividerLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(fgHalfMuted).
@@ -1085,23 +1105,23 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		InsertLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#629657")).
-				Background(lipgloss.Color("#2b322a")),
+				Foreground(lipgloss.Color("#22C55E")).
+				Background(lipgloss.Color("#1c2b21")),
 			Symbol: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#629657")).
-				Background(lipgloss.Color("#323931")),
+				Foreground(lipgloss.Color("#22C55E")).
+				Background(lipgloss.Color("#223325")),
 			Code: lipgloss.NewStyle().
-				Background(lipgloss.Color("#323931")),
+				Background(lipgloss.Color("#223325")),
 		},
 		DeleteLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#a45c59")).
-				Background(lipgloss.Color("#312929")),
+				Foreground(lipgloss.Color("#FB7185")).
+				Background(lipgloss.Color("#2b1a20")),
 			Symbol: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#a45c59")).
-				Background(lipgloss.Color("#383030")),
+				Foreground(lipgloss.Color("#FB7185")).
+				Background(lipgloss.Color("#352126")),
 			Code: lipgloss.NewStyle().
-				Background(lipgloss.Color("#383030")),
+				Background(lipgloss.Color("#352126")),
 		},
 	}
 
@@ -1221,14 +1241,24 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Todo styles - use warm amber for completed items
 	s.Tool.TodoRatio = base.Foreground(blueDark)
-	s.Tool.TodoCompletedIcon = base.Foreground(yellow)
-	s.Tool.TodoInProgressIcon = base.Foreground(greenDark)
+	s.Tool.TodoCompletedIcon = base.Foreground(lipgloss.Color("#22C55E"))
+	s.Tool.TodoInProgressIcon = base.Foreground(lipgloss.Color("#F59E0B"))
 	s.Tool.TodoPendingIcon = base.Foreground(fgMuted)
 
 	// MCP styles - use warm amber/green instead of blue
 	s.Tool.MCPName = base.Foreground(green)
 	s.Tool.MCPToolName = base.Foreground(greenDark)
 	s.Tool.MCPArrow = base.Foreground(green).SetString(ArrowRightIcon)
+
+	s.Tool.ListRoot = base.Foreground(secondary)
+	s.Tool.ListDirectory = base.Foreground(green).Bold(true)
+	s.Tool.ListFile = base.Foreground(fgBase)
+	s.Tool.ListMeta = base.Foreground(fgMuted)
+	s.Tool.ListHint = base.Foreground(yellow)
+	s.Tool.GrepFile = base.Foreground(green).Bold(true)
+	s.Tool.GrepLine = base.Foreground(yellow)
+	s.Tool.GrepMatch = base.Foreground(lipgloss.Color("#F29AA5")).Bold(true)
+	s.Tool.GrepContext = base.Foreground(fgMuted)
 
 	// Loading indicators for images, skills - use warm amber
 	s.Tool.ResourceLoadedText = base.Foreground(yellow)
@@ -1291,8 +1321,8 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Files - use warm amber for additions
 	s.Files.Path = s.Muted
-	s.Files.Additions = s.Base.Foreground(yellow)
-	s.Files.Deletions = s.Base.Foreground(redDark)
+	s.Files.Additions = s.Base.Foreground(lipgloss.Color("#22C55E"))
+	s.Files.Deletions = s.Base.Foreground(lipgloss.Color("#FB7185"))
 
 	// Chat
 	messageFocussedBorder := lipgloss.Border{
@@ -1417,6 +1447,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Attachments.Text = attachmentIconStyle.SetString(TextIcon)
 	s.Attachments.Normal = base.Padding(0, 1).MarginRight(1).Background(fgMuted).Foreground(fgBase)
 	s.Attachments.Deleting = base.Padding(0, 1).Bold(true).Background(red).Foreground(fgBase)
+	s.Attachments.PasteBlock = base.Padding(0, 2).MarginRight(1).Background(charmtone.Bok).Foreground(charmtone.Salt).Border(lipgloss.RoundedBorder()).BorderForeground(primary)
+	s.Attachments.PasteSelected = base.Padding(0, 2).MarginRight(1).Background(primary).Foreground(bgBase).Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Bold(true)
 
 	// Pills styles - use warm amber for todo spinner
 	s.Pills.Base = base.Padding(0, 1)
@@ -1426,7 +1458,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Pills.HelpKey = s.Muted
 	s.Pills.HelpText = s.Subtle
 	s.Pills.Area = base
-	s.Pills.TodoSpinner = base.Foreground(yellow)
+	s.Pills.TodoSpinner = base.Foreground(lipgloss.Color("#F59E0B"))
 
 	return s
 }

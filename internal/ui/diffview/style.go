@@ -16,6 +16,7 @@ type LineStyle struct {
 // different line types such as divider, missing, equal, insert, and delete
 // lines.
 type Style struct {
+	HunkLine    lipgloss.Style
 	DividerLine LineStyle
 	MissingLine LineStyle
 	EqualLine   LineStyle
@@ -26,6 +27,9 @@ type Style struct {
 // DefaultLightStyle provides a default light theme style for the diff view.
 func DefaultLightStyle() Style {
 	return Style{
+		HunkLine: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B")).
+			Background(charmtone.Salt),
 		DividerLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(charmtone.Iron).
@@ -77,6 +81,9 @@ func DefaultLightStyle() Style {
 // DefaultDarkStyle provides a default dark theme style for the diff view.
 func DefaultDarkStyle() Style {
 	return Style{
+		HunkLine: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B")).
+			Background(charmtone.Ox),
 		DividerLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(charmtone.Smoke).

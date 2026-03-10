@@ -1,5 +1,0 @@
-./anthropic.go
-./bedrock.go
-./error.go
-./google.go
-./provider_options.go

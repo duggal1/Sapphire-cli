@@ -1,8 +1,0 @@
-./adapters.go
-./dirent.go
-./dirent_unix.go
-./entry_filter_unix.go
-./fastwalk.go
-./fastwalk_darwin.go
-./zsyscall_darwin.go
-./zsyscall_darwin_arm64.1_13.s

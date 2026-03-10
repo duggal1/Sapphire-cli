@@ -1,9 +1,0 @@
-./button.go
-./capabilities.go
-./common.go
-./diff.go
-./elements.go
-./highlight.go
-./interface.go
-./markdown.go
-./scrollbar.go

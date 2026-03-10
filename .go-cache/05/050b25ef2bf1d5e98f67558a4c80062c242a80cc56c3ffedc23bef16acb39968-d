@@ -1,5 +1,0 @@
-./auth.go
-./error.go
-./google.go
-./provider_options.go
-./slice.go

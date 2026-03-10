@@ -1,5 +1,0 @@
-./background.go
-./coreutils.go
-./doc.go
-./ringbuffer.go
-./shell.go

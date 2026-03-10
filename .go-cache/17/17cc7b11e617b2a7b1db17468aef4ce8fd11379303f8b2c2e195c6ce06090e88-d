@@ -1,5 +1,0 @@
-./filechanges.go
-./inotify.go
-./inotify_tracker.go
-./polling.go
-./watch.go

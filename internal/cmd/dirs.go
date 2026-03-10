@@ -13,18 +13,18 @@ import (
 
 var dirsCmd = &cobra.Command{
 	Use:   "dirs",
-	Short: "Print directories used by Crush",
-	Long: `Print the directories where Crush stores its configuration and data files.
+	Short: "Print directories used by Sapphire",
+	Long: `Print the directories where Sapphire stores its configuration and data files.
 This includes the global configuration directory and data directory.`,
 	Example: `
 # Print all directories
-crush dirs
+sapphire dirs
 
 # Print only the config directory
-crush dirs config
+sapphire dirs config
 
 # Print only the data directory
-crush dirs data
+sapphire dirs data
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		if term.IsTerminal(os.Stdout.Fd()) {
@@ -47,7 +47,7 @@ crush dirs data
 
 var configDirCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Print the configuration directory used by Crush",
+	Short: "Print the configuration directory used by Sapphire",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Println(filepath.Dir(config.GlobalConfig()))
 	},
@@ -55,7 +55,7 @@ var configDirCmd = &cobra.Command{
 
 var dataDirCmd = &cobra.Command{
 	Use:   "data",
-	Short: "Print the datauration directory used by Crush",
+	Short: "Print the datauration directory used by Sapphire",
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Println(filepath.Dir(config.GlobalConfigData()))
 	},

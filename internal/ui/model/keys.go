@@ -17,6 +17,10 @@ type KeyMap struct {
 		AttachmentDeleteMode key.Binding
 		Escape               key.Binding
 		DeleteAllAttachments key.Binding
+		PasteBlockEditMode   key.Binding
+		PasteBlockPrev       key.Binding
+		PasteBlockNext       key.Binding
+		PasteBlockDelete     key.Binding
 
 		// History navigation
 		HistoryPrev key.Binding
@@ -144,6 +148,22 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.DeleteAllAttachments = key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("ctrl+r+r", "delete all attachments"),
+	)
+	km.Editor.PasteBlockEditMode = key.NewBinding(
+		key.WithKeys("ctrl+b"),
+		key.WithHelp("ctrl+b", "toggle paste blocks"),
+	)
+	km.Editor.PasteBlockPrev = key.NewBinding(
+		key.WithKeys("left", "shift+tab"),
+		key.WithHelp("←", "prev paste block"),
+	)
+	km.Editor.PasteBlockNext = key.NewBinding(
+		key.WithKeys("right", "tab"),
+		key.WithHelp("→", "next paste block"),
+	)
+	km.Editor.PasteBlockDelete = key.NewBinding(
+		key.WithKeys("ctrl+delete", "ctrl+backspace"),
+		key.WithHelp("ctrl+del", "delete paste block"),
 	)
 	km.Editor.HistoryPrev = key.NewBinding(
 		key.WithKeys("up"),

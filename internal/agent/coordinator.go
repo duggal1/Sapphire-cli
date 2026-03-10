@@ -41,13 +41,14 @@ import (
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/azure"
 	"charm.land/fantasy/providers/bedrock"
-	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
+	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 	openaisdk "github.com/openai/openai-go/v2/option"
 	"github.com/qjebbs/go-jsons"
+	"google.golang.org/genai"
 )
 
 type Coordinator interface {
@@ -126,7 +127,7 @@ func NewCoordinator(
 	apiKey := c.resolveGeminiAPIKey()
 	if apiKey != "" {
 		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
-			ExtractionModel: "gemini-2.0-flash",
+			ExtractionModel: "gemini-3-flash",
 			APIKey:          apiKey,
 			DataDir:         cfg.Options.DataDirectory,
 			ProjectRoot:     cfg.WorkingDir(),
@@ -209,11 +210,17 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 	// We now rely on explicit skill tooling (load_skill) to manage context.
 	// This reduces context pollution and speeds up model reasoning.
 
-	// NOTE: Autonomous sub-agent pre-delegation removed. The readyWg
-	// goroutines spawned by buildAgent were not waited on after the
-	// initial Wait() completed, causing sub-agents to run with empty
-	// system prompts and nil tools. The agent tool handles delegation
-	// when the LLM requests it.
+	if shouldPrimeAutonomousSubAgents(userPrompt) {
+		subAgentContext, err := c.autonomousSubAgentContext(ctx, sessionID, userPrompt)
+		if err != nil {
+			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
+		} else if strings.TrimSpace(subAgentContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += subAgentContext
+		}
+	}
 
 	run := func() (*fantasy.AgentResult, error) {
 		return c.currentAgent.Run(ctx, SessionAgentCall{
@@ -472,8 +479,35 @@ func (c *coordinator) ensureSkillsDiscovered() {
 	})
 }
 
+func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
+	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
+	if prompt == "" {
+		return false
+	}
+
+	strongSignals := []string{
+		"across the codebase", "large codebase", "architecture", "refactor", "audit",
+		"investigate", "trace", "root cause", "dependency", "parallel", "multiple modules",
+		"multiple packages", "verify independently", "review risks", "complex",
+	}
+	for _, signal := range strongSignals {
+		if strings.Contains(prompt, signal) {
+			return true
+		}
+	}
+
+	if len(strings.Fields(prompt)) >= 80 {
+		return true
+	}
+	if strings.Count(prompt, "\n") >= 4 {
+		return true
+	}
+	return false
+}
+
 func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
-	return []autonomousSubAgentTask{
+	prompt := strings.ToLower(userPrompt)
+	tasks := []autonomousSubAgentTask{
 		{
 			Name:         "codebase-map",
 			SessionTitle: "Autonomous Codebase Map",
@@ -490,23 +524,41 @@ func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
 				userPrompt,
 			),
 		},
-		{
+	}
+
+	if strings.Contains(prompt, "fix") ||
+		strings.Contains(prompt, "bug") ||
+		strings.Contains(prompt, "refactor") ||
+		strings.Contains(prompt, "migrate") ||
+		strings.Contains(prompt, "implement") {
+		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "risk-review",
 			SessionTitle: "Autonomous Risk Review",
 			Prompt: fmt.Sprintf(
 				"User task: %s\n\nReview likely implementation risks, edge cases, and validation points for this task. Return a compact checklist with absolute file paths where the risks live.",
 				userPrompt,
 			),
-		},
-		{
+		})
+	}
+
+	if strings.Contains(prompt, "version") ||
+		strings.Contains(prompt, "latest") ||
+		strings.Contains(prompt, "gemini") ||
+		strings.Contains(prompt, "next.js") ||
+		strings.Contains(prompt, "react") ||
+		strings.Contains(prompt, "api") ||
+		strings.Contains(prompt, "docs") {
+		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "fact-audit",
 			SessionTitle: "Autonomous Knowledge Audit",
 			Prompt: fmt.Sprintf(
 				"User task: %s\n\nAudit the task for external knowledge requirements. If the task mentions specific versions (e.g. Next.js 16.1, React 20) or features that post-date your 2025 cutoff, USE 'agentic_fetch' IMMEDIATELY to search the web for documentation. Provide a concise factual summary with source URLs.",
 				userPrompt,
 			),
-		},
+		})
 	}
+
+	return tasks
 }
 
 func (c *coordinator) autonomousSubAgentContext(ctx context.Context, sessionID, userPrompt string) (string, error) {
@@ -633,7 +685,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		} else if strings.Contains(model.CatwalkCfg.ID, "gpt") {
 			providerType = openai.Name
 		} else if strings.Contains(model.CatwalkCfg.ID, "gemini") {
-			providerType = google.Name
+			providerType = gemini.Name
 		} else {
 			providerType = openaicompat.Name
 		}
@@ -700,13 +752,19 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if err == nil {
 			options[vercel.Name] = parsed
 		}
-	case google.Name:
+	case gemini.Name:
 		_, hasReasoning := mergedOptions["thinking_config"]
 		if !hasReasoning {
-			if strings.HasPrefix(model.CatwalkCfg.ID, "gemini-2") {
+			if config.IsGemini25Model(model.CatwalkCfg.ID) {
+				thinkingBudget := 0
+				includeThoughts := false
+				if model.ModelCfg.Think {
+					thinkingBudget = 2000
+					includeThoughts = true
+				}
 				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_budget":  2000,
-					"include_thoughts": true,
+					"thinking_budget":  thinkingBudget,
+					"include_thoughts": includeThoughts,
 				}
 			} else {
 				mergedOptions["thinking_config"] = map[string]any{
@@ -715,9 +773,9 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				}
 			}
 		}
-		parsed, err := google.ParseOptions(mergedOptions)
+		parsed, err := gemini.ParseOptions(mergedOptions)
 		if err == nil {
-			options[google.Name] = parsed
+			options[gemini.Name] = parsed
 		}
 	case openaicompat.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
@@ -829,9 +887,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		}
 	}
 
-	maxConcurrent := 50
-	if agent.ID == config.AgentCoder {
-		maxConcurrent = 250
+	maxConcurrent := 250
+
+	if pythonTool, err := c.buildPythonTool(ctx, agent); err != nil {
+		return nil, err
+	} else if pythonTool != nil {
+		allTools = append(allTools, pythonTool)
 	}
 
 	allTools = append(allTools,
@@ -859,6 +920,16 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 			pmem.NewRecallTool(c.pmem.Store),
 			pmem.NewSaveTool(c.pmem.Store),
 		)
+	}
+
+	// Add skill tools (list_skills, load_skill).
+	loadSkillTool, err := c.loadSkillTool(ctx)
+	if err == nil {
+		allTools = append(allTools, loadSkillTool)
+	}
+	listSkillsTool, err := c.listSkillsTool(ctx)
+	if err == nil {
+		allTools = append(allTools, listSkillsTool)
 	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
@@ -908,6 +979,77 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 	return filteredTools, nil
+}
+
+func (c *coordinator) buildPythonTool(ctx context.Context, agent config.Agent) (fantasy.AgentTool, error) {
+	modelCfg, ok := c.cfg.Models[agent.Model]
+	if !ok {
+		return nil, nil
+	}
+
+	if !strings.HasPrefix(strings.ToLower(modelCfg.Model), "gemini") {
+		return nil, nil
+	}
+
+	providerCfg, ok := c.cfg.Providers.Get(modelCfg.Provider)
+	if !ok {
+		return nil, nil
+	}
+
+	switch providerCfg.Type {
+	case gemini.Name, "gemini", "google-vertex":
+	default:
+		return nil, nil
+	}
+
+	client, err := c.buildGeminiCodeExecutionClient(ctx, providerCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return tools.NewPythonTool(client, modelCfg.Model), nil
+}
+
+func (c *coordinator) buildGeminiCodeExecutionClient(ctx context.Context, providerCfg config.ProviderConfig) (*genai.Client, error) {
+	headers := maps.Clone(providerCfg.ExtraHeaders)
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	clientConfig := &genai.ClientConfig{}
+	if c.cfg.Options.Debug {
+		clientConfig.HTTPClient = log.NewHTTPClient()
+	}
+
+	if len(headers) > 0 {
+		httpHeaders := http.Header{}
+		for k, v := range headers {
+			httpHeaders.Add(k, v)
+		}
+		clientConfig.HTTPOptions.Headers = httpHeaders
+	}
+
+	switch providerCfg.Type {
+	case gemini.Name, "gemini":
+		apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
+		baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+		clientConfig.Backend = genai.BackendGeminiAPI
+		clientConfig.APIKey = apiKey
+		if baseURL != "" {
+			clientConfig.HTTPOptions.BaseURL = baseURL
+		}
+	case "google-vertex":
+		clientConfig.Backend = genai.BackendVertexAI
+		clientConfig.Project = providerCfg.ExtraParams["project"]
+		clientConfig.Location = providerCfg.ExtraParams["location"]
+		if err := clientConfig.UseDefaultCredentials(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("provider type %q does not support Gemini code execution", providerCfg.Type)
+	}
+
+	return genai.NewClient(ctx, clientConfig)
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
@@ -1141,36 +1283,36 @@ func (c *coordinator) buildBedrockProvider(headers map[string]string) (fantasy.P
 }
 
 func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []google.Option{
-		google.WithBaseURL(baseURL),
-		google.WithGeminiAPIKey(apiKey),
+	opts := []gemini.Option{
+		gemini.WithBaseURL(baseURL),
+		gemini.WithGeminiAPIKey(apiKey),
 	}
 	if c.cfg.Options.Debug {
 		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
+		opts = append(opts, gemini.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
-		opts = append(opts, google.WithHeaders(headers))
+		opts = append(opts, gemini.WithHeaders(headers))
 	}
-	return google.New(opts...)
+	return gemini.New(opts...)
 }
 
 func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
-	opts := []google.Option{}
+	opts := []gemini.Option{}
 	if c.cfg.Options.Debug {
 		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
+		opts = append(opts, gemini.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
-		opts = append(opts, google.WithHeaders(headers))
+		opts = append(opts, gemini.WithHeaders(headers))
 	}
 
 	project := options["project"]
 	location := options["location"]
 
-	opts = append(opts, google.WithVertex(project, location))
+	opts = append(opts, gemini.WithVertex(project, location))
 
-	return google.New(opts...)
+	return gemini.New(opts...)
 }
 
 func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provider, error) {
@@ -1255,7 +1397,7 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
 	case bedrock.Name:
 		return c.buildBedrockProvider(headers)
-	case google.Name, "gemini":
+	case gemini.Name, "gemini":
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
@@ -1389,6 +1531,7 @@ type subAgentParams struct {
 	// SessionSetup is an optional callback invoked after session creation
 	// but before agent execution, for custom session configuration.
 	SessionSetup func(sessionID string)
+	AllowNesting bool
 }
 
 // runSubAgent runs a sub-agent and handles session management and cost accumulation.
@@ -1431,9 +1574,8 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
 		PresencePenalty:  model.ModelCfg.PresencePenalty,
 	})
-	if err != nil {
-		return fantasy.NewTextErrorResponse("error generating response"), nil
-	}
+	return fantasy.NewTextErrorResponse(fmt.Sprintf("error generating response: %v", err)), nil
+}
 
 	// Update parent session cost
 	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {

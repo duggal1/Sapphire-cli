@@ -240,6 +240,62 @@ func TestRunSubAgent(t *testing.T) {
 		assert.NotEmpty(t, setupCalledWith, "SessionSetup should have been called")
 	})
 
+	t.Run("nested sub-agent spawn is rejected", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		require.NoError(t, err)
+
+		childSession, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parentSession.ID, "Child")
+		require.NoError(t, err)
+
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+			t.Fatal("nested sub-agent should not run")
+			return nil, nil
+		})
+
+		resp, err := coord.runSubAgent(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      childSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "test",
+			SessionTitle:   "Nested",
+		})
+		require.NoError(t, err)
+		assert.True(t, resp.IsError)
+		assert.Equal(t, "sub-agents cannot spawn sub-agents", resp.Content)
+	})
+
+	t.Run("nested sub-agent spawn is allowed when requested", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		require.NoError(t, err)
+
+		childSession, err := env.sessions.CreateTaskSession(t.Context(), "tool-1", parentSession.ID, "Child")
+		require.NoError(t, err)
+
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+			return agentResultWithText("nested ok"), nil
+		})
+
+		resp, err := coord.runSubAgent(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      childSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "test",
+			SessionTitle:   "Nested Allowed",
+			AllowNesting:   true,
+		})
+		require.NoError(t, err)
+		assert.False(t, resp.IsError)
+		assert.Equal(t, "nested ok", resp.Content)
+	})
+
 	t.Run("cost propagation to parent session", func(t *testing.T) {
 		env := testEnv(t)
 		coord := newTestCoordinator(t, env, providerID, providerCfg)
@@ -382,4 +438,23 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		require.NoError(t, err)
 		assert.InDelta(t, 0.0, updated.Cost, 1e-9)
 	})
+}
+
+func TestShouldPrimeAutonomousSubAgents(t *testing.T) {
+	t.Run("small prompt stays inline", func(t *testing.T) {
+		assert.False(t, shouldPrimeAutonomousSubAgents("rename this variable"))
+	})
+
+	t.Run("complex prompt primes sub-agents", func(t *testing.T) {
+		assert.True(t, shouldPrimeAutonomousSubAgents("Investigate the root cause across the codebase, trace dependencies, and review risks before refactoring the architecture."))
+	})
+}
+
+func TestBuildAutonomousSubAgentTasks(t *testing.T) {
+	tasks := buildAutonomousSubAgentTasks("Fix the Gemini API integration using the latest docs and review implementation risks.")
+	require.Len(t, tasks, 4)
+	assert.Equal(t, "codebase-map", tasks[0].Name)
+	assert.Equal(t, "dependency-trace", tasks[1].Name)
+	assert.Equal(t, "risk-review", tasks[2].Name)
+	assert.Equal(t, "fact-audit", tasks[3].Name)
 }

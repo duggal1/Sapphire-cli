@@ -1,11 +1,11 @@
 package model
 
 import (
-	"cmp"
 	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/ui/common"
 	"github.com/charmbracelet/sapphire/internal/ui/logo"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -25,6 +25,10 @@ func formatReasoningEffortBrackets(effort string) string {
 		return "[Low]"
 	case "minimal":
 		return "[Minimal]"
+	case "thinking_on":
+		return "[Thinking On]"
+	case "thinking_off":
+		return "[Thinking Off]"
 	default:
 		return fmt.Sprintf("[%s]", effort)
 	}
@@ -44,14 +48,15 @@ func (m *UI) modelInfo(width int) string {
 
 			// Only check reasoning if model can reason
 			if model.CatwalkCfg.CanReason {
-				if len(model.CatwalkCfg.ReasoningLevels) == 0 {
+				reasoningChoices := config.ReasoningChoicesForModel(&model.CatwalkCfg)
+				if len(reasoningChoices) == 0 {
 					if model.ModelCfg.Think {
 						reasoningInfo = "Thinking On"
 					} else {
 						reasoningInfo = "Thinking Off"
 					}
 				} else {
-					reasoningEffort := cmp.Or(model.ModelCfg.ReasoningEffort, model.CatwalkCfg.DefaultReasoningEffort)
+					reasoningEffort := config.CurrentReasoningSelection(&model.CatwalkCfg, model.ModelCfg)
 					// Use bracket format for Gemini models
 					isGemini := strings.Contains(strings.ToLower(model.CatwalkCfg.ID), "gemini")
 					if isGemini {

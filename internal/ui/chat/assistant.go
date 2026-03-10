@@ -215,7 +215,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		vPadding = 0
 	}
 
-	renderer := common.PlainMarkdownRenderer(a.sty, width-hPadding*2)
+	renderer := common.MarkdownRenderer(a.sty, width-hPadding*2)
 	rendered, err := renderer.Render(thinking)
 	if err != nil {
 		rendered = thinking

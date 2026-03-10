@@ -170,7 +170,7 @@ func (r *Reasoning) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	r.help.SetWidth(innerWidth)
 
 	rc := NewRenderContext(t, width)
-	rc.Title = "Select Reasoning Effort"
+	rc.Title = r.dialogTitle()
 	inputView := t.Dialog.InputPrompt.Render(r.input.View())
 	rc.AddPart(inputView)
 
@@ -230,18 +230,16 @@ func (r *Reasoning) setReasoningItems() error {
 		return errors.New("model configuration not found")
 	}
 
-	if len(model.ReasoningLevels) == 0 {
+	choices := config.ReasoningChoicesForModel(model)
+	if len(choices) == 0 {
 		return errors.New("no reasoning levels available")
 	}
 
-	currentEffort := selectedModel.ReasoningEffort
-	if currentEffort == "" {
-		currentEffort = model.DefaultReasoningEffort
-	}
+	currentEffort := config.CurrentReasoningSelection(model, selectedModel)
 
-	items := make([]list.FilterableItem, 0, len(model.ReasoningLevels))
+	items := make([]list.FilterableItem, 0, len(choices))
 	selectedIndex := 0
-	for i, effort := range model.ReasoningLevels {
+	for i, effort := range choices {
 		item := &ReasoningItem{
 			effort:    effort,
 			title:     common.FormatReasoningEffort(effort),
@@ -258,6 +256,19 @@ func (r *Reasoning) setReasoningItems() error {
 	r.list.SetSelected(selectedIndex)
 	r.list.ScrollToSelected()
 	return nil
+}
+
+func (r *Reasoning) dialogTitle() string {
+	cfg := r.com.Config()
+	agentCfg, ok := cfg.Agents[config.AgentCoder]
+	if !ok {
+		return "Select Reasoning"
+	}
+	model := cfg.GetModelByType(agentCfg.Model)
+	if model != nil && config.IsGemini25Model(model.ID) {
+		return "Select Thinking Mode"
+	}
+	return "Select Reasoning Effort"
 }
 
 // Filter returns the filter value for the reasoning item.

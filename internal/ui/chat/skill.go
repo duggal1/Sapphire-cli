@@ -28,7 +28,7 @@ func NewSkillToolMessageItem(
 	return newBaseToolMessageItem(sty, toolCall, result, &SkillToolRenderContext{}, canceled)
 }
 
-// SkillToolRenderContext renders load_skill tool messages.
+// SkillToolRenderContext renders load_skill and list_skills tool messages.
 type SkillToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
@@ -39,13 +39,17 @@ func (t *SkillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
 
 	skillName := params.Name
+	displayMode := "Skill"
+	
 	if skillName == "" {
-		skillName = "Engineering"
+		// list_skills call
+		displayMode = "Skills Directory"
+		skillName = "Available"
 	} else {
 		skillName = strings.Title(skillName)
 	}
 
-	headerText := fmt.Sprintf("Reading %s Skill", skillName)
+	headerText := fmt.Sprintf("Reading %s", displayMode)
 
 	header := toolHeader(sty, opts.Status, "Skill", cappedWidth, opts.Compact, headerText)
 	if opts.Compact {
@@ -53,11 +57,16 @@ func (t *SkillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	// Use our new SkillTag for a premium look
-	tag := sty.Tool.SkillTag.Render("SKILL")
+	tag := sty.Tool.SkillTag.Render(displayMode)
 	tagWidth := lipgloss.Width(tag)
 
 	// Display the intent in a clean way
-	msg := fmt.Sprintf("Activating specialized context: %s Instructions", skillName)
+	var msg string
+	if params.Name == "" {
+		msg = "Listing all available specialized engineering skills"
+	} else {
+		msg = fmt.Sprintf("Activating specialized context: %s Instructions", skillName)
+	}
 	remainingWidth := cappedWidth - tagWidth - 5
 	if remainingWidth < 10 {
 		remainingWidth = 10

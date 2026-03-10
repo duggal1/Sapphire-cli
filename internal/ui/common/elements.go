@@ -25,6 +25,12 @@ func FormatReasoningEffort(effort string) string {
 	if effort == "xhigh" {
 		return "X-High"
 	}
+	switch effort {
+	case "thinking_on":
+		return "Thinking On"
+	case "thinking_off":
+		return "Thinking Off"
+	}
 	return cases.Title(language.English).String(effort)
 }
 
@@ -108,13 +114,13 @@ func formatNumberWithCommas(n int64) string {
 	if n < 1000 {
 		return fmt.Sprintf("%d", n)
 	}
-	
+
 	// Handle negative numbers
 	negative := n < 0
 	if negative {
 		n = -n
 	}
-	
+
 	var result []byte
 	for i, digit := range fmt.Sprintf("%d", n) {
 		if i > 0 && (len(fmt.Sprintf("%d", n))-i)%3 == 0 {
@@ -122,7 +128,7 @@ func formatNumberWithCommas(n int64) string {
 		}
 		result = append(result, byte(digit))
 	}
-	
+
 	if negative {
 		return "-" + string(result)
 	}

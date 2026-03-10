@@ -10,7 +10,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 </usage>
 
 <features>
-- Parallel reading: Read up to 250 files simultaneously (main agent) or 50 files (sub-agents)
+- Parallel reading: Read up to 250 files simultaneously
 - Displays contents with line numbers
 - Can read from any file position using offset
 - Handles large files by limiting lines read
@@ -34,8 +34,9 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 </cross_platform>
 
 <tips>
-- Use with Glob to find files first
+- Use `ls` or `tree` to discover file names before reading
+- Use with Glob to find files after a directory listing
 - For code exploration: Grep to find relevant files, then View to examine
-- For large files: use offset parameter for specific sections
+- For large files: read segmented ranges with `offset`/`limit`; issue multiple parallel View calls for different ranges
 - View tool automatically detects and renders image files
 </tips>

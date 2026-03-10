@@ -122,7 +122,14 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	// Calculate remaining width for prompt.
 	remainingWidth := min(cappedWidth-taskTagWidth-3, maxTextWidth-taskTagWidth-3) // -3 for spacing
 
-	promptText := sty.Tool.AgentPrompt.Width(remainingWidth).Render(prompt)
+	promptText := strings.TrimSpace(prompt)
+	if looksLikeCode(promptText) {
+		promptText = toolOutputCodeContent(sty, "task.txt", promptText, 0, remainingWidth, opts.ExpandedContent)
+	} else if looksLikeMarkdown(promptText) {
+		promptText = toolOutputMarkdownContent(sty, promptText, remainingWidth, opts.ExpandedContent)
+	} else {
+		promptText = sty.Tool.AgentPrompt.Width(remainingWidth).Render(promptText)
+	}
 
 	header = lipgloss.JoinVertical(
 		lipgloss.Left,

@@ -13,7 +13,7 @@ var timeNow = time.Now
 
 // Config holds memory system configuration.
 type Config struct {
-	ExtractionModel string // e.g., "gemini-3-flash-preview"
+	ExtractionModel string // e.g., "gemini-3-flash"
 	APIKey          string
 	DataDir         string
 	ProjectRoot     string
@@ -40,7 +40,7 @@ func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, erro
 
 	model := cfg.ExtractionModel
 	if model == "" {
-		model = "gemini-3-flash-preview"
+		model = "gemini-3-flash"
 	}
 
 	store, err := NewStore(cfg.DataDir, sessionID, cfg.ProjectRoot)

@@ -48,7 +48,7 @@ func TestConfig_setDefaults(t *testing.T) {
 	require.NotNil(t, cfg.Models)
 	require.NotNil(t, cfg.LSP)
 	require.NotNil(t, cfg.MCP)
-	require.Equal(t, filepath.Join("/tmp", ".crush"), cfg.Options.DataDirectory)
+	require.Equal(t, filepath.Join("/tmp", ".sapphire"), cfg.Options.DataDirectory)
 	require.Equal(t, "AGENTS.md", cfg.Options.InitializeAs)
 	for _, path := range defaultContextPaths {
 		require.Contains(t, cfg.Options.ContextPaths, path)
@@ -492,7 +492,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "sourcegraph", "todos", "view", "agentic_view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "recall_memory", "save_memory", "sourcegraph", "python", "todos", "view", "agentic_view", "write", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -521,7 +521,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "download", "edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "todos", "agentic_view", "write", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "download", "edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "recall_memory", "save_memory", "python", "todos", "agentic_view", "write", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

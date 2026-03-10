@@ -47,9 +47,8 @@ type BashResponseMetadata struct {
 const (
 	BashToolName = "bash"
 
-	AutoBackgroundThreshold = 1 * time.Minute // Commands taking longer automatically become background jobs
-	MaxOutputLength         = 30000
-	BashNoOutput            = "no output"
+	MaxOutputLength = 30000
+	BashNoOutput    = "no output"
 )
 
 //go:embed bash.tpl
@@ -239,7 +238,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			// If explicitly requested as background, start immediately with detached context
 			if params.RunInBackground {
 				startTime := time.Now()
-				bgManager := shell.GetBackgroundShellManager()
+				bgManager := shell.GetFastBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
 				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
@@ -247,8 +246,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
 
-				// Wait a short time to detect fast failures (blocked commands, syntax errors, etc.)
-				time.Sleep(1 * time.Second)
+				// Immediate fast-failure check (no waiting).
 				stdout, _, _, stderr, _, _, done, execErr := bgShell.GetOutputSince(0, 0)
 
 				if done {
@@ -295,38 +293,27 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			startTime := time.Now()
 
 			// Start with detached context so it can survive if moved to background
-			bgManager := shell.GetBackgroundShellManager()
+			bgManager := shell.GetFastBackgroundShellManager()
 			bgManager.Cleanup()
 			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}
 
-			// Wait for either completion, auto-background threshold, or context cancellation
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-			timeout := time.After(AutoBackgroundThreshold)
-
 			var stdout, stderr string
 			var done bool
 			var execErr error
-
-		waitLoop:
-			for {
+			stdout, stderr, done, execErr = bgShell.GetOutput()
+			if !done {
+				runtime.Gosched()
+				stdout, stderr, done, execErr = bgShell.GetOutput()
+			}
+			if !done {
 				select {
-				case <-ticker.C:
-					stdout, stderr, done, execErr = bgShell.GetOutput()
-					if done {
-						break waitLoop
-					}
-				case <-timeout:
-					stdout, stderr, done, execErr = bgShell.GetOutput()
-					break waitLoop
 				case <-ctx.Done():
-					// Incoming context was cancelled before we moved to background
-					// Kill the shell and return error
 					bgManager.Kill(bgShell.ID)
 					return fantasy.ToolResponse{}, ctx.Err()
+				default:
 				}
 			}
 

@@ -7,11 +7,13 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 **Discovery process**:
 
 1. Check directory contents with `ls`
-2. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
-3. Identify project type from config files and directory structure
-4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
-5. Read representative source files to understand code patterns
-6. If {{.Config.Options.InitializeAs}} exists, read and improve it
+2. If multiple files are needed, use `agentic_view` and read in parallel (up to 250 files).
+3. For very large files, split into line ranges and read multiple ranges in parallel using separate `agentic_view` calls.
+4. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
+5. Identify project type from config files and directory structure
+6. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
+7. Read representative source files to understand code patterns
+8. If {{.Config.Options.InitializeAs}} exists, read and improve it
 
 **Content to include**:
 

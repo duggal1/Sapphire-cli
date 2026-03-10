@@ -250,10 +250,14 @@ func NewToolMessageItem(
 		item = NewWebSearchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.TodosToolName:
 		item = NewTodosToolMessageItem(sty, toolCall, result, canceled)
+	case tools.LoadSkillToolName:
+		item = NewSkillToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ReferencesToolName:
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LSPRestartToolName:
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
+	case "python":
+		item = NewPythonToolMessageItem(sty, toolCall, result, canceled)
 	default:
 		if strings.HasPrefix(toolCall.Name, "mcp_") {
 			item = NewMCPToolMessageItem(sty, toolCall, result, canceled)
@@ -618,6 +622,49 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	return sty.Tool.Body.Render(strings.Join(out, "\n"))
 }
 
+func toolOutputSmartContent(sty *styles.Styles, path, content string, width int, expanded bool) string {
+	content = stringext.NormalizeSpace(content)
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	if looksLikeMarkdown(trimmed) {
+		return toolOutputMarkdownContent(sty, trimmed, width, expanded)
+	}
+	if looksLikeCode(trimmed) {
+		return sty.Tool.Body.Render(toolOutputCodeContent(sty, path, trimmed, 0, width, expanded))
+	}
+	return sty.Tool.Body.Render(toolOutputPlainContent(sty, trimmed, width, expanded))
+}
+
+func looksLikeCode(content string) bool {
+	if strings.Contains(content, "```") {
+		return true
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) < 2 {
+		return false
+	}
+
+	score := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.ContainsAny(line, "{}[]();") {
+			score++
+		}
+		if strings.Contains(line, "func ") || strings.Contains(line, "def ") || strings.Contains(line, "class ") || strings.Contains(line, "import ") || strings.Contains(line, "return ") {
+			score += 2
+		}
+		if strings.Contains(line, "=>") || strings.Contains(line, "::") || strings.Contains(line, ":=") {
+			score++
+		}
+	}
+	return score >= 3
+}
+
 // toolOutputImageContent renders image data with size info.
 func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 	dataSize := len(data) * 3 / 4
@@ -725,6 +772,41 @@ func formatNonZero(value int) string {
 	return fmt.Sprintf("%d", value)
 }
 
+func splitEditFailures(edits []tools.FailedEdit) (failures []tools.FailedEdit, notes []tools.FailedEdit) {
+	for _, edit := range edits {
+		if isEditNote(edit.Error) {
+			notes = append(notes, edit)
+			continue
+		}
+		failures = append(failures, edit)
+	}
+	return failures, notes
+}
+
+func isEditNote(err string) bool {
+	trimmed := strings.TrimSpace(err)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "note:") ||
+		strings.HasPrefix(lower, "info:") ||
+		strings.HasPrefix(lower, "informational:") ||
+		strings.HasPrefix(lower, "warning:") ||
+		strings.HasPrefix(lower, "warn:")
+}
+
+func trimEditNotePrefix(msg string) string {
+	trimmed := strings.TrimSpace(msg)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"note:", "info:", "informational:", "warning:", "warn:"} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimSpace(trimmed[len(prefix):])
+		}
+	}
+	return trimmed
+}
+
 // toolOutputMultiEditDiffContent renders a diff for a single file edit.
 func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.FileEditMetadata, width int, expanded bool) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
@@ -755,10 +837,21 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 		formatted = truncMsg + "\n" + strings.Join(lines[:maxLines], "\n")
 	}
 
-	// Add failed edits note if any exist for this specific file.
-	if len(meta.EditsFailed) > 0 {
+	// Add failed edits and notes for this specific file.
+	failures, notes := splitEditFailures(meta.EditsFailed)
+	if len(failures) > 0 {
 		noteTag := sty.Tool.NoteTag.Render("Note")
-		noteMsg := fmt.Sprintf("%d edits succeeded (%d failed)", meta.EditsApplied, len(meta.EditsFailed))
+		noteMsg := fmt.Sprintf("%d edits succeeded (%d failed)", meta.EditsApplied, len(failures))
+		note := fmt.Sprintf("%s %s", noteTag, sty.Tool.NoteMessage.Render(noteMsg))
+		formatted = formatted + "\n\n" + note
+	}
+	if len(notes) > 0 {
+		noteTag := sty.Tool.NoteTag.Render("Note")
+		noteLines := make([]string, 0, len(notes))
+		for _, editNote := range notes {
+			noteLines = append(noteLines, trimEditNotePrefix(editNote.Error))
+		}
+		noteMsg := strings.Join(noteLines, "\n")
 		note := fmt.Sprintf("%s %s", noteTag, sty.Tool.NoteMessage.Render(noteMsg))
 		formatted = formatted + "\n\n" + note
 	}
@@ -793,7 +886,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 		width = maxTextWidth
 	}
 
-	renderer := common.PlainMarkdownRenderer(sty, width)
+	renderer := common.MarkdownRenderer(sty, width)
 	rendered, err := renderer.Render(content)
 	if err != nil {
 		return toolOutputPlainContent(sty, content, width, expanded)

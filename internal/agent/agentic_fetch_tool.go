@@ -182,6 +182,8 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				Sessions:             c.sessions,
 				Messages:             c.messages,
 				Tools:                fetchTools,
+				Memory:               c.memory,  // Pass memory service
+				Pmem:                 c.pmem,    // Pass persistent memory
 			})
 
 			return c.runSubAgent(ctx, subAgentParams{
@@ -194,6 +196,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				SessionSetup: func(sessionID string) {
 					c.permissions.AutoApproveSession(sessionID)
 				},
+				AllowNesting: true,
 			})
 		}), nil
 }

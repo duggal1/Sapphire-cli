@@ -664,13 +664,14 @@ outer:
 func (dv *DiffView) hunkLineFor(h *udiff.Hunk) string {
 	beforeShownLines, afterShownLines := dv.hunkShownLines(h)
 
-	return fmt.Sprintf(
+	line := fmt.Sprintf(
 		"  @@ -%d,%d +%d,%d @@ ",
 		h.FromLine,
 		beforeShownLines,
 		h.ToLine,
 		afterShownLines,
 	)
+	return dv.style.HunkLine.Render(line)
 }
 
 // hunkShownLines calculates the number of lines shown in a hunk for both before

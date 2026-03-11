@@ -38,6 +38,8 @@ Thumbs.db
 # Binary output directory
 /bin/
 /dist/
+/sapphire
+/sapphire_test
 
 # Local environment variables
 .env

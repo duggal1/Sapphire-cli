@@ -242,6 +242,8 @@ func NewToolMessageItem(
 		item = NewDiagnosticsToolMessageItem(sty, toolCall, result, canceled)
 	case agent.AgentToolName:
 		item = NewAgentToolMessageItem(sty, toolCall, result, canceled)
+	case agent.BackgroundSubAgentsToolName:
+		item = NewBackgroundSubAgentsToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticFetchToolName:
 		item = NewAgenticFetchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WebFetchToolName:
@@ -258,6 +260,8 @@ func NewToolMessageItem(
 		item = NewLSPRestartToolMessageItem(sty, toolCall, result, canceled)
 	case "python":
 		item = NewPythonToolMessageItem(sty, toolCall, result, canceled)
+	case "google_search":
+		item = NewGoogleSearchToolMessageItem(sty, toolCall, result, canceled)
 	default:
 		if strings.HasPrefix(toolCall.Name, "mcp_") {
 			item = NewMCPToolMessageItem(sty, toolCall, result, canceled)

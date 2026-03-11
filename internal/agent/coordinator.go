@@ -1,0 +1,1781 @@
+package agent
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"maps"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+
+	"charm.land/catwalk/pkg/catwalk"
+	"charm.land/fantasy"
+	"github.com/charmbracelet/sapphire/internal/agent/hyper"
+	"github.com/charmbracelet/sapphire/internal/agent/memory"
+	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
+	"github.com/charmbracelet/sapphire/internal/agent/tools"
+	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/charmbracelet/sapphire/internal/db"
+	"github.com/charmbracelet/sapphire/internal/filetracker"
+	"github.com/charmbracelet/sapphire/internal/history"
+	"github.com/charmbracelet/sapphire/internal/log"
+	"github.com/charmbracelet/sapphire/internal/lsp"
+	pmem "github.com/charmbracelet/sapphire/internal/memory"
+	"github.com/charmbracelet/sapphire/internal/message"
+	"github.com/charmbracelet/sapphire/internal/oauth/copilot"
+	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/charmbracelet/sapphire/internal/skills"
+	"golang.org/x/sync/errgroup"
+
+	"charm.land/fantasy/providers/anthropic"
+	"charm.land/fantasy/providers/azure"
+	"charm.land/fantasy/providers/bedrock"
+	"charm.land/fantasy/providers/openai"
+	"charm.land/fantasy/providers/openaicompat"
+	"charm.land/fantasy/providers/openrouter"
+	"charm.land/fantasy/providers/vercel"
+	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
+	openaisdk "github.com/openai/openai-go/v2/option"
+	"github.com/qjebbs/go-jsons"
+	"google.golang.org/genai"
+)
+
+type Coordinator interface {
+	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
+	// SetMainAgent(string)
+	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	Cancel(sessionID string)
+	CancelAll()
+	IsSessionBusy(sessionID string) bool
+	IsBusy() bool
+	QueuedPrompts(sessionID string) int
+	QueuedPromptsList(sessionID string) []string
+	ClearQueue(sessionID string)
+	Summarize(context.Context, string) error
+	Model() Model
+	UpdateModels(ctx context.Context) error
+}
+
+// coordinator implements the Coordinator interface and manages multiple AI agents.
+type coordinator struct {
+	cfg         *config.Config
+	sessions    session.Service
+	messages    message.Service
+	permissions permission.Service
+	history     history.Service
+	filetracker filetracker.Service
+	editGuard   *tools.EditGuard
+	lspManager  *lsp.Manager
+	memory      memory.MemoryService
+	indexer     *Indexer
+	pmem        *pmem.System
+
+	currentAgent SessionAgent
+	agents       map[string]SessionAgent
+
+	readyWg errgroup.Group
+
+	// Embedding-based skill retrieval.
+	embeddingService *skills.EmbeddingService
+	discoveredSkills []*skills.Skill
+	skillsOnce       sync.Once
+
+	// Google search failure tracking - fallback to DDG after 2 failures
+	googleSearchFailures sync.Map // map[string]int (sessionID -> failureCount)
+	googleSearchClient   *genai.Client
+}
+
+type autonomousSubAgentTask struct {
+	Name         string
+	SessionTitle string
+	Prompt       string
+}
+
+// NewCoordinator creates a new agent coordinator to manage multiple AI agents and sessions.
+func NewCoordinator(
+	ctx context.Context,
+	cfg *config.Config,
+	sessions session.Service,
+	messages message.Service,
+	permissions permission.Service,
+	history history.Service,
+	filetracker filetracker.Service,
+	lspManager *lsp.Manager,
+	conn *sql.DB,
+) (Coordinator, error) {
+	c := &coordinator{
+		cfg:         cfg,
+		sessions:    sessions,
+		messages:    messages,
+		permissions: permissions,
+		history:     history,
+		filetracker: filetracker,
+		editGuard:   tools.NewEditGuard(),
+		lspManager:  lspManager,
+		memory:      memory.NewMemoryService(db.New(conn), conn),
+		agents:      make(map[string]SessionAgent),
+	}
+	c.indexer = NewIndexer(cfg.WorkingDir(), lspManager, c.memory)
+	go c.indexer.Start(ctx)
+
+	// Initialize persistent memory system (optional, requires Gemini API key).
+	apiKey := c.resolveGeminiAPIKey()
+	if apiKey != "" {
+		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
+			ExtractionModel: "gemini-3-flash",
+			APIKey:          apiKey,
+			DataDir:         cfg.Options.DataDirectory,
+			ProjectRoot:     cfg.WorkingDir(),
+		})
+		if pmemErr == nil && pmemSys != nil {
+			c.pmem = pmemSys
+			slog.Debug("Persistent memory system initialized")
+		}
+	}
+
+	// Initialize embedding-based skill retrieval.
+	c.initEmbeddingService()
+
+	// Initialize Google Search client if grounding is enabled.
+	if c.cfg.Options.GoogleGrounding {
+		for p := range c.cfg.Providers.Seq() {
+			if strings.ToLower(string(p.Type)) == "gemini" || strings.ToLower(string(p.Type)) == "google" {
+				searchClient, err := c.buildGeminiCodeExecutionClient(ctx, p)
+				if err == nil {
+					c.googleSearchClient = searchClient
+					break
+				}
+			}
+		}
+	}
+
+	agentCfg, ok := cfg.Agents[config.AgentCoder]
+	if !ok {
+		return nil, errors.New("coder agent not configured")
+	}
+
+	// TODO: make this dynamic when we support multiple agents
+	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
+	if err != nil {
+		return nil, err
+	}
+
+	agent, err := c.buildAgent(ctx, prompt, agentCfg, false)
+	if err != nil {
+		return nil, err
+	}
+	c.currentAgent = agent
+	c.agents[config.AgentCoder] = agent
+	return c, nil
+}
+
+// Run implements Coordinator.
+func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	if err := c.readyWg.Wait(); err != nil {
+		return nil, err
+	}
+
+	// refresh models before each run
+	if err := c.UpdateModels(ctx); err != nil {
+		return nil, fmt.Errorf("failed to update models: %w", err)
+	}
+
+	if err := c.refreshSystemPrompt(ctx); err != nil {
+		return nil, err
+	}
+
+	model := c.currentAgent.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+
+	if !model.CatwalkCfg.SupportsImages && attachments != nil {
+		// filter out image attachments
+		filteredAttachments := make([]message.Attachment, 0, len(attachments))
+		for _, att := range attachments {
+			if att.IsText() {
+				filteredAttachments = append(filteredAttachments, att)
+			}
+		}
+		attachments = filteredAttachments
+	}
+
+	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return nil, errors.New("model provider not configured")
+	}
+
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := c.mergeCallOptions(model, providerCfg, sessionID)
+
+	if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
+		slog.Debug("Token needs to be refreshed", "provider", providerCfg.ID)
+		if err := c.refreshOAuth2Token(ctx, providerCfg); err != nil {
+			return nil, err
+		}
+	}
+
+	var skillContext string
+	var activeSkillNames []string
+
+	// NOTE: Automatic skill injection and discovery removed for performance.
+	// We now rely on explicit skill tooling (load_skill) to manage context.
+	// This reduces context pollution and speeds up model reasoning.
+
+	if shouldPrimeAutonomousSubAgents(userPrompt) {
+		subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, sessionID, userPrompt)
+		if err != nil {
+			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
+		} else if strings.TrimSpace(subAgentContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += subAgentContext
+		}
+	}
+
+	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
+	if !ok {
+		return nil, errors.New("coder agent not configured")
+	}
+	allTools, err := c.buildTools(ctx, agentCfg)
+	if err != nil {
+		return nil, err
+	}
+	selectedMCP, missing, err := c.selectMCPServers(ctx, userPrompt)
+	if err != nil {
+		slog.Warn("MCP routing failed", "error", err)
+		selectedMCP = nil
+	}
+	if len(missing) > 0 {
+		if c.permissions.SkipRequests() {
+			if _, installErr := c.ensureMCPInstalled(ctx, missing); installErr != nil {
+				return nil, installErr
+			}
+		} else {
+			return nil, fmt.Errorf("required MCP servers not connected: %s", strings.Join(missing, ", "))
+		}
+	}
+
+	if c.permissions.SkipRequests() && len(selectedMCP) == 0 {
+		defs := c.loadRegistryDefinitions(ctx)
+		candidates := selectRegistryByKeywords(userPrompt, defs)
+		if len(candidates) > 0 {
+			if _, installErr := c.ensureMCPInstalled(ctx, candidates); installErr != nil {
+				return nil, installErr
+			}
+			selectedMCP = make(map[string]struct{}, len(candidates))
+			for _, name := range candidates {
+				selectedMCP[name] = struct{}{}
+			}
+		}
+	}
+
+	if err := c.refreshSystemPrompt(ctx); err != nil {
+		return nil, err
+	}
+
+	allTools, err = c.buildTools(ctx, agentCfg)
+	if err != nil {
+		return nil, err
+	}
+	activeTools := buildActiveToolNames(allTools, selectedMCP)
+	c.currentAgent.SetTools(allTools)
+
+	run := func() (*fantasy.AgentResult, error) {
+		return c.currentAgent.Run(ctx, SessionAgentCall{
+			SessionID:        sessionID,
+			Prompt:           userPrompt,
+			SkillContext:     skillContext,
+			ActiveSkills:     activeSkillNames,
+			ActiveTools:      activeTools,
+			Attachments:      attachments,
+			MaxOutputTokens:  maxTokens,
+			ProviderOptions:  mergedOptions,
+			Temperature:      temp,
+			TopP:             topP,
+			TopK:             topK,
+			FrequencyPenalty: freqPenalty,
+			PresencePenalty:  presPenalty,
+		})
+	}
+	wasUsingGrounding := func(opts fantasy.ProviderOptions) bool {
+		if gOpts, ok := opts[gemini.Name]; ok {
+			if po, ok := gOpts.(*gemini.ProviderOptions); ok {
+				return po.GoogleSearch != nil && *po.GoogleSearch
+			}
+		}
+		return false
+	}
+
+	result, originalErr := run()
+
+	// Google Search fallback logic: If Google Grounding is enabled and it fails, increment failure count and retry.
+	if originalErr != nil && wasUsingGrounding(mergedOptions) {
+		failures := 0
+		if v, ok := c.googleSearchFailures.Load(sessionID); ok {
+			failures = v.(int)
+		}
+		failures++
+		c.googleSearchFailures.Store(sessionID, failures)
+
+		if failures <= 2 {
+			slog.Info("Google Grounding failed, retrying", "sessionID", sessionID, "failures", failures, "error", originalErr)
+			// Re-merge options. mergeCallOptions will handle disabling grounding if failures >= 2.
+			mergedOptions, _, _, _, _, _ = c.mergeCallOptions(model, providerCfg, sessionID)
+			result, originalErr = run()
+		}
+	}
+
+	// Reset failures on success
+	if originalErr == nil {
+		c.googleSearchFailures.Delete(sessionID)
+	}
+
+	if c.isUnauthorized(originalErr) {
+		switch {
+		case providerCfg.OAuthToken != nil:
+			slog.Debug("Received 401. Refreshing token and retrying", "provider", providerCfg.ID)
+			if err := c.refreshOAuth2Token(ctx, providerCfg); err != nil {
+				return nil, originalErr
+			}
+			slog.Debug("Retrying request with refreshed OAuth token", "provider", providerCfg.ID)
+			return run()
+		case strings.Contains(providerCfg.APIKeyTemplate, "$"):
+			slog.Debug("Received 401. Refreshing API Key template and retrying", "provider", providerCfg.ID)
+			if err := c.refreshApiKeyTemplate(ctx, providerCfg); err != nil {
+				return nil, originalErr
+			}
+			slog.Debug("Retrying request with refreshed API key", "provider", providerCfg.ID)
+			return run()
+		}
+	}
+
+	return result, originalErr
+}
+
+// initEmbeddingService resolves the Gemini API key from configured providers
+// and creates the EmbeddingService for skill retrieval.
+func (c *coordinator) initEmbeddingService() {
+	apiKey := c.resolveGeminiAPIKey()
+	if apiKey == "" {
+		slog.Debug("No Gemini API key found, embedding-based skill retrieval disabled")
+		return
+	}
+	c.embeddingService = skills.NewEmbeddingService(apiKey, skills.DefaultSimilarityThreshold)
+	slog.Debug("Embedding-based skill retrieval initialized")
+}
+
+// resolveGeminiAPIKey finds a Google/Gemini API key from configured providers.
+// Falls back to GEMINI_API_KEY and GOOGLE_API_KEY environment variables.
+func (c *coordinator) resolveGeminiAPIKey() string {
+	for p := range c.cfg.Providers.Seq() {
+		pType := strings.ToLower(string(p.Type))
+		if pType != "gemini" && pType != "google" {
+			continue
+		}
+		if p.APIKey == "" {
+			continue
+		}
+		resolved, err := c.cfg.Resolve(p.APIKey)
+		if err == nil && resolved != "" {
+			return resolved
+		}
+	}
+
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		return key
+	}
+	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
+		return key
+	}
+	return ""
+}
+
+// skillKeywordMap defines hardwired keyword patterns for skill categories.
+// If ANY keyword matches the user prompt (case-insensitive), the corresponding
+// skill category is force-included. This guarantees deterministic skill injection.
+var skillKeywordMap = map[string][]string{
+	"frontend": {
+		"frontend", "front-end", "front end", "ui", "ux", "ui/ux",
+		"component", "page", "layout", "css", "tailwind", "style",
+		"react", "next.js", "nextjs", "html", "design", "responsive",
+		"animation", "button", "modal", "navbar", "sidebar", "header",
+		"footer", "card", "form", "input", "dropdown", "interface",
+		"beautiful", "aesthetic", "refactor ui", "refactor ux",
+	},
+	"backend": {
+		"backend", "back-end", "back end", "api", "server", "database",
+		"prisma", "drizzle", "orm", "endpoint", "route", "middleware",
+		"authentication", "auth", "session", "webhook", "cron",
+		"migration", "schema", "query", "elysia", "express",
+		"go safe", "type-safe", "type safe", "safety",
+	},
+	"debugging": {
+		"debug", "debugging", "bug", "fix", "error", "crash",
+		"issue", "broken", "failing", "trace", "stack trace",
+		"exception", "log", "logging", "troubleshoot",
+	},
+	"architect": {
+		"architecture", "architect", "structural", "high-level",
+		"design pattern", "dependency injection", "system design",
+		"modularity", "package", "composition", "solid",
+	},
+	"devops": {
+		"deployment", "deploy", "ci", "cd", "pipeline", "docker",
+		"container", "kubernetes", "cloud", "infra", "infrastructure",
+		"cicd", "github actions",
+	},
+	"security": {
+		"security", "audit", "vulnerability", "protection", "secure",
+		"encryption", "hashing", "sanitize", "cleaning", "leak",
+		"secret", "token", "env",
+	},
+}
+
+// isWholeWordMatch checks if a keyword appears as a whole word in the text.
+func isWholeWordMatch(text, keyword string) bool {
+	idx := strings.Index(text, keyword)
+	for idx != -1 {
+		leftBoundary := idx == 0 || !isWordChar(text[idx-1])
+		rightBoundary := idx+len(keyword) == len(text) || !isWordChar(text[idx+len(keyword)])
+		if leftBoundary && rightBoundary {
+			return true
+		}
+		nextIdx := strings.Index(text[idx+len(keyword):], keyword)
+		if nextIdx == -1 {
+			break
+		}
+		idx += len(keyword) + nextIdx
+	}
+	return false
+}
+
+func isWordChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// matchSkillsByKeyword performs deterministic, hardwired skill matching.
+// It scans the user prompt for known keyword patterns and returns all
+// discovered skills whose names, descriptions, or folder paths match
+// the triggered categories. Folder path matching is critical because
+// bundled skills may have placeholder YAML names.
+func (c *coordinator) matchSkillsByKeyword(userPrompt string) []*skills.Skill {
+	lower := strings.ToLower(userPrompt)
+	triggeredCategories := make(map[string]bool)
+
+	for category, keywords := range skillKeywordMap {
+		for _, kw := range keywords {
+			if isWholeWordMatch(lower, kw) {
+				triggeredCategories[category] = true
+				break
+			}
+		}
+	}
+
+	if len(triggeredCategories) == 0 {
+		return nil
+	}
+
+	// Map category aliases: e.g. "debugging" category should also match "debug" folder
+	categoryAliases := map[string][]string{
+		"frontend":  {"frontend", "front-end", "ui", "ux"},
+		"backend":   {"backend", "back-end", "api", "server"},
+		"debugging": {"debug", "debugging", "troubleshoot"},
+		"devops":    {"deploy", "infrastructure"},
+		"architect": {"structure", "design"},
+		"security":  {"secure", "audit"},
+	}
+
+	var matched []*skills.Skill
+	for _, s := range c.discoveredSkills {
+		skillNameLower := strings.ToLower(s.Name)
+		skillDescLower := strings.ToLower(s.Description)
+		skillPathLower := strings.ToLower(s.Path)
+
+		for category := range triggeredCategories {
+			// Direct category match on name/description
+			if strings.Contains(skillNameLower, category) || strings.Contains(skillDescLower, category) {
+				matched = append(matched, s)
+				break
+			}
+			// Match on folder path (critical for bundled skills with placeholder names)
+			if strings.Contains(skillPathLower, "/"+category) || strings.HasSuffix(skillPathLower, category) {
+				matched = append(matched, s)
+				break
+			}
+			// Match on category aliases against path
+			if aliases, ok := categoryAliases[category]; ok {
+				found := false
+				for _, alias := range aliases {
+					if strings.Contains(skillPathLower, "/"+alias) || strings.HasSuffix(skillPathLower, alias) {
+						matched = append(matched, s)
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+		}
+	}
+
+	if len(matched) > 0 {
+		names := make([]string, len(matched))
+		for i, s := range matched {
+			// Use folder name as display name if YAML name is a placeholder
+			displayName := s.Name
+			if displayName == "" || displayName == "SKILLNAME" {
+				displayName = filepath.Base(s.Path)
+			}
+			names[i] = displayName
+		}
+		slog.Info("Hardwired skill keyword match", "categories", maps.Keys(triggeredCategories), "matched", names)
+	}
+
+	return matched
+}
+
+// mergeSkills merges two skill slices, deduplicating by skill name.
+func mergeSkills(primary, secondary []*skills.Skill) []*skills.Skill {
+	seen := make(map[string]bool, len(primary))
+	var result []*skills.Skill
+
+	for _, s := range primary {
+		if !seen[s.Path] {
+			seen[s.Path] = true
+			result = append(result, s)
+		}
+	}
+	for _, s := range secondary {
+		if !seen[s.Path] {
+			seen[s.Path] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// ensureSkillsDiscovered discovers all available skills once and caches them.
+func (c *coordinator) ensureSkillsDiscovered() {
+	c.skillsOnce.Do(func() {
+		var expandedPaths []string
+		for _, pth := range c.cfg.Options.SkillsPaths {
+			expandedPaths = append(expandedPaths, promptpkg.ExpandPath(pth, *c.cfg))
+		}
+		c.discoveredSkills = skills.Discover(expandedPaths)
+		if len(c.discoveredSkills) > 0 {
+			slog.Debug("Discovered skills for embedding", "count", len(c.discoveredSkills))
+		}
+	})
+}
+
+func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
+	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
+	if prompt == "" {
+		return false
+	}
+
+	strongSignals := []string{
+		"across the codebase", "large codebase", "architecture", "refactor", "audit",
+		"investigate", "trace", "root cause", "dependency", "parallel", "multiple modules",
+		"multiple packages", "verify independently", "review risks", "complex",
+	}
+	for _, signal := range strongSignals {
+		if strings.Contains(prompt, signal) {
+			return true
+		}
+	}
+
+	if len(strings.Fields(prompt)) >= 80 {
+		return true
+	}
+	if strings.Count(prompt, "\n") >= 4 {
+		return true
+	}
+	return false
+}
+
+func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
+	prompt := strings.ToLower(userPrompt)
+	tasks := []autonomousSubAgentTask{
+		{
+			Name:         "codebase-map",
+			SessionTitle: "Autonomous Codebase Map",
+			Prompt: fmt.Sprintf(
+				"User task: %s\n\nMap the codebase relevant to this task. Identify the main packages, entry points, and the shortest list of absolute file paths that matter. Return a compact summary only.",
+				userPrompt,
+			),
+		},
+		{
+			Name:         "dependency-trace",
+			SessionTitle: "Autonomous Dependency Trace",
+			Prompt: fmt.Sprintf(
+				"User task: %s\n\nTrace the dependency and control flow relevant to this task. Focus on call paths, shared types, and cross-package interactions. Return only concise findings with absolute file paths.",
+				userPrompt,
+			),
+		},
+	}
+
+	if strings.Contains(prompt, "fix") ||
+		strings.Contains(prompt, "bug") ||
+		strings.Contains(prompt, "refactor") ||
+		strings.Contains(prompt, "migrate") ||
+		strings.Contains(prompt, "implement") {
+		tasks = append(tasks, autonomousSubAgentTask{
+			Name:         "risk-review",
+			SessionTitle: "Autonomous Risk Review",
+			Prompt: fmt.Sprintf(
+				"User task: %s\n\nReview likely implementation risks, edge cases, and validation points for this task. Return a compact checklist with absolute file paths where the risks live.",
+				userPrompt,
+			),
+		})
+	}
+
+	if strings.Contains(prompt, "version") ||
+		strings.Contains(prompt, "latest") ||
+		strings.Contains(prompt, "gemini") ||
+		strings.Contains(prompt, "next.js") ||
+		strings.Contains(prompt, "react") ||
+		strings.Contains(prompt, "api") ||
+		strings.Contains(prompt, "docs") {
+		tasks = append(tasks, autonomousSubAgentTask{
+			Name:         "fact-audit",
+			SessionTitle: "Autonomous Knowledge Audit",
+			Prompt: fmt.Sprintf(
+				"User task: %s\n\nAudit the task for external knowledge requirements. If the task mentions specific versions (e.g. Next.js 16.1, React 20) or features that post-date your 2025 cutoff, USE 'agentic_fetch' IMMEDIATELY to search the web for documentation. Provide a concise factual summary with source URLs.",
+				userPrompt,
+			),
+		})
+	}
+
+	return tasks
+}
+
+func (c *coordinator) autonomousSubAgentContext(ctx context.Context, sessionID, userPrompt string) (string, error) {
+	agentCfg, ok := c.cfg.Agents[config.AgentTask]
+	if !ok {
+		return "", errors.New("task agent not configured")
+	}
+
+	prompt, err := taskPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
+	if err != nil {
+		return "", err
+	}
+
+	agent, err := c.buildAgent(ctx, prompt, agentCfg, true)
+	if err != nil {
+		return "", err
+	}
+
+	tasks := buildAutonomousSubAgentTasks(userPrompt)
+	type taskResult struct {
+		Name    string
+		Content string
+	}
+
+	results := make([]taskResult, len(tasks))
+	group, groupCtx := errgroup.WithContext(ctx)
+
+	for i, task := range tasks {
+		i := i
+		task := task
+		group.Go(func() error {
+			resp, err := c.runSubAgent(groupCtx, subAgentParams{
+				Agent:          agent,
+				SessionID:      sessionID,
+				AgentMessageID: "autonomous-sub-agent",
+				ToolCallID:     fmt.Sprintf("autonomous-%s", task.Name),
+				Prompt:         task.Prompt,
+				SessionTitle:   task.SessionTitle,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.IsError {
+				return errors.New(resp.Content)
+			}
+			results[i] = taskResult{Name: task.Name, Content: resp.Content}
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return "", err
+	}
+
+	var summary strings.Builder
+	summary.WriteString("## Autonomous Sub-Agent Findings\n")
+	summary.WriteString("The following summaries were gathered automatically before the main agent proceeds.\n\n")
+	for _, result := range results {
+		if strings.TrimSpace(result.Content) == "" {
+			continue
+		}
+		summary.WriteString("### ")
+		summary.WriteString(result.Name)
+		summary.WriteByte('\n')
+		summary.WriteString(result.Content)
+		summary.WriteString("\n\n")
+	}
+
+	return strings.TrimSpace(summary.String()), nil
+}
+
+func (c *coordinator) getProviderOptions(model Model, providerCfg config.ProviderConfig, useGrounding bool) fantasy.ProviderOptions {
+	options := fantasy.ProviderOptions{}
+
+	cfgOpts := []byte("{}")
+	providerCfgOpts := []byte("{}")
+	catwalkOpts := []byte("{}")
+
+	if model.ModelCfg.ProviderOptions != nil {
+		data, err := json.Marshal(model.ModelCfg.ProviderOptions)
+		if err == nil {
+			cfgOpts = data
+		}
+	}
+
+	if providerCfg.ProviderOptions != nil {
+		data, err := json.Marshal(providerCfg.ProviderOptions)
+		if err == nil {
+			providerCfgOpts = data
+		}
+	}
+
+	if model.CatwalkCfg.Options.ProviderOptions != nil {
+		data, err := json.Marshal(model.CatwalkCfg.Options.ProviderOptions)
+		if err == nil {
+			catwalkOpts = data
+		}
+	}
+
+	readers := []io.Reader{
+		bytes.NewReader(catwalkOpts),
+		bytes.NewReader(providerCfgOpts),
+		bytes.NewReader(cfgOpts),
+	}
+
+	got, err := jsons.Merge(readers)
+	if err != nil {
+		slog.Error("Could not merge call config", "err", err)
+		return options
+	}
+
+	mergedOptions := make(map[string]any)
+
+	err = json.Unmarshal([]byte(got), &mergedOptions)
+	if err != nil {
+		slog.Error("Could not create config for call", "err", err)
+		return options
+	}
+
+	providerType := providerCfg.Type
+	if providerType == "hyper" {
+		if strings.Contains(model.CatwalkCfg.ID, "claude") {
+			providerType = anthropic.Name
+		} else if strings.Contains(model.CatwalkCfg.ID, "gpt") {
+			providerType = openai.Name
+		} else if strings.Contains(model.CatwalkCfg.ID, "gemini") {
+			providerType = gemini.Name
+		} else {
+			providerType = openaicompat.Name
+		}
+	}
+
+	switch providerType {
+	case openai.Name, azure.Name:
+		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
+		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
+			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+		}
+		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
+			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
+				mergedOptions["reasoning_summary"] = "auto"
+				mergedOptions["include"] = []openai.IncludeType{openai.IncludeReasoningEncryptedContent}
+			}
+			parsed, err := openai.ParseResponsesOptions(mergedOptions)
+			if err == nil {
+				options[openai.Name] = parsed
+			}
+		} else {
+			parsed, err := openai.ParseOptions(mergedOptions)
+			if err == nil {
+				options[openai.Name] = parsed
+			}
+		}
+	case anthropic.Name:
+		var (
+			_, hasEffort = mergedOptions["effort"]
+			_, hasThink  = mergedOptions["thinking"]
+		)
+		switch {
+		case !hasEffort && model.ModelCfg.ReasoningEffort != "":
+			mergedOptions["effort"] = model.ModelCfg.ReasoningEffort
+		case !hasThink && model.ModelCfg.Think:
+			mergedOptions["thinking"] = map[string]any{"budget_tokens": 2000}
+		}
+		parsed, err := anthropic.ParseOptions(mergedOptions)
+		if err == nil {
+			options[anthropic.Name] = parsed
+		}
+
+	case openrouter.Name:
+		_, hasReasoning := mergedOptions["reasoning"]
+		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+			mergedOptions["reasoning"] = map[string]any{
+				"enabled": true,
+				"effort":  model.ModelCfg.ReasoningEffort,
+			}
+		}
+		parsed, err := openrouter.ParseOptions(mergedOptions)
+		if err == nil {
+			options[openrouter.Name] = parsed
+		}
+	case vercel.Name:
+		_, hasReasoning := mergedOptions["reasoning"]
+		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
+			mergedOptions["reasoning"] = map[string]any{
+				"enabled": true,
+				"effort":  model.ModelCfg.ReasoningEffort,
+			}
+		}
+		parsed, err := vercel.ParseOptions(mergedOptions)
+		if err == nil {
+			options[vercel.Name] = parsed
+		}
+	case gemini.Name:
+		_, hasGoogleSearch := mergedOptions["google_search"]
+		switch {
+		case useGrounding && !hasGoogleSearch:
+			mergedOptions["google_search"] = true
+		case !useGrounding && hasGoogleSearch:
+			mergedOptions["google_search"] = false
+		}
+
+		_, hasReasoning := mergedOptions["thinking_config"]
+		if !hasReasoning {
+			if config.IsGemini25Model(model.CatwalkCfg.ID) {
+				thinkingBudget := 0
+				includeThoughts := false
+				if model.ModelCfg.Think {
+					thinkingBudget = 2000
+					includeThoughts = true
+				}
+				mergedOptions["thinking_config"] = map[string]any{
+					"thinking_budget":  thinkingBudget,
+					"include_thoughts": includeThoughts,
+				}
+			} else {
+				mergedOptions["thinking_config"] = map[string]any{
+					"thinking_level":   model.ModelCfg.ReasoningEffort,
+					"include_thoughts": true,
+				}
+			}
+		}
+		parsed, err := gemini.ParseOptions(mergedOptions)
+		if err == nil {
+			options[gemini.Name] = parsed
+		}
+	case openaicompat.Name:
+		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
+		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
+			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+		}
+		parsed, err := openaicompat.ParseOptions(mergedOptions)
+		if err == nil {
+			options[openaicompat.Name] = parsed
+		}
+	}
+
+	return options
+}
+
+func (c *coordinator) mergeCallOptions(model Model, cfg config.ProviderConfig, sessionID string) (fantasy.ProviderOptions, *float64, *float64, *int64, *float64, *float64) {
+	// Google Search failure tracking - fallback to DDG after 2 failures.
+	// Failure = 2 consecutive errors with grounding enabled.
+	useGrounding := c.cfg.Options.GoogleGrounding
+	if v, ok := c.googleSearchFailures.Load(sessionID); ok {
+		if failures, ok := v.(int); ok && failures >= 2 {
+			useGrounding = false
+		}
+	}
+
+	modelOptions := c.getProviderOptions(model, cfg, useGrounding)
+	temp := cmp.Or(model.ModelCfg.Temperature, model.CatwalkCfg.Options.Temperature)
+	topP := cmp.Or(model.ModelCfg.TopP, model.CatwalkCfg.Options.TopP)
+	topK := cmp.Or(model.ModelCfg.TopK, model.CatwalkCfg.Options.TopK)
+	freqPenalty := cmp.Or(model.ModelCfg.FrequencyPenalty, model.CatwalkCfg.Options.FrequencyPenalty)
+	presPenalty := cmp.Or(model.ModelCfg.PresencePenalty, model.CatwalkCfg.Options.PresencePenalty)
+	return modelOptions, temp, topP, topK, freqPenalty, presPenalty
+}
+
+func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
+	large, small, err := c.buildAgentModels(ctx, isSubAgent)
+	if err != nil {
+		return nil, err
+	}
+
+	largeProviderCfg, _ := c.cfg.Providers.Get(large.ModelCfg.Provider)
+	result := NewSessionAgent(SessionAgentOptions{
+		LargeModel:           large,
+		SmallModel:           small,
+		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:         "",
+		IsSubAgent:           isSubAgent,
+		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
+		IsYolo:               c.permissions.SkipRequests(),
+		Sessions:             c.sessions,
+		Messages:             c.messages,
+		Tools:                nil,
+		Memory:               c.memory,
+		Pmem:                 c.pmem,
+	})
+
+	// Use a local WaitGroup for sub-agents to ensure initialization finishes before returning.
+	// For the main agent, use c.readyWg to allow background initialization during startup.
+	var wg interface {
+		Go(func() error)
+	}
+	if isSubAgent {
+		innerWg := &errgroup.Group{}
+		wg = innerWg
+		defer func() {
+			if err := innerWg.Wait(); err != nil {
+				slog.Error("Failed to initialize sub-agent", "error", err)
+			}
+		}()
+	} else {
+		wg = &c.readyWg
+	}
+
+	wg.Go(func() error {
+		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), *c.cfg)
+		if err != nil {
+			return err
+		}
+		result.SetSystemPrompt(systemPrompt)
+		return nil
+	})
+
+	wg.Go(func() error {
+		tools, err := c.buildTools(ctx, agent)
+		if err != nil {
+			return err
+		}
+		result.SetTools(tools)
+		return nil
+	})
+
+	return result, nil
+}
+
+func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
+	if c.currentAgent == nil {
+		return nil
+	}
+	model := c.currentAgent.Model()
+	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
+	if err != nil {
+		return err
+	}
+	systemPrompt, err := prompt.Build(ctx, model.Model.Provider(), model.Model.Model(), *c.cfg)
+	if err != nil {
+		return err
+	}
+	c.currentAgent.SetSystemPrompt(systemPrompt)
+	return nil
+}
+
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fantasy.AgentTool, error) {
+	var allTools []fantasy.AgentTool
+	if slices.Contains(agent.AllowedTools, AgentToolName) {
+		agentTool, err := c.agentTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, agentTool)
+	}
+
+	if slices.Contains(agent.AllowedTools, tools.AgenticFetchToolName) {
+		agenticFetchTool, err := c.agenticFetchTool(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, agenticFetchTool)
+	}
+
+	// Get the model name for the agent
+	modelName := ""
+	if modelCfg, ok := c.cfg.Models[agent.Model]; ok {
+		if model := c.cfg.GetModel(modelCfg.Provider, modelCfg.Model); model != nil {
+			modelName = model.Name
+		}
+	}
+
+	maxConcurrent := 250
+
+	if pythonTool, err := c.buildPythonTool(ctx, agent); err != nil {
+		return nil, err
+	} else if pythonTool != nil {
+		allTools = append(allTools, pythonTool)
+	}
+
+	allTools = append(allTools,
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Options.Attribution, modelName),
+		tools.NewJobOutputTool(),
+		tools.NewJobKillTool(),
+		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
+		tools.NewEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewMultiEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
+		tools.NewGlobTool(c.cfg.WorkingDir()),
+		tools.NewMemoryQueryTool(c.memory),
+		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Tools.Grep),
+		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Tools.Ls),
+		tools.NewSourcegraphTool(nil),
+		tools.NewTodosTool(c.sessions),
+		tools.NewViewTool(tools.ViewToolName, c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir(), 1, c.cfg.Options.SkillsPaths...),
+		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir(), maxConcurrent, c.cfg.Options.SkillsPaths...),
+		tools.NewWriteTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+	)
+
+	// Add Google Grounding search tool if enabled and supported.
+	if c.cfg.Options.GoogleGrounding && c.googleSearchClient != nil {
+		// We use a small model for grounding search to keep it fast
+		searchModel := "gemini-3-flash"
+		if smallModelEntry, ok := c.cfg.Models[config.SelectedModelTypeSmall]; ok {
+			searchModel = smallModelEntry.Model
+		}
+
+		allTools = append(allTools, tools.NewGoogleSearchTool(
+			c.googleSearchClient,
+			nil,
+			searchModel,
+			func(sessionID string) int {
+				if v, ok := c.googleSearchFailures.Load(sessionID); ok {
+					return v.(int)
+				}
+				return 0
+			},
+			func(sessionID string) {
+				failures := 0
+				if v, ok := c.googleSearchFailures.Load(sessionID); ok {
+					failures = v.(int)
+				}
+				c.googleSearchFailures.Store(sessionID, failures+1)
+			},
+			func(sessionID string) {
+				c.googleSearchFailures.Delete(sessionID)
+			},
+		))
+	}
+
+	// Add persistent memory tools (recall_memory, save_memory).
+	if c.pmem != nil {
+		allTools = append(allTools,
+			pmem.NewRecallTool(c.pmem.Store),
+			pmem.NewSaveTool(c.pmem.Store),
+		)
+	}
+
+	// Add skill tools (list_skills, load_skill).
+	loadSkillTool, err := c.loadSkillTool(ctx)
+	if err == nil {
+		allTools = append(allTools, loadSkillTool)
+	}
+	listSkillsTool, err := c.listSkillsTool(ctx)
+	if err == nil {
+		allTools = append(allTools, listSkillsTool)
+	}
+
+	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
+	if len(c.cfg.LSP) > 0 || c.cfg.Options.AutoLSP == nil || *c.cfg.Options.AutoLSP {
+		allTools = append(allTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
+	}
+
+	if len(c.cfg.MCP) > 0 {
+		allTools = append(
+			allTools,
+			tools.NewListMCPToolsTool(c.cfg, c.permissions),
+			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
+			tools.NewReadMCPResourceTool(c.cfg, c.permissions),
+		)
+	}
+
+	var filteredTools []fantasy.AgentTool
+	for _, tool := range allTools {
+		if tool.Info().Name == tools.GoogleSearchToolName {
+			filteredTools = append(filteredTools, tool)
+			continue
+		}
+		if slices.Contains(agent.AllowedTools, tool.Info().Name) {
+			filteredTools = append(filteredTools, tool)
+		}
+	}
+
+	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
+		if agent.AllowedMCP == nil {
+			// No MCP restrictions
+			filteredTools = append(filteredTools, tool)
+			continue
+		}
+		if len(agent.AllowedMCP) == 0 {
+			// No MCPs allowed
+			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
+			break
+		}
+
+		for mcp, tools := range agent.AllowedMCP {
+			if mcp != tool.MCP() {
+				continue
+			}
+			if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
+				filteredTools = append(filteredTools, tool)
+				break
+			}
+			slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+		}
+	}
+	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
+		return strings.Compare(a.Info().Name, b.Info().Name)
+	})
+	return filteredTools, nil
+}
+
+func (c *coordinator) buildPythonTool(ctx context.Context, agent config.Agent) (fantasy.AgentTool, error) {
+	modelCfg, ok := c.cfg.Models[agent.Model]
+	if !ok {
+		return nil, nil
+	}
+
+	if !strings.HasPrefix(strings.ToLower(modelCfg.Model), "gemini") {
+		return nil, nil
+	}
+
+	providerCfg, ok := c.cfg.Providers.Get(modelCfg.Provider)
+	if !ok {
+		return nil, nil
+	}
+
+	switch providerCfg.Type {
+	case gemini.Name, "gemini", "google-vertex":
+	default:
+		return nil, nil
+	}
+
+	client, err := c.buildGeminiCodeExecutionClient(ctx, providerCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return tools.NewPythonTool(client, modelCfg.Model), nil
+}
+
+func (c *coordinator) buildGeminiCodeExecutionClient(ctx context.Context, providerCfg config.ProviderConfig) (*genai.Client, error) {
+	headers := maps.Clone(providerCfg.ExtraHeaders)
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	clientConfig := &genai.ClientConfig{}
+	if c.cfg.Options.Debug {
+		clientConfig.HTTPClient = log.NewHTTPClient()
+	}
+
+	if len(headers) > 0 {
+		httpHeaders := http.Header{}
+		for k, v := range headers {
+			httpHeaders.Add(k, v)
+		}
+		clientConfig.HTTPOptions.Headers = httpHeaders
+	}
+
+	switch providerCfg.Type {
+	case gemini.Name, "gemini":
+		apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
+		baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+		clientConfig.Backend = genai.BackendGeminiAPI
+		clientConfig.APIKey = apiKey
+		if baseURL != "" {
+			clientConfig.HTTPOptions.BaseURL = baseURL
+		}
+	case "google-vertex":
+		clientConfig.Backend = genai.BackendVertexAI
+		clientConfig.Project = providerCfg.ExtraParams["project"]
+		clientConfig.Location = providerCfg.ExtraParams["location"]
+		if err := clientConfig.UseDefaultCredentials(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("provider type %q does not support Gemini code execution", providerCfg.Type)
+	}
+
+	return genai.NewClient(ctx, clientConfig)
+}
+
+// TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
+func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, error) {
+	largeModelCfg, ok := c.cfg.Models[config.SelectedModelTypeLarge]
+	if !ok {
+		return Model{}, Model{}, errors.New("large model not selected")
+	}
+	smallModelCfg, ok := c.cfg.Models[config.SelectedModelTypeSmall]
+	if !ok {
+		return Model{}, Model{}, errors.New("small model not selected")
+	}
+
+	largeProviderCfg, ok := c.cfg.Providers.Get(largeModelCfg.Provider)
+	if !ok {
+		return Model{}, Model{}, errors.New("large model provider not configured")
+	}
+
+	largeProvider, err := c.buildProvider(largeProviderCfg, largeModelCfg, isSubAgent)
+	if err != nil {
+		return Model{}, Model{}, err
+	}
+
+	smallProviderCfg, ok := c.cfg.Providers.Get(smallModelCfg.Provider)
+	if !ok {
+		return Model{}, Model{}, errors.New("small model provider not configured")
+	}
+
+	smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
+	if err != nil {
+		return Model{}, Model{}, err
+	}
+
+	var largeCatwalkModel *catwalk.Model
+	var smallCatwalkModel *catwalk.Model
+
+	for _, m := range largeProviderCfg.Models {
+		if m.ID == largeModelCfg.Model {
+			largeCatwalkModel = &m
+		}
+	}
+	for _, m := range smallProviderCfg.Models {
+		if m.ID == smallModelCfg.Model {
+			smallCatwalkModel = &m
+		}
+	}
+
+	if largeCatwalkModel == nil {
+		return Model{}, Model{}, errors.New("large model not found in provider config")
+	}
+
+	if smallCatwalkModel == nil {
+		return Model{}, Model{}, errors.New("small model not found in provider config")
+	}
+
+	largeModelID := largeModelCfg.Model
+	smallModelID := smallModelCfg.Model
+
+	if largeModelCfg.Provider == openrouter.Name && isExactoSupported(largeModelID) {
+		largeModelID += ":exacto"
+	}
+
+	if smallModelCfg.Provider == openrouter.Name && isExactoSupported(smallModelID) {
+		smallModelID += ":exacto"
+	}
+
+	largeModel, err := largeProvider.LanguageModel(ctx, largeModelID)
+	if err != nil {
+		return Model{}, Model{}, err
+	}
+	smallModel, err := smallProvider.LanguageModel(ctx, smallModelID)
+	if err != nil {
+		return Model{}, Model{}, err
+	}
+
+	return Model{
+			Model:      largeModel,
+			CatwalkCfg: *largeCatwalkModel,
+			ModelCfg:   largeModelCfg,
+		}, Model{
+			Model:      smallModel,
+			CatwalkCfg: *smallCatwalkModel,
+			ModelCfg:   smallModelCfg,
+		}, nil
+}
+
+func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
+	var opts []anthropic.Option
+
+	switch {
+	case strings.HasPrefix(apiKey, "Bearer "):
+		// NOTE: Prevent the SDK from picking up the API key from env.
+		os.Setenv("ANTHROPIC_API_KEY", "")
+		headers["Authorization"] = apiKey
+	case providerID == string(catwalk.InferenceProviderMiniMax) || providerID == string(catwalk.InferenceProviderMiniMaxChina):
+		// NOTE: Prevent the SDK from picking up the API key from env.
+		os.Setenv("ANTHROPIC_API_KEY", "")
+		headers["Authorization"] = "Bearer " + apiKey
+	case apiKey != "":
+		// X-Api-Key header
+		opts = append(opts, anthropic.WithAPIKey(apiKey))
+	}
+
+	if len(headers) > 0 {
+		opts = append(opts, anthropic.WithHeaders(headers))
+	}
+
+	if baseURL != "" {
+		opts = append(opts, anthropic.WithBaseURL(baseURL))
+	}
+
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, anthropic.WithHTTPClient(httpClient))
+	}
+	return anthropic.New(opts...)
+}
+
+func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+	opts := []openai.Option{
+		openai.WithAPIKey(apiKey),
+		openai.WithUseResponsesAPI(),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, openai.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, openai.WithHeaders(headers))
+	}
+	if baseURL != "" {
+		opts = append(opts, openai.WithBaseURL(baseURL))
+	}
+	return openai.New(opts...)
+}
+
+func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+	opts := []openrouter.Option{
+		openrouter.WithAPIKey(apiKey),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, openrouter.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, openrouter.WithHeaders(headers))
+	}
+	return openrouter.New(opts...)
+}
+
+func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+	opts := []vercel.Option{
+		vercel.WithAPIKey(apiKey),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, vercel.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, vercel.WithHeaders(headers))
+	}
+	return vercel.New(opts...)
+}
+
+func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, isSubAgent bool) (fantasy.Provider, error) {
+	opts := []openaicompat.Option{
+		openaicompat.WithBaseURL(baseURL),
+		openaicompat.WithAPIKey(apiKey),
+	}
+
+	// Set HTTP client based on provider and debug mode.
+	var httpClient *http.Client
+	if providerID == string(catwalk.InferenceProviderCopilot) {
+		opts = append(opts, openaicompat.WithUseResponsesAPI())
+		httpClient = copilot.NewClient(isSubAgent, c.cfg.Options.Debug)
+	} else if c.cfg.Options.Debug {
+		httpClient = log.NewHTTPClient()
+	}
+	if httpClient != nil {
+		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
+	}
+
+	if len(headers) > 0 {
+		opts = append(opts, openaicompat.WithHeaders(headers))
+	}
+
+	for extraKey, extraValue := range extraBody {
+		opts = append(opts, openaicompat.WithSDKOptions(openaisdk.WithJSONSet(extraKey, extraValue)))
+	}
+
+	return openaicompat.New(opts...)
+}
+
+func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[string]string, options map[string]string) (fantasy.Provider, error) {
+	opts := []azure.Option{
+		azure.WithBaseURL(baseURL),
+		azure.WithAPIKey(apiKey),
+		azure.WithUseResponsesAPI(),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, azure.WithHTTPClient(httpClient))
+	}
+	if options == nil {
+		options = make(map[string]string)
+	}
+	if apiVersion, ok := options["apiVersion"]; ok {
+		opts = append(opts, azure.WithAPIVersion(apiVersion))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, azure.WithHeaders(headers))
+	}
+
+	return azure.New(opts...)
+}
+
+func (c *coordinator) buildBedrockProvider(headers map[string]string) (fantasy.Provider, error) {
+	var opts []bedrock.Option
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, bedrock.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, bedrock.WithHeaders(headers))
+	}
+	bearerToken := os.Getenv("AWS_BEARER_TOKEN_BEDROCK")
+	if bearerToken != "" {
+		opts = append(opts, bedrock.WithAPIKey(bearerToken))
+	}
+	return bedrock.New(opts...)
+}
+
+func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
+	opts := []gemini.Option{
+		gemini.WithBaseURL(baseURL),
+		gemini.WithGeminiAPIKey(apiKey),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, gemini.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, gemini.WithHeaders(headers))
+	}
+	return gemini.New(opts...)
+}
+
+func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
+	opts := []gemini.Option{}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, gemini.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, gemini.WithHeaders(headers))
+	}
+
+	project := options["project"]
+	location := options["location"]
+
+	opts = append(opts, gemini.WithVertex(project, location))
+
+	return gemini.New(opts...)
+}
+
+func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provider, error) {
+	opts := []hyper.Option{
+		hyper.WithBaseURL(baseURL),
+		hyper.WithAPIKey(apiKey),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, hyper.WithHTTPClient(httpClient))
+	}
+	return hyper.New(opts...)
+}
+
+func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
+	if model.Think {
+		return true
+	}
+
+	if model.ProviderOptions == nil {
+		return false
+	}
+
+	opts, err := anthropic.ParseOptions(model.ProviderOptions)
+	if err != nil {
+		return false
+	}
+	if opts.Thinking != nil {
+		return true
+	}
+	return false
+}
+
+func (c *coordinator) isGeminiThinking(model config.SelectedModel) bool {
+	if model.Think {
+		return true
+	}
+
+	if model.ProviderOptions == nil {
+		return false
+	}
+
+	// Check for thinkingConfig in provider options
+	if _, ok := model.ProviderOptions["thinking_config"]; ok {
+		return true
+	}
+	if _, ok := model.ProviderOptions["thinkingConfig"]; ok {
+		return true
+	}
+
+	return false
+}
+
+func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool) (fantasy.Provider, error) {
+	headers := maps.Clone(providerCfg.ExtraHeaders)
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	// handle special headers for anthropic
+	if providerCfg.Type == anthropic.Name && c.isAnthropicThinking(model) {
+		if v, ok := headers["anthropic-beta"]; ok {
+			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
+		} else {
+			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
+		}
+	}
+
+	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
+	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+
+	switch providerCfg.Type {
+	case openai.Name:
+		return c.buildOpenaiProvider(baseURL, apiKey, headers)
+	case anthropic.Name:
+		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
+	case openrouter.Name:
+		return c.buildOpenrouterProvider(baseURL, apiKey, headers)
+	case vercel.Name:
+		return c.buildVercelProvider(baseURL, apiKey, headers)
+	case azure.Name:
+		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
+	case bedrock.Name:
+		return c.buildBedrockProvider(headers)
+	case gemini.Name, "gemini":
+		return c.buildGoogleProvider(baseURL, apiKey, headers)
+	case "google-vertex":
+		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
+	case openaicompat.Name:
+		if providerCfg.ID == string(catwalk.InferenceProviderZAI) {
+			if providerCfg.ExtraBody == nil {
+				providerCfg.ExtraBody = map[string]any{}
+			}
+			providerCfg.ExtraBody["tool_stream"] = true
+		}
+		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent)
+	case hyper.Name:
+		return c.buildHyperProvider(baseURL, apiKey)
+	default:
+		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
+	}
+}
+
+func isExactoSupported(modelID string) bool {
+	supportedModels := []string{
+		"moonshotai/kimi-k2-0905",
+		"deepseek/deepseek-v3.1-terminus",
+		"z-ai/glm-4.6",
+		"openai/gpt-oss-120b",
+		"qwen/qwen3-coder",
+	}
+	return slices.Contains(supportedModels, modelID)
+}
+
+func (c *coordinator) Cancel(sessionID string) {
+	c.currentAgent.Cancel(sessionID)
+}
+
+func (c *coordinator) CancelAll() {
+	c.currentAgent.CancelAll()
+}
+
+func (c *coordinator) ClearQueue(sessionID string) {
+	c.currentAgent.ClearQueue(sessionID)
+}
+
+func (c *coordinator) IsBusy() bool {
+	return c.currentAgent.IsBusy()
+}
+
+func (c *coordinator) IsSessionBusy(sessionID string) bool {
+	return c.currentAgent.IsSessionBusy(sessionID)
+}
+
+func (c *coordinator) Model() Model {
+	return c.currentAgent.Model()
+}
+
+func (c *coordinator) UpdateModels(ctx context.Context) error {
+	// build the models again so we make sure we get the latest config
+	large, small, err := c.buildAgentModels(ctx, false)
+	if err != nil {
+		return err
+	}
+	c.currentAgent.SetModels(large, small)
+
+	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
+	if !ok {
+		return errors.New("coder agent not configured")
+	}
+
+	tools, err := c.buildTools(ctx, agentCfg)
+	if err != nil {
+		return err
+	}
+	c.currentAgent.SetTools(tools)
+	return nil
+}
+
+func (c *coordinator) QueuedPrompts(sessionID string) int {
+	return c.currentAgent.QueuedPrompts(sessionID)
+}
+
+func (c *coordinator) QueuedPromptsList(sessionID string) []string {
+	return c.currentAgent.QueuedPromptsList(sessionID)
+}
+
+func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
+	providerCfg, ok := c.cfg.Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+	if !ok {
+		return errors.New("model provider not configured")
+	}
+	return c.currentAgent.Summarize(ctx, sessionID, c.getProviderOptions(c.currentAgent.Model(), providerCfg, c.cfg.Options.GoogleGrounding))
+}
+
+func (c *coordinator) isUnauthorized(err error) bool {
+	var providerErr *fantasy.ProviderError
+	return errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized
+}
+
+func (c *coordinator) refreshOAuth2Token(ctx context.Context, providerCfg config.ProviderConfig) error {
+	if err := c.cfg.RefreshOAuthToken(ctx, providerCfg.ID); err != nil {
+		slog.Error("Failed to refresh OAuth token after 401 error", "provider", providerCfg.ID, "error", err)
+		return err
+	}
+	if err := c.UpdateModels(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *coordinator) refreshApiKeyTemplate(ctx context.Context, providerCfg config.ProviderConfig) error {
+	newAPIKey, err := c.cfg.Resolve(providerCfg.APIKeyTemplate)
+	if err != nil {
+		slog.Error("Failed to re-resolve API key after 401 error", "provider", providerCfg.ID, "error", err)
+		return err
+	}
+
+	providerCfg.APIKey = newAPIKey
+	c.cfg.Providers.Set(providerCfg.ID, providerCfg)
+
+	if err := c.UpdateModels(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// subAgentParams holds the parameters for running a sub-agent.
+type subAgentParams struct {
+	Agent          SessionAgent
+	SessionID      string
+	AgentMessageID string
+	ToolCallID     string
+	Prompt         string
+	SessionTitle   string
+	// SessionSetup is an optional callback invoked after session creation
+	// but before agent execution, for custom session configuration.
+	SessionSetup func(sessionID string)
+	AllowNesting bool
+}
+
+// runSubAgent runs a sub-agent and handles session management and cost accumulation.
+// It creates a sub-session, runs the agent with the given prompt, and propagates
+// the cost to the parent session.
+func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	// Create sub-session
+	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
+	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
+	if err != nil {
+		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
+	}
+
+	// Call session setup function if provided
+	if params.SessionSetup != nil {
+		params.SessionSetup(session.ID)
+	}
+
+	// Get model configuration
+	model := params.Agent.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+
+	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return fantasy.ToolResponse{}, errors.New("model provider not configured")
+	}
+
+	// Run the agent
+	result, err := params.Agent.Run(ctx, SessionAgentCall{
+		SessionID:        session.ID,
+		Prompt:           params.Prompt,
+		MaxOutputTokens:  maxTokens,
+		ProviderOptions:  c.getProviderOptions(model, providerCfg, c.cfg.Options.GoogleGrounding),
+		Temperature:      model.ModelCfg.Temperature,
+		TopP:             model.ModelCfg.TopP,
+		TopK:             model.ModelCfg.TopK,
+		FrequencyPenalty: model.ModelCfg.FrequencyPenalty,
+		PresencePenalty:  model.ModelCfg.PresencePenalty,
+	})
+	if err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("error generating response: %v", err)), nil
+	}
+
+	// Update parent session cost
+	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
+
+	return fantasy.NewTextResponse(result.Response.Content.Text()), nil
+}
+
+// updateParentSessionCost accumulates the cost from a child session to its parent session.
+func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionID, parentSessionID string) error {
+	childSession, err := c.sessions.Get(ctx, childSessionID)
+	if err != nil {
+		return fmt.Errorf("get child session: %w", err)
+	}
+
+	parentSession, err := c.sessions.Get(ctx, parentSessionID)
+	if err != nil {
+		return fmt.Errorf("get parent session: %w", err)
+	}
+
+	parentSession.Cost += childSession.Cost
+
+	if _, err := c.sessions.Save(ctx, parentSession); err != nil {
+		return fmt.Errorf("save parent session: %w", err)
+	}
+
+	return nil
+}

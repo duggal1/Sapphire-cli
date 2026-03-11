@@ -1,0 +1,25 @@
+{
+  "session": "dec713f8-46c3-4572-b015-0463bf8b207d",
+  "generated_at": "2026-03-11T13:58:34Z",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ],
+  "source_prompt": "jjhhshs"
+}

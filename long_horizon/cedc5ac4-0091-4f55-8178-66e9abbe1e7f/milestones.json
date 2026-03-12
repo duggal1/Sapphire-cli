@@ -1,0 +1,25 @@
+{
+  "session": "cedc5ac4-0091-4f55-8178-66e9abbe1e7f",
+  "generated_at": "2026-03-12T15:14:27Z",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ],
+  "source_prompt": "Ok, I want you to do this. I want you to create a new folder and a new demo file named demo1.go. I want you to create a GO file intentionally extremely broken, make it so broken that you clearly see all the errors and everything. Then I want you to edit it, remove all the errors on the demo GO file. Just do this. Make sure to create this in a folder as a GO demo testing folder and in a file as GO testing demo, like that. Create and add the super broken GO file on purpose, then update it and make it so it fixes all the issues.\n\nWhy are we doing this? We are doing this so we can see if you have compiler capabilities baked into you. I want to see if you have compiler capabilities baked into you so when you edit it, you can see all the errors and fix them without using GO build to be dependent on it."
+}

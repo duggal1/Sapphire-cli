@@ -1,0 +1,25 @@
+{
+  "session": "5a5927b9-9b4f-49e9-b154-8d9759eda5fb",
+  "generated_at": "2026-03-12T15:43:06Z",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ],
+  "source_prompt": "I want you to create a new folder named \"demo file testing 1\". Create a new code file named \"demo file testing 1.go\". I want you to intentionally and on purpose create an extremely messy, extremely broken Go code file that is super messy and extremely broken, with syntax errors and everything that is guaranteed to give an error.\n\nThen I want you to edit the code file. When you're going to edit the code file, edit it and remove all the errors. This is what I want you to do, because I want to know, and I also want you to tell me brutally honestly.\n\nWhen you write an extremely broken Go code file that has a lot of errors, like literally a significant error, an extremely broken Go code file that is guaranteed to give a lot of errors, when you're going to edit it, do you see all the errors and warnings? Do you have compiler capabilities baked into you? When you're going to edit the code file, can you literally see all the errors and warnings? That will make it ten times easier for you to edit it easily, without depending on go build to catch all the errors, because you can. This is the validation test I want you to I genuinely want you to be brutally honest about everything."
+}

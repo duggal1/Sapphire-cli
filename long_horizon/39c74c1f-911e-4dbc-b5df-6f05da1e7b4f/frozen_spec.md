@@ -1,7 +1,7 @@
 # Frozen Spec (Session 39c74c1f-911e-4dbc-b5df-6f05da1e7b4f)
 
 ## Task Definition
-I want you to create a to-do list about this.
+please do it agin the same
 
 ## Success Criteria
 - Implement exactly the requirements stated above.

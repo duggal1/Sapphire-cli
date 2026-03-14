@@ -43,6 +43,7 @@ type EditResponseMetadata struct {
 }
 
 const EditToolName = "edit"
+const SingleEditToolName = "single_edit"
 
 var (
 	oldStringNotFoundErr        = fantasy.NewTextErrorResponse("CRITICAL FAILURE: old_string not found in file. Precision violation. You MUST re-read the file using View/Agentic View to capture character-perfect content (including whitespace/newlines) before any further attempt. Guessing is prohibited.")
@@ -58,6 +59,7 @@ type editContext struct {
 	files       history.Service
 	filetracker filetracker.Service
 	workingDir  string
+	toolName    string
 }
 
 // NewEditTool creates a tool for managing file modifications including text replacement and file deletion.
@@ -69,8 +71,47 @@ func NewEditTool(
 	filetracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return newNamedEditTool(
 		EditToolName,
+		lspManager,
+		editGuard,
+		permissions,
+		files,
+		filetracker,
+		workingDir,
+	)
+}
+
+func NewSingleEditTool(
+	lspManager *lsp.Manager,
+	editGuard *EditGuard,
+	permissions permission.Service,
+	files history.Service,
+	filetracker filetracker.Service,
+	workingDir string,
+) fantasy.AgentTool {
+	return newNamedEditTool(
+		SingleEditToolName,
+		lspManager,
+		editGuard,
+		permissions,
+		files,
+		filetracker,
+		workingDir,
+	)
+}
+
+func newNamedEditTool(
+	name string,
+	lspManager *lsp.Manager,
+	editGuard *EditGuard,
+	permissions permission.Service,
+	files history.Service,
+	filetracker filetracker.Service,
+	workingDir string,
+) fantasy.AgentTool {
+	return fantasy.NewAgentTool(
+		name,
 		string(editDescription),
 		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.FilePath == "" {
@@ -80,14 +121,14 @@ func NewEditTool(
 			params.FilePath = filepathext.SmartJoin(workingDir, params.FilePath)
 
 			sessionID := GetSessionFromContext(ctx)
-			if err := editGuard.EnsureAllowed(sessionID, params.FilePath); err != nil {
+			if err := editGuard.EnsureAllowed(sessionID, params.FilePath, true); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			var response fantasy.ToolResponse
 			var err error
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{ctx, permissions, files, filetracker, workingDir, name}
 
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
@@ -109,9 +150,9 @@ func NewEditTool(
 			notifyLSPs(ctx, lspManager, params.FilePath)
 
 			text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
-			diagnostics, summary := getDiagnosticsWithSummary(params.FilePath, lspManager)
+			diagnostics, summary := getDiagnosticsWithSummary(ctx, params.FilePath, lspManager)
 			text += diagnostics
-			editGuard.SetLockedIfErrors(sessionID, params.FilePath, summary.FileErrors > 0)
+			editGuard.SetLockedIfErrors(sessionID, params.FilePath, summary.FileErrors+summary.CompilerErrors+summary.FileWarnings+summary.CompilerWarnings > 0)
 			response.Content = text
 			return response, nil
 		})
@@ -148,7 +189,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
 			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
+			ToolName:    edit.toolName,
 			Action:      "write",
 			Description: fmt.Sprintf("Create file %s", filePath),
 			Params: EditPermissionsParams{
@@ -267,7 +308,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
 			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
+			ToolName:    edit.toolName,
 			Action:      "write",
 			Description: fmt.Sprintf("Delete content from file %s", filePath),
 			Params: EditPermissionsParams{
@@ -398,7 +439,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			SessionID:   sessionID,
 			Path:        fsext.PathOrPrefix(filePath, edit.workingDir),
 			ToolCallID:  call.ID,
-			ToolName:    EditToolName,
+			ToolName:    edit.toolName,
 			Action:      "write",
 			Description: fmt.Sprintf("Replace content in file %s", filePath),
 			Params: EditPermissionsParams{

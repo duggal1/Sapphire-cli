@@ -20,9 +20,9 @@ Use this tool when exact computation or verification is required.
 
 ## Input
 
-- Provide a concise task prompt describing what must be computed, verified, or transformed.
+- Provide a concise task description or Python code in the `code` field.
 - State the expected result clearly.
-- Include the data needed for the computation in the prompt.
+- Include the data needed for the computation in the input.
 
 ## Output
 

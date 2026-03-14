@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,7 +64,7 @@ func TestReadTextFileBoundaryCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			gotContent, gotHasMore, err := readTextFile(filePath, tt.offset, tt.limit)
+			gotContent, gotHasMore, err := readTextFile(context.Background(), filePath, tt.offset, tt.limit)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantContent, gotContent)
 			require.Equal(t, tt.wantHasMore, gotHasMore)
@@ -80,7 +81,7 @@ func TestReadTextFileTruncatesLongLines(t *testing.T) {
 	longLine := strings.Repeat("a", MaxLineLength+10)
 	require.NoError(t, os.WriteFile(filePath, []byte(longLine), 0o644))
 
-	content, hasMore, err := readTextFile(filePath, 0, 1)
+	content, hasMore, err := readTextFile(context.Background(), filePath, 0, 1)
 	require.NoError(t, err)
 	require.False(t, hasMore)
 	require.Equal(t, strings.Repeat("a", MaxLineLength)+"...", content)

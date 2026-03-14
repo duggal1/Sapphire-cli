@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -45,9 +46,8 @@ func NewAgentToolMessageItem(
 ) *AgentToolMessageItem {
 	t := &AgentToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgentToolRenderContext{agent: t}, canceled)
-	// For the agent tool we shouldn't show spinning animations.
 	t.spinningFunc = func(state SpinningState) bool {
-		return false
+		return !state.HasResult() && !state.IsCanceled()
 	}
 	return t
 }
@@ -100,12 +100,16 @@ type AgentToolRenderContext struct {
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
-	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
-		return pendingTool(sty, "Agent", nil)
-	}
 
 	var params agent.AgentParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+	if params.Background {
+		return renderBackgroundAgentIndicator(sty, opts)
+	}
+
+	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
+		return pendingAgentTool(sty, opts.Anim)
+	}
 
 	prompt := params.Prompt
 	prompt = strings.ReplaceAll(prompt, "\n", " ")
@@ -168,6 +172,23 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	return result
 }
 
+func pendingAgentTool(sty *styles.Styles, anim *anim.Anim) string {
+	icon := sty.Tool.IconPending.Render()
+	label := sty.Tool.NameNormal.Render("Agent")
+	if anim != nil {
+		label = styles.ShimmerTextWarm(sty, "Agent", anim.Frame())
+	}
+	return fmt.Sprintf("%s %s", icon, label)
+}
+
+func renderBackgroundAgentIndicator(sty *styles.Styles, opts *ToolRenderOpts) string {
+	label := "Agent running in background"
+	if opts.Anim != nil {
+		return styles.ShimmerTextNeutral(sty, label, opts.Anim.Frame())
+	}
+	return label
+}
+
 // -----------------------------------------------------------------------------
 // Background Sub-Agents Indicator
 // -----------------------------------------------------------------------------
@@ -194,9 +215,6 @@ func NewBackgroundSubAgentsToolMessageItem(
 		&BackgroundSubAgentsToolRenderContext{},
 		canceled,
 	)
-	t.spinningFunc = func(state SpinningState) bool {
-		return false
-	}
 	return t
 }
 
@@ -206,15 +224,20 @@ type BackgroundSubAgentsToolRenderContext struct{}
 // RenderTool implements the [ToolRenderer] interface.
 func (r *BackgroundSubAgentsToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	label := "Running agents in the background"
-	return styles.ApplyBoldForegroundGradShifted(
-		sty,
-		label,
-		0,
-		sty.Primary,
-		sty.Secondary,
-		sty.Tertiary,
-		sty.Secondary,
-	)
+	var payload struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &payload); err == nil && payload.Count > 0 {
+		label = fmt.Sprintf("Running %d agents in the background", payload.Count)
+	}
+	if !opts.IsSpinning {
+		return label
+	}
+	shift := 0
+	if opts.Anim != nil {
+		shift = opts.Anim.Frame()
+	}
+	return styles.ShimmerTextNeutral(sty, label, shift)
 }
 
 // -----------------------------------------------------------------------------
@@ -242,9 +265,8 @@ func NewAgenticFetchToolMessageItem(
 ) *AgenticFetchToolMessageItem {
 	t := &AgenticFetchToolMessageItem{}
 	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &AgenticFetchToolRenderContext{fetch: t}, canceled)
-	// For the agentic fetch tool we shouldn't show spinning animations.
 	t.spinningFunc = func(state SpinningState) bool {
-		return false
+		return !state.HasResult() && !state.IsCanceled()
 	}
 	return t
 }
@@ -285,7 +307,7 @@ type agenticFetchParams struct {
 func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.fetch.nestedTools) == 0 {
-		return pendingTool(sty, "Agentic Fetch", nil)
+		return pendingTool(sty, "Agentic Fetch", opts.Anim)
 	}
 
 	var params agenticFetchParams

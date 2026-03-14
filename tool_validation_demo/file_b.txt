@@ -1,0 +1,3 @@
+Line 1 of File B. (Batch Edit)
+It is a companion to file A.
+Line 3 of File B.

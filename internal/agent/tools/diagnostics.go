@@ -20,10 +20,12 @@ type DiagnosticsParams struct {
 }
 
 type DiagnosticsSummary struct {
-	FileErrors      int
-	FileWarnings    int
-	ProjectErrors   int
-	ProjectWarnings int
+	FileErrors       int
+	FileWarnings     int
+	ProjectErrors    int
+	ProjectWarnings  int
+	CompilerErrors   int
+	CompilerWarnings int
 }
 
 const DiagnosticsToolName = "lsp_diagnostics"
@@ -37,11 +39,10 @@ func NewDiagnosticsTool(lspManager *lsp.Manager) fantasy.AgentTool {
 		DiagnosticsToolName,
 		string(diagnosticsDescription),
 		func(ctx context.Context, params DiagnosticsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if lspManager.Clients().Len() == 0 {
-				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
+			if lspManager != nil && lspManager.Clients().Len() > 0 {
+				notifyLSPs(ctx, lspManager, params.FilePath)
 			}
-			notifyLSPs(ctx, lspManager, params.FilePath)
-			output := getDiagnostics(params.FilePath, lspManager)
+			output := getDiagnostics(ctx, params.FilePath, lspManager)
 			return fantasy.NewTextResponse(output), nil
 		})
 }
@@ -122,33 +123,31 @@ func notifyLSPs(
 	wg.Wait()
 }
 
-func getDiagnostics(filePath string, manager *lsp.Manager) string {
-	output, _ := getDiagnosticsWithSummary(filePath, manager)
+func getDiagnostics(ctx context.Context, filePath string, manager *lsp.Manager) string {
+	output, _ := getDiagnosticsWithSummary(ctx, filePath, manager)
 	return output
 }
 
-func getDiagnosticsWithSummary(filePath string, manager *lsp.Manager) (string, DiagnosticsSummary) {
-	if manager == nil {
-		return "", DiagnosticsSummary{}
-	}
-
+func getDiagnosticsWithSummary(ctx context.Context, filePath string, manager *lsp.Manager) (string, DiagnosticsSummary) {
 	var fileDiagnostics []string
 	var projectDiagnostics []string
 
-	for lspName, client := range manager.Clients().Seq2() {
-		for location, diags := range client.GetDiagnostics() {
-			path, err := location.Path()
-			if err != nil {
-				slog.Error("Failed to convert diagnostic location URI to path", "uri", location, "error", err)
-				continue
-			}
-			isCurrentFile := path == filePath
-			for _, diag := range diags {
-				formattedDiag := formatDiagnostic(path, diag, lspName)
-				if isCurrentFile {
-					fileDiagnostics = append(fileDiagnostics, formattedDiag)
-				} else {
-					projectDiagnostics = append(projectDiagnostics, formattedDiag)
+	if manager != nil {
+		for lspName, client := range manager.Clients().Seq2() {
+			for location, diags := range client.GetDiagnostics() {
+				path, err := location.Path()
+				if err != nil {
+					slog.Error("Failed to convert diagnostic location URI to path", "uri", location, "error", err)
+					continue
+				}
+				isCurrentFile := path == filePath
+				for _, diag := range diags {
+					formattedDiag := formatDiagnostic(path, diag, lspName)
+					if isCurrentFile {
+						fileDiagnostics = append(fileDiagnostics, formattedDiag)
+					} else {
+						projectDiagnostics = append(projectDiagnostics, formattedDiag)
+					}
 				}
 			}
 		}
@@ -162,8 +161,16 @@ func getDiagnosticsWithSummary(filePath string, manager *lsp.Manager) (string, D
 	writeDiagnostics(&output, "project_diagnostics", projectDiagnostics)
 
 	summary := DiagnosticsSummary{}
+	compilerDiagnostics := getCompilerDiagnostics(ctx, filePath)
+	if compilerDiagnostics.Output != "" {
+		output.WriteString("\n<compiler_diagnostics>\n")
+		output.WriteString(compilerDiagnostics.Output)
+		output.WriteString("\n</compiler_diagnostics>\n")
+		summary.CompilerErrors = compilerDiagnostics.Errors
+		summary.CompilerWarnings = compilerDiagnostics.Warnings
+	}
 
-	if len(fileDiagnostics) > 0 || len(projectDiagnostics) > 0 {
+	if len(fileDiagnostics) > 0 || len(projectDiagnostics) > 0 || summary.CompilerErrors > 0 || summary.CompilerWarnings > 0 {
 		summary.FileErrors = countSeverity(fileDiagnostics, "Error")
 		summary.FileWarnings = countSeverity(fileDiagnostics, "Warn")
 		summary.ProjectErrors = countSeverity(projectDiagnostics, "Error")
@@ -171,6 +178,9 @@ func getDiagnosticsWithSummary(filePath string, manager *lsp.Manager) (string, D
 		output.WriteString("\n<diagnostic_summary>\n")
 		fmt.Fprintf(&output, "Current file: %d errors, %d warnings\n", summary.FileErrors, summary.FileWarnings)
 		fmt.Fprintf(&output, "Project: %d errors, %d warnings\n", summary.ProjectErrors, summary.ProjectWarnings)
+		if summary.CompilerErrors > 0 || summary.CompilerWarnings > 0 {
+			fmt.Fprintf(&output, "Compiler: %d errors, %d warnings\n", summary.CompilerErrors, summary.CompilerWarnings)
+		}
 		output.WriteString("</diagnostic_summary>\n")
 	}
 

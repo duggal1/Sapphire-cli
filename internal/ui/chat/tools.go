@@ -169,7 +169,7 @@ func newBaseToolMessageItem(
 	canceled bool,
 ) *baseToolMessageItem {
 	// we only do full width for diffs (as far as I know)
-	hasCappedWidth := toolCall.Name != tools.EditToolName && toolCall.Name != tools.AgenticEditToolName
+	hasCappedWidth := toolCall.Name != tools.EditToolName && toolCall.Name != tools.SingleEditToolName && toolCall.Name != tools.AgenticEditToolName
 
 	status := ToolStatusRunning
 	if canceled {
@@ -218,11 +218,11 @@ func NewToolMessageItem(
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
 		item = NewJobKillToolMessageItem(sty, toolCall, result, canceled)
-	case tools.ViewToolName, tools.AgenticViewToolName:
+	case tools.ViewToolName, tools.SingleViewToolName, tools.AgenticViewToolName:
 		item = NewViewToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WriteToolName:
 		item = NewWriteToolMessageItem(sty, toolCall, result, canceled)
-	case tools.EditToolName:
+	case tools.EditToolName, tools.SingleEditToolName:
 		item = NewEditToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticEditToolName:
 		item = NewMultiEditToolMessageItem(sty, toolCall, result, canceled)
@@ -435,13 +435,11 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 func pendingTool(sty *styles.Styles, name string, anim *anim.Anim) string {
 	icon := sty.Tool.IconPending.Render()
 	toolName := sty.Tool.NameNormal.Render(name)
-
-	var animView string
 	if anim != nil {
-		animView = anim.Render()
+		toolName = styles.ShimmerText(sty, name, anim.Frame())
 	}
 
-	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
+	return fmt.Sprintf("%s %s", icon, toolName)
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.
@@ -531,7 +529,11 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 		nameStyle = sty.Tool.NameNested
 	}
 	toolName := nameStyle.Render(name)
-	prefix := fmt.Sprintf("%s %s ", icon, toolName)
+	prefix := fmt.Sprintf("%s %s", icon, toolName)
+	if len(params) > 0 {
+		prefix += " " + sty.ResourceAdditionalText.Render("·")
+	}
+	prefix += " "
 	prefixWidth := lipgloss.Width(prefix)
 	remainingWidth := width - prefixWidth
 	paramsStr := toolParamList(sty, params, remainingWidth)
@@ -542,6 +544,8 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
+	prefix := sty.HalfMuted.Render("│ ")
+	contentWidth := max(0, width-lipgloss.Width(prefix))
 
 	maxLines := responseContextHeight
 	if expanded {
@@ -553,11 +557,10 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		if i >= maxLines {
 			break
 		}
-		ln = " " + ln
-		if lipgloss.Width(ln) > width {
-			ln = ansi.Truncate(ln, width, "…")
+		if lipgloss.Width(ln) > contentWidth {
+			ln = ansi.Truncate(ln, contentWidth, "…")
 		}
-		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(prefix+ln))
 	}
 
 	wasTruncated := len(lines) > responseContextHeight
@@ -565,7 +568,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 	if !expanded && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(prefix+fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
 	}
 
 	return strings.Join(out, "\n")
@@ -617,7 +620,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	if len(lines) > maxLines && !expanded {
 		out = append(out, sty.Tool.ContentCodeTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+			Render(sty.HalfMuted.Render("│ ")+fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -672,7 +675,7 @@ func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 	dataSize := len(data) * 3 / 4
 	sizeStr := formatSize(dataSize)
 
-	return sty.Tool.Body.Render(fmt.Sprintf(
+	return sty.Tool.FileBlock.Render(fmt.Sprintf(
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Image"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
@@ -683,7 +686,7 @@ func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 
 // toolOutputSkillContent renders a skill loaded indicator.
 func toolOutputSkillContent(sty *styles.Styles, name, description string) string {
-	return sty.Tool.Body.Render(fmt.Sprintf(
+	return sty.Tool.FileBlock.Render(fmt.Sprintf(
 		"%s %s %s %s",
 		sty.Tool.ResourceLoadedText.Render("Loaded Skill"),
 		sty.Tool.ResourceLoadedIndicator.Render(styles.ArrowRightIcon),
@@ -918,6 +921,18 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	return sty.Tool.Body.Render(strings.Join(out, "\n"))
 }
 
+func toolOutputCollapsedMarkdownContent(sty *styles.Styles, content string, width int) string {
+	lineCount := 0
+	if strings.TrimSpace(content) != "" {
+		lineCount = strings.Count(content, "\n") + 1
+	}
+	summary := " Markdown output hidden"
+	if lineCount > 0 {
+		summary = fmt.Sprintf("%s · %d lines", summary, lineCount)
+	}
+	return sty.Tool.ContentTruncation.Width(width).Render(sty.HalfMuted.Render("│") + summary)
+}
+
 // formatToolForCopy formats the tool call for clipboard copying.
 func (t *baseToolMessageItem) formatToolForCopy() string {
 	var parts []string
@@ -965,7 +980,7 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 			cmd = strings.ReplaceAll(cmd, "\t", "    ")
 			return fmt.Sprintf("**Command:** %s", cmd)
 		}
-	case tools.ViewToolName:
+	case tools.ViewToolName, tools.SingleViewToolName:
 		var params tools.ViewParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
 			var parts []string
@@ -978,7 +993,7 @@ func (t *baseToolMessageItem) formatParametersForCopy() string {
 			}
 			return strings.Join(parts, "\n")
 		}
-	case tools.EditToolName:
+	case tools.EditToolName, tools.SingleEditToolName:
 		var params tools.EditParams
 		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
 			return fmt.Sprintf("**File:** %s", fsext.PrettyPath(params.FilePath))
@@ -1126,9 +1141,9 @@ func (t *baseToolMessageItem) formatResultForCopy() string {
 	switch t.toolCall.Name {
 	case tools.BashToolName:
 		return t.formatBashResultForCopy()
-	case tools.ViewToolName:
+	case tools.ViewToolName, tools.SingleViewToolName:
 		return t.formatViewResultForCopy()
-	case tools.EditToolName:
+	case tools.EditToolName, tools.SingleEditToolName:
 		return t.formatEditResultForCopy()
 	case tools.AgenticEditToolName:
 		return t.formatMultiEditResultForCopy()
@@ -1470,6 +1485,8 @@ func prettifyToolName(name string) string {
 		return "Download"
 	case tools.EditToolName:
 		return "Edit"
+	case tools.SingleEditToolName:
+		return "Single Edit"
 	case tools.AgenticEditToolName:
 		return "Agentic Edit"
 	case tools.FetchToolName:
@@ -1492,6 +1509,8 @@ func prettifyToolName(name string) string {
 		return "To-Do"
 	case tools.ViewToolName:
 		return "View"
+	case tools.SingleViewToolName:
+		return "Single View"
 	case tools.WriteToolName:
 		return "Write"
 	default:

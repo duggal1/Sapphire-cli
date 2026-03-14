@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,15 +30,88 @@ type MultiEditOperation struct {
 	ReplaceAll bool   `json:"replace_all,omitempty" description:"Replace all occurrences of old_string (default false)."`
 }
 
+func (o *MultiEditOperation) UnmarshalJSON(data []byte) error {
+	type rawMultiEditOperation struct {
+		OldString   *string `json:"old_string"`
+		Old         *string `json:"old"`
+		NewString   *string `json:"new_string"`
+		New         *string `json:"new"`
+		Replacement *string `json:"replacement"`
+		Replace     *string `json:"replace"`
+		ReplaceWith *string `json:"replace_with"`
+		Content     *string `json:"content"`
+		ReplaceAll  *bool   `json:"replace_all"`
+		All         *bool   `json:"all"`
+		Global      *bool   `json:"global"`
+	}
+
+	var raw rawMultiEditOperation
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	o.OldString = firstStringValue(raw.OldString, raw.Old)
+	o.NewString = firstStringValue(raw.NewString, raw.New, raw.Replacement, raw.Replace, raw.ReplaceWith, raw.Content)
+	o.ReplaceAll = firstBoolValue(raw.ReplaceAll, raw.All, raw.Global)
+
+	return nil
+}
+
 type FileEdit struct {
 	FilePath string               `json:"file_path" description:"The absolute path to the file to modify"`
 	Edits    []MultiEditOperation `json:"edits" description:"Array of edit operations to perform sequentially on the file"`
 }
 
+func (f *FileEdit) UnmarshalJSON(data []byte) error {
+	type rawFileEdit struct {
+		FilePath    string          `json:"file_path"`
+		Path        string          `json:"path"`
+		Edits       json.RawMessage `json:"edits"`
+		OldString   *string         `json:"old_string"`
+		Old         *string         `json:"old"`
+		NewString   *string         `json:"new_string"`
+		New         *string         `json:"new"`
+		Replacement *string         `json:"replacement"`
+		Replace     *string         `json:"replace"`
+		ReplaceWith *string         `json:"replace_with"`
+		Content     *string         `json:"content"`
+		ReplaceAll  *bool           `json:"replace_all"`
+		All         *bool           `json:"all"`
+		Global      *bool           `json:"global"`
+	}
+
+	var raw rawFileEdit
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	edits, err := decodeMultiEditOperations(raw.Edits)
+	if err != nil {
+		return err
+	}
+
+	f.FilePath = strings.TrimSpace(cmp.Or(raw.FilePath, raw.Path))
+	f.Edits = edits
+
+	if len(f.Edits) == 0 && hasInlineEdit(raw.OldString, raw.Old, raw.NewString, raw.New, raw.Replacement, raw.Replace, raw.ReplaceWith, raw.Content, raw.ReplaceAll, raw.All, raw.Global) {
+		f.Edits = []MultiEditOperation{{
+			OldString:  firstStringValue(raw.OldString, raw.Old),
+			NewString:  firstStringValue(raw.NewString, raw.New, raw.Replacement, raw.Replace, raw.ReplaceWith, raw.Content),
+			ReplaceAll: firstBoolValue(raw.ReplaceAll, raw.All, raw.Global),
+		}}
+	}
+
+	return nil
+}
+
 type MultiEditParams struct {
-	FileEdits []FileEdit           `json:"file_edits,omitempty" description:"Array of files and their edits to apply in parallel"`
-	FilePath  string               `json:"file_path,omitempty" description:"The absolute path to the file to modify (legacy)"`
-	Edits     []MultiEditOperation `json:"edits,omitempty" description:"Array of edit operations to perform sequentially on the file (legacy)"`
+	FileEdits  []FileEdit           `json:"file_edits,omitempty" description:"Array of files and their edits to apply in parallel"`
+	FilePath   string               `json:"file_path,omitempty" description:"The absolute path to the file to modify (legacy)"`
+	Path       string               `json:"path,omitempty" description:"Alias for file_path"`
+	Edits      []MultiEditOperation `json:"edits,omitempty" description:"Array of edit operations to perform sequentially on the file (legacy)"`
+	OldString  string               `json:"old_string,omitempty" description:"Single-edit compatibility alias for one-file edits"`
+	NewString  string               `json:"new_string,omitempty" description:"Single-edit compatibility alias for one-file edits"`
+	ReplaceAll bool                 `json:"replace_all,omitempty" description:"Single-edit compatibility alias for one-file edits"`
 }
 
 type MultiEditPermissionsParams struct {
@@ -71,6 +146,63 @@ type MultiEditResponseMetadata struct {
 	EditsFailed  []FailedEdit       `json:"edits_failed,omitempty"`
 }
 
+var (
+	errMultiEditMissingFileEdits = errors.New("at least one file edit operation is required")
+	errMultiEditMissingEdits     = errors.New("at least one edit operation is required")
+)
+
+func (p *MultiEditParams) UnmarshalJSON(data []byte) error {
+	type rawMultiEditParams struct {
+		FileEdits   json.RawMessage `json:"file_edits"`
+		FilePath    string          `json:"file_path"`
+		Path        string          `json:"path"`
+		Edits       json.RawMessage `json:"edits"`
+		OldString   *string         `json:"old_string"`
+		Old         *string         `json:"old"`
+		NewString   *string         `json:"new_string"`
+		New         *string         `json:"new"`
+		Replacement *string         `json:"replacement"`
+		Replace     *string         `json:"replace"`
+		ReplaceWith *string         `json:"replace_with"`
+		Content     *string         `json:"content"`
+		ReplaceAll  *bool           `json:"replace_all"`
+		All         *bool           `json:"all"`
+		Global      *bool           `json:"global"`
+	}
+
+	var raw rawMultiEditParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	fileEdits, err := decodeFileEdits(raw.FileEdits)
+	if err != nil {
+		return err
+	}
+	edits, err := decodeMultiEditOperations(raw.Edits)
+	if err != nil {
+		return err
+	}
+
+	p.FileEdits = fileEdits
+	p.FilePath = strings.TrimSpace(cmp.Or(raw.FilePath, raw.Path))
+	p.Path = strings.TrimSpace(raw.Path)
+	p.Edits = edits
+	p.OldString = firstStringValue(raw.OldString, raw.Old)
+	p.NewString = firstStringValue(raw.NewString, raw.New, raw.Replacement, raw.Replace, raw.ReplaceWith, raw.Content)
+	p.ReplaceAll = firstBoolValue(raw.ReplaceAll, raw.All, raw.Global)
+
+	if len(p.Edits) == 0 && hasInlineEdit(raw.OldString, raw.Old, raw.NewString, raw.New, raw.Replacement, raw.Replace, raw.ReplaceWith, raw.Content, raw.ReplaceAll, raw.All, raw.Global) {
+		p.Edits = []MultiEditOperation{{
+			OldString:  p.OldString,
+			NewString:  p.NewString,
+			ReplaceAll: p.ReplaceAll,
+		}}
+	}
+
+	return nil
+}
+
 const AgenticEditToolName = "agentic_edit"
 
 //go:embed agentic_edit.md
@@ -89,22 +221,11 @@ func NewMultiEditTool(
 		AgenticEditToolName,
 		string(agenticEditDescription),
 		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if len(params.FileEdits) == 0 && params.FilePath != "" {
-				params.FileEdits = []FileEdit{
-					{
-						FilePath: params.FilePath,
-						Edits:    params.Edits,
-					},
-				}
+			normalizedParams, err := normalizeMultiEditParams(params)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-
-			if len(params.FileEdits) == 0 {
-				return fantasy.NewTextErrorResponse("at least one file edit operation is required"), nil
-			}
-
-			if len(params.FileEdits) > 25 {
-				return fantasy.NewTextErrorResponse("maximum of 25 file edits allowed per call"), nil
-			}
+			params = normalizedParams
 
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
@@ -117,7 +238,7 @@ func NewMultiEditTool(
 					return fantasy.NewTextErrorResponse("file_path is required"), nil
 				}
 				fileEdit.FilePath = filepathext.SmartJoin(workingDir, fileEdit.FilePath)
-				if err := editGuard.EnsureAllowed(sessionID, fileEdit.FilePath); err != nil {
+				if err := editGuard.EnsureAllowed(sessionID, fileEdit.FilePath, true); err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
 				resolvedEdits[i] = fileEdit
@@ -137,8 +258,8 @@ func NewMultiEditTool(
 			var finalMeta MultiEditResponseMetadata
 
 			for i, fe := range params.FileEdits {
-				if len(fe.Edits) == 0 {
-					allErrors = append(allErrors, fmt.Sprintf("%s: at least one edit operation is required", fe.FilePath))
+				if err := editGuard.EnsureAllowed(sessionID, fe.FilePath, true); err != nil {
+					allErrors = append(allErrors, fmt.Sprintf("- %s: %v", fe.FilePath, err))
 					continue
 				}
 
@@ -147,7 +268,7 @@ func NewMultiEditTool(
 					continue
 				}
 
-				editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+				editCtx := editContext{ctx: ctx, permissions: permissions, files: files, filetracker: filetracker, workingDir: workingDir, toolName: AgenticEditToolName}
 
 				var response fantasy.ToolResponse
 				var err error
@@ -169,7 +290,7 @@ func NewMultiEditTool(
 
 				notifyLSPs(ctx, lspManager, fe.FilePath)
 				text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
-				diagnostics, summary := getDiagnosticsWithSummary(fe.FilePath, lspManager)
+				diagnostics, summary := getDiagnosticsWithSummary(ctx, fe.FilePath, lspManager)
 				text += diagnostics
 
 				var meta MultiEditResponseMetadata
@@ -179,8 +300,8 @@ func NewMultiEditTool(
 
 				results = append(results, fileResult{filePath: fe.FilePath, output: text, meta: meta})
 
-				editGuard.SetLockedIfErrors(sessionID, fe.FilePath, summary.FileErrors > 0)
-				if summary.FileErrors > 0 {
+				editGuard.SetLockedIfErrors(sessionID, fe.FilePath, summary.FileErrors+summary.CompilerErrors+summary.FileWarnings+summary.CompilerWarnings > 0)
+				if summary.FileErrors+summary.CompilerErrors > 0 {
 					remaining := len(params.FileEdits) - i - 1
 					if remaining > 0 {
 						allErrors = append(allErrors, fmt.Sprintf("Skipped %d remaining file edit(s) due to errors in %s", remaining, fe.FilePath))
@@ -241,6 +362,128 @@ func validateEdits(edits []MultiEditOperation) error {
 		}
 	}
 	return nil
+}
+
+func normalizeMultiEditParams(params MultiEditParams) (MultiEditParams, error) {
+	if params.FilePath == "" && params.Path != "" {
+		params.FilePath = params.Path
+	}
+
+	if len(params.Edits) == 0 && (params.OldString != "" || params.NewString != "" || params.ReplaceAll) {
+		params.Edits = []MultiEditOperation{{
+			OldString:  params.OldString,
+			NewString:  params.NewString,
+			ReplaceAll: params.ReplaceAll,
+		}}
+	}
+
+	if len(params.FileEdits) == 0 && params.FilePath != "" {
+		params.FileEdits = []FileEdit{{
+			FilePath: params.FilePath,
+			Edits:    params.Edits,
+		}}
+	}
+
+	if len(params.FileEdits) == 0 {
+		return MultiEditParams{}, errMultiEditMissingFileEdits
+	}
+
+	if len(params.FileEdits) > 25 {
+		return MultiEditParams{}, fmt.Errorf("maximum of 25 file edits allowed per call")
+	}
+
+	normalizedFileEdits := make([]FileEdit, len(params.FileEdits))
+	for i, fileEdit := range params.FileEdits {
+		if fileEdit.FilePath == "" {
+			return MultiEditParams{}, fmt.Errorf("file_path is required")
+		}
+		if len(fileEdit.Edits) == 0 {
+			if len(params.FileEdits) == 1 {
+				return MultiEditParams{}, errMultiEditMissingEdits
+			}
+			return MultiEditParams{}, fmt.Errorf("%s: %w", fileEdit.FilePath, errMultiEditMissingEdits)
+		}
+		if err := validateEdits(fileEdit.Edits); err != nil {
+			return MultiEditParams{}, fmt.Errorf("%s: %w", fileEdit.FilePath, err)
+		}
+		normalizedFileEdits[i] = FileEdit{
+			FilePath: fileEdit.FilePath,
+			Edits:    fileEdit.Edits,
+		}
+	}
+
+	params.FileEdits = normalizedFileEdits
+	return params, nil
+}
+
+func decodeFileEdits(raw json.RawMessage) ([]FileEdit, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var edits []FileEdit
+	if err := json.Unmarshal(raw, &edits); err == nil {
+		return edits, nil
+	}
+
+	var edit FileEdit
+	if err := json.Unmarshal(raw, &edit); err == nil {
+		return []FileEdit{edit}, nil
+	}
+
+	return nil, fmt.Errorf("invalid file_edits payload")
+}
+
+func decodeMultiEditOperations(raw json.RawMessage) ([]MultiEditOperation, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var edits []MultiEditOperation
+	if err := json.Unmarshal(raw, &edits); err == nil {
+		return edits, nil
+	}
+
+	var edit MultiEditOperation
+	if err := json.Unmarshal(raw, &edit); err == nil {
+		return []MultiEditOperation{edit}, nil
+	}
+
+	return nil, fmt.Errorf("invalid edits payload")
+}
+
+func firstStringValue(values ...*string) string {
+	for _, value := range values {
+		if value != nil {
+			return *value
+		}
+	}
+	return ""
+}
+
+func firstBoolValue(values ...*bool) bool {
+	for _, value := range values {
+		if value != nil {
+			return *value
+		}
+	}
+	return false
+}
+
+func hasInlineEdit(values ...any) bool {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case *string:
+			if typed != nil {
+				return true
+			}
+		case *bool:
+			if typed != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func processMultiEditWithCreation(edit editContext, params FileEdit, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

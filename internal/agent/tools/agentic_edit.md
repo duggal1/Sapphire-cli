@@ -1,4 +1,4 @@
-Makes multiple edits to one or more files in one operation. Built on Edit tool for efficient multiple find-and-replace operations. Prefer over Edit tool for multiple edits to same file, or when editing up to 25 files in parallel.
+Makes batched edits across one or more files in one operation. Built on Edit tool for efficient multiple find-and-replace operations across a file set. Prefer `single_edit` for a single replacement in one file.
 
 **Note**: This tool is only available to the main agent. Sub-agents do not have multi-edit capability to prevent token explosion.
 
@@ -16,6 +16,11 @@ Makes multiple edits to one or more files in one operation. Built on Edit tool f
      - old_string: Text to replace (must match exactly including whitespace/indentation)
      - new_string: Replacement text
      - replace_all: Replace all occurrences (optional, defaults to false)
+2. Compatible single-file shorthand:
+   - `file_path` + `edits`
+   - `file_path` + `old_string` + `new_string` (+ optional `replace_all`)
+3. Compatible per-file shorthand inside `file_edits`:
+   - `file_path` + direct `old_string` + `new_string` (+ optional `replace_all`)
 </parameters>
 
 <operation>
@@ -72,7 +77,7 @@ If some edits fail:
 - Use replace_all only when you're certain; otherwise provide unique context.
 - Match existing style exactly (spaces, tabs, blank lines).
 - Review failed edits in the response and retry with corrections.
-- **High-Precision Batching**: Use the full capacity of `agentic_edit` (up to 10 edits) for efficiency. Success depends on absolute precision in every `old_string` match.
+- Prefer smaller precise batches over large speculative ones. Use `agentic_edit` when batching improves clarity, not just to fill capacity.
 - **Verify target context**: Ensure the surrounding context exactly matches the file before calling the tool.
 - **NEVER GUESS**: If a batch edit fails, re-read the file. Guessing whitespace or context in a multi-edit operation is guaranteed to fail.
 </best_practices>

@@ -173,6 +173,11 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 			slog.Debug("Skipping disabled MCP", "name", name)
 			continue
 		}
+		if !m.ShouldAutoStart() {
+			updateState(name, StateDisabled, nil, nil, Counts{})
+			slog.Debug("Skipping MCP auto-start", "name", name)
+			continue
+		}
 
 		// Set initial starting state
 		updateState(name, StateStarting, nil, nil, Counts{})
@@ -202,7 +207,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				return
 			}
 
-			tools, err := getTools(ctx, session)
+			tools, err := getTools(ctx, cfg, name, session)
 			if err != nil {
 				slog.Error("Error listing tools", "error", err)
 				updateState(name, StateError, err, nil, Counts{})
@@ -210,7 +215,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				return
 			}
 
-			prompts, err := getPrompts(ctx, session)
+			prompts, err := getPrompts(ctx, cfg, name, session)
 			if err != nil {
 				slog.Error("Error listing prompts", "error", err)
 				updateState(name, StateError, err, nil, Counts{})
@@ -218,7 +223,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				return
 			}
 
-			resources, err := getResources(ctx, session)
+			resources, err := getResources(ctx, cfg, name, session)
 			if err != nil {
 				slog.Error("Error listing resources", "error", err)
 				updateState(name, StateError, err, nil, Counts{})
@@ -461,7 +466,11 @@ func mcpTimeout(m config.MCPConfig) time.Duration {
 func stdioCheck(old *exec.Cmd) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, old.Path, old.Args...)
+	args := old.Args
+	if len(args) > 0 {
+		args = args[1:]
+	}
+	cmd := exec.CommandContext(ctx, old.Path, args...)
 	cmd.Env = old.Env
 	out, err := cmd.CombinedOutput()
 	if err == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {

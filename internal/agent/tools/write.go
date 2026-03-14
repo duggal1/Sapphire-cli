@@ -70,7 +70,7 @@ func NewWriteTool(
 			}
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
-			if err := editGuard.EnsureAllowed(sessionID, filePath); err != nil {
+			if err := editGuard.EnsureAllowed(sessionID, filePath, false); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
@@ -169,9 +169,9 @@ func NewWriteTool(
 
 			result := fmt.Sprintf("File successfully written: %s", filePath)
 			result = fmt.Sprintf("<result>\n%s\n</result>", result)
-			diagnostics, summary := getDiagnosticsWithSummary(filePath, lspManager)
+			diagnostics, summary := getDiagnosticsWithSummary(ctx, filePath, lspManager)
 			result += diagnostics
-			editGuard.SetLockedIfErrors(sessionID, filePath, summary.FileErrors > 0)
+			editGuard.SetLockedIfErrors(sessionID, filePath, summary.FileErrors+summary.CompilerErrors+summary.FileWarnings+summary.CompilerWarnings > 0)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result),
 				WriteResponseMetadata{
 					Diff:      diff,

@@ -5,18 +5,53 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// NewHTTPClient creates an HTTP client with debug logging enabled when debug mode is on.
+const (
+	defaultDialTimeout           = 10 * time.Second
+	defaultTLSHandshakeTimeout   = 10 * time.Second
+	defaultResponseHeaderTimeout = 45 * time.Second
+	defaultIdleConnTimeout       = 90 * time.Second
+	defaultKeepAlive             = 30 * time.Second
+	defaultExpectContinueTimeout = 1 * time.Second
+	defaultMaxIdleConns          = 100
+	defaultMaxIdleConnsPerHost   = 10
+)
+
+// NewHTTPClient creates an HTTP client with debug logging enabled.
 func NewHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: &HTTPRoundTripLogger{
-			Transport: http.DefaultTransport,
-		},
+	return NewHTTPClientWithTimeouts(true)
+}
+
+// NewHTTPClientWithTimeouts creates an HTTP client with sane timeouts.
+// When debug is true, requests and responses are logged.
+func NewHTTPClientWithTimeouts(debug bool) *http.Client {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   defaultDialTimeout,
+			KeepAlive: defaultKeepAlive,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          defaultMaxIdleConns,
+		MaxIdleConnsPerHost:   defaultMaxIdleConnsPerHost,
+		IdleConnTimeout:       defaultIdleConnTimeout,
+		TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
+		ResponseHeaderTimeout: defaultResponseHeaderTimeout,
+		ExpectContinueTimeout: defaultExpectContinueTimeout,
 	}
+	if debug {
+		return &http.Client{
+			Transport: &HTTPRoundTripLogger{
+				Transport: transport,
+			},
+		}
+	}
+	return &http.Client{Transport: transport}
 }
 
 // HTTPRoundTripLogger is an http.RoundTripper that logs requests and responses.

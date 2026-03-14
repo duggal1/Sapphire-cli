@@ -29,11 +29,11 @@ const (
 )
 
 type PythonToolParams struct {
-	Prompt string `json:"prompt" description:"The exact computation, verification, or transformation task to run with Python."`
+	Code string `json:"code" description:"The exact computation, verification, or transformation task to run with Python."`
 }
 
 type PythonToolResponseMetadata struct {
-	Prompt          string `json:"prompt"`
+	Code            string `json:"code"`
 	Model           string `json:"model"`
 	Text            string `json:"text,omitempty"`
 	ExecutedCode    string `json:"executed_code,omitempty"`
@@ -51,14 +51,14 @@ func NewPythonTool(client *genai.Client, model string) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("python tool is not configured"), nil
 			}
 
-			prompt := strings.TrimSpace(params.Prompt)
-			if prompt == "" {
-				return fantasy.NewTextErrorResponse("prompt is required"), nil
+			input := strings.TrimSpace(params.Code)
+			if input == "" {
+				return fantasy.NewTextErrorResponse("code is required"), nil
 			}
 
 			var (
 				text          string
-				code          string
+				executedCode  string
 				output        string
 				executionTime time.Duration
 				attempts      int
@@ -66,7 +66,7 @@ func NewPythonTool(client *genai.Client, model string) fantasy.AgentTool {
 
 			for attempts = 1; attempts <= pythonExecutionAttempts; attempts++ {
 				forceExecution := attempts > 1
-				response, duration, err := executePythonPrompt(ctx, client, model, prompt, forceExecution)
+				response, duration, err := executePythonPrompt(ctx, client, model, input, forceExecution)
 				executionTime += duration
 				if err != nil {
 					if errorsIsTimeout(err) {
@@ -76,8 +76,8 @@ func NewPythonTool(client *genai.Client, model string) fantasy.AgentTool {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("gemini python execution failed: %s", err)), nil
 				}
 
-				text, code, output = parsePythonExecutionResponse(response)
-				if code != "" || output != "" || attempts == pythonExecutionAttempts {
+				text, executedCode, output = parsePythonExecutionResponse(response)
+				if executedCode != "" || output != "" || attempts == pythonExecutionAttempts {
 					break
 				}
 			}
@@ -90,10 +90,10 @@ func NewPythonTool(client *genai.Client, model string) fantasy.AgentTool {
 				return fantasy.WithResponseMetadata(
 					fantasy.NewTextResponse("Python execution encountered an error:\n\n"+output),
 					PythonToolResponseMetadata{
-						Prompt:          prompt,
+						Code:            input,
 						Model:           model,
 						Text:            text,
-						ExecutedCode:    code,
+						ExecutedCode:    executedCode,
 						ExecutionOutput: output,
 						ExecutionTimeMs: executionTime.Milliseconds(),
 						Attempts:        attempts,
@@ -113,10 +113,10 @@ func NewPythonTool(client *genai.Client, model string) fantasy.AgentTool {
 			}
 
 			metadata := PythonToolResponseMetadata{
-				Prompt:          prompt,
+				Code:            input,
 				Model:           model,
 				Text:            text,
-				ExecutedCode:    code,
+				ExecutedCode:    executedCode,
 				ExecutionOutput: output,
 				ExecutionTimeMs: executionTime.Milliseconds(),
 				Attempts:        attempts,

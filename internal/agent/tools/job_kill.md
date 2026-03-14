@@ -1,7 +1,7 @@
 Terminates a background shell process.
 
 <usage>
-- Provide the shell ID returned from a background bash execution
+- Provide the shell ID returned from a background bash execution (optional if there is a recent background job in the session)
 - Cancels the running process and cleans up resources
 </usage>
 

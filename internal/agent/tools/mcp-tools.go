@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
@@ -46,7 +47,47 @@ func (m *Tool) ProviderOptions() fantasy.ProviderOptions {
 }
 
 func (m *Tool) Name() string {
-	return fmt.Sprintf("mcp_%s_%s", m.mcpName, m.tool.Name)
+	return sanitizeToolName(fmt.Sprintf("mcp_%s_%s", m.mcpName, m.tool.Name))
+}
+
+// sanitizeToolName replaces characters that are invalid in Gemini function
+// names. Gemini requires: ^[a-zA-Z_][a-zA-Z0-9_.:\-]*$ (max 64 chars).
+func sanitizeToolName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '_', r == '.', r == ':', r == '-':
+			b.WriteRune(r)
+		default:
+			// Replace invalid characters with underscore.
+			// Avoid double underscores from consecutive invalid chars.
+			if i > 0 && b.Len() > 0 {
+				last := b.String()
+				if last[len(last)-1] != '_' {
+					b.WriteByte('_')
+				}
+			} else {
+				b.WriteByte('_')
+			}
+		}
+	}
+	result := b.String()
+	// Ensure it starts with a letter or underscore (not digit, dot, colon, dash).
+	if len(result) > 0 {
+		first := result[0]
+		if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+			result = "_" + result
+		}
+	}
+	// Truncate to 64 chars max.
+	if len(result) > 64 {
+		result = result[:64]
+	}
+	return result
 }
 
 func (m *Tool) MCP() string {

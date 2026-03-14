@@ -1,7 +1,7 @@
 Retrieves the current output from a background shell.
 
 <usage>
-- Provide the shell ID returned from a background bash execution
+- Provide the shell ID returned from a background bash execution (optional if there is a recent background job in the session)
 - Returns the current stdout and stderr output
 - Indicates whether the shell has completed execution
 - Set wait=true to block until the shell completes or the request context is done

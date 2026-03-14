@@ -9,6 +9,9 @@ type (
 	messageIDContextKey string
 	supportsImagesKey   string
 	modelNameKey        string
+	workingDirKey       string
+	runtimeControlKey   string
+	writeScopeKey       string
 )
 
 const (
@@ -20,10 +23,25 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+	// WorkingDirContextKey is the key for the working directory in the context.
+	WorkingDirContextKey workingDirKey = "working_dir"
+	// RuntimeControlContextKey is the key for the runtime control loop in the context.
+	RuntimeControlContextKey runtimeControlKey = "runtime_control"
+	// WriteScopeContextKey is the key for sub-agent write scope constraints.
+	WriteScopeContextKey writeScopeKey = "write_scope"
 
 	// LoadSkillToolName is the name of the tool used to load skills.
 	LoadSkillToolName = "load_skill"
+
+	// ToolSuggestToolName is the name of the tool used to suggest MCP tools.
+	ToolSuggestToolName = "tool_suggest"
 )
+
+type RuntimeControl interface {
+	AllowToolCall(toolName string) error
+	BeginToolExecution(toolName string)
+	FinishToolExecution(toolName string)
+}
 
 // getContextValue is a generic helper that retrieves a typed value from context.
 // If the value is not found or has the wrong type, it returns the default value.
@@ -56,4 +74,31 @@ func GetSupportsImagesFromContext(ctx context.Context) bool {
 // GetModelNameFromContext retrieves the model name from the context.
 func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
+}
+
+// GetWorkingDirFromContext retrieves the working directory from the context.
+func GetWorkingDirFromContext(ctx context.Context) string {
+	return getContextValue(ctx, WorkingDirContextKey, "")
+}
+
+func GetRuntimeControlFromContext(ctx context.Context) RuntimeControl {
+	value := ctx.Value(RuntimeControlContextKey)
+	if value == nil {
+		return nil
+	}
+	if control, ok := value.(RuntimeControl); ok {
+		return control
+	}
+	return nil
+}
+
+func GetWriteScopeFromContext(ctx context.Context) *WriteScope {
+	value := ctx.Value(WriteScopeContextKey)
+	if value == nil {
+		return nil
+	}
+	if scope, ok := value.(*WriteScope); ok {
+		return scope
+	}
+	return nil
 }

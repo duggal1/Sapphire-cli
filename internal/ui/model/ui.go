@@ -50,7 +50,6 @@ import (
 	"github.com/charmbracelet/sapphire/internal/version"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
-	"github.com/charmbracelet/ultraviolet/screen"
 	"github.com/charmbracelet/x/editor"
 )
 
@@ -308,7 +307,7 @@ func New(com *common.Common) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(false)
+	ui.setEditorPrompt(com.App.Permissions.SkipRequests())
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -537,9 +536,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
-		if !m.isAgentBusy() {
-			m.completeRequestTimer()
-		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
 	case pubsub.Event[app.LSPEvent]:
@@ -1013,6 +1009,9 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
+		if !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+			m.completeRequestTimer()
+		}
 		hadFooter := m.assistantFooter != nil
 		if cmd := m.setAssistantFooter(&msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1034,6 +1033,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 			if toolMsgItem, ok := toolItem.(chat.ToolMessageItem); ok {
 				toolMsgItem.SetResult(&tr)
+				m.chat.InvalidateMessage(tr.ToolCallID)
 				if m.chat.Follow() {
 					if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
@@ -1073,7 +1073,11 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
 			assistantItem.SetMessage(&msg)
+			m.chat.InvalidateMessage(msg.ID)
 		}
+	}
+	if msg.Role == message.Assistant && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+		m.completeRequestTimer()
 	}
 	if cmd := m.setAssistantFooter(&msg); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -1094,6 +1098,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			// to avoid clearing the cache
 			if (tc.Finished && !existingToolCall.Finished) || tc.Input != existingToolCall.Input {
 				toolItem.SetToolCall(tc)
+				m.chat.InvalidateMessage(tc.ID)
 			}
 		}
 		if existingToolItem == nil {
@@ -1138,19 +1143,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Find the parent agent tool item.
 	var agentItem chat.NestedToolContainer
-	for i := 0; i < m.chat.Len(); i++ {
-		item := m.chat.MessageItem(toolCallID)
-		if item == nil {
-			continue
-		}
+	item := m.chat.MessageItem(toolCallID)
+	if item != nil {
 		if agent, ok := item.(chat.NestedToolContainer); ok {
-			if toolMessageItem, ok := item.(chat.ToolMessageItem); ok {
-				if toolMessageItem.ToolCall().ID == toolCallID {
-					// Verify this agent belongs to the correct parent message.
-					// We can't directly check parentMessageID on the item, so we trust the session parsing.
-					agentItem = agent
-					break
-				}
+			if toolMessageItem, ok := item.(chat.ToolMessageItem); ok && toolMessageItem.ToolCall().ID == toolCallID {
+				agentItem = agent
 			}
 		}
 	}
@@ -1268,9 +1265,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.setEditorPrompt(yolo)
 		// Show feedback message based on YOLO mode state
 		if yolo {
-			cmds = append(cmds, util.ReportInfo("YOLO mode enabled - auto-approving permissions"))
+			cmds = append(cmds, util.ReportInfo("YOLO mode enabled. Permissions will be auto-approved."))
 		} else {
-			cmds = append(cmds, util.ReportWarn("YOLO mode disabled - manual permission required"))
+			cmds = append(cmds, util.ReportWarn("YOLO mode disabled. Manual permission approval is required."))
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
@@ -1457,14 +1454,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		def := msg.Definition
 		envMap, missing := buildMCPEnvPlaceholders(def.EnvKeys)
-		disabled := len(def.EnvKeys) > 0 && len(missing) > 0
-		installCfg := config.MCPConfig{
-			Type:     def.Type,
-			Command:  def.Command,
-			Args:     append([]string{}, def.Args...),
-			Env:      envMap,
-			Disabled: disabled,
-		}
+		installCfg := config.RegistryDefinitionToMCPConfig(def, true)
+		installCfg.Env = envMap
+		installCfg.Disabled = len(def.EnvKeys) > 0 && len(missing) > 0
 		if err := cfg.UpsertMCPConfig(def.Name, installCfg); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
@@ -2096,8 +2088,11 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		m.updateSize()
 	}
 
-	// Clear the screen first
-	screen.Clear(scr)
+	// Clear the screen and fill with background color
+	bgStyle := lipgloss.NewStyle().Background(m.com.Styles.BgBase)
+	bgFill := strings.Repeat(" ", area.Dx())
+	bgView := strings.Repeat(bgStyle.Render(bgFill)+"\n", area.Dy())
+	uv.NewStyledString(bgView).Draw(scr, area)
 
 	switch m.state {
 	case uiOnboarding:
@@ -2204,8 +2199,17 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 		if m.textarea.Focused() {
 			cur := m.textarea.Cursor()
-			cur.X++                            // Adjust for app margins
-			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
+			cur.X++ // Adjust for app margins
+			attachmentOffset := 0
+			if len(m.attachments.List()) > 0 {
+				editorWidth := scr.Bounds().Dx()
+				if !m.isCompact {
+					editorWidth -= layout.sidebar.Dx()
+				}
+				attachmentsView := m.attachments.Render(editorWidth)
+				attachmentOffset = lipgloss.Height(attachmentsView) + 1 // attachments row + spacer
+			}
+			cur.Y += m.layout.editor.Min.Y + attachmentOffset
 			return cur
 		}
 	}
@@ -2790,37 +2794,44 @@ func (m *UI) setEditorPrompt(yolo bool) {
 	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
 }
 
-// normalPromptFunc returns the normal editor prompt style ("  > " on first
-// line, "::: " on subsequent lines).
-func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
+func (m *UI) statusPrompt(info textarea.PromptInfo, yolo bool) string {
 	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return "  ✨ "
-		}
-		return "::: "
-	}
-	if info.Focused {
-		return t.EditorPromptNormalFocused.Render()
-	}
-	return t.EditorPromptNormalBlurred.Render()
-}
 
-// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
-// and colored dots.
-func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
+	if !yolo {
+		if info.LineNumber == 0 {
+			if info.Focused {
+				return "  > "
+			}
+			return "::: "
+		}
+		if info.Focused {
+			return t.EditorPromptNormalFocused.Render()
+		}
+		return t.EditorPromptNormalBlurred.Render()
+	}
+
 	if info.LineNumber == 0 {
 		if info.Focused {
 			return t.EditorPromptYoloIconFocused.Render()
-		} else {
-			return t.EditorPromptYoloIconBlurred.Render()
 		}
+		return t.EditorPromptYoloIconBlurred.Render()
 	}
 	if info.Focused {
 		return t.EditorPromptYoloDotsFocused.Render()
 	}
 	return t.EditorPromptYoloDotsBlurred.Render()
+}
+
+// normalPromptFunc returns the normal editor prompt style ("  > " on first
+// line, "::: " on subsequent lines).
+func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
+	return m.statusPrompt(info, false)
+}
+
+// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
+// and colored dots.
+func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
+	return m.statusPrompt(info, true)
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -3013,11 +3024,12 @@ func (m *UI) renderEditorView(width int) string {
 	if len(m.attachments.List()) > 0 {
 		attachmentsView = m.attachments.Render(width)
 	}
-	return strings.Join([]string{
-		attachmentsView,
-		m.textarea.View(),
-		"", // margin at bottom of editor
-	}, "\n")
+	// Add blank line between attachments and textarea for proper visual separation
+	parts := []string{m.textarea.View(), ""}
+	if attachmentsView != "" {
+		parts = append([]string{attachmentsView, ""}, parts...)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
@@ -3104,6 +3116,7 @@ func (m *UI) cancelAgent() tea.Cmd {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
 		coordinator.Cancel(m.session.ID)
+		m.completeRequestTimer()
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
 		m.renderPills()

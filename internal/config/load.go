@@ -391,6 +391,12 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 			}
 		}
 	}
+	if err := DisableSeededMCPAutoStart(context.Background(), c); err != nil {
+		slog.Warn("MCP auto-start migration failed", "error", err)
+	}
+	if err := PruneSeededMCPInventory(context.Background(), c); err != nil {
+		slog.Warn("MCP inventory prune failed", "error", err)
+	}
 	if c.LSP == nil {
 		c.LSP = make(map[string]LSPConfig)
 	}
@@ -440,6 +446,12 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		}
 	}
 	c.Options.InitializeAs = cmp.Or(c.Options.InitializeAs, defaultInitializeAs)
+	if c.Options.AgentMaxDepth <= 0 {
+		c.Options.AgentMaxDepth = defaultAgentMaxDepth
+	}
+	if c.Options.AgentMaxThreads <= 0 {
+		c.Options.AgentMaxThreads = defaultAgentMaxThreads
+	}
 }
 
 // applyLSPDefaults applies default values from powernap to LSP configurations
@@ -500,6 +512,19 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 			err = fmt.Errorf("default large model %s not found for provider %s", p.DefaultLargeModelID, p.ID)
 			return largeModel, smallModel, err
 		}
+		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
+		if defaultSmallModel == nil {
+			err = fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
+			return largeModel, smallModel, err
+		}
+
+		if strings.EqualFold(string(providerConfig.Type), "gemini") || strings.EqualFold(string(p.ID), "gemini") {
+			if flash := c.GetModel(string(p.ID), "gemini-3-flash-preview"); flash != nil {
+				defaultLargeModel = flash
+				defaultSmallModel = flash
+			}
+		}
+
 		largeModel = SelectedModel{
 			Provider:        string(p.ID),
 			Model:           defaultLargeModel.ID,
@@ -507,11 +532,6 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 			ReasoningEffort: defaultLargeModel.DefaultReasoningEffort,
 		}
 
-		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
-		if defaultSmallModel == nil {
-			err = fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			return largeModel, smallModel, err
-		}
 		smallModel = SelectedModel{
 			Provider:        string(p.ID),
 			Model:           defaultSmallModel.ID,

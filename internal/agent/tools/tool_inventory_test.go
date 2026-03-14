@@ -1,0 +1,291 @@
+package tools
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"charm.land/fantasy"
+	agentmemory "github.com/charmbracelet/sapphire/internal/agent/memory"
+	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/charmbracelet/sapphire/internal/db"
+	"github.com/charmbracelet/sapphire/internal/lsp"
+	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDownloadTool(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("downloaded content"))
+	}))
+	defer srv.Close()
+
+	workingDir := t.TempDir()
+	tool := NewDownloadTool(permission.NewPermissionService(workingDir, true, nil), workingDir, srv.Client())
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, "session-download")
+
+	resp := runTool(t, tool, DownloadToolName, DownloadParams{
+		URL:      srv.URL,
+		FilePath: "artifact.txt",
+	}, ctx)
+
+	require.Contains(t, resp.Content, "Successfully downloaded")
+	content, err := os.ReadFile(filepath.Join(workingDir, "artifact.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "downloaded content", string(content))
+}
+
+func TestFetchToolHTMLAndMarkdown(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><body><h1>Hello</h1><p>World</p></body></html>")
+	}))
+	defer srv.Close()
+
+	workingDir := t.TempDir()
+	tool := NewFetchTool(permission.NewPermissionService(workingDir, true, nil), workingDir, srv.Client())
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, "session-fetch")
+
+	textResp := runTool(t, tool, FetchToolName, FetchParams{
+		URL:    srv.URL,
+		Format: "text",
+	}, ctx)
+	require.Contains(t, textResp.Content, "Hello")
+	require.Contains(t, textResp.Content, "World")
+
+	mdResp := runTool(t, tool, FetchToolName, FetchParams{
+		URL:    srv.URL,
+		Format: "markdown",
+	}, ctx)
+	require.Contains(t, mdResp.Content, "```")
+	require.Contains(t, mdResp.Content, "Hello")
+}
+
+func TestWebFetchTool(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><body><article><h1>Test Page</h1><p>Body</p></article></body></html>")
+	}))
+	defer srv.Close()
+
+	tool := NewWebFetchTool(t.TempDir(), srv.Client())
+	resp := runTool(t, tool, WebFetchToolName, WebFetchParams{URL: srv.URL}, t.Context())
+	require.Contains(t, resp.Content, "Fetched content from")
+	require.Contains(t, resp.Content, "Test Page")
+}
+
+func TestGlobTool(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workingDir, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "main.go"), []byte("package main"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "nested", "worker.go"), []byte("package nested"), 0o644))
+
+	tool := NewGlobTool(workingDir)
+	resp := runTool(t, tool, GlobToolName, GlobParams{Pattern: "**/*.go"}, t.Context())
+	require.Contains(t, resp.Content, "main.go")
+	require.Contains(t, resp.Content, "worker.go")
+}
+
+func TestLSTool(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workingDir, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "nested", "file.txt"), []byte("x"), 0o644))
+
+	tool := NewLsTool(permission.NewPermissionService(workingDir, true, nil), workingDir, config.ToolLs{})
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, "session-ls")
+	resp := runTool(t, tool, LSToolName, LSParams{Path: workingDir, Depth: 2}, ctx)
+	require.Contains(t, resp.Content, filepath.ToSlash(workingDir)+"/")
+	require.Contains(t, resp.Content, "nested/")
+	require.Contains(t, resp.Content, "file.txt")
+}
+
+func TestWebAndGoogleSearchTools(t *testing.T) {
+	t.Parallel()
+
+	searchHTML := `
+<html><body>
+<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fone">Example One</a>
+<td class="result-snippet">First result snippet</td>
+<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftwo">Example Two</a>
+<td class="result-snippet">Second result snippet</td>
+</body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, searchHTML)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Transport: rewriteDuckDuckGoTransport(t, srv.URL)}
+
+	webTool := NewWebSearchTool(client)
+	webResp := runTool(t, webTool, WebSearchToolName, WebSearchParams{
+		Query:      "example query",
+		MaxResults: 2,
+	}, t.Context())
+	require.Contains(t, webResp.Content, "Found 2 search results")
+	require.Contains(t, webResp.Content, "https://example.com/one")
+
+	googleTool := NewGoogleSearchTool(
+		nil,
+		client,
+		"gemini-3-flash",
+		func(string) int { return 2 },
+		func(string) {},
+		func(string) {},
+		func(context.Context, string) string { return "default query" },
+	)
+	googleResp := runTool(t, googleTool, GoogleSearchToolName, GoogleSearchParams{
+		MaxResults: 2,
+	}, t.Context())
+	require.Contains(t, googleResp.Content, "Found 2 search results")
+	require.Contains(t, googleResp.Content, "Example One")
+}
+
+func TestSourcegraphFormatting(t *testing.T) {
+	t.Parallel()
+
+	result := map[string]any{
+		"data": map[string]any{
+			"search": map[string]any{
+				"results": map[string]any{
+					"matchCount":  float64(1),
+					"resultCount": float64(1),
+					"limitHit":    false,
+					"results": []any{
+						map[string]any{
+							"__typename": "FileMatch",
+							"repository": map[string]any{"name": "repo"},
+							"file": map[string]any{
+								"path":    "main.go",
+								"url":     "https://sourcegraph.example/repo/main.go",
+								"content": "package main\nfunc main() {}\n",
+							},
+							"lineMatches": []any{
+								map[string]any{
+									"lineNumber": float64(2),
+									"preview":    "func main() {}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out, err := formatSourcegraphResults(result, 1)
+	require.NoError(t, err)
+	require.Contains(t, out, "Sourcegraph Search Results")
+	require.Contains(t, out, "repo/main.go")
+	require.Contains(t, out, "func main() {}")
+}
+
+func TestMemoryAndLSPAuxiliaryTools(t *testing.T) {
+	t.Parallel()
+
+	memTool := NewMemoryQueryTool(fakeMemoryService{})
+	memResp := runTool(t, memTool, MemoryQueryToolName, MemoryQueryParams{Query: "auth"}, t.Context())
+	require.Contains(t, memResp.Content, "Codebase Knowledge")
+
+	cfg, err := config.Init(t.TempDir(), "", false)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join(cfg.WorkingDir(), ".sapphire"))
+	})
+	manager := lsp.NewManager(cfg)
+
+	diagResp := runTool(t, NewDiagnosticsTool(manager), DiagnosticsToolName, DiagnosticsParams{}, t.Context())
+	require.False(t, diagResp.IsError)
+
+	refResp := runTool(t, NewReferencesTool(manager), ReferencesToolName, ReferencesParams{Symbol: "main"}, t.Context())
+	require.True(t, refResp.IsError)
+	require.Contains(t, refResp.Content, "no LSP clients available")
+
+	restartResp := runTool(t, NewLSPRestartTool(manager), LSPRestartToolName, LSPRestartParams{}, t.Context())
+	require.True(t, restartResp.IsError)
+	require.Contains(t, restartResp.Content, "no LSP clients available")
+}
+
+func rewriteDuckDuckGoTransport(t *testing.T, serverURL string) http.RoundTripper {
+	t.Helper()
+
+	target := strings.TrimPrefix(serverURL, "http://")
+	return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		clone := req.Clone(req.Context())
+		clone.URL.Scheme = "http"
+		clone.URL.Host = target
+		clone.Host = target
+		return http.DefaultTransport.RoundTrip(clone)
+	})
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type fakeMemoryService struct{}
+
+func (fakeMemoryService) GetProjectConstitution(context.Context, string) (string, error) {
+	return "", nil
+}
+func (fakeMemoryService) UpsertProjectConstitution(context.Context, string, string) error { return nil }
+func (fakeMemoryService) GetStructuredSummary(context.Context, string) (*agentmemory.StructuredSummaryData, error) {
+	return nil, nil
+}
+func (fakeMemoryService) CreateStructuredSummary(context.Context, string, agentmemory.StructuredSummaryData) error {
+	return nil
+}
+func (fakeMemoryService) GetCodebaseKnowledge(context.Context, string) ([]db.CodebaseKnowledge, error) {
+	return nil, nil
+}
+func (fakeMemoryService) UpsertCodebaseKnowledge(context.Context, db.UpsertCodebaseKnowledgeParams) error {
+	return nil
+}
+func (fakeMemoryService) ListStructuredSummaries(context.Context, int) ([]db.StructuredSummary, error) {
+	return []db.StructuredSummary{
+		{SessionID: "session-1", SummaryData: `{"summary":"fixed auth bug"}`},
+	}, nil
+}
+func (fakeMemoryService) SearchCodebaseKnowledge(context.Context, string, int) ([]db.CodebaseKnowledge, error) {
+	return []db.CodebaseKnowledge{
+		{
+			SymbolName:    "AuthFix",
+			SymbolType:    "function",
+			FilePath:      "internal/auth.go",
+			Documentation: sql.NullString{String: "Fixes auth refresh", Valid: true},
+		},
+	}, nil
+}
+
+func runTool[T any](t *testing.T, tool fantasy.AgentTool, name string, params T, ctx context.Context) fantasy.ToolResponse {
+	t.Helper()
+
+	input, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    name + "-1",
+		Name:  name,
+		Input: string(input),
+	})
+	require.NoError(t, err)
+	return resp
+}

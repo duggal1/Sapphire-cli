@@ -36,6 +36,8 @@ type RegistryMCPDefinition struct {
 	Type        MCPType
 	Command     string
 	Args        []string
+	URL         string
+	Headers     map[string]string
 	EnvKeys     []string
 }
 
@@ -59,26 +61,47 @@ type registryServerMeta struct {
 }
 
 type registryServer struct {
-	Name        string            `json:"name"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Packages    []registryPackage `json:"packages"`
+	Name        string              `json:"name"`
+	Title       string              `json:"title"`
+	Description string              `json:"description"`
+	Packages    []registryPackage   `json:"packages"`
+	Remotes     []registryTransport `json:"remotes"`
 }
 
 type registryPackage struct {
-	RegistryType         string            `json:"registryType"`
-	Identifier           string            `json:"identifier"`
-	Transport            registryTransport `json:"transport"`
-	EnvironmentVariables []registryEnvVar  `json:"environmentVariables"`
+	RegistryType         string             `json:"registryType"`
+	Identifier           string             `json:"identifier"`
+	RuntimeHint          string             `json:"runtimeHint"`
+	Transport            registryTransport  `json:"transport"`
+	RuntimeArguments     []registryArgument `json:"runtimeArguments"`
+	PackageArguments     []registryArgument `json:"packageArguments"`
+	EnvironmentVariables []registryInput    `json:"environmentVariables"`
 }
 
 type registryTransport struct {
-	Type string `json:"type"`
+	Type      string                   `json:"type"`
+	URL       string                   `json:"url"`
+	Headers   []registryInput          `json:"headers"`
+	Variables map[string]registryInput `json:"variables"`
 }
 
-type registryEnvVar struct {
+type registryInput struct {
 	Name       string `json:"name"`
+	Default    string `json:"default"`
+	Value      string `json:"value"`
+	Format     string `json:"format"`
 	IsRequired bool   `json:"isRequired"`
+	IsSecret   bool   `json:"isSecret"`
+}
+
+type registryArgument struct {
+	Type       string                   `json:"type"`
+	Name       string                   `json:"name"`
+	Default    string                   `json:"default"`
+	Value      string                   `json:"value"`
+	Format     string                   `json:"format"`
+	IsRequired bool                     `json:"isRequired"`
+	Variables  map[string]registryInput `json:"variables"`
 }
 
 func init() {
@@ -103,15 +126,12 @@ func SeedMCPOnFirstLaunch(ctx context.Context, cfg *Config) error {
 		return nil
 	}
 
-	defs, err := FetchRegistryDefinitions(ctx)
-	if err != nil || len(defs) == 0 {
-		defs = RegistryMCPDefinitions
-	}
+	defs := DefaultRegistryDefinitions(ctx)
 	if len(defs) == 0 {
 		return nil
 	}
 
-	_, err = applyRegistryDefinitions(cfg, defs, true)
+	_, err := applyRegistryDefinitions(cfg, defs, true)
 	return err
 }
 
@@ -121,11 +141,21 @@ func SyncFromRegistry(ctx context.Context, cfg *Config) (int, error) {
 	if cfg == nil {
 		return 0, errors.New("config is nil")
 	}
-	defs, err := FetchRegistryDefinitions(ctx)
-	if err != nil {
-		return 0, err
+	return applyRegistryDefinitions(cfg, DefaultRegistryDefinitions(ctx), true)
+}
+
+func DefaultRegistryDefinitions(ctx context.Context) []RegistryMCPDefinition {
+	if ctx == nil {
+		return CuratedRegistryDefinitions(RegistryMCPDefinitions)
 	}
-	return applyRegistryDefinitions(cfg, defs, true)
+	if _, ok := ctx.Deadline(); !ok {
+		return CuratedRegistryDefinitions(RegistryMCPDefinitions)
+	}
+	defs, err := FetchRegistryDefinitions(ctx)
+	if err == nil && len(defs) > 0 {
+		return CuratedRegistryDefinitions(defs)
+	}
+	return CuratedRegistryDefinitions(RegistryMCPDefinitions)
 }
 
 // FetchRegistryDefinitions fetches the MCP registry and derives MCP definitions.
@@ -184,9 +214,6 @@ func fetchRegistryDefinitions(ctx context.Context) ([]RegistryMCPDefinition, err
 			}
 			seen[def.Name] = struct{}{}
 			defs = append(defs, def)
-			if len(defs) >= mcpRegistryMinDefinitions {
-				return defs, nil
-			}
 		}
 
 		if payload.Metadata.NextCursor == "" {
@@ -212,29 +239,34 @@ func definitionFromServer(wrapped registryServerWrapper) (RegistryMCPDefinition,
 		return RegistryMCPDefinition{}, false
 	}
 
-	for _, pkg := range server.Packages {
-		mcpType, ok := mcpTypeFromTransport(pkg.Transport.Type)
-		if !ok {
-			continue
-		}
-		cmd, args, ok := spawnFromRegistry(pkg.RegistryType, pkg.Identifier)
-		if !ok {
-			continue
-		}
-		return RegistryMCPDefinition{
-			Name:        name,
-			Description: description,
-			Type:        mcpType,
-			Command:     cmd,
-			Args:        args,
-			EnvKeys:     requiredEnvKeys(pkg.EnvironmentVariables),
-		}, true
+	type candidate struct {
+		def   RegistryMCPDefinition
+		score int
 	}
 
-	return RegistryMCPDefinition{}, false
+	candidates := make([]candidate, 0, len(server.Remotes)+len(server.Packages))
+	for _, remote := range server.Remotes {
+		def, score, ok := definitionFromRemote(name, description, remote)
+		if ok {
+			candidates = append(candidates, candidate{def: def, score: score})
+		}
+	}
+	for _, pkg := range server.Packages {
+		def, score, ok := definitionFromPackage(name, description, pkg)
+		if ok {
+			candidates = append(candidates, candidate{def: def, score: score})
+		}
+	}
+	if len(candidates) == 0 {
+		return RegistryMCPDefinition{}, false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+	return candidates[0].def, true
 }
 
-func requiredEnvKeys(vars []registryEnvVar) []string {
+func requiredEnvKeys(vars []registryInput) []string {
 	var out []string
 	seen := make(map[string]struct{})
 	for _, v := range vars {
@@ -268,21 +300,275 @@ func mcpTypeFromTransport(transport string) (MCPType, bool) {
 	}
 }
 
-func spawnFromRegistry(registryType, identifier string) (string, []string, bool) {
-	id := strings.TrimSpace(identifier)
+func definitionFromRemote(name, description string, transport registryTransport) (RegistryMCPDefinition, int, bool) {
+	mcpType, ok := mcpTypeFromTransport(transport.Type)
+	if !ok {
+		return RegistryMCPDefinition{}, 0, false
+	}
+	endpoint, headers, ok := resolveTransport(transport)
+	if !ok {
+		return RegistryMCPDefinition{}, 0, false
+	}
+	score := 90
+	if endpointIsLocal(endpoint) {
+		score = 55
+	}
+	return RegistryMCPDefinition{
+		Name:        name,
+		Description: description,
+		Type:        mcpType,
+		URL:         endpoint,
+		Headers:     headers,
+	}, score, true
+}
+
+func definitionFromPackage(name, description string, pkg registryPackage) (RegistryMCPDefinition, int, bool) {
+	mcpType, ok := mcpTypeFromTransport(pkg.Transport.Type)
+	if !ok {
+		return RegistryMCPDefinition{}, 0, false
+	}
+	command, args, ok := spawnFromRegistry(pkg)
+	if !ok {
+		return RegistryMCPDefinition{}, 0, false
+	}
+
+	def := RegistryMCPDefinition{
+		Name:        name,
+		Description: description,
+		Type:        mcpType,
+		Command:     command,
+		Args:        args,
+		EnvKeys:     requiredEnvKeys(pkg.EnvironmentVariables),
+	}
+
+	score := 80
+	if command == "docker" {
+		score -= 10
+	}
+	if mcpType != MCPStdio {
+		endpoint, headers, ok := resolveTransport(pkg.Transport)
+		if !ok {
+			return RegistryMCPDefinition{}, 0, false
+		}
+		def.URL = endpoint
+		def.Headers = headers
+		score = 75
+		if endpointIsLocal(endpoint) {
+			score = 72
+		}
+	}
+
+	return def, score, true
+}
+
+func spawnFromRegistry(pkg registryPackage) (string, []string, bool) {
+	id := strings.TrimSpace(pkg.Identifier)
 	if id == "" {
 		return "", nil, false
 	}
-	switch strings.ToLower(strings.TrimSpace(registryType)) {
-	case "npm":
-		return "npx", []string{"-y", id}, true
-	case "pypi":
-		return "uvx", []string{id}, true
+	runtime := strings.ToLower(strings.TrimSpace(pkg.RuntimeHint))
+	if runtime == "" {
+		runtime = strings.ToLower(strings.TrimSpace(pkg.RegistryType))
+	}
+	switch runtime {
+	case "npm", "npx":
+		runtimeArgs, ok := buildRegistryArgs(pkg.RuntimeArguments)
+		if !ok {
+			return "", nil, false
+		}
+		packageArgs, ok := buildRegistryArgs(pkg.PackageArguments)
+		if !ok {
+			return "", nil, false
+		}
+		args := append([]string{}, runtimeArgs...)
+		if !slicesContains(args, "-y") && !slicesContains(args, "--yes") {
+			args = append(args, "-y")
+		}
+		args = append(args, id)
+		args = append(args, packageArgs...)
+		return "npx", args, true
+	case "pypi", "uvx":
+		runtimeArgs, ok := buildRegistryArgs(pkg.RuntimeArguments)
+		if !ok {
+			return "", nil, false
+		}
+		executable, usedPackageArg := guessUVXExecutable(id, pkg.PackageArguments)
+		packageArgs, ok := buildRegistryArgs(skipFirstArgument(pkg.PackageArguments, usedPackageArg))
+		if !ok {
+			return "", nil, false
+		}
+		if executable == "" {
+			args := append([]string{}, runtimeArgs...)
+			args = append(args, id)
+			args = append(args, packageArgs...)
+			return "uvx", args, true
+		}
+		args := append([]string{}, runtimeArgs...)
+		args = append(args, "--from", id, executable)
+		args = append(args, packageArgs...)
+		return "uvx", args, true
 	case "oci", "docker":
-		return "docker", []string{"run", "-i", "--rm", id}, true
+		runtimeArgs, ok := buildRegistryArgs(pkg.RuntimeArguments)
+		if !ok {
+			return "", nil, false
+		}
+		packageArgs, ok := buildRegistryArgs(pkg.PackageArguments)
+		if !ok {
+			return "", nil, false
+		}
+		args := []string{"run", "-i", "--rm"}
+		args = append(args, runtimeArgs...)
+		args = append(args, id)
+		args = append(args, packageArgs...)
+		return "docker", args, true
 	default:
 		return "", nil, false
 	}
+}
+
+func guessUVXExecutable(identifier string, args []registryArgument) (string, bool) {
+	if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0].Type), "positional") {
+		if value, ok := resolveArgumentValue(args[0]); ok && value != "" && !strings.HasPrefix(value, "-") {
+			return value, true
+		}
+	}
+	guess := strings.TrimSpace(identifier)
+	if guess == "" {
+		return "", false
+	}
+	if idx := strings.LastIndexAny(guess, "/:"); idx >= 0 && idx < len(guess)-1 {
+		guess = guess[idx+1:]
+	}
+	return guess, false
+}
+
+func skipFirstArgument(args []registryArgument, skip bool) []registryArgument {
+	if !skip || len(args) == 0 {
+		return args
+	}
+	return args[1:]
+}
+
+func buildRegistryArgs(args []registryArgument) ([]string, bool) {
+	out := make([]string, 0, len(args)*2)
+	for _, arg := range args {
+		value, ok := resolveArgumentValue(arg)
+		if !ok {
+			return nil, false
+		}
+		switch strings.ToLower(strings.TrimSpace(arg.Type)) {
+		case "named":
+			name := strings.TrimSpace(arg.Name)
+			if name == "" || value == "" {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(arg.Format), "boolean") {
+				switch strings.ToLower(strings.TrimSpace(value)) {
+				case "true":
+					out = append(out, name)
+				case "false":
+				default:
+					out = append(out, name, value)
+				}
+				continue
+			}
+			out = append(out, name, value)
+		case "positional":
+			if value != "" {
+				out = append(out, value)
+			}
+		}
+	}
+	return out, true
+}
+
+func resolveArgumentValue(arg registryArgument) (string, bool) {
+	values := resolveVariableValues(arg.Variables)
+	if value := substituteVariables(strings.TrimSpace(arg.Value), values); value != "" {
+		return value, true
+	}
+	if value := substituteVariables(strings.TrimSpace(arg.Default), values); value != "" {
+		return value, true
+	}
+	return "", !arg.IsRequired
+}
+
+func resolveTransport(transport registryTransport) (string, map[string]string, bool) {
+	values := resolveVariableValues(transport.Variables)
+	endpoint := substituteVariables(strings.TrimSpace(transport.URL), values)
+	if endpoint == "" || strings.Contains(endpoint, "{") || strings.Contains(endpoint, "}") {
+		return "", nil, false
+	}
+
+	headers := make(map[string]string)
+	for _, header := range transport.Headers {
+		name := strings.TrimSpace(header.Name)
+		if name == "" {
+			continue
+		}
+		value, ok := resolveInputValue(header)
+		if !ok || value == "" {
+			continue
+		}
+		headers[name] = substituteVariables(value, values)
+	}
+	if len(headers) == 0 {
+		headers = nil
+	}
+	return endpoint, headers, true
+}
+
+func resolveVariableValues(inputs map[string]registryInput) map[string]string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	values := make(map[string]string, len(inputs))
+	for key, input := range inputs {
+		value, ok := resolveInputValue(input)
+		if !ok || value == "" {
+			continue
+		}
+		values[key] = value
+	}
+	return values
+}
+
+func resolveInputValue(input registryInput) (string, bool) {
+	if value := strings.TrimSpace(input.Value); value != "" {
+		return value, true
+	}
+	if value := strings.TrimSpace(input.Default); value != "" {
+		return value, true
+	}
+	return "", !input.IsRequired
+}
+
+func substituteVariables(value string, values map[string]string) string {
+	if value == "" || len(values) == 0 {
+		return value
+	}
+	for key, replacement := range values {
+		value = strings.ReplaceAll(value, "{"+key+"}", replacement)
+	}
+	return value
+}
+
+func endpointIsLocal(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func slicesContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func isWebSearchServer(name, description string) bool {
@@ -309,15 +595,7 @@ func applyRegistryDefinitions(cfg *Config, defs []RegistryMCPDefinition, onlyNew
 			}
 		}
 
-		envMap, missing := buildEnvMap(def.EnvKeys)
-		disabled := len(def.EnvKeys) > 0 && len(missing) > 0
-		cfg.MCP[def.Name] = MCPConfig{
-			Type:     def.Type,
-			Command:  def.Command,
-			Args:     append([]string{}, def.Args...),
-			Env:      envMap,
-			Disabled: disabled,
-		}
+		cfg.MCP[def.Name] = RegistryDefinitionToMCPConfig(def, false)
 		added++
 	}
 
@@ -329,6 +607,106 @@ func applyRegistryDefinitions(cfg *Config, defs []RegistryMCPDefinition, onlyNew
 		return 0, err
 	}
 	return added, nil
+}
+
+func RegistryDefinitionToMCPConfig(def RegistryMCPDefinition, autoStart bool) MCPConfig {
+	envMap, missing := buildEnvMap(def.EnvKeys)
+	disabled := len(def.EnvKeys) > 0 && len(missing) > 0
+	return MCPConfig{
+		Type:      def.Type,
+		Command:   def.Command,
+		Args:      append([]string{}, def.Args...),
+		URL:       def.URL,
+		Headers:   cloneStringMap(def.Headers),
+		Env:       envMap,
+		Disabled:  disabled,
+		AutoStart: boolPtr(autoStart),
+	}
+}
+
+func DisableSeededMCPAutoStart(ctx context.Context, cfg *Config) error {
+	if cfg == nil || len(cfg.MCP) < mcpRegistryMinDefinitions/2 {
+		return nil
+	}
+	defs := DefaultRegistryDefinitions(ctx)
+	if len(defs) == 0 {
+		return nil
+	}
+	defMap := make(map[string]struct{}, len(defs))
+	for _, def := range defs {
+		defMap[def.Name] = struct{}{}
+	}
+
+	changed := false
+	for name, mcpCfg := range cfg.MCP {
+		if mcpCfg.AutoStart != nil {
+			continue
+		}
+		if _, ok := defMap[name]; !ok {
+			continue
+		}
+		mcpCfg.AutoStart = boolPtr(false)
+		cfg.MCP[name] = mcpCfg
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return cfg.SaveMCPConfigs()
+}
+
+func PruneSeededMCPInventory(ctx context.Context, cfg *Config) error {
+	if cfg == nil || len(cfg.MCP) < mcpRegistryMinDefinitions/2 {
+		return nil
+	}
+
+	allDefs := RegistryMCPDefinitions
+	if len(allDefs) == 0 {
+		return nil
+	}
+	allNames := make(map[string]struct{}, len(allDefs))
+	for _, def := range allDefs {
+		allNames[def.Name] = struct{}{}
+	}
+
+	curatedNames := make(map[string]struct{})
+	for _, def := range DefaultRegistryDefinitions(ctx) {
+		curatedNames[def.Name] = struct{}{}
+	}
+	if len(curatedNames) == 0 {
+		return nil
+	}
+
+	changed := false
+	for name := range cfg.MCP {
+		if _, known := allNames[name]; !known {
+			continue
+		}
+		if _, keep := curatedNames[name]; keep {
+			continue
+		}
+		delete(cfg.MCP, name)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return cfg.SaveMCPConfigs()
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func buildEnvMap(keys []string) (map[string]string, []string) {
@@ -378,6 +756,20 @@ func GenerateRegistryDefinitionsFile(ctx context.Context, outputPath string) err
 				sb.WriteString(", ")
 			}
 			sb.WriteString(fmt.Sprintf("%q", arg))
+		}
+		sb.WriteString("}, ")
+		sb.WriteString(fmt.Sprintf("URL: %q, ", def.URL))
+		sb.WriteString("Headers: map[string]string{")
+		headerKeys := make([]string, 0, len(def.Headers))
+		for key := range def.Headers {
+			headerKeys = append(headerKeys, key)
+		}
+		sort.Strings(headerKeys)
+		for i, key := range headerKeys {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(fmt.Sprintf("%q: %q", key, def.Headers[key]))
 		}
 		sb.WriteString("}, ")
 		sb.WriteString("EnvKeys: []string{")

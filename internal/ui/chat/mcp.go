@@ -88,7 +88,7 @@ func (b *MCPToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *T
 			body = sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
 		}
 	} else if looksLikeMarkdown(opts.Result.Content) {
-		body = sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.md", opts.Result.Content, 0, bodyWidth, opts.ExpandedContent))
+		body = sty.Tool.Body.Render(toolOutputCollapsedMarkdownContent(sty, opts.Result.Content, bodyWidth))
 	} else {
 		body = sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
 	}

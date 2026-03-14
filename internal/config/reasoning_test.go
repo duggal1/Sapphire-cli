@@ -6,30 +6,28 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 )
 
-func TestReasoningChoicesForGemini25(t *testing.T) {
+func TestReasoningChoicesForGemini3(t *testing.T) {
 	model := &catwalk.Model{
-		ID:        "gemini-2.5-flash",
+		ID:        "gemini-3-flash-preview",
 		CanReason: true,
 	}
 
 	choices := ReasoningChoicesForModel(model)
-	if len(choices) != 2 || choices[0] != "thinking_on" || choices[1] != "thinking_off" {
+	// Gemini 3 Flash has minimal, low, medium, high
+	if len(choices) != 4 || choices[2] != "medium" {
 		t.Fatalf("unexpected choices: %#v", choices)
 	}
 }
 
-func TestApplyReasoningSelectionForGemini25(t *testing.T) {
+func TestApplyReasoningSelectionForGemini3(t *testing.T) {
 	model := &catwalk.Model{
-		ID:        "gemini-2.5-pro",
+		ID:        "gemini-3-pro",
 		CanReason: true,
 	}
 
-	selected := ApplyReasoningSelection(model, SelectedModel{ReasoningEffort: "medium", Think: true}, "thinking_off")
-	if selected.Think {
-		t.Fatalf("expected thinking to be disabled")
-	}
-	if selected.ReasoningEffort != "" {
-		t.Fatalf("expected reasoning effort to be cleared, got %q", selected.ReasoningEffort)
+	selected := ApplyReasoningSelection(model, SelectedModel{ReasoningEffort: "medium", Think: false}, "high")
+	if selected.ReasoningEffort != "high" {
+		t.Fatalf("expected reasoning effort to be high, got %q", selected.ReasoningEffort)
 	}
 }
 

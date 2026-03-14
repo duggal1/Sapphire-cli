@@ -29,6 +29,9 @@ var viewDescription []byte
 type ViewParams struct {
 	FilePaths []string `json:"file_paths,omitempty" description:"The paths to the files to read. Max concurrent reads will apply."`
 	FilePath  string   `json:"file_path,omitempty" description:"The path to the file to read (legacy single file)"`
+	Paths     []string `json:"paths,omitempty" description:"Alias for file_paths"`
+	Files     []string `json:"files,omitempty" description:"Alias for file_paths"`
+	Path      string   `json:"path,omitempty" description:"Alias for file_path"`
 	Offset    int      `json:"offset,omitempty" description:"The line number to start reading from (0-based, applies to single file only)"`
 	Limit     int      `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000, applies to single file only)"`
 }
@@ -65,6 +68,7 @@ type ViewResponseMetadata struct {
 
 const (
 	ViewToolName        = "view"
+	SingleViewToolName  = "single_view"
 	AgenticViewToolName = "agentic_view"
 	MaxReadSize         = 25 * 1024 * 1024 // 25MB
 	DefaultReadLimit    = 2000
@@ -76,6 +80,7 @@ const (
 func NewViewTool(
 	name string,
 	lspManager *lsp.Manager,
+	editGuard *EditGuard,
 	permissions permission.Service,
 	filetracker filetracker.Service,
 	workingDir string,
@@ -94,13 +99,10 @@ func NewViewTool(
 			defer cancel()
 			ctx = toolCtx
 
-			filePaths := params.FilePaths
-			if params.FilePath != "" {
-				filePaths = append(filePaths, params.FilePath)
-			}
+			filePaths := collectViewPaths(params)
 
 			if len(filePaths) == 0 {
-				return fantasy.NewTextErrorResponse("file_paths or file_path is required"), nil
+				return fantasy.NewTextResponse("No file paths provided. Use ls/glob to discover files, then call view or agentic_view with file_path(s)."), nil
 			}
 
 			if maxConcurrent <= 0 {
@@ -121,7 +123,7 @@ func NewViewTool(
 			}
 
 			if len(uniquePaths) == 0 {
-				return fantasy.NewTextErrorResponse("no valid file paths provided"), nil
+				return fantasy.NewTextResponse("No valid file paths provided. Use ls/glob to discover files, then call view or agentic_view with file_path(s)."), nil
 			}
 
 			var wg sync.WaitGroup
@@ -191,7 +193,7 @@ func NewViewTool(
 								SessionID:   sessionID,
 								Path:        absFilePath,
 								ToolCallID:  call.ID,
-								ToolName:    ViewToolName,
+								ToolName:    name,
 								Action:      "read",
 								Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
 								Params:      ViewPermissionsParams{FilePath: filePath, Offset: params.Offset, Limit: params.Limit},
@@ -306,10 +308,16 @@ func NewViewTool(
 					}
 					output += "\n</file>\n"
 					output += detectLiteralEscapes(content)
-					output += getDiagnostics(fullPath, lspManager)
+					output += getDiagnostics(ctx, fullPath, lspManager)
 
 					mu.Lock()
 					filetracker.RecordRead(ctx, sessionID, fullPath)
+					if editGuard != nil {
+						// Record view only if we got the full file (params.Offset == 0 and limit > len(lines))
+						// We don't have exactly len(lines) here without passing it out, 
+						// but if !hasMore and offset == 0, we've seen the whole file.
+						editGuard.RecordView(sessionID, fullPath, params.Offset == 0 && !hasMore)
+					}
 					mu.Unlock()
 
 					meta := ViewResponseMetadata{
@@ -466,6 +474,20 @@ func resolveViewAliasPath(workingDir, filePath string) (string, string, bool) {
 		return alias, fullPath, true
 	}
 	return "", "", false
+}
+
+func collectViewPaths(params ViewParams) []string {
+	filePaths := make([]string, 0, len(params.FilePaths)+len(params.Paths)+len(params.Files)+2)
+	filePaths = append(filePaths, params.FilePaths...)
+	filePaths = append(filePaths, params.Paths...)
+	filePaths = append(filePaths, params.Files...)
+	if params.FilePath != "" {
+		filePaths = append(filePaths, params.FilePath)
+	}
+	if params.Path != "" {
+		filePaths = append(filePaths, params.Path)
+	}
+	return filePaths
 }
 
 func getImageMimeType(filePath string) (bool, string) {

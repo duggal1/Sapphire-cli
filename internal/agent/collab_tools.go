@@ -1,0 +1,364 @@
+package agent
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"charm.land/fantasy"
+
+	"github.com/charmbracelet/sapphire/internal/agent/tools"
+)
+
+//go:embed tools/spawn_agent.md
+var spawnAgentDescription []byte
+
+//go:embed tools/resume_agent.md
+var resumeAgentDescription []byte
+
+//go:embed tools/send_input.md
+var sendInputDescription []byte
+
+//go:embed tools/wait.md
+var waitAgentsDescription []byte
+
+//go:embed tools/close_agent.md
+var closeAgentDescription []byte
+
+const (
+	SpawnAgentToolName  = "spawn_agent"
+	ResumeAgentToolName = "resume_agent"
+	SendInputToolName   = "send_input"
+	WaitAgentsToolName  = "wait"
+	CloseAgentToolName  = "close_agent"
+)
+
+type SpawnAgentParams struct {
+	Message          string   `json:"message,omitempty" description:"Initial task or prompt for the sub-agent"`
+	Title            string   `json:"title,omitempty" description:"Optional session title for the sub-agent"`
+	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default true)"`
+	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/worktrees/<task>)"`
+	Branch           string   `json:"branch,omitempty" description:"Optional branch name for the worktree"`
+	WriteManifest    []string `json:"write_manifest,omitempty" description:"Allowed write paths (relative to repo root). Empty list = read-only."`
+	DefinitionOfDone string   `json:"definition_of_done,omitempty" description:"Acceptance criteria for completion"`
+	Agent            string   `json:"agent,omitempty" description:"Agent profile to use (coder or task)"`
+	Model            string   `json:"model,omitempty" description:"Optional model override (format provider:model or model)"`
+	ReasoningEffort  string   `json:"reasoning_effort,omitempty" description:"Optional reasoning effort override (low, medium, high)"`
+	ForkContext      *bool    `json:"fork_context,omitempty" description:"Copy recent parent context into the sub-agent session (default false)"`
+}
+
+type ResumeAgentParams struct {
+	ID      string `json:"id" description:"Agent id returned by spawn_agent"`
+	Message string `json:"message,omitempty" description:"Optional prompt to continue the resumed sub-agent"`
+}
+
+type SendInputParams struct {
+	ID        string `json:"id" description:"Agent id returned by spawn_agent"`
+	Message   string `json:"message,omitempty" description:"Follow-up task or prompt for the sub-agent"`
+	Interrupt bool   `json:"interrupt,omitempty" description:"Interrupt current run before sending"`
+}
+
+type WaitAgentsParams struct {
+	IDs       []string `json:"ids,omitempty" description:"Agent ids to wait for"`
+	TimeoutMS int64    `json:"timeout_ms,omitempty" description:"Timeout in milliseconds (default 30000)"`
+}
+
+type CloseAgentParams struct {
+	ID string `json:"id" description:"Agent id returned by spawn_agent"`
+}
+
+func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
+	type rawSpawnAgentParams struct {
+		Message          string   `json:"message,omitempty"`
+		Prompt           string   `json:"prompt,omitempty"`
+		Task             string   `json:"task,omitempty"`
+		Instruction      string   `json:"instruction,omitempty"`
+		Title            string   `json:"title,omitempty"`
+		Worktree         *bool    `json:"worktree,omitempty"`
+		WorktreePath     string   `json:"worktree_path,omitempty"`
+		WorktreeDir      string   `json:"worktree_dir,omitempty"`
+		WorktreeDirAlt   string   `json:"worktree_directory,omitempty"`
+		Branch           string   `json:"branch,omitempty"`
+		BranchName       string   `json:"branch_name,omitempty"`
+		WriteManifest    []string `json:"write_manifest,omitempty"`
+		Manifest         []string `json:"manifest,omitempty"`
+		AllowedFiles     []string `json:"allowed_files,omitempty"`
+		AllowedPaths     []string `json:"allowed_paths,omitempty"`
+		OwnedFiles       []string `json:"owned_files,omitempty"`
+		DefinitionOfDone string   `json:"definition_of_done,omitempty"`
+		Done             string   `json:"done,omitempty"`
+		Acceptance       string   `json:"acceptance_criteria,omitempty"`
+		Agent            string   `json:"agent,omitempty"`
+		AgentType        string   `json:"agent_type,omitempty"`
+		AgentID          string   `json:"agent_id,omitempty"`
+		AgentProfile     string   `json:"agent_profile,omitempty"`
+		Model            string   `json:"model,omitempty"`
+		ModelName        string   `json:"model_name,omitempty"`
+		ReasoningEffort  string   `json:"reasoning_effort,omitempty"`
+		Reasoning        string   `json:"reasoning,omitempty"`
+		ForkContext      *bool    `json:"fork_context,omitempty"`
+	}
+
+	var raw rawSpawnAgentParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task, raw.Instruction)
+	p.Title = strings.TrimSpace(raw.Title)
+	p.Worktree = raw.Worktree
+	p.WorktreePath = firstNonEmptyString(raw.WorktreePath, raw.WorktreeDir, raw.WorktreeDirAlt)
+	p.Branch = firstNonEmptyString(raw.Branch, raw.BranchName)
+	p.WriteManifest = firstNonEmptyStringSlice(raw.WriteManifest, raw.Manifest, raw.AllowedFiles, raw.AllowedPaths, raw.OwnedFiles)
+	p.DefinitionOfDone = firstNonEmptyString(raw.DefinitionOfDone, raw.Done, raw.Acceptance)
+	p.Agent = firstNonEmptyString(raw.Agent, raw.AgentType, raw.AgentID, raw.AgentProfile)
+	p.Model = firstNonEmptyString(raw.Model, raw.ModelName)
+	p.ReasoningEffort = firstNonEmptyString(raw.ReasoningEffort, raw.Reasoning)
+	p.ForkContext = raw.ForkContext
+	return nil
+}
+
+func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {
+	type rawResumeAgentParams struct {
+		ID      string `json:"id,omitempty"`
+		AgentID string `json:"agent_id,omitempty"`
+		Message string `json:"message,omitempty"`
+		Prompt  string `json:"prompt,omitempty"`
+		Task    string `json:"task,omitempty"`
+	}
+
+	var raw rawResumeAgentParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
+	return nil
+}
+
+func (p *SendInputParams) UnmarshalJSON(data []byte) error {
+	type rawSendInputParams struct {
+		ID        string `json:"id,omitempty"`
+		AgentID   string `json:"agent_id,omitempty"`
+		Message   string `json:"message,omitempty"`
+		Prompt    string `json:"prompt,omitempty"`
+		Task      string `json:"task,omitempty"`
+		Interrupt bool   `json:"interrupt,omitempty"`
+	}
+
+	var raw rawSendInputParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
+	p.Interrupt = raw.Interrupt
+	return nil
+}
+
+func (p *WaitAgentsParams) UnmarshalJSON(data []byte) error {
+	type rawWaitAgentsParams struct {
+		IDs      []string `json:"ids,omitempty"`
+		AgentIDs []string `json:"agent_ids,omitempty"`
+		Timeout  int64    `json:"timeout_ms,omitempty"`
+	}
+
+	var raw rawWaitAgentsParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.IDs = firstNonEmptyStringSlice(raw.IDs, raw.AgentIDs)
+	p.TimeoutMS = raw.Timeout
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStringSlice(groups ...[]string) []string {
+	for _, group := range groups {
+		normalized := normalizeStringSlice(group)
+		if len(normalized) > 0 {
+			return normalized
+		}
+	}
+	return nil
+}
+
+func normalizeStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	return fantasy.NewParallelAgentTool(
+		SpawnAgentToolName,
+		string(spawnAgentDescription),
+		func(ctx context.Context, params SpawnAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if strings.TrimSpace(params.Message) == "" {
+				return fantasy.NewTextErrorResponse("message is required"), nil
+			}
+			sessionID := tools.GetSessionFromContext(ctx)
+			if sessionID == "" {
+				return fantasy.ToolResponse{}, errors.New("session id missing from context")
+			}
+			useWorktree := true
+			if params.Worktree != nil {
+				useWorktree = *params.Worktree
+			}
+			forkContext := false
+			if params.ForkContext != nil {
+				forkContext = *params.ForkContext
+			}
+			agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+				Prompt:           params.Message,
+				Title:            params.Title,
+				Worktree:         useWorktree,
+				WorktreePath:     params.WorktreePath,
+				Branch:           params.Branch,
+				WriteManifest:    params.WriteManifest,
+				DefinitionOfDone: params.DefinitionOfDone,
+				AgentID:          params.Agent,
+				Model:            params.Model,
+				ReasoningEffort:  params.ReasoningEffort,
+				ForkContext:      forkContext,
+			})
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"agent_id":      agentID,
+				"submission_id": submissionID,
+				"status":        subAgentStatusRunning,
+			})
+			return fantasy.NewTextResponse(string(payload)), nil
+		},
+	), nil
+}
+
+func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	return fantasy.NewParallelAgentTool(
+		ResumeAgentToolName,
+		string(resumeAgentDescription),
+		func(ctx context.Context, params ResumeAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if params.ID == "" {
+				return fantasy.NewTextErrorResponse("id is required"), nil
+			}
+			sessionID := tools.GetSessionFromContext(ctx)
+			if sessionID == "" {
+				return fantasy.ToolResponse{}, errors.New("session id missing from context")
+			}
+			submissionID, status, err := c.resumeSubAgent(ctx, sessionID, params.ID, params.Message)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			payload := map[string]any{
+				"agent_id": params.ID,
+				"status":   status,
+			}
+			if submissionID != "" {
+				payload["submission_id"] = submissionID
+			}
+			encoded, _ := json.Marshal(payload)
+			return fantasy.NewTextResponse(string(encoded)), nil
+		},
+	), nil
+}
+
+func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	return fantasy.NewParallelAgentTool(
+		SendInputToolName,
+		string(sendInputDescription),
+		func(ctx context.Context, params SendInputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if params.ID == "" {
+				return fantasy.NewTextErrorResponse("id is required"), nil
+			}
+			if strings.TrimSpace(params.Message) == "" {
+				return fantasy.NewTextErrorResponse("message is required"), nil
+			}
+			submissionID, err := c.sendSubAgentInput(ctx, params.ID, params.Message, params.Interrupt)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"submission_id": submissionID,
+			})
+			return fantasy.NewTextResponse(string(payload)), nil
+		},
+	), nil
+}
+
+func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	return fantasy.NewParallelAgentTool(
+		WaitAgentsToolName,
+		string(waitAgentsDescription),
+		func(ctx context.Context, params WaitAgentsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if len(params.IDs) == 0 {
+				return fantasy.NewTextErrorResponse("ids are required"), nil
+			}
+			timeout := 30 * time.Second
+			if params.TimeoutMS > 0 {
+				timeout = time.Duration(params.TimeoutMS) * time.Millisecond
+			}
+			snapshots, timedOut := c.waitSubAgents(ctx, params.IDs, timeout)
+			payload, _ := json.Marshal(map[string]any{
+				"agents":    snapshots,
+				"timed_out": timedOut,
+			})
+			return fantasy.NewTextResponse(string(payload)), nil
+		},
+	), nil
+}
+
+func (c *coordinator) closeAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	return fantasy.NewParallelAgentTool(
+		CloseAgentToolName,
+		string(closeAgentDescription),
+		func(ctx context.Context, params CloseAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if params.ID == "" {
+				return fantasy.NewTextErrorResponse("id is required"), nil
+			}
+			if err := c.closeSubAgent(params.ID); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"agent_id": params.ID,
+				"status":   subAgentStatusClosed,
+			})
+			return fantasy.NewTextResponse(string(payload)), nil
+		},
+	), nil
+}

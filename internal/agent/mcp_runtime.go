@@ -13,12 +13,16 @@ import (
 )
 
 const mcpPolicyBlock = `<mcp_policy>
-1. Read the MCP capability map first and plan which servers are required before tool calls.
-2. Always use a tool to get information before using that information. Never assume or invent.
-3. Chain tools sequentially. The output of one tool call is the input to the next.
-4. Execute autonomously. Do not ask for confirmation between steps unless blocked.
-5. When a task needs multiple MCP servers, plan the full sequence before tool calls.
-6. Treat every tool response as ground truth for this session.
+1. Sapphire has built-in MCP support.
+2. The MCP capability map only lists CONNECTED servers. It is not the full inventory.
+3. Use list_available_mcps with a query to discover available MCP servers before claiming coverage or inventory.
+4. Prefer direct connected MCP tools when they are already available for the selected server.
+5. Always use a tool to get information before using that information. Never assume or invent.
+6. Chain MCP tools sequentially. The output of one tool call is the input to the next.
+7. Execute autonomously. Do not ask for confirmation between steps unless blocked.
+8. When a task needs multiple MCP servers, plan the full sequence before tool calls.
+9. Do not stop after listing MCPs or tools if an execution path is available.
+10. Treat every tool response as ground truth for this session.
 </mcp_policy>`
 
 type activeToolSet struct {
@@ -104,6 +108,7 @@ func buildMCPCapabilityMap() string {
 
 	var sb strings.Builder
 	sb.WriteString("<mcp_capability_map>\n")
+	sb.WriteString(fmt.Sprintf("Connected MCP servers only: %d\n", len(caps)))
 	for _, cap := range caps {
 		sb.WriteString(fmt.Sprintf("- %s: %s (tools: %d)\n", cap.Name, cap.Domain, cap.ToolCount))
 	}

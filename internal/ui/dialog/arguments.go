@@ -16,6 +16,7 @@ import (
 
 	"github.com/charmbracelet/sapphire/internal/commands"
 	"github.com/charmbracelet/sapphire/internal/ui/common"
+	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/sapphire/internal/ui/util"
 	uv "github.com/charmbracelet/ultraviolet"
 )
@@ -33,13 +34,14 @@ const (
 
 // Arguments represents a dialog for collecting command arguments.
 type Arguments struct {
-	com       *common.Common
-	title     string
-	arguments []commands.Argument
-	inputs    []textinput.Model
-	focused   int
-	spinner   spinner.Model
-	loading   bool
+	com          *common.Common
+	title        string
+	arguments    []commands.Argument
+	inputs       []textinput.Model
+	focused      int
+	spinner      spinner.Model
+	loading      bool
+	shimmerFrame int
 
 	description  string
 	resultAction Action
@@ -189,7 +191,10 @@ func (a *Arguments) HandleMsg(msg tea.Msg) Action {
 		if a.loading {
 			var cmd tea.Cmd
 			a.spinner, cmd = a.spinner.Update(msg)
-			return ActionCmd{Cmd: cmd}
+			a.shimmerFrame++
+			if cmd != nil {
+				return ActionCmd{Cmd: cmd}
+			}
 		}
 	case tea.KeyPressMsg:
 		switch {
@@ -325,7 +330,7 @@ func (a *Arguments) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	helpView := s.Dialog.HelpView.Width(width).Render(a.help.View(a))
 	if a.loading {
-		helpView = s.Dialog.HelpView.Width(width).Render(a.spinner.View() + " Generating Prompt...")
+		helpView = s.Dialog.HelpView.Width(width).Render(styles.ShimmerText(a.com.Styles, "Generating prompt...", a.shimmerFrame))
 	}
 
 	availableHeight := area.Dy() - s.Dialog.View.GetVerticalFrameSize() - dialogContentStyle.GetVerticalFrameSize() - lipgloss.Height(header) - lipgloss.Height(description) - lipgloss.Height(helpView) - 2 // extra spacing

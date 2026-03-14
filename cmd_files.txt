@@ -1,0 +1,13 @@
+internal/cmd/models.go
+internal/cmd/run.go
+internal/cmd/dirs.go
+internal/cmd/dirs_test.go
+internal/cmd/projects_test.go
+internal/cmd/stats.go
+internal/cmd/update_providers.go
+internal/cmd/mcp.go
+internal/cmd/logs.go
+internal/cmd/schema.go
+internal/cmd/projects.go
+internal/cmd/login.go
+internal/cmd/root.go

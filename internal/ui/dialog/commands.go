@@ -55,8 +55,9 @@ type Commands struct {
 	hasQueue   bool
 	selected   CommandType
 
-	spinner spinner.Model
-	loading bool
+	spinner      spinner.Model
+	loading      bool
+	shimmerFrame int
 
 	help  help.Model
 	input textinput.Model
@@ -149,7 +150,10 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 		if c.loading {
 			var cmd tea.Cmd
 			c.spinner, cmd = c.spinner.Update(msg)
-			return ActionCmd{Cmd: cmd}
+			c.shimmerFrame++
+			if cmd != nil {
+				return ActionCmd{Cmd: cmd}
+			}
 		}
 	case tea.KeyPressMsg:
 		switch {
@@ -272,7 +276,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.Help = c.help.View(c)
 
 	if c.loading {
-		rc.Help = c.spinner.View() + " Generating Prompt..."
+		rc.Help = styles.ShimmerText(c.com.Styles, "Generating prompt...", c.shimmerFrame)
 	}
 
 	view := rc.Render()
@@ -419,7 +423,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 			if len(reasoningChoices) > 0 {
 				label := "Select Reasoning Effort"
-				if config.IsGemini25Model(model.ID) {
+				if config.IsGemini3Model(model.ID) {
 					label = "Select Thinking Mode"
 				}
 				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", label, "", ActionOpenDialog{

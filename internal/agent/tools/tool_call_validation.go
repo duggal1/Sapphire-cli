@@ -1,0 +1,223 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"charm.land/fantasy"
+)
+
+func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fantasy.ToolCall, input map[string]any) error {
+	if tool == nil {
+		return errors.New("tool not found")
+	}
+
+	switch call.Name {
+	case TodosToolName:
+		// Validate using the normalized input map, NOT the original call.Input.
+		// The middleware has already repaired aliases and structure; validating
+		// the raw string would undo all normalization work.
+		return validateTodosInputMap(input)
+	case ViewToolName, SingleViewToolName, AgenticViewToolName:
+		if len(extractViewPaths(input)) == 0 {
+			return errors.New("file_path is required")
+		}
+	case EditToolName, SingleEditToolName:
+		// Validate using the normalized input map to honor parameter aliasing
+		// (e.g. "path" → "file_path") already applied by the middleware.
+		return validateEditInputMap(input)
+	case AgenticEditToolName:
+		return validateAgenticEditInputMap(input)
+	default:
+		return nil
+	}
+
+	return nil
+}
+
+// validateTodosInputMap validates todos parameters from the already-normalized
+// input map. This avoids re-parsing the raw JSON, ensuring middleware normalization
+// (alias resolution, action inference) is honored.
+func validateTodosInputMap(input map[string]any) error {
+	if input == nil {
+		return errors.New("todos input must be a JSON object")
+	}
+
+	// Prevent malformed structure like task as string
+	if taskObj, ok := input["task"]; ok && taskObj != nil {
+		if _, isMap := taskObj.(map[string]any); !isMap {
+			return errors.New("task must be a JSON object, not a string or array")
+		}
+	}
+
+	// Decode from the already-normalized map
+	var params TodosParams
+	if err := decodeInto(input, &params); err != nil {
+		return fmt.Errorf("invalid parameters: %w", err)
+	}
+
+	if params.Action == "" {
+		switch {
+		case len(params.Tasks) > 0 || len(params.Todos) > 0:
+			params.Action = "create"
+		case params.Task != nil || strings.TrimSpace(params.TaskID) != "" || strings.TrimSpace(params.TaskContent) != "":
+			params.Action = "update"
+		default:
+			params.Action = "list"
+		}
+	}
+
+	action := strings.ToLower(strings.TrimSpace(params.Action))
+	switch action {
+	case "create", "reset":
+		if strings.TrimSpace(params.TaskContent) == "" && len(params.Tasks) == 0 && len(params.Todos) == 0 && params.Task == nil {
+			return errors.New("task_content is required for create")
+		}
+	case "update", "start", "complete":
+		return nil
+	case "list":
+		return nil
+	default:
+		return fmt.Errorf("invalid action %q", params.Action)
+	}
+	return nil
+}
+
+func extractViewPaths(input map[string]any) []string {
+	if input == nil {
+		return nil
+	}
+	paths := make([]string, 0, 2)
+	if raw, ok := input["file_paths"]; ok {
+		paths = append(paths, coerceStringSlice(raw)...)
+	}
+	if raw, ok := input["file_path"]; ok {
+		paths = append(paths, coerceStringSlice(raw)...)
+	}
+	if raw, ok := input["paths"]; ok {
+		paths = append(paths, coerceStringSlice(raw)...)
+	}
+	if raw, ok := input["files"]; ok {
+		paths = append(paths, coerceStringSlice(raw)...)
+	}
+	if raw, ok := input["path"]; ok {
+		paths = append(paths, coerceStringSlice(raw)...)
+	}
+	return uniqueStrings(paths)
+}
+
+// validateEditInputMap validates edit parameters from the already-normalized input map.
+func validateEditInputMap(input map[string]any) error {
+	if input == nil {
+		return errors.New("edit input must be a JSON object")
+	}
+	filePath, _ := input["file_path"].(string)
+	if strings.TrimSpace(filePath) == "" {
+		return errors.New("file_path is required")
+	}
+	if _, hasOld := input["old_string"]; !hasOld {
+		if _, hasNew := input["new_string"]; !hasNew {
+			return errors.New("at least one of old_string or new_string is required")
+		}
+	}
+	return nil
+}
+
+// validateAgenticEditInputMap validates agentic_edit parameters from the already-normalized input map.
+func validateAgenticEditInputMap(input map[string]any) error {
+	if input == nil {
+		return errors.New("agentic_edit input must be a JSON object")
+	}
+
+	// Check for file_edits array structure
+	if fileEdits, ok := input["file_edits"]; ok {
+		edits, ok := fileEdits.([]any)
+		if !ok {
+			return errors.New("agentic_edit file_edits must be an array")
+		}
+		if len(edits) == 0 {
+			return errors.New("at least one file edit operation is required")
+		}
+		for _, item := range edits {
+			editMap, ok := item.(map[string]any)
+			if !ok {
+				return errors.New("each file_edit must be a JSON object")
+			}
+			filePath, _ := editMap["file_path"].(string)
+			if strings.TrimSpace(filePath) == "" {
+				return errors.New("file_path is required in each file_edit")
+			}
+			if err := validateAgenticEditOperationsMap(editMap); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Fallback: single-file edit shape
+	filePath, _ := input["file_path"].(string)
+	if strings.TrimSpace(filePath) == "" {
+		path, _ := input["path"].(string)
+		if strings.TrimSpace(path) == "" {
+			return errors.New("at least one file edit operation is required")
+		}
+	}
+
+	return validateAgenticEditOperationsMap(input)
+}
+
+func validateAgenticEditOperationsMap(editMap map[string]any) error {
+	if edits, ok := editMap["edits"]; ok {
+		editList, ok := edits.([]any)
+		if !ok {
+			return errors.New("agentic_edit edits must be an array")
+		}
+		if len(editList) == 0 {
+			return errors.New("at least one file edit operation is required")
+		}
+		for _, op := range editList {
+			opMap, ok := op.(map[string]any)
+			if !ok {
+				return errors.New("each edit must be a JSON object")
+			}
+			if _, hasOld := opMap["old_string"]; !hasOld {
+				if _, hasNew := opMap["new_string"]; !hasNew {
+					return errors.New("each edit must include old_string or new_string")
+				}
+			}
+		}
+		return nil
+	}
+
+	if _, ok := editMap["old_string"]; ok {
+		return nil
+	}
+	if _, ok := editMap["new_string"]; ok {
+		return nil
+	}
+	return errors.New("at least one file edit operation is required")
+}
+
+func coerceStringSlice(v any) []string {
+	switch value := v.(type) {
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return []string{value}
+	case []string:
+		return value
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}

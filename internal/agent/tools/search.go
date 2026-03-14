@@ -50,6 +50,9 @@ func searchDuckDuckGo(ctx context.Context, client *http.Client, query string, ma
 	if maxResults <= 0 {
 		maxResults = 10
 	}
+	if client == nil {
+		client = http.DefaultClient
+	}
 
 	searchURL := "https://lite.duckduckgo.com/lite/?q=" + url.QueryEscape(query)
 

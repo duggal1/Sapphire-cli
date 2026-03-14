@@ -105,7 +105,7 @@ func lspList(t *styles.Styles, lsps []LSPInfo, width, maxItems int) string {
 				description = t.ResourceStatus.Render(fmt.Sprintf("error: %s", l.Error.Error()))
 			}
 		case lsp.StateDisabled:
-			icon = t.ResourceOfflineIcon.Foreground(t.Muted.GetBackground()).String()
+			icon = t.ResourceOfflineIcon.String()
 			description = t.ResourceStatus.Render("disabled")
 		default:
 			continue

@@ -316,7 +316,7 @@ func (p *Permissions) respond(action PermissionAction) tea.Msg {
 
 func (p *Permissions) hasDiffView() bool {
 	switch p.permission.ToolName {
-	case tools.EditToolName, tools.WriteToolName, tools.AgenticEditToolName:
+	case tools.EditToolName, tools.SingleEditToolName, tools.WriteToolName, tools.AgenticEditToolName:
 		return true
 	}
 	return false
@@ -463,7 +463,7 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 			lines = append(lines, p.renderKeyValue("URL", params.URL, contentWidth))
 			lines = append(lines, p.renderKeyValue("File", fsext.PrettyPath(params.FilePath), contentWidth))
 		}
-	case tools.EditToolName, tools.WriteToolName, tools.AgenticEditToolName, tools.ViewToolName:
+	case tools.EditToolName, tools.SingleEditToolName, tools.WriteToolName, tools.AgenticEditToolName, tools.ViewToolName, tools.SingleViewToolName:
 		var filePath string
 		switch params := p.permission.Params.(type) {
 		case tools.EditPermissionsParams:
@@ -525,7 +525,7 @@ func (p *Permissions) renderContent(width int) string {
 	switch p.permission.ToolName {
 	case tools.BashToolName:
 		return p.renderBashContent(width)
-	case tools.EditToolName:
+	case tools.EditToolName, tools.SingleEditToolName:
 		return p.renderEditContent(width)
 	case tools.WriteToolName:
 		return p.renderWriteContent(width)
@@ -537,7 +537,7 @@ func (p *Permissions) renderContent(width int) string {
 		return p.renderFetchContent(width)
 	case tools.AgenticFetchToolName:
 		return p.renderAgenticFetchContent(width)
-	case tools.ViewToolName:
+	case tools.ViewToolName, tools.SingleViewToolName:
 		return p.renderViewContent(width)
 	case tools.LSToolName:
 		return p.renderLSContent(width)

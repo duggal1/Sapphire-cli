@@ -18,7 +18,7 @@ const (
 var jobOutputDescription []byte
 
 type JobOutputParams struct {
-	ShellID      string `json:"shell_id" description:"The ID of the background shell to retrieve output from"`
+	ShellID      string `json:"shell_id,omitempty" description:"The ID of the background shell to retrieve output from (optional if using the most recent background job)"`
 	Wait         bool   `json:"wait,omitempty" description:"If true, block until the background shell completes before returning output"`
 	StdoutCursor int    `json:"stdout_cursor,omitempty" description:"The stdout cursor returned from a previous reading. Starts at 0."`
 	StderrCursor int    `json:"stderr_cursor,omitempty" description:"The stderr cursor returned from a previous reading. Starts at 0."`
@@ -40,20 +40,53 @@ func NewJobOutputTool() fantasy.AgentTool {
 		string(jobOutputDescription),
 		func(ctx context.Context, params JobOutputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if params.ShellID == "" {
-				return fantasy.NewTextErrorResponse("missing shell_id"), nil
+				params.ShellID = getLastBackgroundShellID(GetSessionFromContext(ctx))
+			}
+			if params.ShellID == "" {
+				return fantasy.NewTextResponse("No background job is available to read."), nil
 			}
 
-			bgManager := shell.GetBackgroundShellManager()
-			bgShell, ok := bgManager.Get(params.ShellID)
-			if !ok {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("background shell not found: %s", params.ShellID)), nil
+			var (
+				command         string
+				description     string
+				workingDir      string
+				stdout          string
+				stderr          string
+				done            bool
+				execErr         error
+				stdoutMissed    bool
+				stderrMissed    bool
+				newStdoutCursor int
+				newStderrCursor int
+				found           bool
+			)
+
+			fastManager := shell.GetFastBackgroundShellManager()
+			if fastShell, ok := fastManager.Get(params.ShellID); ok {
+				found = true
+				if params.Wait {
+					fastShell.WaitContext(ctx)
+				}
+				stdout, newStdoutCursor, stdoutMissed, stderr, newStderrCursor, stderrMissed, done, execErr = fastShell.GetOutputSince(params.StdoutCursor, params.StderrCursor)
+				command = fastShell.Command
+				description = fastShell.Description
+				workingDir = fastShell.WorkingDir
 			}
 
-			if params.Wait {
-				bgShell.WaitContext(ctx)
+			if !found {
+				bgManager := shell.GetBackgroundShellManager()
+				bgShell, ok := bgManager.Get(params.ShellID)
+				if !ok {
+					return fantasy.NewTextResponse(fmt.Sprintf("No background job found for ID: %s", params.ShellID)), nil
+				}
+				if params.Wait {
+					bgShell.WaitContext(ctx)
+				}
+				stdout, newStdoutCursor, stdoutMissed, stderr, newStderrCursor, stderrMissed, done, execErr = bgShell.GetOutputSince(params.StdoutCursor, params.StderrCursor)
+				command = bgShell.Command
+				description = bgShell.Description
+				workingDir = bgShell.WorkingDir
 			}
-
-			stdout, newStdoutCursor, stdoutMissed, stderr, newStderrCursor, stderrMissed, done, err := bgShell.GetOutputSince(params.StdoutCursor, params.StderrCursor)
 
 			var outputParts []string
 			if stdoutMissed || stderrMissed {
@@ -69,8 +102,9 @@ func NewJobOutputTool() fantasy.AgentTool {
 			status := "running"
 			if done {
 				status = "completed"
-				if err != nil {
-					exitCode := shell.ExitCode(err)
+				removeBackgroundShellID(GetSessionFromContext(ctx), params.ShellID)
+				if execErr != nil {
+					exitCode := shell.ExitCode(execErr)
 					if exitCode != 0 {
 						outputParts = append(outputParts, fmt.Sprintf("Exit code %d", exitCode))
 					}
@@ -81,10 +115,10 @@ func NewJobOutputTool() fantasy.AgentTool {
 
 			metadata := JobOutputResponseMetadata{
 				ShellID:          params.ShellID,
-				Command:          bgShell.Command,
-				Description:      bgShell.Description,
+				Command:          command,
+				Description:      description,
 				Done:             done,
-				WorkingDirectory: bgShell.WorkingDir,
+				WorkingDirectory: workingDir,
 				StdoutCursor:     newStdoutCursor,
 				StderrCursor:     newStderrCursor,
 			}

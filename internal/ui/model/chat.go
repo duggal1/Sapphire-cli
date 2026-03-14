@@ -144,6 +144,40 @@ func (m *Chat) AppendMessages(msgs ...chat.MessageItem) {
 	m.list.AppendItems(items...)
 }
 
+// InsertMessagesAt inserts message items at the given index.
+func (m *Chat) InsertMessagesAt(index int, msgs ...chat.MessageItem) {
+	if len(msgs) == 0 {
+		return
+	}
+
+	items := make([]list.Item, len(msgs))
+	for i, msg := range msgs {
+		items[i] = msg
+	}
+	m.list.InsertItemsAt(index, items...)
+
+	// Rebuild index map for all items after the insertion point.
+	for i := index; i < m.list.Len(); i++ {
+		item, ok := m.list.ItemAt(i).(chat.MessageItem)
+		if !ok {
+			continue
+		}
+		m.idInxMap[item.ID()] = i
+		// Register nested tool IDs for tools that contain nested tools.
+		if container, ok := item.(chat.NestedToolContainer); ok {
+			for _, nested := range container.NestedTools() {
+				m.idInxMap[nested.ID()] = i
+			}
+		}
+	}
+}
+
+// IndexForID returns the list index for the given message or tool ID.
+func (m *Chat) IndexForID(id string) (int, bool) {
+	idx, ok := m.idInxMap[id]
+	return idx, ok
+}
+
 // UpdateNestedToolIDs updates the ID map for nested tools within a container.
 // Call this after modifying nested tools to ensure animations work correctly.
 func (m *Chat) UpdateNestedToolIDs(containerID string) {
@@ -479,12 +513,22 @@ func (m *Chat) MessageItem(id string) chat.MessageItem {
 	return item
 }
 
+// InvalidateMessage invalidates cached layout for the message item with the given ID.
+func (m *Chat) InvalidateMessage(id string) {
+	idx, ok := m.idInxMap[id]
+	if !ok {
+		return
+	}
+	m.list.InvalidateItem(idx)
+}
+
 // ToggleExpandedSelectedItem expands the selected message item if it is expandable.
 func (m *Chat) ToggleExpandedSelectedItem() {
 	if expandable, ok := m.list.SelectedItem().(chat.Expandable); ok {
 		if !expandable.ToggleExpanded() {
 			m.ScrollToIndex(m.list.Selected())
 		}
+		m.list.InvalidateItem(m.list.Selected())
 		if m.AtBottom() {
 			m.ScrollToBottom()
 		}
@@ -577,7 +621,7 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 				m.selectWord(itemIdx, x, itemY)
 				return true, nil
 			}
-			
+
 			if content != "" {
 				return true, common.CopyToClipboard(content, "Copied to clipboard")
 			}
@@ -615,6 +659,7 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) bool {
 			if !expandable.ToggleExpanded() {
 				m.ScrollToIndex(m.list.Selected())
 			}
+			m.list.InvalidateItem(m.list.Selected())
 		}
 		if m.AtBottom() {
 			m.ScrollToBottom()

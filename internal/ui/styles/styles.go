@@ -561,12 +561,13 @@ func DefaultStyles(yellowMode bool) Styles {
 
 		// Backgrounds
 		bgBase        = lipgloss.Color("#15110f")
-		bgBaseLighter = lipgloss.Color("#15110f")
-		bgSubtle      = lipgloss.Color("#15110f")
-		bgOverlay     = lipgloss.Color("#15110f")
+		bgSubtle      = lipgloss.Color("#171311")
+		bgOverlay     = lipgloss.Color("#181412")
+		bgBaseLighter = lipgloss.Color("#191513")
 
-		thinkingBg     = lipgloss.Color("#171311")
-		thinkingBorder = lipgloss.Color("#171311")
+		thinkingBg     = bgOverlay
+		thinkingBorder = lipgloss.Color("#2a1d16")
+
 
 		// Foregrounds
 		fgBase      = charmtone.Ash
@@ -844,14 +845,14 @@ func DefaultStyles(yellowMode bool) Styles {
 				Prefix:          " ",
 				Suffix:          " ",
 				Color:           stringPtr(syntaxGray),
-				BackgroundColor: stringPtr("#15110f"),
+				BackgroundColor: stringPtr("#181412"),
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
 					Color:           stringPtr(fgBase.Hex()),
-					BackgroundColor: stringPtr("#15110f"),
+					BackgroundColor: stringPtr("#181412"),
 				},
 				Margin: uintPtr(1),
 			},
@@ -861,7 +862,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				},
 				Error: ansi.StylePrimitive{
 					Color:           stringPtr(syntaxGray),
-					BackgroundColor: stringPtr("#1a100cff"),
+					BackgroundColor: stringPtr("#181412"),
 				},
 				Comment: ansi.StylePrimitive{
 					Color: stringPtr(syntaxGrayMuted),
@@ -950,7 +951,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(markdownSecondaryHex),
 				},
 				Background: ansi.StylePrimitive{
-					BackgroundColor: stringPtr("#15110f"),
+					BackgroundColor: stringPtr("#181412"),
 				},
 			},
 		},
@@ -965,7 +966,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	// PlainMarkdown style - muted colors on warm background for thinking content.
-	plainBg := stringPtr("#17100C")
+	plainBg := stringPtr("#171311")
 	plainFg := stringPtr("#fff3e9ff")
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -1287,7 +1288,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Diff and multi-edit styles
 	s.Tool.DiffTruncation = s.Muted.Background(bgBaseLighter).PaddingLeft(2)
-	s.Tool.NoteTag = base.Padding(0, 1).Background(lipgloss.Color("#201916")).Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
+	s.Tool.NoteTag = base.Padding(0, 1).Background(bgBaseLighter).Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
 	s.Tool.NoteMessage = base.Foreground(fgHalfMuted)
 
 	// Job header styles - warm accents
@@ -1298,16 +1299,16 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.JobAction = base.Foreground(fgHalfMuted)
 	s.Tool.JobPID = s.Muted
 	s.Tool.JobDescription = s.Subtle
-	s.Tool.BashLabel = base.Foreground(lipgloss.Color("#D4D0CB")).Background(lipgloss.Color("#16110f")).Padding(0, 1).Bold(true)
+	s.Tool.BashLabel = base.Foreground(lipgloss.Color("#D4D0CB")).Background(bgSubtle).Padding(0, 1).Bold(true)
 	s.Tool.BashCommand = base.Foreground(fgBase).Background(bgSubtle).Padding(0, 1)
 	s.Tool.BashOutputLabel = base.Foreground(greenLight).Bold(true)
 
 	// Agent task styles - warm orange accent
-	s.Tool.AgentTaskTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(lipgloss.Color("#1d1614")).Foreground(lipgloss.Color("#E79A5B"))
+	s.Tool.AgentTaskTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(lipgloss.Color("#E79A5B"))
 	s.Tool.AgentPrompt = s.Muted
 
 	// Agentic fetch styles - orange accent
-	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(lipgloss.Color("#1b1618")).Foreground(lipgloss.Color("#E28AB0"))
+	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(lipgloss.Color("#E28AB0"))
 
 	// Todo styles
 	s.Tool.TodoRatio = base.Foreground(secondary)
@@ -1336,7 +1337,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.ResourceName = base
 	s.Tool.MediaType = base
 	s.Tool.ResourceSize = base.Foreground(fgMuted)
-	s.Tool.SkillTag = base.Bold(true).Padding(0, 1).Background(lipgloss.Color("#171312")).Foreground(lipgloss.Color("#B78AE8"))
+	s.Tool.SkillTag = base.Bold(true).Padding(0, 1).Background(bgSubtle).Foreground(lipgloss.Color("#B78AE8"))
 
 	// Buttons
 	s.ButtonFocus = lipgloss.NewStyle().Foreground(white).Background(primary)
@@ -1462,7 +1463,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Dialog.TitleText = base.Foreground(primary)
 	s.Dialog.TitleError = base.Foreground(red)
 	s.Dialog.TitleAccent = base.Foreground(secondary).Bold(true)
-	dialogSurface := lipgloss.Color("#181412")
+	dialogSurface := bgOverlay
 	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Background(dialogSurface)
 	s.Dialog.PrimaryText = base.Padding(0, 1).Foreground(primary)
 	s.Dialog.SecondaryText = base.Padding(0, 1).Foreground(fgSubtle)

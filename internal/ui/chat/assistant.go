@@ -320,11 +320,22 @@ func loadingPhraseForMessage(messageID string) string {
 // renderError renders an error message.
 func (a *AssistantMessageItem) renderError(width int) string {
 	finishPart := a.message.FinishPart()
-	errTag := a.sty.Chat.Message.ErrorTag.Render("ERROR")
-	truncated := ansi.Truncate(finishPart.Message, width-2-lipgloss.Width(errTag), "...")
-	title := fmt.Sprintf("%s %s", errTag, a.sty.Chat.Message.ErrorTitle.Render(truncated))
-	details := a.sty.Chat.Message.ErrorDetails.Width(width - 2).Render(finishPart.Details)
-	return fmt.Sprintf("%s\n\n%s", title, details)
+	titleLines := wrapPrefixedText(finishPart.Message, width, "✗ ", "  ")
+	rendered := make([]string, 0, len(titleLines)+1)
+	for i, line := range titleLines {
+		if i == 0 && strings.HasPrefix(line, "✗ ") {
+			rendered = append(rendered, a.sty.Chat.Message.ErrorTag.Render("✗ ")+a.sty.Chat.Message.ErrorTitle.Render(strings.TrimPrefix(line, "✗ ")))
+			continue
+		}
+		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render(line))
+	}
+	if strings.TrimSpace(finishPart.Details) == "" {
+		return strings.Join(rendered, "\n")
+	}
+	for _, line := range wrapPrefixedText(finishPart.Details, width, "  ", "  ") {
+		rendered = append(rendered, a.sty.Chat.Message.ErrorDetails.Render(line))
+	}
+	return strings.Join(rendered, "\n")
 }
 
 // isSpinning returns true if the assistant message is still generating.

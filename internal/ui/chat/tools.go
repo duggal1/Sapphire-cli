@@ -459,16 +459,22 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	return msg, true
 }
 
-// toolErrorContent formats an error message with ERROR tag.
+// toolErrorContent formats an error message using a minimal Codex-style prefix.
 func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int) string {
 	if result == nil {
 		return ""
 	}
 	errContent := strings.ReplaceAll(result.Content, "\n", " ")
-	errTag := sty.Tool.ErrorTag.Render("ERROR")
-	tagWidth := lipgloss.Width(errTag)
-	errContent = ansi.Truncate(errContent, width-tagWidth-3, "…")
-	return fmt.Sprintf("%s %s", errTag, sty.Tool.ErrorMessage.Render(errContent))
+	lines := wrapPrefixedText(errContent, width, "✗ ", "  ")
+	rendered := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if i == 0 && strings.HasPrefix(line, "✗ ") {
+			rendered = append(rendered, sty.Tool.ErrorTag.Render("✗ ")+sty.Tool.ErrorMessage.Render(strings.TrimPrefix(line, "✗ ")))
+			continue
+		}
+		rendered = append(rendered, sty.Tool.ErrorMessage.Render(line))
+	}
+	return strings.Join(rendered, "\n")
 }
 
 // toolIcon returns the status icon for a tool call.

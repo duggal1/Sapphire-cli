@@ -35,7 +35,7 @@ func TestSkillToolsRegistered(t *testing.T) {
 // TestSkillToolExecution verifies skill tools can be created and executed.
 func TestSkillToolExecution(t *testing.T) {
 	ctx := context.Background()
-	
+
 	// Create a minimal coordinator for testing
 	// Note: This is a basic smoke test - full integration tests require more setup
 	c := &coordinator{
@@ -44,7 +44,8 @@ func TestSkillToolExecution(t *testing.T) {
 				SkillsPaths: []string{},
 			},
 		},
-		discoveredSkills: []*skills.Skill{}, // Empty skills list
+		discoveredSkills:          []*skills.Skill{}, // Empty skills list
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 	}
 
 	// Test list_skills tool creation
@@ -53,7 +54,7 @@ func TestSkillToolExecution(t *testing.T) {
 	require.NotNil(t, listTool)
 	require.Equal(t, "list_skills", listTool.Info().Name)
 
-	// Test load_skill tool creation  
+	// Test load_skill tool creation
 	loadTool, err := c.loadSkillTool(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, loadTool)

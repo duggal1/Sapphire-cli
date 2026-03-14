@@ -70,17 +70,17 @@ func DefaultLightStyle() Style {
 				Foreground(charmtone.Pepper).
 				Background(charmtone.Salt),
 		},
-		// Insertions: warm amber instead of green
+		// Insertions: clean green
 		InsertLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F59E0B")).
-				Background(lipgloss.Color("#fef3c7")),
+				Foreground(lipgloss.Color("#16A34A")).
+				Background(lipgloss.Color("#ECFDF3")),
 			Symbol: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#F59E0B")).
-				Background(lipgloss.Color("#fef9c3")),
+				Foreground(lipgloss.Color("#16A34A")).
+				Background(lipgloss.Color("#F0FDF4")),
 			Code: lipgloss.NewStyle().
 				Foreground(charmtone.Pepper).
-				Background(lipgloss.Color("#fef9c3")),
+				Background(lipgloss.Color("#F0FDF4")),
 		},
 		DeleteLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
@@ -132,28 +132,28 @@ func DefaultDarkStyle() Style {
 				Foreground(charmtone.Salt).
 				Background(charmtone.Pepper),
 		},
-		// Insertions: warm amber instead of green
+		// Insertions: clean green
 		InsertLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FDBA74")).
-				Background(lipgloss.Color("#3a2f1a")),
+				Foreground(lipgloss.Color("#9ECE6A")).
+				Background(lipgloss.Color("#16231B")),
 			Symbol: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FDBA74")).
-				Background(lipgloss.Color("#423318")),
+				Foreground(lipgloss.Color("#9ECE6A")).
+				Background(lipgloss.Color("#1D2D22")),
 			Code: lipgloss.NewStyle().
 				Foreground(charmtone.Salt).
-				Background(lipgloss.Color("#423318")),
+				Background(lipgloss.Color("#1D2D22")),
 		},
 		DeleteLine: LineStyle{
 			LineNumber: lipgloss.NewStyle().
-				Foreground(charmtone.Cherry).
-				Background(lipgloss.Color("#332929")),
+				Foreground(lipgloss.Color("#F7768E")).
+				Background(lipgloss.Color("#24161D")),
 			Symbol: lipgloss.NewStyle().
-				Foreground(charmtone.Cherry).
-				Background(lipgloss.Color("#3a3030")),
+				Foreground(lipgloss.Color("#F7768E")).
+				Background(lipgloss.Color("#2C1C24")),
 			Code: lipgloss.NewStyle().
 				Foreground(charmtone.Salt).
-				Background(lipgloss.Color("#3a3030")),
+				Background(lipgloss.Color("#2C1C24")),
 		},
 	}
 }

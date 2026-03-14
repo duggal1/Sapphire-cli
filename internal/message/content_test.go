@@ -4,7 +4,46 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"charm.land/fantasy"
+	"charm.land/fantasy/providers/google"
+	"github.com/stretchr/testify/require"
 )
+
+func TestToAIMessageAssistantPreservesToolCallOrderAndThoughtSignature(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{Thinking: "thinking", ThoughtSignature: "sig-123", ToolID: "call-1"},
+			ToolCall{ID: "call-1", Name: "list_available_mcps", Input: `{"query":"stripe"}`},
+			TextContent{Text: "after tool call"},
+		},
+	}
+
+	aiMessages := msg.ToAIMessage()
+	require.Len(t, aiMessages, 1)
+	require.Len(t, aiMessages[0].Content, 3)
+
+	reasoningPart, ok := fantasy.AsMessagePart[fantasy.ReasoningPart](aiMessages[0].Content[0])
+	require.True(t, ok)
+	require.Equal(t, "thinking", reasoningPart.Text)
+
+	toolCallPart, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[1])
+	require.True(t, ok)
+	require.Equal(t, "call-1", toolCallPart.ToolCallID)
+
+	metadata, ok := toolCallPart.ProviderOptions[google.Name]
+	require.True(t, ok)
+	googleMetadata, ok := metadata.(*google.ReasoningMetadata)
+	require.True(t, ok)
+	require.Equal(t, "sig-123", googleMetadata.Signature)
+
+	textPart, ok := fantasy.AsMessagePart[fantasy.TextPart](aiMessages[0].Content[2])
+	require.True(t, ok)
+	require.Equal(t, "after tool call", textPart.Text)
+}
 
 func makeTestAttachments(n int, contentSize int) []Attachment {
 	attachments := make([]Attachment, n)

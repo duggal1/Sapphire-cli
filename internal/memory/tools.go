@@ -12,6 +12,7 @@ import (
 const (
 	RecallToolName = "recall_memory"
 	SaveToolName   = "save_memory"
+	HealthToolName = "memory_health"
 )
 
 // RecallParams is the input schema for the recall_memory tool.
@@ -28,12 +29,12 @@ type SaveParams struct {
 }
 
 // NewRecallTool creates the recall_memory agent tool.
-func NewRecallTool(store *Store) fantasy.AgentTool {
+func NewRecallTool(system *System) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RecallToolName,
 		"Query persistent memory that survives context compaction. Returns structured JSON records ranked by relevance. Use this before modifying files, after compaction, before architectural decisions, or when encountering familiar errors.",
 		func(ctx context.Context, params RecallParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if store == nil {
+			if system == nil || system.Store == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil
 			}
 
@@ -53,15 +54,14 @@ func NewRecallTool(store *Store) fantasy.AgentTool {
 			var records []MemoryRecord
 			var err error
 
-			// If query is non-empty and filter is "all", try FTS first
+			// If query is non-empty and filter is "all", use hybrid search
 			if params.Query != "" && filter == "all" {
-				records, err = store.SearchFTS(ctx, params.Query, limit)
+				records, err = system.SearchHybrid(ctx, params.Query, limit)
 				if err != nil || len(records) == 0 {
-					// Fallback to scored retrieval
-					records, err = store.QueryRecords(ctx, filter, limit)
+					records, err = system.Store.QueryRecords(ctx, filter, limit)
 				}
 			} else {
-				records, err = store.QueryRecords(ctx, filter, limit)
+				records, err = system.Store.QueryRecords(ctx, filter, limit)
 			}
 
 			if err != nil {
@@ -78,12 +78,12 @@ func NewRecallTool(store *Store) fantasy.AgentTool {
 }
 
 // NewSaveTool creates the save_memory agent tool.
-func NewSaveTool(store *Store) fantasy.AgentTool {
+func NewSaveTool(system *System) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		SaveToolName,
 		"Write a critical fact to persistent memory immediately, bypassing the background pipeline. Use when the agent makes a decision so important it cannot risk the pipeline missing it. Writes synchronously at maximum salience.",
 		func(ctx context.Context, params SaveParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if store == nil {
+			if system == nil || system.Store == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil
 			}
 
@@ -106,7 +106,7 @@ func NewSaveTool(store *Store) fantasy.AgentTool {
 			}
 
 			rec := MemoryRecord{
-				SessionID:               store.sessionID,
+				SessionID:               system.Store.sessionID,
 				EventType:               eventType,
 				Timestamp:               timeNowUnix(),
 				TurnIndex:               0, // Explicit saves have no turn index
@@ -119,11 +119,33 @@ func NewSaveTool(store *Store) fantasy.AgentTool {
 			// Maximum salience for explicit saves
 			rec.Salience = 1.0
 
-			if err := store.WriteRecord(ctx, rec); err != nil {
+			if err := system.WriteRecord(ctx, rec); err != nil {
 				return fantasy.NewTextResponse(fmt.Sprintf("Failed to save memory: %s", err)), nil
 			}
 
 			return fantasy.NewTextResponse(fmt.Sprintf("Memory saved: %s", eventType)), nil
+		},
+	)
+}
+
+// NewHealthTool creates the memory_health agent tool.
+func NewHealthTool(system *System) fantasy.AgentTool {
+	return fantasy.NewAgentTool(
+		HealthToolName,
+		"Get a structured health report on persistent memory extraction, queue pressure, and storage stats.",
+		func(ctx context.Context, params struct{}, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			if system == nil {
+				return fantasy.NewTextResponse("Memory system not initialized."), nil
+			}
+			report, err := system.HealthSnapshot(ctx)
+			if err != nil {
+				return fantasy.NewTextResponse(fmt.Sprintf("Failed to fetch memory health: %s", err)), nil
+			}
+			payload, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				return fantasy.NewTextResponse(fmt.Sprintf("Failed to encode memory health: %s", err)), nil
+			}
+			return fantasy.NewTextResponse(string(payload)), nil
 		},
 	)
 }

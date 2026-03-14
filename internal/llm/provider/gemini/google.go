@@ -455,9 +455,9 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 					geminiPart := &genai.Part{
 						Text: text.Text,
 					}
-					if currentReasoningMetadata != nil {
+					if currentReasoningMetadata != nil && currentReasoningMetadata.ToolID == "" {
 						geminiPart.ThoughtSignature = []byte(currentReasoningMetadata.Signature)
-						currentReasoningMetadata = nil
+						// Do not clear currentReasoningMetadata; it may apply to multiple parts in the turn
 					}
 					parts = append(parts, geminiPart)
 				case fantasy.ContentTypeToolCall:
@@ -478,13 +478,25 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 							Args: result,
 						},
 					}
-					if currentReasoningMetadata != nil {
-						geminiPart.ThoughtSignature = []byte(currentReasoningMetadata.Signature)
-						currentReasoningMetadata = nil
+					reasoningMetadata := currentReasoningMetadata
+					if metadata, ok := toolCall.ProviderOptions[Name]; ok {
+						if googleMetadata, ok := metadata.(*ReasoningMetadata); ok {
+							reasoningMetadata = googleMetadata
+						}
+					}
+					if reasoningMetadata != nil &&
+						(reasoningMetadata.ToolID == "" || reasoningMetadata.ToolID == toolCall.ToolCallID) {
+						geminiPart.ThoughtSignature = []byte(reasoningMetadata.Signature)
+						// Do not clear currentReasoningMetadata; once thinking is started, it applies to subseq. parts
+					}
+					if geminiPart.ThoughtSignature == nil {
+						geminiPart.ThoughtSignature = []byte{}
 					}
 					parts = append(parts, geminiPart)
 				}
 			}
+			// Reset currentReasoningMetadata at the end of the Assistant message processing
+			currentReasoningMetadata = nil
 			if len(parts) > 0 {
 				content = append(content, &genai.Content{
 					Role:  genai.RoleModel,

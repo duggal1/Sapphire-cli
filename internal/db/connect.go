@@ -17,7 +17,7 @@ var pragmas = map[string]string{
 	"cache_size":    "-8000",
 	"synchronous":   "NORMAL",
 	"secure_delete": "ON",
-	"busy_timeout":  "30000",
+	"busy_timeout":  "5000",
 }
 
 // Connect opens a SQLite database connection and runs migrations.
@@ -36,6 +36,12 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
+
+	// SQLite performs best with a single shared writer connection in this CLI.
+	// Without this, concurrent title/session/message writes can fight over locks
+	// and trigger busy_timeout stalls in the live render path.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	goose.SetBaseFS(FS)
 

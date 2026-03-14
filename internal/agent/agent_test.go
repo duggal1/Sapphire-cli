@@ -52,6 +52,9 @@ func TestCoderAgent(t *testing.T) {
 
 	for _, pair := range modelPairs {
 		t.Run(pair.name, func(t *testing.T) {
+			if key := requiredAPIKey(pair.name); key != "" && os.Getenv(key) == "" {
+				t.Skipf("missing %s", key)
+			}
 			t.Run("simple test", func(t *testing.T) {
 				agent, env := setupAgent(t, pair)
 
@@ -615,6 +618,21 @@ func TestCoderAgent(t *testing.T) {
 				require.True(t, foundLSResult, "Expected to find ls tool result")
 			})
 		})
+	}
+}
+
+func requiredAPIKey(pairName string) string {
+	switch pairName {
+	case "anthropic-sonnet":
+		return "CRUSH_ANTHROPIC_API_KEY"
+	case "openai-gpt-5":
+		return "CRUSH_OPENAI_API_KEY"
+	case "openrouter-kimi-k2":
+		return "CRUSH_OPENROUTER_API_KEY"
+	case "zai-glm4.6":
+		return "CRUSH_ZAI_API_KEY"
+	default:
+		return ""
 	}
 }
 

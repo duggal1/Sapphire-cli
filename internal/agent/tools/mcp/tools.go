@@ -42,7 +42,9 @@ func RunTool(ctx context.Context, cfg *config.Config, name, toolName string, inp
 	if err != nil {
 		return ToolResult{}, err
 	}
-	result, err := c.CallTool(ctx, &mcp.CallToolParams{
+	callCtx, cancel := withMCPTimeout(ctx, cfg, name)
+	defer cancel()
+	result, err := c.CallTool(callCtx, &mcp.CallToolParams{
 		Name:      toolName,
 		Arguments: args,
 	})
@@ -115,7 +117,7 @@ func RefreshTools(ctx context.Context, cfg *config.Config, name string) {
 		return
 	}
 
-	tools, err := getTools(ctx, session)
+	tools, err := getTools(ctx, cfg, name, session)
 	if err != nil {
 		updateState(name, StateError, err, nil, Counts{})
 		return
@@ -128,11 +130,13 @@ func RefreshTools(ctx context.Context, cfg *config.Config, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
-func getTools(ctx context.Context, session *ClientSession) ([]*Tool, error) {
+func getTools(ctx context.Context, cfg *config.Config, name string, session *ClientSession) ([]*Tool, error) {
 	// Always call ListTools to get the actual available tools.
 	// The InitializeResult Capabilities.Tools field may be an empty object {},
 	// which is valid per MCP spec, but we still need to call ListTools to discover tools.
-	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	callCtx, cancel := withMCPTimeout(ctx, cfg, name)
+	defer cancel()
+	result, err := session.ListTools(callCtx, &mcp.ListToolsParams{})
 	if err != nil {
 		return nil, err
 	}

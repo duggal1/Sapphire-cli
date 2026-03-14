@@ -72,6 +72,26 @@ CREATE TABLE IF NOT EXISTS compaction_checkpoints (
 	checkpoint_json TEXT NOT NULL,
 	created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+	record_id INTEGER PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	project_scope TEXT NOT NULL,
+	vector BLOB NOT NULL,
+	dim INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_dead_letter (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	project_scope TEXT NOT NULL,
+	event_type TEXT NOT NULL,
+	timestamp INTEGER NOT NULL,
+	turn_index INTEGER NOT NULL DEFAULT 0,
+	reason TEXT NOT NULL,
+	raw_source TEXT NOT NULL
+);
 `
 
 // NewStore opens (or creates) a per-session SQLite memory database.
@@ -150,14 +170,14 @@ type MemoryRecord struct {
 	IsFailureMode           bool    `json:"is_failure_mode"`
 }
 
-// WriteRecord writes a memory record with deduplication.
-func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) error {
+// WriteRecord writes a memory record with deduplication and returns the record ID.
+func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	hash := dedupHash(rec.SessionID, rec.TurnIndex, rec.EventType)
 
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO memory_records
 			(session_id, project_scope, event_type, timestamp, turn_index, salience,
 			 content_json, raw_source, is_negative_constraint, is_architectural_decision,
@@ -168,7 +188,22 @@ func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) error {
 		boolToInt(rec.IsNegativeConstraint), boolToInt(rec.IsArchitecturalDecision),
 		boolToInt(rec.IsFailureMode), hash,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+
+	if id, err := res.LastInsertId(); err == nil && id > 0 {
+		return id, nil
+	}
+
+	// If insert was ignored, fetch existing ID by dedup hash.
+	var id int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM memory_records WHERE dedup_hash = ? LIMIT 1`, hash,
+	).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // QueryRecords retrieves top-K records by retrieval score with temporal decay.
@@ -240,9 +275,9 @@ func (s *Store) SearchFTS(ctx context.Context, query string, limit int) ([]Memor
 			m.is_architectural_decision, m.is_failure_mode
 		FROM memory_fts f
 		JOIN memory_records m ON f.rowid = m.id
-		WHERE memory_fts MATCH ? AND m.session_id = ?
+		WHERE memory_fts MATCH ? AND m.session_id = ? AND m.project_scope = ?
 		ORDER BY rank LIMIT ?`,
-		query, s.sessionID, limit,
+		query, s.sessionID, s.project, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -326,6 +361,217 @@ func (s *Store) GetLatestCheckpoint(ctx context.Context) (string, error) {
 	return checkpoint, err
 }
 
+// WriteDeadLetter persists an event that could not be enqueued.
+func (s *Store) WriteDeadLetter(ctx context.Context, event ExtractionEvent, reason string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO memory_dead_letter
+		(session_id, project_scope, event_type, timestamp, turn_index, reason, raw_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.SessionID, s.project, event.EventType, time.Now().Unix(), event.TurnIndex, reason, event.RawSource,
+	)
+	return err
+}
+
+// DeadLetterCount returns the number of dead-lettered events for the session.
+func (s *Store) DeadLetterCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_dead_letter WHERE session_id = ? AND project_scope = ?`,
+		s.sessionID, s.project,
+	).Scan(&count)
+	return count, err
+}
+
+// CountRecords returns the total number of records for the session.
+func (s *Store) CountRecords(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_records WHERE session_id = ? AND project_scope = ?`,
+		s.sessionID, s.project,
+	).Scan(&count)
+	return count, err
+}
+
+// TopSalience returns the top-K salience scores.
+func (s *Store) TopSalience(ctx context.Context, limit int) ([]float64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT salience FROM memory_records
+		WHERE session_id = ? AND project_scope = ?
+		ORDER BY salience DESC LIMIT ?`,
+		s.sessionID, s.project, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var scores []float64
+	for rows.Next() {
+		var svalue float64
+		if err := rows.Scan(&svalue); err != nil {
+			continue
+		}
+		scores = append(scores, svalue)
+	}
+	return scores, nil
+}
+
+// LatestCheckpointAgeSeconds returns age seconds and timestamp of the latest checkpoint.
+func (s *Store) LatestCheckpointAgeSeconds(ctx context.Context) (int64, int64, error) {
+	var createdAt int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT created_at FROM compaction_checkpoints
+		WHERE session_id = ? AND project_scope = ?
+		ORDER BY created_at DESC LIMIT 1`,
+		s.sessionID, s.project,
+	).Scan(&createdAt)
+	if err == sql.ErrNoRows {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	age := time.Now().Unix() - createdAt
+	return age, createdAt, nil
+}
+
+// UpsertEmbedding stores or updates an embedding vector for a record.
+func (s *Store) UpsertEmbedding(ctx context.Context, recordID int64, vector []float32, dimensions int) error {
+	if recordID == 0 || len(vector) == 0 {
+		return nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	blob := encodeVector(vector)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO memory_embeddings (record_id, session_id, project_scope, vector, dim, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(record_id) DO UPDATE SET vector = excluded.vector, dim = excluded.dim, updated_at = excluded.updated_at`,
+		recordID, s.sessionID, s.project, blob, dimensions, time.Now().Unix(),
+	)
+	return err
+}
+
+type embeddedRecord struct {
+	record MemoryRecord
+	vector []float32
+}
+
+// LoadEmbeddingCandidates fetches recent/high-salience records with embeddings.
+func (s *Store) LoadEmbeddingCandidates(ctx context.Context, limit int) ([]embeddedRecord, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.id, m.session_id, m.event_type, m.timestamp, m.turn_index, m.salience,
+			m.content_json, m.raw_source, m.is_negative_constraint,
+			m.is_architectural_decision, m.is_failure_mode, e.vector
+		FROM memory_embeddings e
+		JOIN memory_records m ON e.record_id = m.id
+		WHERE m.session_id = ? AND m.project_scope = ?
+		ORDER BY m.salience DESC, m.timestamp DESC LIMIT ?`,
+		s.sessionID, s.project, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []embeddedRecord
+	for rows.Next() {
+		var r MemoryRecord
+		var neg, arch, fail int
+		var blob []byte
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.EventType, &r.Timestamp,
+			&r.TurnIndex, &r.Salience, &r.ContentJSON, &r.RawSource,
+			&neg, &arch, &fail, &blob); err != nil {
+			continue
+		}
+		r.IsNegativeConstraint = neg == 1
+		r.IsArchitecturalDecision = arch == 1
+		r.IsFailureMode = fail == 1
+
+		vec, err := decodeVector(blob)
+		if err != nil {
+			continue
+		}
+		results = append(results, embeddedRecord{record: r, vector: vec})
+	}
+	return results, nil
+}
+
+// SearchHybrid merges FTS and semantic retrieval results.
+func (s *Store) SearchHybrid(ctx context.Context, query string, limit int, embedder Embedder) ([]MemoryRecord, error) {
+	if query == "" {
+		return s.QueryRecords(ctx, "all", limit)
+	}
+
+	ftsRecords, ftsErr := s.SearchFTS(ctx, query, limit)
+	if embedder == nil {
+		if ftsErr == nil && len(ftsRecords) > 0 {
+			return ftsRecords, nil
+		}
+		return s.QueryRecords(ctx, "all", limit)
+	}
+
+	queryVec, err := embedder.EmbedQuery(ctx, query)
+	if err != nil {
+		slog.Debug("memory: semantic embed failed, falling back to FTS", "error", err)
+		if ftsErr == nil && len(ftsRecords) > 0 {
+			return ftsRecords, nil
+		}
+		return s.QueryRecords(ctx, "all", limit)
+	}
+
+	candidateLimit := limit * 20
+	if candidateLimit < 50 {
+		candidateLimit = 50
+	}
+	if candidateLimit > 300 {
+		candidateLimit = 300
+	}
+	embedded, err := s.LoadEmbeddingCandidates(ctx, candidateLimit)
+	if err != nil {
+		slog.Debug("memory: semantic candidates failed, falling back to FTS", "error", err)
+		if ftsErr == nil && len(ftsRecords) > 0 {
+			return ftsRecords, nil
+		}
+		return s.QueryRecords(ctx, "all", limit)
+	}
+
+	var semanticScored []scoredRecord
+	for _, item := range embedded {
+		score := cosineSimilarity(queryVec, item.vector)
+		if score <= 0 {
+			continue
+		}
+		semanticScored = append(semanticScored, scoredRecord{
+			record: item.record,
+			score:  score,
+		})
+	}
+
+	// Sort semantic results by similarity.
+	for i := 1; i < len(semanticScored); i++ {
+		for j := i; j > 0 && semanticScored[j].score > semanticScored[j-1].score; j-- {
+			semanticScored[j], semanticScored[j-1] = semanticScored[j-1], semanticScored[j]
+		}
+	}
+
+	if len(semanticScored) > limit {
+		semanticScored = semanticScored[:limit]
+	}
+
+	return mergeHybridResults(ftsRecords, semanticScored, limit), nil
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -339,6 +585,80 @@ func sortRecordsBySalience(records []MemoryRecord) {
 			records[j], records[j-1] = records[j-1], records[j]
 		}
 	}
+}
+
+type scoredRecord struct {
+	record MemoryRecord
+	score  float64
+}
+
+func mergeHybridResults(fts []MemoryRecord, semantic []scoredRecord, limit int) []MemoryRecord {
+	if limit <= 0 {
+		return nil
+	}
+	if len(fts) == 0 && len(semantic) == 0 {
+		return nil
+	}
+
+	scores := make(map[int64]scoredRecord)
+
+	// Seed with FTS results.
+	for i, rec := range fts {
+		score := 0.6
+		if len(fts) > 1 {
+			score = 0.6 + 0.4*(1.0-float64(i)/float64(len(fts)))
+		}
+		scores[rec.ID] = scoredRecord{record: rec, score: score}
+	}
+
+	// Merge semantic results.
+	for _, srec := range semantic {
+		existing, ok := scores[srec.record.ID]
+		if ok {
+			// Boost when both methods agree.
+			combined := srec.score
+			if existing.score > combined {
+				combined = existing.score + 0.1
+			} else {
+				combined = srec.score + 0.1
+			}
+			existing.score = combined
+			scores[srec.record.ID] = existing
+			continue
+		}
+		scores[srec.record.ID] = srec
+	}
+
+	merged := make([]scoredRecord, 0, len(scores))
+	for _, srec := range scores {
+		merged = append(merged, srec)
+	}
+
+	// Sort by score, then salience.
+	for i := 1; i < len(merged); i++ {
+		for j := i; j > 0; j-- {
+			if merged[j].score > merged[j-1].score {
+				merged[j], merged[j-1] = merged[j-1], merged[j]
+				continue
+			}
+			if merged[j].score == merged[j-1].score &&
+				merged[j].record.Salience > merged[j-1].record.Salience {
+				merged[j], merged[j-1] = merged[j-1], merged[j]
+				continue
+			}
+			break
+		}
+	}
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+
+	out := make([]MemoryRecord, len(merged))
+	for i, srec := range merged {
+		out[i] = srec.record
+	}
+	return out
 }
 
 // MarshalRecordsJSON returns a JSON string of the given records for injection.

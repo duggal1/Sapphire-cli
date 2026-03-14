@@ -25,7 +25,9 @@ func GetPromptMessages(ctx context.Context, cfg *config.Config, clientName, prom
 	if err != nil {
 		return nil, err
 	}
-	result, err := c.GetPrompt(ctx, &mcp.GetPromptParams{
+	callCtx, cancel := withMCPTimeout(ctx, cfg, clientName)
+	defer cancel()
+	result, err := c.GetPrompt(callCtx, &mcp.GetPromptParams{
 		Name:      promptName,
 		Arguments: args,
 	})
@@ -54,7 +56,7 @@ func RefreshPrompts(ctx context.Context, name string) {
 		return
 	}
 
-	prompts, err := getPrompts(ctx, session)
+	prompts, err := getPrompts(ctx, nil, name, session)
 	if err != nil {
 		updateState(name, StateError, err, nil, Counts{})
 		return
@@ -67,11 +69,13 @@ func RefreshPrompts(ctx context.Context, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
-func getPrompts(ctx context.Context, c *ClientSession) ([]*Prompt, error) {
+func getPrompts(ctx context.Context, cfg *config.Config, name string, c *ClientSession) ([]*Prompt, error) {
 	if c.InitializeResult().Capabilities.Prompts == nil {
 		return nil, nil
 	}
-	result, err := c.ListPrompts(ctx, &mcp.ListPromptsParams{})
+	callCtx, cancel := withMCPTimeout(ctx, cfg, name)
+	defer cancel()
+	result, err := c.ListPrompts(callCtx, &mcp.ListPromptsParams{})
 	if err != nil {
 		return nil, err
 	}

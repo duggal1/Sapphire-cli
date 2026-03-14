@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -35,4 +38,13 @@ func TestMCPSession_CancelOnClose(t *testing.T) {
 
 	// After Close, the context must be cancelled.
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
+}
+
+func TestStdioCheck_DoesNotDuplicateArgv0(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "check.sh")
+	err := os.WriteFile(script, []byte("#!/bin/sh\n[ \"$1\" = \"expected\" ]\n"), 0o755)
+	require.NoError(t, err)
+
+	cmd := exec.Command(script, "expected")
+	require.NoError(t, stdioCheck(cmd))
 }

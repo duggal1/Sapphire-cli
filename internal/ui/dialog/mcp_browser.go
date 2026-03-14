@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -41,6 +42,8 @@ type mcpRegistryLoadedMsg struct {
 	err  error
 }
 
+type shimmerTickMsg struct{}
+
 // MCPBrowser represents the MCP registry browser dialog.
 type MCPBrowser struct {
 	com          *common.Common
@@ -50,6 +53,7 @@ type MCPBrowser struct {
 	mode         mcpBrowserMode
 	loading      bool
 	loadErr      string
+	shimmerFrame int
 	defs         []config.RegistryMCPDefinition
 	defsByName   map[string]config.RegistryMCPDefinition
 	selectedName string
@@ -135,10 +139,13 @@ func (b *MCPBrowser) StartLoading() tea.Cmd {
 		return nil
 	}
 	b.loading = true
-	return func() tea.Msg {
-		defs, err := config.FetchRegistryDefinitions(context.Background())
-		return mcpRegistryLoadedMsg{defs: defs, err: err}
-	}
+	return tea.Batch(
+		b.shimmerTick(),
+		func() tea.Msg {
+			defs, err := config.FetchRegistryDefinitions(context.Background())
+			return mcpRegistryLoadedMsg{defs: defs, err: err}
+		},
+	)
 }
 
 // StopLoading implements LoadingDialog.
@@ -162,6 +169,12 @@ func (b *MCPBrowser) HandleMsg(msg tea.Msg) Action {
 			b.defsByName[def.Name] = def
 		}
 		b.refreshItems()
+		return nil
+	case shimmerTickMsg:
+		if b.loading {
+			b.shimmerFrame++
+			return ActionCmd{Cmd: b.shimmerTick()}
+		}
 		return nil
 	case tea.KeyPressMsg:
 		switch b.mode {
@@ -217,6 +230,12 @@ func (b *MCPBrowser) HandleMsg(msg tea.Msg) Action {
 	return nil
 }
 
+func (b *MCPBrowser) shimmerTick() tea.Cmd {
+	return tea.Tick(33*time.Millisecond, func(time.Time) tea.Msg {
+		return shimmerTickMsg{}
+	})
+}
+
 // Draw implements Dialog.
 func (b *MCPBrowser) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := b.com.Styles
@@ -270,7 +289,7 @@ func (b *MCPBrowser) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 func (b *MCPBrowser) titleInfo(t *styles.Styles) string {
 	if b.loading {
-		return t.HalfMuted.Render("loading registry…")
+		return styles.ShimmerText(t, "Loading registry...", b.shimmerFrame)
 	}
 	count := len(b.defs)
 	label := fmt.Sprintf("%d servers", count)
@@ -282,7 +301,8 @@ func (b *MCPBrowser) titleInfo(t *styles.Styles) string {
 
 func (b *MCPBrowser) renderOverview(width int) string {
 	if b.loading {
-		return ansi.Truncate("Loading MCP registry…", width, "…")
+		label := ansi.Truncate("Loading MCP registry...", width, "…")
+		return styles.ShimmerText(b.com.Styles, label, b.shimmerFrame)
 	}
 	if b.loadErr != "" {
 		return ansi.Truncate("Registry error: "+b.loadErr, width, "…")
@@ -296,7 +316,8 @@ func (b *MCPBrowser) renderOverview(width int) string {
 
 func (b *MCPBrowser) renderDetail(width int) string {
 	if b.loading {
-		return ansi.Truncate("Loading MCP registry…", width, "…")
+		label := ansi.Truncate("Loading MCP registry...", width, "…")
+		return styles.ShimmerText(b.com.Styles, label, b.shimmerFrame)
 	}
 	if b.selectedName == "" {
 		return ansi.Truncate("Select an MCP server", width, "…")

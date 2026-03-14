@@ -11,6 +11,9 @@ vars:
 env:
   CGO_ENABLED: 0
   GOEXPERIMENT: greenteagc
+  GIT_TERMINAL_PROMPT: "0"
+  GIT_ASKPASS: "true"
+  GOPROXY: "https://proxy.golang.org"
 
 tasks:
   lint:install:

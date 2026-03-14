@@ -30,7 +30,7 @@ func ListResources(ctx context.Context, cfg *config.Config, name string) ([]*Res
 		return nil, err
 	}
 
-	resources, err := getResources(ctx, session)
+	resources, err := getResources(ctx, cfg, name, session)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,9 @@ func ReadResource(ctx context.Context, cfg *config.Config, name, uri string) ([]
 	if err != nil {
 		return nil, err
 	}
-	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	callCtx, cancel := withMCPTimeout(ctx, cfg, name)
+	defer cancel()
+	result, err := session.ReadResource(callCtx, &mcp.ReadResourceParams{URI: uri})
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +66,7 @@ func RefreshResources(ctx context.Context, name string) {
 		return
 	}
 
-	resources, err := getResources(ctx, session)
+	resources, err := getResources(ctx, nil, name, session)
 	if err != nil {
 		updateState(name, StateError, err, nil, Counts{})
 		return
@@ -77,11 +79,13 @@ func RefreshResources(ctx context.Context, name string) {
 	updateState(name, StateConnected, nil, session, prev.Counts)
 }
 
-func getResources(ctx context.Context, c *ClientSession) ([]*Resource, error) {
+func getResources(ctx context.Context, cfg *config.Config, name string, c *ClientSession) ([]*Resource, error) {
 	if c.InitializeResult().Capabilities.Resources == nil {
 		return nil, nil
 	}
-	result, err := c.ListResources(ctx, &mcp.ListResourcesParams{})
+	callCtx, cancel := withMCPTimeout(ctx, cfg, name)
+	defer cancel()
+	result, err := c.ListResources(callCtx, &mcp.ListResourcesParams{})
 	if err != nil {
 		// Handle "Method not found" errors from MCP servers that don't support resources/list.
 		if isMethodNotFoundError(err) {

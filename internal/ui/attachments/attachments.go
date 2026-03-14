@@ -19,6 +19,9 @@ import (
 const maxFilename = 15
 const pasteTextIcon = "≡"
 
+// greenBadge is a pre-styled green background for the hamburger icon
+var greenBadge = lipgloss.NewStyle().Background(lipgloss.Color("#22c55e")).Foreground(lipgloss.Color("#ffffff")).Padding(0, 1)
+
 type Keymap struct {
 	DeleteMode,
 	DeleteAll,
@@ -180,7 +183,9 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting, editing bo
 				r.normalStyle.Render(filename),
 			)
 		} else if isPasteBlock(att) {
-			label := fmt.Sprintf("%s %s", pasteTextIcon, filename)
+			// Render paste block with green badge icon on left, filename on right
+			iconBadge := greenBadge.Render(pasteTextIcon)
+			label := fmt.Sprintf(" %s", filename)
 			style := r.pasteStyle.Copy()
 			color := r.pastePalette[pasteIndex%len(r.pastePalette)]
 			style = style.Background(color)
@@ -189,7 +194,7 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting, editing bo
 				selectedColor := r.pasteSelectedPalette[pasteIndex%len(r.pasteSelectedPalette)]
 				style = style.Background(selectedColor)
 			}
-			chips = append(chips, style.Render(label))
+			chips = append(chips, style.Render(iconBadge+label))
 			pasteIndex++
 		} else {
 			chips = append(

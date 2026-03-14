@@ -38,6 +38,10 @@ crush run --quiet "Generate a README for this project"
 crush run --verbose "Generate a README for this project"
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Mark non-interactive mode as early as possible to skip heavy startup work.
+		_ = os.Setenv("SAPPHIRE_NON_INTERACTIVE", "1")
+		event.SetNonInteractive(true)
+
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		largeModel, _ := cmd.Flags().GetString("model")
@@ -73,7 +77,6 @@ crush run --verbose "Generate a README for this project"
 			return fmt.Errorf("no prompt provided")
 		}
 
-		event.SetNonInteractive(true)
 		event.AppInitialized()
 
 		return app.RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose)

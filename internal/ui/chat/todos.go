@@ -48,12 +48,20 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	var meta tools.TodosResponseMetadata
 	var headerText string
 	var body string
+	var items []tools.TodoItem
 
 	// Parse params for pending state (before result is available).
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err == nil {
 		completedCount := 0
 		inProgressTask := ""
-		for _, todo := range params.Todos {
+		if len(params.Tasks) > 0 {
+			items = params.Tasks
+		} else if len(params.Todos) > 0 {
+			items = params.Todos
+		} else if params.Task != nil {
+			items = []tools.TodoItem{*params.Task}
+		}
+		for _, todo := range items {
 			if todo.Status == "completed" {
 				completedCount++
 			}
@@ -67,7 +75,7 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		}
 
 		// Default display from params (used when pending or no metadata).
-		ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", completedCount, len(params.Todos)))
+		ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", completedCount, len(items)))
 		headerText = ratio
 		if inProgressTask != "" {
 			headerText = fmt.Sprintf("%s · %s", ratio, inProgressTask)
@@ -116,6 +124,10 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 				}
 			}
 		}
+
+		if opts.HasResult() && body == "" && len(items) > 0 {
+			body = FormatTodosList(sty, todosFromItems(items), styles.ArrowRightIcon, cappedWidth)
+		}
 	}
 
 	toolParams := []string{headerText}
@@ -153,10 +165,12 @@ func FormatTodosList(sty *styles.Styles, todos []session.Todo, inProgressIcon st
 		switch todo.Status {
 		case session.TodoStatusCompleted:
 			prefix = sty.Tool.TodoCompletedIcon.Render(styles.TodoCompletedIcon) + " "
+			textStyle = sty.Muted
 		case session.TodoStatusInProgress:
 			prefix = sty.Tool.TodoInProgressIcon.Render(inProgressIcon + " ")
 		default:
 			prefix = sty.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon) + " "
+			textStyle = sty.Subtle
 		}
 
 		text := todo.Content
@@ -172,6 +186,18 @@ func FormatTodosList(sty *styles.Styles, todos []session.Todo, inProgressIcon st
 	return strings.Join(lines, "\n")
 }
 
+func todosFromItems(items []tools.TodoItem) []session.Todo {
+	todos := make([]session.Todo, 0, len(items))
+	for _, item := range items {
+		todos = append(todos, session.Todo{
+			Content:    item.Content,
+			Status:     session.TodoStatus(item.Status),
+			ActiveForm: item.ActiveForm,
+		})
+	}
+	return todos
+}
+
 // sortTodos sorts todos by status: completed, in_progress, pending.
 func sortTodos(todos []session.Todo) {
 	slices.SortStableFunc(todos, func(a, b session.Todo) int {
@@ -182,9 +208,9 @@ func sortTodos(todos []session.Todo) {
 // statusOrder returns the sort order for a todo status.
 func statusOrder(s session.TodoStatus) int {
 	switch s {
-	case session.TodoStatusCompleted:
-		return 0
 	case session.TodoStatusInProgress:
+		return 0
+	case session.TodoStatusPending:
 		return 1
 	default:
 		return 2

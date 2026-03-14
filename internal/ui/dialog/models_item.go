@@ -7,7 +7,6 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
@@ -42,15 +41,42 @@ func (m *ModelGroup) AppendItems(items ...*ModelItem) {
 func (m *ModelGroup) Render(width int) string {
 	var configured string
 	if m.configured {
-		configuredIcon := m.t.ToolCallSuccess.Render()
-		configuredText := m.t.Subtle.Render("Configured")
+		configuredIcon := lipgloss.NewStyle().
+			Foreground(m.t.GreenLight).
+			Background(m.t.BgBaseLighter).
+			SetString(styles.ToolSuccess).
+			Render()
+		configuredText := m.t.HalfMuted.Background(m.t.BgBaseLighter).Render("Configured")
 		configured = configuredIcon + " " + configuredText
 	}
 
 	title := " " + m.Title + " "
 	title = ansi.Truncate(title, max(0, width-lipgloss.Width(configured)-1), "…")
 
-	return common.Section(m.t, title, width, configured)
+	return renderModelGroupHeader(m.t, title, width, configured)
+}
+
+func renderModelGroupHeader(t *styles.Styles, text string, width int, info ...string) string {
+	char := styles.SectionSeparator
+	length := lipgloss.Width(text) + 1
+	remainingWidth := width - length
+
+	var infoText string
+	if len(info) > 0 {
+		infoText = strings.Join(info, " ")
+		if len(infoText) > 0 {
+			infoText = " " + infoText
+			remainingWidth -= lipgloss.Width(infoText)
+		}
+	}
+
+	titleStyle := t.Section.Title.Background(t.BgBaseLighter)
+	lineStyle := t.Section.Line.Foreground(t.Primary).Background(t.BgBaseLighter)
+	text = titleStyle.Render(text)
+	if remainingWidth > 0 {
+		text = text + " " + lineStyle.Render(strings.Repeat(char, remainingWidth)) + infoText
+	}
+	return text
 }
 
 // ModelItem represents a list item for a model type.

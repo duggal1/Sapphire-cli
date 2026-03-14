@@ -2,6 +2,7 @@ package model
 
 import (
 	"image/color"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -81,6 +82,7 @@ func (s *Status) Draw(scr uv.Screen, area uv.Rectangle) {
 
 	var toastBg color.Color
 	var label string
+	textColor := s.com.Styles.Toast.TextColor
 	switch s.msg.Type {
 	case util.InfoTypeError:
 		toastBg = s.com.Styles.Toast.ErrorColor
@@ -89,20 +91,24 @@ func (s *Status) Draw(scr uv.Screen, area uv.Rectangle) {
 		toastBg = s.com.Styles.Toast.WarnColor
 		label = "WARN"
 	case util.InfoTypeUpdate:
-		toastBg = s.com.Styles.Toast.InfoColor
+		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "UPDATE"
 	case util.InfoTypeInfo:
-		toastBg = s.com.Styles.Toast.InfoColor
+		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "INFO"
 	case util.InfoTypeSuccess:
 		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "SUCCESS"
 	default:
-		toastBg = s.com.Styles.Toast.InfoColor
+		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "INFO"
 	}
 
-	textColor := s.com.Styles.Toast.TextColor
+	if strings.HasPrefix(s.msg.Msg, "YOLO mode disabled.") {
+		toastBg = s.com.Styles.Yellow
+		textColor = s.com.Styles.BgBase
+		label = "YOLO"
+	}
 	if textColor == nil {
 		textColor = s.com.Styles.White
 	}

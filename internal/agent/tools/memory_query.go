@@ -19,18 +19,12 @@ const MemoryQueryToolName = "memory_query"
 func NewMemoryQueryTool(mem memory.MemoryService) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		MemoryQueryToolName,
-		"Query the agent's long-term memory (cold memory), including past session summaries and codebase knowledge.",
+		"Query the agent's long-term memory (cold memory), including codebase knowledge. Session-history summaries are intentionally disabled.",
 		func(ctx context.Context, params MemoryQueryParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			var sb strings.Builder
 
-			if params.Type == "" || params.Type == "summaries" {
-				summaries, err := mem.ListStructuredSummaries(ctx, 10) // Get latest 10
-				if err == nil && len(summaries) > 0 {
-					sb.WriteString("### Past Session Summaries\n")
-					for _, s := range summaries {
-						sb.WriteString(fmt.Sprintf("#### Session: %s\n%s\n", s.SessionID, s.SummaryData))
-					}
-				}
+			if params.Type == "summaries" || params.Type == "history" {
+				return fantasy.NewTextResponse("Session-history summaries are disabled."), nil
 			}
 
 			if params.Type == "" || params.Type == "codebase" {

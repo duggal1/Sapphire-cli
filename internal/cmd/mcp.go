@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"context"
+	"time"
+
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +17,12 @@ var mcpSyncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync MCP servers from the registry",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+		}
 		cwd, err := ResolveCwd(cmd)
 		if err != nil {
 			return err
@@ -27,7 +36,7 @@ var mcpSyncCmd = &cobra.Command{
 			return err
 		}
 
-		added, err := config.SyncFromRegistry(cmd.Context(), cfg)
+		added, err := config.SyncFromRegistry(ctx, cfg)
 		if err != nil {
 			return err
 		}

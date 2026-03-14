@@ -1,5 +1,10 @@
 version: "3"
 
+env:
+  GIT_TERMINAL_PROMPT: "0"
+  GIT_ASKPASS: "true"
+  GOPROXY: "https://proxy.golang.org"
+
 tasks:
   test:
     desc: Run tests

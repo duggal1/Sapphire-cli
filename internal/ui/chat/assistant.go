@@ -5,6 +5,7 @@ package chat
 
 import (
 	"fmt"
+	"hash/fnv"
 	"image/color"
 	"strings"
 	"time"
@@ -25,6 +26,28 @@ const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to
 
 // maxCollapsedThinkingHeight defines the maximum height of the thinking
 const maxCollapsedThinkingHeight = 10
+
+var mainLoaderPhrases = []string{
+	"Cooking...",
+	"Let me cook...",
+	"Scrutinizing...",
+	"Contemplating...",
+	"Contemplating life...",
+	"Spiraling...",
+	"Fumbling...",
+	"Yapping...",
+	"Brainrotting...",
+	"Hallucinating confidently...",
+	"Gaslighting myself...",
+	"Going feral...",
+	"Asking the void...",
+	"Absolutely cooked...",
+	"In shambles but shipping...",
+	"Screaming internally...",
+	"Existing barely...",
+	"Crying a little...",
+	"Having a moment...",
+}
 
 // AssistantMessageItem represents an assistant message in the chat UI.
 //
@@ -76,7 +99,7 @@ func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	if !a.isSpinning() && !a.hasAnimatedContext() {
 		return nil
 	}
-	if a.hasAnimatedContext() || a.message.IsThinking() {
+	if a.isSpinning() || a.hasAnimatedContext() || a.message.IsThinking() {
 		a.skillFrame++
 		a.clearCache()
 	}
@@ -184,23 +207,14 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
 	bgManager := shell.GetBackgroundShellManager()
 	count := bgManager.RunningCount()
-	if count == 0 {
+	if count == 0 || a.message.IsFinished() {
 		return ""
 	}
 
-	dotsCount := (a.skillFrame / 3) % 4
+	dotsCount := (a.skillFrame / 6) % 4
 	dots := strings.Repeat(".", dotsCount)
 	label := fmt.Sprintf("Running %d terminal(s) in background%s", count, dots)
-
-	label = styles.ApplyBoldForegroundGradShifted(
-		a.sty,
-		label,
-		a.skillFrame,
-		a.sty.Tertiary,
-		a.sty.Secondary,
-		a.sty.Primary,
-		a.sty.Tertiary, // different cycle color order than skill context
-	)
+	label = styles.ShimmerText(a.sty, label, a.skillFrame)
 
 	return label
 }
@@ -260,19 +274,10 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 
 // renderThinkingShimmer renders a beautiful text shimmer for "Thinking...".
 func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
-	dotsCount := (a.skillFrame / 3) % 4
+	dotsCount := (a.skillFrame / 6) % 4
 	dots := strings.Repeat(".", dotsCount)
 	label := "Thinking" + dots
-
-	return styles.ApplyBoldForegroundGradShifted(
-		a.sty,
-		label,
-		a.skillFrame,
-		a.sty.Primary,
-		a.sty.Secondary,
-		a.sty.Tertiary,
-		a.sty.Secondary,
-	)
+	return styles.ShimmerTextNeutral(a.sty, label, a.skillFrame)
 }
 
 // renderMarkdown renders content as markdown.
@@ -286,9 +291,30 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 }
 func (a *AssistantMessageItem) renderSpinning() string {
 	if a.message.IsThinking() {
-		return a.renderThinkingShimmer(0) + " " + a.anim.Render()
+		return a.renderThinkingShimmer(0)
 	}
-	return a.anim.Render()
+	return a.renderMainLoadingShimmer()
+}
+
+func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
+	label := loadingPhraseForMessage(a.message.ID)
+	return styles.ShimmerTextNeutral(a.sty, label, a.skillFrame)
+}
+
+func loadingPhraseForMessage(messageID string) string {
+	if len(mainLoaderPhrases) == 0 {
+		return "Loading..."
+	}
+	if messageID == "" {
+		return mainLoaderPhrases[0]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(messageID))
+	idx := int(h.Sum32()) % len(mainLoaderPhrases)
+	if idx < 0 {
+		idx = -idx
+	}
+	return mainLoaderPhrases[idx]
 }
 
 // renderError renders an error message.
@@ -313,7 +339,14 @@ func (a *AssistantMessageItem) isSpinning() bool {
 func (a *AssistantMessageItem) hasAnimatedContext() bool {
 	hasBg := shell.GetBackgroundShellManager().RunningCount() > 0
 	isThinking := a.message.IsThinking()
-	return (hasBg || isThinking) && !a.message.IsFinished()
+	hasActiveTools := false
+	for _, call := range a.message.ToolCalls() {
+		if !call.Finished {
+			hasActiveTools = true
+			break
+		}
+	}
+	return (hasBg || isThinking || hasActiveTools) && !a.message.IsFinished()
 }
 
 // SetMessage is used to update the underlying message.
@@ -321,7 +354,12 @@ func (a *AssistantMessageItem) SetMessage(message *message.Message) tea.Cmd {
 	wasAnimating := a.isSpinning() || a.hasAnimatedContext()
 	a.message = message
 	a.clearCache()
-	if !wasAnimating && (a.isSpinning() || a.hasAnimatedContext()) {
+	nowAnimating := a.isSpinning() || a.hasAnimatedContext()
+	if !nowAnimating {
+		a.skillFrame = 0
+	}
+	if !wasAnimating && nowAnimating {
+		a.skillFrame = 0
 		return a.StartAnimation()
 	}
 	return nil

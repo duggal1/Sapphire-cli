@@ -94,7 +94,9 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent))
+	commandBlock := renderBashCommandBlock(sty, cmd, bodyWidth)
+	outputBlock := renderBashOutputBlock(sty, output, bodyWidth, opts.ExpandedContent)
+	body := sty.Tool.Body.Render(strings.Join([]string{commandBlock, outputBlock}, "\n"))
 	return joinToolParts(header, body)
 }
 
@@ -217,7 +219,7 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, content, bodyWidth, opts.ExpandedContent))
+	body := sty.Tool.Body.Render(renderBashOutputBlock(sty, content, bodyWidth, opts.ExpandedContent))
 	return joinToolParts(header, body)
 }
 
@@ -248,4 +250,23 @@ func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, descripti
 // joinToolParts joins header and body with a blank line separator.
 func joinToolParts(header, body string) string {
 	return strings.Join([]string{header, "", body}, "\n")
+}
+
+func renderBashCommandBlock(sty *styles.Styles, command string, width int) string {
+	label := sty.Tool.BashLabel.Render("Command")
+	labelWidth := lipgloss.Width(label)
+	commandPadding := sty.Tool.BashCommand.GetHorizontalPadding()
+	available := width - labelWidth - 1 - commandPadding
+	if available < 0 {
+		available = 0
+	}
+	cmd := ansi.Truncate(command, available, "…")
+	cmd = sty.Tool.BashCommand.Render(cmd)
+	return lipgloss.JoinHorizontal(lipgloss.Left, label, " ", cmd)
+}
+
+func renderBashOutputBlock(sty *styles.Styles, output string, width int, expanded bool) string {
+	label := sty.Tool.BashOutputLabel.Render("Output")
+	content := toolOutputPlainContent(sty, output, width, expanded)
+	return strings.Join([]string{label, content}, "\n")
 }

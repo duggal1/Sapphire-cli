@@ -7,9 +7,12 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/charmbracelet/sapphire/internal/lsp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genai"
 )
 
 // mockSessionAgent is a minimal mock for the SessionAgent interface.
@@ -26,6 +29,7 @@ func (m *mockSessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fan
 func (m *mockSessionAgent) Model() Model                        { return m.model }
 func (m *mockSessionAgent) SetModels(large, small Model)        {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)  {}
+func (m *mockSessionAgent) SetWorkingDir(workingDir string)     {}
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string) {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
@@ -46,8 +50,9 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 	require.NoError(t, err)
 	cfg.Providers.Set(providerID, providerCfg)
 	return &coordinator{
-		cfg:      cfg,
-		sessions: env.sessions,
+		cfg:                       cfg,
+		sessions:                  env.sessions,
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 	}
 }
 
@@ -338,7 +343,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		env := testEnv(t)
 		cfg, err := config.Init(env.workingDir, "", false)
 		require.NoError(t, err)
-		coord := &coordinator{cfg: cfg, sessions: env.sessions}
+		coord := &coordinator{cfg: cfg, sessions: env.sessions, backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents)}
 
 		parent, err := env.sessions.Create(t.Context(), "Parent")
 		require.NoError(t, err)
@@ -363,7 +368,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		env := testEnv(t)
 		cfg, err := config.Init(env.workingDir, "", false)
 		require.NoError(t, err)
-		coord := &coordinator{cfg: cfg, sessions: env.sessions}
+		coord := &coordinator{cfg: cfg, sessions: env.sessions, backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents)}
 
 		parent, err := env.sessions.Create(t.Context(), "Parent")
 		require.NoError(t, err)
@@ -394,7 +399,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		env := testEnv(t)
 		cfg, err := config.Init(env.workingDir, "", false)
 		require.NoError(t, err)
-		coord := &coordinator{cfg: cfg, sessions: env.sessions}
+		coord := &coordinator{cfg: cfg, sessions: env.sessions, backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents)}
 
 		parent, err := env.sessions.Create(t.Context(), "Parent")
 		require.NoError(t, err)
@@ -408,7 +413,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		env := testEnv(t)
 		cfg, err := config.Init(env.workingDir, "", false)
 		require.NoError(t, err)
-		coord := &coordinator{cfg: cfg, sessions: env.sessions}
+		coord := &coordinator{cfg: cfg, sessions: env.sessions, backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents)}
 
 		parent, err := env.sessions.Create(t.Context(), "Parent")
 		require.NoError(t, err)
@@ -424,7 +429,7 @@ func TestUpdateParentSessionCost(t *testing.T) {
 		env := testEnv(t)
 		cfg, err := config.Init(env.workingDir, "", false)
 		require.NoError(t, err)
-		coord := &coordinator{cfg: cfg, sessions: env.sessions}
+		coord := &coordinator{cfg: cfg, sessions: env.sessions, backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents)}
 
 		parent, err := env.sessions.Create(t.Context(), "Parent")
 		require.NoError(t, err)
@@ -452,9 +457,94 @@ func TestShouldPrimeAutonomousSubAgents(t *testing.T) {
 
 func TestBuildAutonomousSubAgentTasks(t *testing.T) {
 	tasks := buildAutonomousSubAgentTasks("Fix the Gemini API integration using the latest docs and review implementation risks.")
-	require.Len(t, tasks, 4)
-	assert.Equal(t, "codebase-map", tasks[0].Name)
-	assert.Equal(t, "dependency-trace", tasks[1].Name)
-	assert.Equal(t, "risk-review", tasks[2].Name)
-	assert.Equal(t, "fact-audit", tasks[3].Name)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "risk-review", tasks[0].Name)
+}
+
+func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	cfg.Providers.Set("gemini-test", config.ProviderConfig{
+		ID:     "gemini-test",
+		Type:   "gemini",
+		APIKey: "test-key",
+	})
+	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{
+		Provider: "gemini-test",
+		Model:    "gemini-3-flash-preview",
+	}
+	cfg.Models[config.SelectedModelTypeSmall] = config.SelectedModel{
+		Provider: "gemini-test",
+		Model:    "gemini-3-flash-preview",
+	}
+	cfg.Options.GoogleGrounding = true
+
+	coord := &coordinator{
+		cfg:                       cfg,
+		sessions:                  env.sessions,
+		messages:                  env.messages,
+		permissions:               env.permissions,
+		history:                   env.history,
+		filetracker:               *env.filetracker,
+		editGuard:                 tools.NewEditGuard(),
+		lspManager:                lsp.NewManager(cfg),
+		memory:                    env.memory,
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
+		googleSearchClient:        &genai.Client{},
+	}
+
+	coderTools, err := coord.buildTools(t.Context(), cfg.Agents[config.AgentCoder])
+	require.NoError(t, err)
+	taskTools, err := coord.buildTools(t.Context(), cfg.Agents[config.AgentTask])
+	require.NoError(t, err)
+
+	coderNames := toolNames(coderTools)
+	taskNames := toolNames(taskTools)
+
+	require.Contains(t, taskNames, tools.BashToolName)
+	require.Contains(t, taskNames, tools.JobOutputToolName)
+	require.Contains(t, taskNames, tools.JobKillToolName)
+	require.Contains(t, taskNames, tools.TodosToolName)
+	require.Contains(t, taskNames, tools.ViewToolName)
+	require.Contains(t, taskNames, tools.SingleViewToolName)
+	require.Contains(t, taskNames, tools.AgenticViewToolName)
+	require.Contains(t, taskNames, tools.PythonToolName)
+	require.Contains(t, taskNames, tools.GoogleSearchToolName)
+	require.NotContains(t, taskNames, AgentToolName)
+	require.NotContains(t, taskNames, SpawnAgentToolName)
+	require.NotContains(t, taskNames, ResumeAgentToolName)
+	require.NotContains(t, taskNames, SendInputToolName)
+	require.NotContains(t, taskNames, WaitAgentsToolName)
+	require.NotContains(t, taskNames, CloseAgentToolName)
+	require.NotContains(t, taskNames, tools.EditToolName)
+	require.NotContains(t, taskNames, tools.SingleEditToolName)
+	require.NotContains(t, taskNames, tools.AgenticEditToolName)
+	require.NotContains(t, taskNames, tools.WriteToolName)
+
+	coderNamesWithoutAgent := make([]string, 0, len(coderNames))
+	for _, name := range coderNames {
+		if name != AgentToolName &&
+			name != SpawnAgentToolName &&
+			name != ResumeAgentToolName &&
+			name != SendInputToolName &&
+			name != WaitAgentsToolName &&
+			name != CloseAgentToolName &&
+			name != tools.EditToolName &&
+			name != tools.SingleEditToolName &&
+			name != tools.AgenticEditToolName &&
+			name != tools.WriteToolName {
+			coderNamesWithoutAgent = append(coderNamesWithoutAgent, name)
+		}
+	}
+	assert.ElementsMatch(t, coderNamesWithoutAgent, taskNames)
+}
+
+func toolNames(agentTools []fantasy.AgentTool) []string {
+	names := make([]string, 0, len(agentTools))
+	for _, tool := range agentTools {
+		names = append(names, tool.Info().Name)
+	}
+	return names
 }

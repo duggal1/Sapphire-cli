@@ -169,7 +169,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				tools.NewGlobTool(tmpDir),
 				tools.NewGrepTool(tmpDir, c.cfg.Tools.Grep),
 				tools.NewSourcegraphTool(client),
-				tools.NewViewTool(tools.ViewToolName, c.lspManager, c.permissions, c.filetracker, tmpDir, 5),
+				tools.NewViewTool(tools.ViewToolName, c.lspManager, nil, c.permissions, c.filetracker, tmpDir, 5),
 			}
 
 			agent := NewSessionAgent(SessionAgentOptions{

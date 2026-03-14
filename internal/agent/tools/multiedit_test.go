@@ -2,10 +2,15 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"charm.land/fantasy"
+	"github.com/charmbracelet/sapphire/internal/filetracker"
 	"github.com/charmbracelet/sapphire/internal/history"
 	"github.com/charmbracelet/sapphire/internal/permission"
 	"github.com/charmbracelet/sapphire/internal/pubsub"
@@ -72,6 +77,64 @@ func (m *mockHistoryService) Delete(ctx context.Context, id string) error {
 
 func (m *mockHistoryService) DeleteSessionFiles(ctx context.Context, sessionID string) error {
 	return nil
+}
+
+type mockFileTracker struct {
+	lastRead map[string]time.Time
+}
+
+func (m *mockFileTracker) RecordRead(_ context.Context, _ string, path string) {
+	if m.lastRead == nil {
+		m.lastRead = make(map[string]time.Time)
+	}
+	m.lastRead[path] = time.Now().Add(time.Minute)
+}
+
+func (m *mockFileTracker) LastReadTime(_ context.Context, _ string, path string) time.Time {
+	if m.lastRead == nil {
+		return time.Time{}
+	}
+	return m.lastRead[path]
+}
+
+func (m *mockFileTracker) ListReadFiles(_ context.Context, _ string) ([]string, error) {
+	paths := make([]string, 0, len(m.lastRead))
+	for path := range m.lastRead {
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+var _ filetracker.Service = (*mockFileTracker)(nil)
+
+type stubLanguageModel struct {
+	generate func(ctx context.Context, call fantasy.Call) (*fantasy.Response, error)
+}
+
+var errStubUnsupported = errors.New("unsupported in stub")
+
+func (m *stubLanguageModel) Generate(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
+	return m.generate(ctx, call)
+}
+
+func (m *stubLanguageModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+	return nil, errStubUnsupported
+}
+
+func (m *stubLanguageModel) GenerateObject(context.Context, fantasy.ObjectCall) (*fantasy.ObjectResponse, error) {
+	return nil, errStubUnsupported
+}
+
+func (m *stubLanguageModel) StreamObject(context.Context, fantasy.ObjectCall) (fantasy.ObjectStreamResponse, error) {
+	return nil, errStubUnsupported
+}
+
+func (m *stubLanguageModel) Provider() string {
+	return "stub"
+}
+
+func (m *stubLanguageModel) Model() string {
+	return "stub"
 }
 
 func TestApplyEditToContentPartialSuccess(t *testing.T) {
@@ -209,4 +272,145 @@ func TestMultiEditAllEditsFail(t *testing.T) {
 
 	require.Len(t, failedEdits, 2)
 	require.Equal(t, content, currentContent, "Content should be unchanged")
+}
+
+func TestMultiEditParamsNormalizeNestedShorthand(t *testing.T) {
+	t.Parallel()
+
+	var params MultiEditParams
+	err := json.Unmarshal([]byte(`{
+		"file_edits": [{
+			"file_path": "/tmp/test.txt",
+			"old_string": "line 1",
+			"new_string": "LINE 1"
+		}]
+	}`), &params)
+	require.NoError(t, err)
+
+	normalized, err := normalizeMultiEditParams(params)
+	require.NoError(t, err)
+	require.Len(t, normalized.FileEdits, 1)
+	require.Equal(t, "/tmp/test.txt", normalized.FileEdits[0].FilePath)
+	require.Len(t, normalized.FileEdits[0].Edits, 1)
+	require.Equal(t, "line 1", normalized.FileEdits[0].Edits[0].OldString)
+	require.Equal(t, "LINE 1", normalized.FileEdits[0].Edits[0].NewString)
+}
+
+func TestMultiEditParamsNormalizeSingleFileShorthand(t *testing.T) {
+	t.Parallel()
+
+	var params MultiEditParams
+	err := json.Unmarshal([]byte(`{
+		"file_path": "/tmp/test.txt",
+		"old": "line 1",
+		"replacement": "LINE 1"
+	}`), &params)
+	require.NoError(t, err)
+
+	normalized, err := normalizeMultiEditParams(params)
+	require.NoError(t, err)
+	require.Len(t, normalized.FileEdits, 1)
+	require.Equal(t, "/tmp/test.txt", normalized.FileEdits[0].FilePath)
+	require.Len(t, normalized.FileEdits[0].Edits, 1)
+	require.Equal(t, "line 1", normalized.FileEdits[0].Edits[0].OldString)
+	require.Equal(t, "LINE 1", normalized.FileEdits[0].Edits[0].NewString)
+}
+
+func TestMultiEditParamsDecodeFileEditsObject(t *testing.T) {
+	t.Parallel()
+
+	var params MultiEditParams
+	err := json.Unmarshal([]byte(`{
+		"file_edits": {
+			"path": "/tmp/test.txt",
+			"edits": {
+				"old": "line 1",
+				"replace_with": "LINE 1"
+			}
+		}
+	}`), &params)
+	require.NoError(t, err)
+
+	normalized, err := normalizeMultiEditParams(params)
+	require.NoError(t, err)
+	require.Len(t, normalized.FileEdits, 1)
+	require.Equal(t, "/tmp/test.txt", normalized.FileEdits[0].FilePath)
+	require.Len(t, normalized.FileEdits[0].Edits, 1)
+	require.Equal(t, "line 1", normalized.FileEdits[0].Edits[0].OldString)
+	require.Equal(t, "LINE 1", normalized.FileEdits[0].Edits[0].NewString)
+}
+
+func TestMultiEditParamsRejectNestedEmptyEditsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	var params MultiEditParams
+	err := json.Unmarshal([]byte(`{
+		"file_edits": [{
+			"file_path": "/tmp/test.txt"
+		}]
+	}`), &params)
+	require.NoError(t, err)
+
+	_, err = normalizeMultiEditParams(params)
+	require.EqualError(t, err, "at least one edit operation is required")
+}
+
+func TestMultiEditRuntimeNormalizesNestedShorthandWithoutRepair(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err := os.WriteFile(testFile, []byte("line 1\nline 2\n"), 0o644)
+	require.NoError(t, err)
+
+	fileTracker := &mockFileTracker{lastRead: map[string]time.Time{
+		testFile: time.Now().Add(time.Minute),
+	}}
+	editGuard := NewEditGuard()
+	editGuard.RecordView("session-1", testFile, true)
+
+	tool := NewMultiEditTool(
+		nil,
+		editGuard,
+		&mockPermissionService{},
+		&mockHistoryService{},
+		fileTracker,
+		tmpDir,
+	)
+
+	model := &stubLanguageModel{
+		generate: func(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
+			return &fantasy.Response{
+				Content: []fantasy.Content{
+					fantasy.ToolCallContent{
+						ToolCallID: "call-1",
+						ToolName:   AgenticEditToolName,
+						Input:      `{"file_edits":[{"file_path":"` + testFile + `","old_string":"line 1","new_string":"LINE 1"}]}`,
+					},
+				},
+				Usage:        fantasy.Usage{TotalTokens: 10},
+				FinishReason: fantasy.FinishReasonStop,
+			}, nil
+		},
+	}
+
+	agent := fantasy.NewAgent(model, fantasy.WithTools(tool))
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "session-1")
+
+	result, err := agent.Generate(ctx, fantasy.AgentCall{Prompt: "update the file"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	content, err := os.ReadFile(testFile)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "LINE 1")
+
+	var toolResults []fantasy.ToolResultContent
+	for _, part := range result.Response.Content {
+		if toolResult, ok := fantasy.AsContentType[fantasy.ToolResultContent](part); ok {
+			toolResults = append(toolResults, toolResult)
+		}
+	}
+	require.Len(t, toolResults, 1)
+	require.Equal(t, AgenticEditToolName, toolResults[0].ToolName)
 }

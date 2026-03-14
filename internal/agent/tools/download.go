@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,33 @@ type DownloadParams struct {
 	URL      string `json:"url" description:"The URL to download from"`
 	FilePath string `json:"file_path" description:"The local file path where the downloaded content should be saved"`
 	Timeout  int    `json:"timeout,omitempty" description:"Optional timeout in seconds (max 600)"`
+}
+
+func (p *DownloadParams) UnmarshalJSON(data []byte) error {
+	type rawDownloadParams struct {
+		URL         string `json:"url,omitempty"`
+		URI         string `json:"uri,omitempty"`
+		Link        string `json:"link,omitempty"`
+		Href        string `json:"href,omitempty"`
+		Source      string `json:"source,omitempty"`
+		FilePath    string `json:"file_path,omitempty"`
+		Path        string `json:"path,omitempty"`
+		Destination string `json:"destination,omitempty"`
+		Dest        string `json:"dest,omitempty"`
+		File        string `json:"file,omitempty"`
+		Output      string `json:"output,omitempty"`
+		Timeout     int    `json:"timeout,omitempty"`
+	}
+
+	var raw rawDownloadParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.URL = firstFetchString(raw.URL, raw.URI, raw.Link, raw.Href, raw.Source)
+	p.FilePath = firstFetchString(raw.FilePath, raw.Path, raw.Destination, raw.Dest, raw.File, raw.Output)
+	p.Timeout = raw.Timeout
+	return nil
 }
 
 type DownloadPermissionsParams struct {

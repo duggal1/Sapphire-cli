@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,14 +23,16 @@ type Indexer struct {
 	mem        memory.MemoryService
 	mu         sync.Mutex
 	indexed    map[string]time.Time
+	isBusy     func() bool
 }
 
-func NewIndexer(workingDir string, lspManager *lsp.Manager, mem memory.MemoryService) *Indexer {
+func NewIndexer(workingDir string, lspManager *lsp.Manager, mem memory.MemoryService, isBusy func() bool) *Indexer {
 	return &Indexer{
 		workingDir: workingDir,
 		lspManager: lspManager,
 		mem:        mem,
 		indexed:    make(map[string]time.Time),
+		isBusy:     isBusy,
 	}
 }
 
@@ -52,10 +55,19 @@ func (idx *Indexer) Start(ctx context.Context) {
 }
 
 func (idx *Indexer) IndexAll(ctx context.Context) {
+	if idx.isBusy != nil && idx.isBusy() {
+		slog.Debug("Indexing skipped; agent busy")
+		return
+	}
+
+	var errIndexingPaused = errors.New("indexing paused")
 	slog.Info("Starting proactive codebase indexing...")
 	err := filepath.Walk(idx.workingDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
+		}
+		if idx.isBusy != nil && idx.isBusy() {
+			return errIndexingPaused
 		}
 		// Skip non-code files and ignored dirs
 		if strings.Contains(path, "/.git/") || strings.Contains(path, "/vendor/") || strings.Contains(path, "/node_modules/") {
@@ -70,7 +82,7 @@ func (idx *Indexer) IndexAll(ctx context.Context) {
 		idx.IndexFile(ctx, path)
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errIndexingPaused) {
 		slog.Error("Indexing failed", "error", err)
 	}
 	slog.Info("Proactive indexing complete.")
@@ -79,6 +91,9 @@ func (idx *Indexer) IndexAll(ctx context.Context) {
 var symbolRegex = regexp.MustCompile(`(?m)^(?:func|type|class|interface|const|var)\s+([A-Z][a-zA-Z0-9_]*)`)
 
 func (idx *Indexer) IndexFile(ctx context.Context, path string) {
+	if idx.isBusy != nil && idx.isBusy() {
+		return
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -97,6 +112,9 @@ func (idx *Indexer) IndexFile(ctx context.Context, path string) {
 			continue
 		}
 		symbol := m[1]
+		if idx.isBusy != nil && idx.isBusy() {
+			return
+		}
 
 		// If we have LSP, try to get more info via hover or doc
 		doc := ""

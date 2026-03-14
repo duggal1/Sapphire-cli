@@ -55,9 +55,9 @@ func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts
 	}
 
 	var sections []string
-	if prompt := strings.TrimSpace(params.Prompt); prompt != "" {
+	if input := strings.TrimSpace(params.Code); input != "" {
 		taskHeader := " " + sty.Tool.ResourceName.Render("Task")
-		taskBody := toolOutputSmartContent(sty, "task.txt", prompt, bodyWidth, opts.ExpandedContent)
+		taskBody := toolOutputSmartContent(sty, "task.txt", input, bodyWidth, opts.ExpandedContent)
 		sections = append(sections, strings.Join([]string{taskHeader, taskBody}, "\n"))
 	}
 

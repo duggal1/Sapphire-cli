@@ -33,6 +33,8 @@ var (
 	providerErr  error
 )
 
+const providerBackgroundTimeout = 3 * time.Second
+
 // file to cache provider data
 func cachePathFor(name string) string {
 	xdgDataHome := os.Getenv("XDG_DATA_HOME")
@@ -141,72 +143,65 @@ var (
 // the cached list, or the embedded list if all others fail.
 func Providers(cfg *Config) ([]catwalk.Provider, error) {
 	providerOnce.Do(func() {
-		var wg sync.WaitGroup
 		var errs []error
 		providers := csync.NewSlice[catwalk.Provider]()
 		autoupdate := !cfg.Options.DisableProviderAutoUpdate
 		customProvidersOnly := cfg.Options.DisableDefaultProviders
 
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-
-		wg.Go(func() {
-			if customProvidersOnly {
-				return
-			}
-			catwalkURL := cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL)
-			client := catwalk.NewWithURL(catwalkURL)
-			path := cachePathFor("providers")
-			catwalkSyncer.Init(client, path, autoupdate)
-
-			items, err := catwalkSyncer.Get(ctx)
+		// Fast path: load cached providers (or embedded) without network calls.
+		if !customProvidersOnly {
+			items, err := loadCachedCatwalkProviders()
 			if err != nil {
-				catwalkURL := fmt.Sprintf("%s/v2/providers", cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL))
-				errs = append(errs, fmt.Errorf("Sapphire was unable to fetch an updated list of providers from %s. Consider setting CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1 to use the embedded providers bundled at the time of this Sapphire release. You can also update providers manually. For more info see sapphire update-providers --help.\n\nCause: %w", catwalkURL, err)) //nolint:staticcheck
-				return
+				slog.Debug("Failed to read cached Catwalk providers", "error", err)
+			}
+			if len(items) == 0 {
+				items = embedded.GetAll()
 			}
 			providers.Append(items...)
-		})
 
-		wg.Go(func() {
-			if customProvidersOnly || !hyper.Enabled() {
-				return
+			if autoupdate {
+				go refreshCatwalkProviders()
 			}
-			path := cachePathFor("hyper")
-			hyperSyncer.Init(realHyperClient{baseURL: hyper.BaseURL()}, path, autoupdate)
+		}
 
-			item, err := hyperSyncer.Get(ctx)
+		if !customProvidersOnly && hyper.Enabled() {
+			item, err := loadCachedHyperProvider()
 			if err != nil {
-				errs = append(errs, fmt.Errorf("Sapphire was unable to fetch updated information from Hyper: %w", err)) //nolint:staticcheck
-				return
+				slog.Debug("Failed to read cached Hyper provider", "error", err)
 			}
-			providers.Append(item)
-		})
-
-		wg.Wait()
+			if item.ID == "" {
+				item = hyper.Embedded()
+			}
+			if item.ID != "" {
+				providers.Append(item)
+			}
+			if autoupdate {
+				go refreshHyperProvider()
+			}
+		}
 
 		providerList = slices.Collect(providers.Seq())
 
-		// Add Gemini 3.1 Flash Lite
+		// Add Gemini 3 Flash Preview
 		for i := range providerList {
 			if providerList[i].ID == "gemini" {
-				hasFlashLite := false
+				hasFlash := false
 				for _, m := range providerList[i].Models {
-					if m.ID == "gemini-3.1-flash-lite-preview" {
-						hasFlashLite = true
+					if m.ID == "gemini-3-flash-preview" {
+						hasFlash = true
 						break
 					}
 				}
-				if !hasFlashLite {
+				if !hasFlash {
 					providerList[i].Models = append(providerList[i].Models, catwalk.Model{
-						ID:                     "gemini-3.1-flash-lite-preview",
-						Name:                   "Gemini 3.1 Flash Lite",
-						CostPer1MIn:            0.5,
-						CostPer1MOut:           3.0,
-						CostPer1MInCached:      0.05,
+						ID:                     "gemini-3-flash-preview",
+						Name:                   "Gemini 3 Flash Preview",
+						CostPer1MIn:            0.1,
+						CostPer1MOut:           0.4,
+						CostPer1MInCached:      0.01,
 						CostPer1MOutCached:     0.0,
 						ContextWindow:          1000000,
-						DefaultMaxTokens:       8000,
+						DefaultMaxTokens:       8192,
 						CanReason:              true,
 						ReasoningLevels:        []string{"minimal", "low", "medium", "high"},
 						DefaultReasoningEffort: "medium",
@@ -218,6 +213,42 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 		providerErr = errors.Join(errs...)
 	})
 	return providerList, providerErr
+}
+
+func loadCachedCatwalkProviders() ([]catwalk.Provider, error) {
+	cached, _, err := newCache[[]catwalk.Provider](cachePathFor("providers")).Get()
+	return cached, err
+}
+
+func loadCachedHyperProvider() (catwalk.Provider, error) {
+	cached, _, err := newCache[catwalk.Provider](cachePathFor("hyper")).Get()
+	return cached, err
+}
+
+func refreshCatwalkProviders() {
+	ctx, cancel := context.WithTimeout(context.Background(), providerBackgroundTimeout)
+	defer cancel()
+	catwalkURL := cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL)
+	client := catwalk.NewWithURL(catwalkURL)
+	path := cachePathFor("providers")
+	catwalkSyncer.Init(client, path, true)
+
+	if _, err := catwalkSyncer.Get(ctx); err != nil {
+		slog.Debug("Catwalk provider refresh failed", "error", err)
+	}
+}
+
+func refreshHyperProvider() {
+	if !hyper.Enabled() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), providerBackgroundTimeout)
+	defer cancel()
+	path := cachePathFor("hyper")
+	hyperSyncer.Init(realHyperClient{baseURL: hyper.BaseURL()}, path, true)
+	if _, err := hyperSyncer.Get(ctx); err != nil {
+		slog.Debug("Hyper provider refresh failed", "error", err)
+	}
 }
 
 type cache[T any] struct {

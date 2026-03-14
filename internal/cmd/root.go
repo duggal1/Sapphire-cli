@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/sapphire/internal/app"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/db"
@@ -23,7 +25,6 @@ import (
 	"github.com/charmbracelet/sapphire/internal/ui/common"
 	ui "github.com/charmbracelet/sapphire/internal/ui/model"
 	"github.com/charmbracelet/sapphire/internal/version"
-	"github.com/charmbracelet/fang"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
@@ -41,6 +42,7 @@ func init() {
 
 	rootCmd.AddCommand(
 		runCmd,
+		worktreesCmd,
 		dirsCmd,
 		projectsCmd,
 		updateProvidersCmd,
@@ -254,11 +256,39 @@ func MaybePrependStdin(prompt string) (string, error) {
 	if fi.Mode()&os.ModeNamedPipe == 0 && !fi.Mode().IsRegular() {
 		return prompt, nil
 	}
-	bts, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return prompt, err
+	if fi.Mode().IsRegular() {
+		bts, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return prompt, err
+		}
+		if len(bts) == 0 {
+			return prompt, nil
+		}
+		return string(bts) + "\n\n" + prompt, nil
 	}
-	return string(bts) + "\n\n" + prompt, nil
+
+	type readResult struct {
+		bts []byte
+		err error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		bts, err := io.ReadAll(os.Stdin)
+		ch <- readResult{bts: bts, err: err}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return prompt, res.err
+		}
+		if len(res.bts) == 0 {
+			return prompt, nil
+		}
+		return string(res.bts) + "\n\n" + prompt, nil
+	case <-time.After(100 * time.Millisecond):
+		return prompt, nil
+	}
 }
 
 func ResolveCwd(cmd *cobra.Command) (string, error) {

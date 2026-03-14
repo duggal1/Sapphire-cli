@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
 	"google.golang.org/genai"
@@ -26,18 +27,27 @@ func NewGoogleSearchTool(
 	getFailures func(string) int,
 	incFailures func(string),
 	resetFailures func(string),
+	getDefaultQuery func(context.Context, string) string,
 ) fantasy.AgentTool {
 	return fantasy.NewParallelAgentTool(
 		GoogleSearchToolName,
 		string(googleSearchToolDescription),
-		func(ctx context.Context, params WebSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		func(ctx context.Context, params GoogleSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
 				sessionID = "default"
 			}
 
-			if params.Query == "" {
-				return fantasy.NewTextErrorResponse("query is required"), nil
+			if httpClient == nil {
+				httpClient = http.DefaultClient
+			}
+
+			query := strings.TrimSpace(params.Query)
+			if query == "" && getDefaultQuery != nil {
+				query = strings.TrimSpace(getDefaultQuery(ctx, sessionID))
+			}
+			if query == "" {
+				return fantasy.NewTextResponse("No query provided for Google Grounding."), nil
 			}
 
 			maxResults := params.MaxResults
@@ -49,7 +59,7 @@ func NewGoogleSearchTool(
 			failures := getFailures(sessionID)
 			if failures >= 2 {
 				maybeDelaySearch()
-				results, err := searchDuckDuckGo(ctx, httpClient, params.Query, maxResults)
+				results, err := searchDuckDuckGo(ctx, httpClient, query, maxResults)
 				if err != nil {
 					return fantasy.NewTextErrorResponse("DuckDuckGo fallback failed: " + err.Error()), nil
 				}
@@ -61,7 +71,7 @@ func NewGoogleSearchTool(
 				{
 					Role: "user",
 					Parts: []*genai.Part{
-						{Text: params.Query},
+						{Text: query},
 					},
 				},
 			}
@@ -71,12 +81,14 @@ func NewGoogleSearchTool(
 				},
 			}
 
-			resp, err := client.Models.GenerateContent(ctx, model, content, config)
+			searchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			resp, err := client.Models.GenerateContent(searchCtx, model, content, config)
 			if err != nil {
 				incFailures(sessionID)
 				// Retry with DDG immediately on failure
 				maybeDelaySearch()
-				results, err2 := searchDuckDuckGo(ctx, httpClient, params.Query, maxResults)
+				results, err2 := searchDuckDuckGo(ctx, httpClient, query, maxResults)
 				if err2 == nil {
 					return fantasy.NewTextResponse(formatSearchResults(results)), nil
 				}
@@ -92,14 +104,14 @@ func NewGoogleSearchTool(
 				candidate := resp.Candidates[0]
 				if candidate.GroundingMetadata != nil && len(candidate.GroundingMetadata.GroundingChunks) > 0 {
 					hasGrounding = true
-					
+
 					urlChunks := 0
 					for _, chunk := range candidate.GroundingMetadata.GroundingChunks {
 						if chunk.Web != nil {
 							urlChunks++
 						}
 					}
-					
+
 					sb.WriteString(fmt.Sprintf("Found %d search results from Google Grounding:\n\n", urlChunks))
 					count := 1
 					for _, chunk := range candidate.GroundingMetadata.GroundingChunks {

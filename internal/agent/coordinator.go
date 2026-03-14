@@ -17,10 +17,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/agent/hyper"
+	"github.com/charmbracelet/sapphire/internal/agent/longhorizon"
 	"github.com/charmbracelet/sapphire/internal/agent/memory"
 	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
@@ -55,6 +57,7 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	OrchestrateWorktrees(ctx context.Context, sessionID string, params OrchestrateWorktreesParams) (OrchestrateWorktreesResult, error)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -80,11 +83,15 @@ type coordinator struct {
 	memory      memory.MemoryService
 	indexer     *Indexer
 	pmem        *pmem.System
+	longHorizon *longhorizon.Manager
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
 
-	readyWg errgroup.Group
+	readyWg   errgroup.Group
+	readyOnce sync.Once
+	readyDone chan struct{}
+	readyErr  error
 
 	// Embedding-based skill retrieval.
 	embeddingService *skills.EmbeddingService
@@ -92,14 +99,62 @@ type coordinator struct {
 	skillsOnce       sync.Once
 
 	// Google search failure tracking - fallback to DDG after 2 failures
-	googleSearchFailures sync.Map // map[string]int (sessionID -> failureCount)
-	googleSearchClient   *genai.Client
+	googleSearchFailures      sync.Map // map[string]int (sessionID -> failureCount)
+	googleSearchClient        *genai.Client
+	backgroundSubAgentLimiter chan struct{}
+	backgroundIndicatorMu     sync.Mutex
+	backgroundIndicators      map[string]*backgroundIndicatorState
+	subAgentsMu               sync.Mutex
+	subAgents                 map[string]*subAgentRunner
+	agentJobs                 *agentJobManager
+	mcpRegistryMu             sync.Mutex
+	mcpRegistryDefs           []config.RegistryMCPDefinition
+	mcpRegistryLastFetch      time.Time
+	mcpRegistryFetchInFlight  bool
+	toolCacheMu               sync.RWMutex
+	cachedTools               []fantasy.AgentTool
+	cachedToolNames           []string
+	mcpPreflightMu            sync.Mutex
+	mcpPreflightCache         map[string]mcpPreflightSnapshot
+	mcpPreflightInFlight      map[string]bool
+	mcpSelectionMu            sync.Mutex
+	mcpSelectionCache         map[string]mcpSelectionSnapshot
+	mcpSelectionInFlight      map[string]bool
 }
 
 type autonomousSubAgentTask struct {
 	Name         string
 	SessionTitle string
 	Prompt       string
+}
+
+func isNonInteractiveMode() bool {
+	return strings.TrimSpace(os.Getenv("SAPPHIRE_NON_INTERACTIVE")) == "1"
+}
+
+func (c *coordinator) waitForReady(ctx context.Context, timeout time.Duration) error {
+	c.readyOnce.Do(func() {
+		c.readyDone = make(chan struct{})
+		go func() {
+			c.readyErr = c.readyWg.Wait()
+			close(c.readyDone)
+		}()
+	})
+
+	if timeout <= 0 {
+		timeout = 1 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-c.readyDone:
+		return c.readyErr
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // NewCoordinator creates a new agent coordinator to manage multiple AI agents and sessions.
@@ -115,46 +170,64 @@ func NewCoordinator(
 	conn *sql.DB,
 ) (Coordinator, error) {
 	c := &coordinator{
-		cfg:         cfg,
-		sessions:    sessions,
-		messages:    messages,
-		permissions: permissions,
-		history:     history,
-		filetracker: filetracker,
-		editGuard:   tools.NewEditGuard(),
-		lspManager:  lspManager,
-		memory:      memory.NewMemoryService(db.New(conn), conn),
-		agents:      make(map[string]SessionAgent),
+		cfg:                       cfg,
+		sessions:                  sessions,
+		messages:                  messages,
+		permissions:               permissions,
+		history:                   history,
+		filetracker:               filetracker,
+		editGuard:                 tools.NewEditGuard(),
+		lspManager:                lspManager,
+		memory:                    memory.NewMemoryService(db.New(conn), conn),
+		agents:                    make(map[string]SessionAgent),
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
+		backgroundIndicators:      make(map[string]*backgroundIndicatorState),
+		subAgents:                 make(map[string]*subAgentRunner),
+		agentJobs:                 newAgentJobManager(),
+		mcpPreflightCache:         make(map[string]mcpPreflightSnapshot),
+		mcpPreflightInFlight:      make(map[string]bool),
+		mcpSelectionCache:         make(map[string]mcpSelectionSnapshot),
+		mcpSelectionInFlight:      make(map[string]bool),
 	}
-	c.indexer = NewIndexer(cfg.WorkingDir(), lspManager, c.memory)
-	go c.indexer.Start(ctx)
-
-	// Initialize persistent memory system (optional, requires Gemini API key).
-	apiKey := c.resolveGeminiAPIKey()
-	if apiKey != "" {
-		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
-			ExtractionModel: "gemini-3-flash",
-			APIKey:          apiKey,
-			DataDir:         cfg.Options.DataDirectory,
-			ProjectRoot:     cfg.WorkingDir(),
+	if !isNonInteractiveMode() {
+		c.indexer = NewIndexer(cfg.WorkingDir(), lspManager, c.memory, func() bool {
+			if c.currentAgent == nil {
+				return false
+			}
+			return c.currentAgent.IsBusy()
 		})
-		if pmemErr == nil && pmemSys != nil {
-			c.pmem = pmemSys
-			slog.Debug("Persistent memory system initialized")
+		go c.indexer.Start(ctx)
+		c.longHorizon = longhorizon.NewManager(cfg.WorkingDir())
+
+		// Initialize persistent memory system (optional, requires Gemini API key).
+		apiKey := c.resolveGeminiAPIKey()
+		if apiKey != "" {
+			pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
+				ExtractionModel: c.resolveGeminiExtractionModel(),
+				APIKey:          apiKey,
+				EmbeddingModel:  pmem.DefaultEmbeddingModel,
+				EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
+				DataDir:         cfg.Options.DataDirectory,
+				ProjectRoot:     cfg.WorkingDir(),
+			})
+			if pmemErr == nil && pmemSys != nil {
+				c.pmem = pmemSys
+				slog.Debug("Persistent memory system initialized")
+			}
 		}
-	}
 
-	// Initialize embedding-based skill retrieval.
-	c.initEmbeddingService()
+		// Initialize embedding-based skill retrieval.
+		c.initEmbeddingService()
 
-	// Initialize Google Search client if grounding is enabled.
-	if c.cfg.Options.GoogleGrounding {
-		for p := range c.cfg.Providers.Seq() {
-			if strings.ToLower(string(p.Type)) == "gemini" || strings.ToLower(string(p.Type)) == "google" {
-				searchClient, err := c.buildGeminiCodeExecutionClient(ctx, p)
-				if err == nil {
-					c.googleSearchClient = searchClient
-					break
+		// Initialize Google Search client if grounding is enabled.
+		if c.cfg.Options.GoogleGrounding {
+			for p := range c.cfg.Providers.Seq() {
+				if strings.ToLower(string(p.Type)) == "gemini" || strings.ToLower(string(p.Type)) == "google" {
+					searchClient, err := c.buildGeminiCodeExecutionClient(ctx, p)
+					if err == nil {
+						c.googleSearchClient = searchClient
+						break
+					}
 				}
 			}
 		}
@@ -182,19 +255,13 @@ func NewCoordinator(
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	if err := c.readyWg.Wait(); err != nil {
-		return nil, err
+	if userPrompt == "" && !message.ContainsTextAttachment(attachments) {
+		return nil, ErrEmptyPrompt
 	}
 
-	// refresh models before each run
-	if err := c.UpdateModels(ctx); err != nil {
-		return nil, fmt.Errorf("failed to update models: %w", err)
-	}
-
-	if err := c.refreshSystemPrompt(ctx); err != nil {
-		return nil, err
-	}
-
+	// NOTE: We used to call UpdateModels and refreshSystemPrompt here, but
+	// they are redundant. The coordinator state is already initialized,
+	// and we only need to refresh if the config explicitly changed.
 	model := c.currentAgent.Model()
 	maxTokens := model.CatwalkCfg.DefaultMaxTokens
 	if model.ModelCfg.MaxTokens != 0 {
@@ -212,6 +279,25 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 		attachments = filteredAttachments
 	}
 
+	createdUserMsg := false
+	{
+		parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
+		for _, attachment := range attachments {
+			parts = append(parts, message.BinaryContent{
+				Path:     attachment.FilePath,
+				MIMEType: attachment.MimeType,
+				Data:     attachment.Content,
+			})
+		}
+		if _, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role:  message.User,
+			Parts: parts,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to create user message: %w", err)
+		}
+		createdUserMsg = true
+	}
+
 	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
 	if !ok {
 		return nil, errors.New("model provider not configured")
@@ -224,6 +310,12 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 		if err := c.refreshOAuth2Token(ctx, providerCfg); err != nil {
 			return nil, err
 		}
+	}
+
+	// Ensure background initialization is complete before heavy execution,
+	// but only after the user message is recorded so the UI renders instantly.
+	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
+		return nil, err
 	}
 
 	var skillContext string
@@ -245,70 +337,64 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 		}
 	}
 
-	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
-	if !ok {
-		return nil, errors.New("coder agent not configured")
+	preflightContext := ""
+	if requiresMCPDiscovery(userPrompt) {
+		preflightContext = c.getMCPPreflightContext(sessionID, userPrompt)
 	}
-	allTools, err := c.buildTools(ctx, agentCfg)
-	if err != nil {
-		return nil, err
-	}
-	selectedMCP, missing, err := c.selectMCPServers(ctx, userPrompt)
-	if err != nil {
-		slog.Warn("MCP routing failed", "error", err)
-		selectedMCP = nil
-	}
-	if len(missing) > 0 {
-		if c.permissions.SkipRequests() {
-			if _, installErr := c.ensureMCPInstalled(ctx, missing); installErr != nil {
-				return nil, installErr
-			}
-		} else {
-			return nil, fmt.Errorf("required MCP servers not connected: %s", strings.Join(missing, ", "))
+	if strings.TrimSpace(preflightContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
 		}
+		skillContext += preflightContext
 	}
 
-	if c.permissions.SkipRequests() && len(selectedMCP) == 0 {
-		defs := c.loadRegistryDefinitions(ctx)
-		candidates := selectRegistryByKeywords(userPrompt, defs)
-		if len(candidates) > 0 {
-			if _, installErr := c.ensureMCPInstalled(ctx, candidates); installErr != nil {
-				return nil, installErr
-			}
-			selectedMCP = make(map[string]struct{}, len(candidates))
-			for _, name := range candidates {
-				selectedMCP[name] = struct{}{}
-			}
+	selectedMCP := map[string]struct{}(nil)
+	mcpContext := ""
+	if requiresMCPDiscovery(userPrompt) {
+		selectedMCP, mcpContext = c.getMCPSelection(sessionID, userPrompt)
+	}
+	if strings.TrimSpace(mcpContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
 		}
+		skillContext += mcpContext
 	}
+	if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += inventoryContext
+	}
+	if subAgentContext := c.buildSubAgentStatusContext(sessionID); strings.TrimSpace(subAgentContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += subAgentContext
+	}
+	c.refreshMCPPreflightAsync(sessionID, userPrompt)
+	c.refreshMCPSelectionAsync(sessionID, userPrompt)
 
-	if err := c.refreshSystemPrompt(ctx); err != nil {
-		return nil, err
+	cachedTools, _ := c.getToolCache()
+	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
+	call := SessionAgentCall{
+		SessionID:        sessionID,
+		Prompt:           userPrompt,
+		SkillContext:     skillContext,
+		ActiveSkills:     activeSkillNames,
+		ActiveTools:      activeTools,
+		Attachments:      attachments,
+		SkipUserMessage:  createdUserMsg,
+		MaxOutputTokens:  maxTokens,
+		ProviderOptions:  mergedOptions,
+		Temperature:      temp,
+		TopP:             topP,
+		TopK:             topK,
+		FrequencyPenalty: freqPenalty,
+		PresencePenalty:  presPenalty,
 	}
-
-	allTools, err = c.buildTools(ctx, agentCfg)
-	if err != nil {
-		return nil, err
-	}
-	activeTools := buildActiveToolNames(allTools, selectedMCP)
-	c.currentAgent.SetTools(allTools)
 
 	run := func() (*fantasy.AgentResult, error) {
-		return c.currentAgent.Run(ctx, SessionAgentCall{
-			SessionID:        sessionID,
-			Prompt:           userPrompt,
-			SkillContext:     skillContext,
-			ActiveSkills:     activeSkillNames,
-			ActiveTools:      activeTools,
-			Attachments:      attachments,
-			MaxOutputTokens:  maxTokens,
-			ProviderOptions:  mergedOptions,
-			Temperature:      temp,
-			TopP:             topP,
-			TopK:             topK,
-			FrequencyPenalty: freqPenalty,
-			PresencePenalty:  presPenalty,
-		})
+		return c.currentAgent.Run(ctx, call)
 	}
 	wasUsingGrounding := func(opts fantasy.ProviderOptions) bool {
 		if gOpts, ok := opts[gemini.Name]; ok {
@@ -401,6 +487,31 @@ func (c *coordinator) resolveGeminiAPIKey() string {
 		return key
 	}
 	return ""
+}
+
+// resolveGeminiExtractionModel picks a Gemini model suitable for lightweight
+// extraction/search tasks, falling back to a known available Gemini model.
+func (c *coordinator) resolveGeminiExtractionModel() string {
+	if entry, ok := c.cfg.Models[config.SelectedModelTypeSmall]; ok {
+		if entry.Model != "" && isGeminiProvider(c.cfg, entry.Provider) {
+			return entry.Model
+		}
+	}
+	return "gemini-3.1-flash-lite-preview"
+}
+
+func isGeminiProvider(cfg *config.Config, providerID string) bool {
+	if cfg == nil || providerID == "" || cfg.Providers == nil {
+		return false
+	}
+	for p := range cfg.Providers.Seq() {
+		if p.ID != providerID {
+			continue
+		}
+		pType := strings.ToLower(string(p.Type))
+		return pType == "gemini" || pType == "google"
+	}
+	return false
 }
 
 // skillKeywordMap defines hardwired keyword patterns for skill categories.
@@ -583,57 +694,37 @@ func (c *coordinator) ensureSkillsDiscovered() {
 }
 
 func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
-	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
-	if prompt == "" {
-		return false
-	}
-
-	strongSignals := []string{
-		"across the codebase", "large codebase", "architecture", "refactor", "audit",
-		"investigate", "trace", "root cause", "dependency", "parallel", "multiple modules",
-		"multiple packages", "verify independently", "review risks", "complex",
-	}
-	for _, signal := range strongSignals {
-		if strings.Contains(prompt, signal) {
-			return true
-		}
-	}
-
-	if len(strings.Fields(prompt)) >= 80 {
-		return true
-	}
-	if strings.Count(prompt, "\n") >= 4 {
-		return true
-	}
-	return false
+	allowed, _ := shouldAllowSubAgentLaunch(userPrompt)
+	return allowed
 }
 
 func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
 	prompt := strings.ToLower(userPrompt)
-	tasks := []autonomousSubAgentTask{
-		{
+	tasks := []autonomousSubAgentTask{}
+
+	if hasAnySignal(prompt, subAgentCodebaseSignals) {
+		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "codebase-map",
 			SessionTitle: "Autonomous Codebase Map",
 			Prompt: fmt.Sprintf(
 				"User task: %s\n\nMap the codebase relevant to this task. Identify the main packages, entry points, and the shortest list of absolute file paths that matter. Return a compact summary only.",
 				userPrompt,
 			),
-		},
-		{
+		})
+	}
+
+	if hasAnySignal(prompt, subAgentDependencySignals) {
+		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "dependency-trace",
 			SessionTitle: "Autonomous Dependency Trace",
 			Prompt: fmt.Sprintf(
 				"User task: %s\n\nTrace the dependency and control flow relevant to this task. Focus on call paths, shared types, and cross-package interactions. Return only concise findings with absolute file paths.",
 				userPrompt,
 			),
-		},
+		})
 	}
 
-	if strings.Contains(prompt, "fix") ||
-		strings.Contains(prompt, "bug") ||
-		strings.Contains(prompt, "refactor") ||
-		strings.Contains(prompt, "migrate") ||
-		strings.Contains(prompt, "implement") {
+	if hasAnySignal(prompt, subAgentRiskSignals) {
 		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "risk-review",
 			SessionTitle: "Autonomous Risk Review",
@@ -644,13 +735,7 @@ func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
 		})
 	}
 
-	if strings.Contains(prompt, "version") ||
-		strings.Contains(prompt, "latest") ||
-		strings.Contains(prompt, "gemini") ||
-		strings.Contains(prompt, "next.js") ||
-		strings.Contains(prompt, "react") ||
-		strings.Contains(prompt, "api") ||
-		strings.Contains(prompt, "docs") {
+	if hasAnySignal(prompt, subAgentSourceSignals) && hasAnySignal(prompt, subAgentMultiSourceSignals) {
 		tasks = append(tasks, autonomousSubAgentTask{
 			Name:         "fact-audit",
 			SessionTitle: "Autonomous Knowledge Audit",
@@ -662,75 +747,6 @@ func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
 	}
 
 	return tasks
-}
-
-func (c *coordinator) autonomousSubAgentContext(ctx context.Context, sessionID, userPrompt string) (string, error) {
-	agentCfg, ok := c.cfg.Agents[config.AgentTask]
-	if !ok {
-		return "", errors.New("task agent not configured")
-	}
-
-	prompt, err := taskPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
-	if err != nil {
-		return "", err
-	}
-
-	agent, err := c.buildAgent(ctx, prompt, agentCfg, true)
-	if err != nil {
-		return "", err
-	}
-
-	tasks := buildAutonomousSubAgentTasks(userPrompt)
-	type taskResult struct {
-		Name    string
-		Content string
-	}
-
-	results := make([]taskResult, len(tasks))
-	group, groupCtx := errgroup.WithContext(ctx)
-
-	for i, task := range tasks {
-		i := i
-		task := task
-		group.Go(func() error {
-			resp, err := c.runSubAgent(groupCtx, subAgentParams{
-				Agent:          agent,
-				SessionID:      sessionID,
-				AgentMessageID: "autonomous-sub-agent",
-				ToolCallID:     fmt.Sprintf("autonomous-%s", task.Name),
-				Prompt:         task.Prompt,
-				SessionTitle:   task.SessionTitle,
-			})
-			if err != nil {
-				return err
-			}
-			if resp.IsError {
-				return errors.New(resp.Content)
-			}
-			results[i] = taskResult{Name: task.Name, Content: resp.Content}
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		return "", err
-	}
-
-	var summary strings.Builder
-	summary.WriteString("## Autonomous Sub-Agent Findings\n")
-	summary.WriteString("The following summaries were gathered automatically before the main agent proceeds.\n\n")
-	for _, result := range results {
-		if strings.TrimSpace(result.Content) == "" {
-			continue
-		}
-		summary.WriteString("### ")
-		summary.WriteString(result.Name)
-		summary.WriteByte('\n')
-		summary.WriteString(result.Content)
-		summary.WriteString("\n\n")
-	}
-
-	return strings.TrimSpace(summary.String()), nil
 }
 
 func (c *coordinator) getProviderOptions(model Model, providerCfg config.ProviderConfig, useGrounding bool) fantasy.ProviderOptions {
@@ -866,7 +882,7 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 
 		_, hasReasoning := mergedOptions["thinking_config"]
 		if !hasReasoning {
-			if config.IsGemini25Model(model.CatwalkCfg.ID) {
+			if config.IsGemini3Model(model.CatwalkCfg.ID) {
 				thinkingBudget := 0
 				includeThoughts := false
 				if model.ModelCfg.Think {
@@ -922,7 +938,19 @@ func (c *coordinator) mergeCallOptions(model Model, cfg config.ProviderConfig, s
 }
 
 func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
-	large, small, err := c.buildAgentModels(ctx, isSubAgent)
+	return c.buildAgentWithWorkingDir(ctx, prompt, agent, isSubAgent, c.cfg.WorkingDir())
+}
+
+func (c *coordinator) buildAgentWithWorkingDir(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool, workingDir string) (SessionAgent, error) {
+	return c.buildAgentWithWorkingDirInternal(ctx, prompt, agent, isSubAgent, workingDir, nil, nil)
+}
+
+func (c *coordinator) buildAgentWithWorkingDirOverrides(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool, workingDir string, override *agentModelOverride, writeScope *tools.WriteScope) (SessionAgent, error) {
+	return c.buildAgentWithWorkingDirInternal(ctx, prompt, agent, isSubAgent, workingDir, override, writeScope)
+}
+
+func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool, workingDir string, override *agentModelOverride, writeScope *tools.WriteScope) (SessionAgent, error) {
+	large, small, err := c.buildAgentModelsWithOverride(ctx, isSubAgent, override)
 	if err != nil {
 		return nil, err
 	}
@@ -941,6 +969,9 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, 
 		Tools:                nil,
 		Memory:               c.memory,
 		Pmem:                 c.pmem,
+		LongHorizon:          c.longHorizon,
+		WaitBackground:       c.waitForBackgroundWork,
+		WriteScope:           writeScope,
 	})
 
 	// Use a local WaitGroup for sub-agents to ensure initialization finishes before returning.
@@ -970,15 +1001,45 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, 
 	})
 
 	wg.Go(func() error {
-		tools, err := c.buildTools(ctx, agent)
+		tools, err := c.buildToolsForWorkingDir(ctx, agent, workingDir)
 		if err != nil {
 			return err
 		}
+		if isSubAgent {
+			tools = filterTools(tools, map[string]struct{}{
+				AgentToolName:       {},
+				SpawnAgentToolName:  {},
+				ResumeAgentToolName: {},
+				SendInputToolName:   {},
+				WaitAgentsToolName:  {},
+				CloseAgentToolName:  {},
+			})
+		}
 		result.SetTools(tools)
+		if !isSubAgent {
+			c.setToolCache(tools)
+		}
 		return nil
 	})
 
 	return result, nil
+}
+
+func filterTools(items []fantasy.AgentTool, disallowed map[string]struct{}) []fantasy.AgentTool {
+	if len(items) == 0 || len(disallowed) == 0 {
+		return items
+	}
+	filtered := make([]fantasy.AgentTool, 0, len(items))
+	for _, tool := range items {
+		if tool == nil {
+			continue
+		}
+		if _, blocked := disallowed[tool.Info().Name]; blocked {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
 }
 
 func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
@@ -999,6 +1060,12 @@ func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
 }
 
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fantasy.AgentTool, error) {
+	return c.buildToolsForWorkingDir(ctx, agent, c.cfg.WorkingDir())
+}
+
+func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.Agent, workingDir string) ([]fantasy.AgentTool, error) {
+	tools.SetValidationFileTracker(c.filetracker)
+
 	var allTools []fantasy.AgentTool
 	if slices.Contains(agent.AllowedTools, AgentToolName) {
 		agentTool, err := c.agentTool(ctx)
@@ -1006,6 +1073,62 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 			return nil, err
 		}
 		allTools = append(allTools, agentTool)
+	}
+	if slices.Contains(agent.AllowedTools, SpawnAgentToolName) {
+		spawnTool, err := c.spawnAgentTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, spawnTool)
+	}
+	if slices.Contains(agent.AllowedTools, ResumeAgentToolName) {
+		resumeTool, err := c.resumeAgentTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, resumeTool)
+	}
+	if slices.Contains(agent.AllowedTools, SendInputToolName) {
+		sendTool, err := c.sendInputTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, sendTool)
+	}
+	if slices.Contains(agent.AllowedTools, WaitAgentsToolName) {
+		waitTool, err := c.waitAgentsTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, waitTool)
+	}
+	if slices.Contains(agent.AllowedTools, CloseAgentToolName) {
+		closeTool, err := c.closeAgentTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, closeTool)
+	}
+	if slices.Contains(agent.AllowedTools, SpawnAgentsOnCSVToolName) {
+		jobTool, err := c.spawnAgentsOnCSVTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, jobTool)
+	}
+	if slices.Contains(agent.AllowedTools, ReportAgentJobResultToolName) {
+		reportTool, err := c.reportAgentJobResultTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, reportTool)
+	}
+	if slices.Contains(agent.AllowedTools, OrchestrateWorktreesToolName) {
+		planTool, err := c.orchestrateWorktreesTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, planTool)
 	}
 
 	if slices.Contains(agent.AllowedTools, tools.AgenticFetchToolName) {
@@ -1033,31 +1156,45 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 	}
 
 	allTools = append(allTools,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Options.Attribution, modelName),
+		tools.NewBashTool(c.permissions, workingDir, c.cfg.Options.Attribution, modelName),
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
-		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
-		tools.NewEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewMultiEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
-		tools.NewGlobTool(c.cfg.WorkingDir()),
+		tools.NewDownloadTool(c.permissions, workingDir, nil),
+		tools.NewEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
+		tools.NewSingleEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
+		tools.NewMultiEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
+		tools.NewFetchTool(c.permissions, workingDir, nil),
+		tools.NewGlobTool(workingDir),
 		tools.NewMemoryQueryTool(c.memory),
-		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Tools.Grep),
-		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Tools.Ls),
+		tools.NewGrepTool(workingDir, c.cfg.Tools.Grep),
+		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(tools.ViewToolName, c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir(), 1, c.cfg.Options.SkillsPaths...),
-		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.permissions, c.filetracker, c.cfg.WorkingDir(), maxConcurrent, c.cfg.Options.SkillsPaths...),
-		tools.NewWriteTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewViewTool(tools.ViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
+		tools.NewViewTool(tools.SingleViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
+		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, maxConcurrent, c.cfg.Options.SkillsPaths...),
+		tools.NewWriteTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
 	)
+
+	listTools := func() []string {
+		if len(allTools) == 0 {
+			return nil
+		}
+		names := make([]string, 0, len(allTools))
+		for _, tool := range allTools {
+			if tool == nil {
+				continue
+			}
+			names = append(names, tool.Info().Name)
+		}
+		return names
+	}
+	allTools = append(allTools, tools.NewListToolsTool(listTools))
 
 	// Add Google Grounding search tool if enabled and supported.
 	if c.cfg.Options.GoogleGrounding && c.googleSearchClient != nil {
-		// We use a small model for grounding search to keep it fast
-		searchModel := "gemini-3-flash"
-		if smallModelEntry, ok := c.cfg.Models[config.SelectedModelTypeSmall]; ok {
-			searchModel = smallModelEntry.Model
-		}
+		// We use a small Gemini model for grounding search to keep it fast.
+		searchModel := c.resolveGeminiExtractionModel()
 
 		allTools = append(allTools, tools.NewGoogleSearchTool(
 			c.googleSearchClient,
@@ -1079,14 +1216,31 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 			func(sessionID string) {
 				c.googleSearchFailures.Delete(sessionID)
 			},
+			func(ctx context.Context, sessionID string) string {
+				if sessionID == "" {
+					return ""
+				}
+				messages, err := c.messages.ListUserMessages(ctx, sessionID)
+				if err != nil {
+					return ""
+				}
+				for i := len(messages) - 1; i >= 0; i-- {
+					text := strings.TrimSpace(messages[i].Content().Text)
+					if text != "" {
+						return text
+					}
+				}
+				return ""
+			},
 		))
 	}
 
 	// Add persistent memory tools (recall_memory, save_memory).
 	if c.pmem != nil {
 		allTools = append(allTools,
-			pmem.NewRecallTool(c.pmem.Store),
-			pmem.NewSaveTool(c.pmem.Store),
+			pmem.NewRecallTool(c.pmem),
+			pmem.NewSaveTool(c.pmem),
+			pmem.NewHealthTool(c.pmem),
 		)
 	}
 
@@ -1105,14 +1259,15 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		allTools = append(allTools, tools.NewDiagnosticsTool(c.lspManager), tools.NewReferencesTool(c.lspManager), tools.NewLSPRestartTool(c.lspManager))
 	}
 
-	if len(c.cfg.MCP) > 0 {
-		allTools = append(
-			allTools,
-			tools.NewListMCPToolsTool(c.cfg, c.permissions),
-			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
-			tools.NewReadMCPResourceTool(c.cfg, c.permissions),
-		)
-	}
+	allTools = append(
+		allTools,
+		tools.NewListAvailableMCPsTool(c.cfg, c.permissions),
+		tools.NewConnectMCPTool(c.cfg, c.permissions),
+		tools.NewCallMCPTool(c.cfg, c.permissions),
+		tools.NewListMCPToolsTool(c.cfg, c.permissions),
+		tools.NewListMCPResourcesTool(c.cfg, c.permissions),
+		tools.NewReadMCPResourceTool(c.cfg, c.permissions),
+	)
 
 	var filteredTools []fantasy.AgentTool
 	for _, tool := range allTools {
@@ -1125,7 +1280,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		}
 	}
 
-	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
+	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, workingDir) {
 		if agent.AllowedMCP == nil {
 			// No MCP restrictions
 			filteredTools = append(filteredTools, tool)
@@ -1148,9 +1303,35 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 			slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
 		}
 	}
+
+	if slices.Contains(agent.AllowedTools, tools.ListToolsToolName) {
+		listToolsTool := tools.NewListToolsTool(func() []string {
+			names := make([]string, 0, len(filteredTools))
+			for _, tool := range filteredTools {
+				names = append(names, tool.Info().Name)
+			}
+			return names
+		})
+		filteredTools = append(filteredTools, listToolsTool)
+	}
+	if slices.Contains(agent.AllowedTools, tools.SearchToolsToolName) {
+		searchToolsTool := tools.NewSearchToolsTool(func() []fantasy.ToolInfo {
+			infos := make([]fantasy.ToolInfo, 0, len(filteredTools))
+			for _, tool := range filteredTools {
+				infos = append(infos, tool.Info())
+			}
+			return infos
+		})
+		filteredTools = append(filteredTools, searchToolsTool)
+	}
+	if slices.Contains(agent.AllowedTools, tools.ToolSuggestToolName) {
+		suggestTool := tools.NewToolSuggestTool(c.cfg, c.permissions)
+		filteredTools = append(filteredTools, suggestTool)
+	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
+
 	return filteredTools, nil
 }
 
@@ -1189,9 +1370,8 @@ func (c *coordinator) buildGeminiCodeExecutionClient(ctx context.Context, provid
 		headers = make(map[string]string)
 	}
 
-	clientConfig := &genai.ClientConfig{}
-	if c.cfg.Options.Debug {
-		clientConfig.HTTPClient = log.NewHTTPClient()
+	clientConfig := &genai.ClientConfig{
+		HTTPClient: c.httpClient(),
 	}
 
 	if len(headers) > 0 {
@@ -1225,8 +1405,52 @@ func (c *coordinator) buildGeminiCodeExecutionClient(ctx context.Context, provid
 	return genai.NewClient(ctx, clientConfig)
 }
 
+type agentModelOverride struct {
+	Provider        string
+	Model           string
+	ReasoningEffort string
+}
+
+func (c *coordinator) resolveSubAgentModelOverride(rawModel, reasoningEffort string) (*agentModelOverride, error) {
+	rawModel = strings.TrimSpace(rawModel)
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	if rawModel == "" && reasoningEffort == "" {
+		return nil, nil
+	}
+	largeModelCfg, ok := c.cfg.Models[config.SelectedModelTypeLarge]
+	if !ok {
+		return nil, errors.New("large model not selected")
+	}
+	provider := largeModelCfg.Provider
+	modelID := largeModelCfg.Model
+	if rawModel != "" {
+		parts := strings.SplitN(rawModel, ":", 2)
+		if len(parts) == 2 {
+			provider = strings.TrimSpace(parts[0])
+			modelID = strings.TrimSpace(parts[1])
+		} else {
+			modelID = strings.TrimSpace(rawModel)
+		}
+	}
+	if provider == "" || modelID == "" {
+		return nil, errors.New("invalid model override")
+	}
+	if _, ok := c.cfg.Providers.Get(provider); !ok {
+		return nil, fmt.Errorf("model provider %q not configured", provider)
+	}
+	return &agentModelOverride{
+		Provider:        provider,
+		Model:           modelID,
+		ReasoningEffort: reasoningEffort,
+	}, nil
+}
+
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
 func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Model, Model, error) {
+	return c.buildAgentModelsWithOverride(ctx, isSubAgent, nil)
+}
+
+func (c *coordinator) buildAgentModelsWithOverride(ctx context.Context, isSubAgent bool, override *agentModelOverride) (Model, Model, error) {
 	largeModelCfg, ok := c.cfg.Models[config.SelectedModelTypeLarge]
 	if !ok {
 		return Model{}, Model{}, errors.New("large model not selected")
@@ -1234,6 +1458,18 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 	smallModelCfg, ok := c.cfg.Models[config.SelectedModelTypeSmall]
 	if !ok {
 		return Model{}, Model{}, errors.New("small model not selected")
+	}
+
+	if override != nil {
+		if override.Provider != "" {
+			largeModelCfg.Provider = override.Provider
+		}
+		if override.Model != "" {
+			largeModelCfg.Model = override.Model
+		}
+		if override.ReasoningEffort != "" {
+			largeModelCfg.ReasoningEffort = override.ReasoningEffort
+		}
 	}
 
 	largeProviderCfg, ok := c.cfg.Providers.Get(largeModelCfg.Provider)
@@ -1334,10 +1570,7 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
 	}
 
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, anthropic.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, anthropic.WithHTTPClient(c.httpClient()))
 	return anthropic.New(opts...)
 }
 
@@ -1346,10 +1579,7 @@ func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[st
 		openai.WithAPIKey(apiKey),
 		openai.WithUseResponsesAPI(),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openai.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, openai.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, openai.WithHeaders(headers))
 	}
@@ -1363,10 +1593,7 @@ func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[stri
 	opts := []openrouter.Option{
 		openrouter.WithAPIKey(apiKey),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openrouter.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, openrouter.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, openrouter.WithHeaders(headers))
 	}
@@ -1377,10 +1604,7 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	opts := []vercel.Option{
 		vercel.WithAPIKey(apiKey),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, vercel.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, vercel.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, vercel.WithHeaders(headers))
 	}
@@ -1398,8 +1622,8 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 	if providerID == string(catwalk.InferenceProviderCopilot) {
 		opts = append(opts, openaicompat.WithUseResponsesAPI())
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Options.Debug)
-	} else if c.cfg.Options.Debug {
-		httpClient = log.NewHTTPClient()
+	} else {
+		httpClient = c.httpClient()
 	}
 	if httpClient != nil {
 		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
@@ -1422,10 +1646,7 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 		azure.WithAPIKey(apiKey),
 		azure.WithUseResponsesAPI(),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, azure.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, azure.WithHTTPClient(c.httpClient()))
 	if options == nil {
 		options = make(map[string]string)
 	}
@@ -1441,10 +1662,7 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 
 func (c *coordinator) buildBedrockProvider(headers map[string]string) (fantasy.Provider, error) {
 	var opts []bedrock.Option
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, bedrock.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, bedrock.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, bedrock.WithHeaders(headers))
 	}
@@ -1460,10 +1678,7 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 		gemini.WithBaseURL(baseURL),
 		gemini.WithGeminiAPIKey(apiKey),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, gemini.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, gemini.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, gemini.WithHeaders(headers))
 	}
@@ -1472,10 +1687,7 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 
 func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
 	opts := []gemini.Option{}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, gemini.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, gemini.WithHTTPClient(c.httpClient()))
 	if len(headers) > 0 {
 		opts = append(opts, gemini.WithHeaders(headers))
 	}
@@ -1493,11 +1705,12 @@ func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provid
 		hyper.WithBaseURL(baseURL),
 		hyper.WithAPIKey(apiKey),
 	}
-	if c.cfg.Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, hyper.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, hyper.WithHTTPClient(c.httpClient()))
 	return hyper.New(opts...)
+}
+
+func (c *coordinator) httpClient() *http.Client {
+	return log.NewHTTPClientWithTimeouts(c.cfg.Options.Debug)
 }
 
 func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
@@ -1642,6 +1855,10 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetTools(tools)
+	c.setToolCache(tools)
+	if err := c.refreshSystemPrompt(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1711,9 +1928,21 @@ type subAgentParams struct {
 // It creates a sub-session, runs the agent with the given prompt, and propagates
 // the cost to the parent session.
 func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	if !params.AllowNesting {
+		parentSession, err := c.sessions.Get(ctx, params.SessionID)
+		if err != nil {
+			return fantasy.ToolResponse{}, err
+		}
+		if parentSession.ParentSessionID != "" {
+			return fantasy.NewTextErrorResponse("sub-agents cannot spawn sub-agents"), nil
+		}
+	}
+
 	// Create sub-session
 	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
-	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
+	createCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	session, err := c.sessions.CreateTaskSession(createCtx, agentToolSessionID, params.SessionID, params.SessionTitle)
+	cancel()
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
 	}
@@ -1748,7 +1977,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		PresencePenalty:  model.ModelCfg.PresencePenalty,
 	})
 	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("error generating response: %v", err)), nil
+		return fantasy.NewTextErrorResponse("error generating response"), nil
 	}
 
 	// Update parent session cost
@@ -1761,19 +1990,26 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 
 // updateParentSessionCost accumulates the cost from a child session to its parent session.
 func (c *coordinator) updateParentSessionCost(ctx context.Context, childSessionID, parentSessionID string) error {
-	childSession, err := c.sessions.Get(ctx, childSessionID)
+	getChildCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	childSession, err := c.sessions.Get(getChildCtx, childSessionID)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("get child session: %w", err)
 	}
 
-	parentSession, err := c.sessions.Get(ctx, parentSessionID)
+	getParentCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	parentSession, err := c.sessions.Get(getParentCtx, parentSessionID)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("get parent session: %w", err)
 	}
 
 	parentSession.Cost += childSession.Cost
 
-	if _, err := c.sessions.Save(ctx, parentSession); err != nil {
+	saveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err = c.sessions.Save(saveCtx, parentSession)
+	cancel()
+	if err != nil {
 		return fmt.Errorf("save parent session: %w", err)
 	}
 

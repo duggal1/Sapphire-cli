@@ -39,6 +39,7 @@ type fileResult struct {
 func FastViewTool(
 	name string,
 	lspManager *lsp.Manager,
+	editGuard *EditGuard,
 	permissions permission.Service,
 	filetracker filetracker.Service,
 	workingDir string,
@@ -49,13 +50,10 @@ func FastViewTool(
 		name,
 		string(viewDescription),
 		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			filePaths := params.FilePaths
-			if params.FilePath != "" {
-				filePaths = append(filePaths, params.FilePath)
-			}
+			filePaths := collectViewPaths(params)
 
 			if len(filePaths) == 0 {
-				return fantasy.NewTextErrorResponse("file_paths or file_path is required"), nil
+				return fantasy.NewTextErrorResponse("No file paths provided. Use ls/glob to discover files, then call view or agentic_view with file_path(s)."), nil
 			}
 
 			if maxConcurrent <= 0 {
@@ -86,13 +84,13 @@ func FastViewTool(
 					if groupCtx.Err() != nil {
 						return groupCtx.Err()
 					}
-					
-					result := fastReadFile(groupCtx, p, params, workingDir, sessionID, permissions, filetracker, lspManager, skillsPaths, call)
-					
+
+					result := fastReadFile(groupCtx, name, p, params, workingDir, sessionID, editGuard, permissions, filetracker, lspManager, skillsPaths, call)
+
 					mu.Lock()
 					results[i] = result
 					mu.Unlock()
-					
+
 					return nil
 				})
 			}
@@ -112,9 +110,11 @@ func FastViewTool(
 // fastReadFile performs optimized file reading with minimal allocations.
 func fastReadFile(
 	ctx context.Context,
+	toolName string,
 	filePath string,
 	params ViewParams,
 	workingDir, sessionID string,
+	editGuard *EditGuard,
 	permissions permission.Service,
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
@@ -150,7 +150,7 @@ func fastReadFile(
 				SessionID:   sessionID,
 				Path:        absFilePath,
 				ToolCallID:  call.ID,
-				ToolName:    ViewToolName,
+				ToolName:    toolName,
 				Action:      "read",
 				Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
 				Params:      ViewPermissionsParams{FilePath: filePath, Offset: params.Offset, Limit: params.Limit},
@@ -221,10 +221,13 @@ func fastReadFile(
 	// Build output with pre-allocated strings.Builder
 	output := buildViewOutput(filePath, content, hasMore, params.Offset)
 	output += detectLiteralEscapes(content)
-	output += getDiagnostics(fullPath, lspManager)
+	output += getDiagnostics(ctx, fullPath, lspManager)
 
 	// Record file read (lock-free in filetracker)
 	filetracker.RecordRead(ctx, sessionID, fullPath)
+	if editGuard != nil {
+		editGuard.RecordView(sessionID, fullPath, params.Offset == 0 && !hasMore)
+	}
 
 	// Build metadata
 	meta := ViewResponseMetadata{
@@ -254,7 +257,7 @@ func fastReadTextFile(filePath string, offset, limit int) (string, bool, error) 
 	lines := make([]string, 0, limit)
 
 	scanner := NewLineScanner(file)
-	
+
 	// Fast skip
 	if offset > 0 {
 		skipped := 0
@@ -294,12 +297,12 @@ func buildViewOutput(filePath, content string, hasMore bool, offset int) string 
 	sb.WriteString(filePath)
 	sb.WriteString("\">\n")
 	sb.WriteString(addLineNumbers(content, offset+1))
-	
+
 	if hasMore {
 		sb.WriteString(fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)", offset+len(strings.Split(content, "\n"))))
 	}
 	sb.WriteString("\n</file>\n")
-	
+
 	return sb.String()
 }
 
@@ -307,14 +310,14 @@ func buildViewOutput(filePath, content string, hasMore bool, offset int) string 
 func deduplicatePaths(paths []string) []string {
 	seen := make(map[string]bool, len(paths))
 	result := make([]string, 0, len(paths))
-	
+
 	for _, p := range paths {
 		if p != "" && !seen[p] {
 			seen[p] = true
 			result = append(result, p)
 		}
 	}
-	
+
 	return result
 }
 
@@ -324,7 +327,7 @@ func handleFileNotFound(fullPath, filePath string) fileResult {
 	if err == nil {
 		return fileResult{filePath: filePath, err: fmt.Errorf("file exists: %s", fullPath)}
 	}
-	
+
 	if os.IsNotExist(err) {
 		dir := filepath.Dir(fullPath)
 		base := filepath.Base(fullPath)

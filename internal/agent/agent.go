@@ -12,7 +12,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,6 +33,7 @@ import (
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/sapphire/internal/agent/hyper"
+	"github.com/charmbracelet/sapphire/internal/agent/longhorizon"
 	"github.com/charmbracelet/sapphire/internal/agent/memory"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
@@ -55,6 +55,27 @@ const (
 	largeContextWindowThreshold = 200_000
 	largeContextWindowBuffer    = 20_000
 	smallContextWindowRatio     = 0.2
+	smallContextWindowMinBuffer = 3_000
+
+	// Post-compaction injection tuning
+	postCompactionInjectionRatio     = 0.2
+	postCompactionContextCharsPerTok = 4
+
+	// Message update timeouts to prevent UI stalls on DB contention.
+	messageUpdateTimeout      = 750 * time.Millisecond
+	messageFinalUpdateTimeout = 5 * time.Second
+	messageUpdateMinInterval  = 50 * time.Millisecond
+
+	// Database operation timeouts to avoid stalls.
+	dbOpTimeout     = 2 * time.Second
+	dbOpLongTimeout = 5 * time.Second
+
+	// Memory injection timeouts (best-effort).
+	memoryCallTimeout = 500 * time.Millisecond
+
+	// Stream retry tuning for transient failures.
+	maxStreamRetries   = 2
+	streamRetryBackoff = 500 * time.Millisecond
 )
 
 //go:embed templates/title.md
@@ -77,6 +98,7 @@ type SessionAgentCall struct {
 	ActiveTools      []string
 	ProviderOptions  fantasy.ProviderOptions
 	Attachments      []message.Attachment
+	SkipUserMessage  bool
 	MaxOutputTokens  int64
 	Temperature      *float64
 	TopP             *float64
@@ -99,6 +121,7 @@ type SessionAgent interface {
 	ClearQueue(sessionID string)
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
 	Model() Model
+	SetWorkingDir(string)
 }
 
 type Model struct {
@@ -121,13 +144,20 @@ type sessionAgent struct {
 	disableAutoSummarize bool
 	isYolo               bool
 
-	messageQueue   *csync.Map[string, []SessionAgentCall]
-	activeRequests *csync.Map[string, context.CancelFunc]
-	memory         memory.MemoryService
-	pmem           *pmem.System
+	messageQueue            *csync.Map[string, []SessionAgentCall]
+	activeRequests          *csync.Map[string, context.CancelFunc]
+	memory                  memory.MemoryService
+	pmem                    *pmem.System
+	postCompactionInjection *csync.Map[string, bool]
+	longHorizon             *longhorizon.Manager
+	longHorizonSessions     *csync.Map[string, bool]
+	longHorizonInit         *csync.Map[string, bool]
+	waitBackground          func(ctx context.Context, sessionID string) error
 
 	// Python tool failure tracking - quit after 3 consecutive failures
 	pythonFailures atomic.Int32
+	workingDir     *csync.Value[string]
+	writeScope     *tools.WriteScope
 }
 
 type SessionAgentOptions struct {
@@ -141,8 +171,12 @@ type SessionAgentOptions struct {
 	Sessions             session.Service
 	Messages             message.Service
 	Tools                []fantasy.AgentTool
+	WorkingDir           string
+	WriteScope           *tools.WriteScope
 	Memory               memory.MemoryService
 	Pmem                 *pmem.System
+	LongHorizon          *longhorizon.Manager
+	WaitBackground       func(ctx context.Context, sessionID string) error
 }
 
 // NewSessionAgent initializes a new session-based AI agent with the provided configuration options.
@@ -150,21 +184,140 @@ func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
 	return &sessionAgent{
-		largeModel:           csync.NewValue(opts.LargeModel),
-		smallModel:           csync.NewValue(opts.SmallModel),
-		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
-		systemPrompt:         csync.NewValue(opts.SystemPrompt),
-		isSubAgent:           opts.IsSubAgent,
-		sessions:             opts.Sessions,
-		messages:             opts.Messages,
-		disableAutoSummarize: opts.DisableAutoSummarize,
-		tools:                csync.NewSliceFrom(opts.Tools),
-		isYolo:               opts.IsYolo,
-		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, context.CancelFunc](),
-		memory:               opts.Memory,
-		pmem:                 opts.Pmem,
+		largeModel:              csync.NewValue(opts.LargeModel),
+		smallModel:              csync.NewValue(opts.SmallModel),
+		systemPromptPrefix:      csync.NewValue(opts.SystemPromptPrefix),
+		systemPrompt:            csync.NewValue(opts.SystemPrompt),
+		isSubAgent:              opts.IsSubAgent,
+		sessions:                opts.Sessions,
+		messages:                opts.Messages,
+		disableAutoSummarize:    opts.DisableAutoSummarize,
+		tools:                   csync.NewSliceFrom(opts.Tools),
+		isYolo:                  opts.IsYolo,
+		waitBackground:          opts.WaitBackground,
+		messageQueue:            csync.NewMap[string, []SessionAgentCall](),
+		activeRequests:          csync.NewMap[string, context.CancelFunc](),
+		memory:                  opts.Memory,
+		pmem:                    opts.Pmem,
+		workingDir:              csync.NewValue(opts.WorkingDir),
+		writeScope:              opts.WriteScope,
+		postCompactionInjection: csync.NewMap[string, bool](),
+		longHorizon:             opts.LongHorizon,
+		longHorizonSessions:     csync.NewMap[string, bool](),
+		longHorizonInit:         csync.NewMap[string, bool](),
 	}
+}
+
+func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			return context.WithCancel(ctx)
+		}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func isDBBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database is busy") || strings.Contains(msg, "sqlite_busy")
+}
+
+func retryDB(ctx context.Context, timeout time.Duration, attempts int, fn func(context.Context) error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	backoff := 100 * time.Millisecond
+	for i := 0; i < attempts; i++ {
+		opCtx, cancel := withTimeout(ctx, timeout)
+		lastErr = fn(opCtx)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+		if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) || isDBBusyErr(lastErr) {
+			if ctx != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if i < attempts-1 {
+				time.Sleep(backoff)
+				if backoff < 500*time.Millisecond {
+					backoff *= 2
+				}
+				continue
+			}
+		}
+		return lastErr
+	}
+	return lastErr
+}
+
+func shouldRetryStreamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var providerErr *fantasy.ProviderError
+	if errors.As(err, &providerErr) {
+		switch providerErr.StatusCode {
+		case 0, 408, 409, 425, 429, 500, 502, 503, 504:
+			return true
+		}
+	}
+	return false
+}
+
+func (a *sessionAgent) createMessage(ctx context.Context, sessionID string, params message.CreateMessageParams, timeout time.Duration) (message.Message, error) {
+	var out message.Message
+	err := retryDB(ctx, timeout, 2, func(opCtx context.Context) error {
+		msg, err := a.messages.Create(opCtx, sessionID, params)
+		if err != nil {
+			return err
+		}
+		out = msg
+		return nil
+	})
+	return out, err
+}
+
+func (a *sessionAgent) updateMessage(ctx context.Context, msg message.Message, timeout time.Duration) error {
+	return retryDB(ctx, timeout, 2, func(opCtx context.Context) error {
+		return a.messages.Update(opCtx, msg)
+	})
+}
+
+func (a *sessionAgent) getSessionWithTimeout(ctx context.Context, sessionID string) (session.Session, error) {
+	var out session.Session
+	err := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+		sess, err := a.sessions.Get(opCtx, sessionID)
+		if err != nil {
+			return err
+		}
+		out = sess
+		return nil
+	})
+	return out, err
+}
+
+func (a *sessionAgent) saveSessionWithTimeout(ctx context.Context, sess session.Session) (session.Session, error) {
+	var out session.Session
+	err := retryDB(ctx, dbOpLongTimeout, 2, func(opCtx context.Context) error {
+		saved, err := a.sessions.Save(opCtx, sess)
+		if err != nil {
+			return err
+		}
+		out = saved
+		return nil
+	})
+	return out, err
 }
 
 func isGeminiCodeExecutionModel(model Model) bool {
@@ -195,6 +348,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Queue the message if busy
 	if a.IsSessionBusy(call.SessionID) {
+		if !call.SkipUserMessage {
+			if _, err := a.createUserMessage(ctx, call); err != nil {
+				return nil, err
+			}
+			call.SkipUserMessage = true
+		}
 		existing, ok := a.messageQueue.Get(call.SessionID)
 		if !ok {
 			existing = []SessionAgentCall{}
@@ -211,6 +370,30 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	promptPrefix := a.systemPromptPrefix.Get()
 	var instructions strings.Builder
 	activeTools := newActiveToolSet(call.ActiveTools)
+
+	if a.longHorizon != nil {
+		if active, ok := a.longHorizonSessions.Get(call.SessionID); ok && active {
+			// already active
+		} else if a.shouldActivateLongHorizon(call) {
+			if pending, ok := a.longHorizonInit.Get(call.SessionID); ok && pending {
+				// already initializing
+			} else {
+				a.longHorizonInit.Set(call.SessionID, true)
+				go func(sessionID, prompt string) {
+					bgCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					if _, err := a.longHorizon.Ensure(bgCtx, sessionID, prompt); err == nil {
+						a.longHorizonSessions.Set(sessionID, true)
+						a.longHorizonInit.Del(sessionID)
+						a.longHorizon.AppendAudit(bgCtx, sessionID, "Activated long-horizon mode based on task complexity.")
+					} else {
+						a.longHorizonInit.Del(sessionID)
+						slog.Warn("Failed to initialize long-horizon artifacts", "error", err)
+					}
+				}(call.SessionID, call.Prompt)
+			}
+		}
+	}
 
 	for _, server := range mcp.GetStates() {
 		if server.State != mcp.StateConnected {
@@ -242,7 +425,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	)
 
 	sessionLock := sync.Mutex{}
-	currentSession, err := a.sessions.Get(ctx, call.SessionID)
+	currentSession, err := a.getSessionWithTimeout(ctx, call.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
@@ -262,23 +445,54 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 	defer wg.Wait()
 
-	// Add the user message to the session.
-	_, err = a.createUserMessage(ctx, call)
-	if err != nil {
-		return nil, err
+	// Add the user message to the session unless it was created earlier.
+	if !call.SkipUserMessage {
+		_, err = a.createUserMessage(ctx, call)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	runtimeControl := newRuntimeControl()
+	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
 
 	genCtx, cancel := context.WithCancel(ctx)
-	a.activeRequests.Set(call.SessionID, cancel)
-
 	defer cancel()
+	a.activeRequests.Set(call.SessionID, cancel)
 	defer a.activeRequests.Del(call.SessionID)
 
+	markActivity := func() {}
+	var updateMu sync.Mutex
+	var lastUpdate time.Time
+	updateAssistant := func(ctx context.Context, msg *message.Message, timeout time.Duration, force bool) error {
+		if msg == nil {
+			return nil
+		}
+		if !force && timeout == messageUpdateTimeout {
+			updateMu.Lock()
+			if !lastUpdate.IsZero() && time.Since(lastUpdate) < messageUpdateMinInterval {
+				updateMu.Unlock()
+				return nil
+			}
+			lastUpdate = time.Now()
+			updateMu.Unlock()
+		}
+		updateCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		clone := msg.Clone()
+		if err := a.updateMessage(updateCtx, clone, timeout); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				slog.Debug("Message update timed out", "session_id", msg.SessionID, "message_id", msg.ID, "error", err)
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 	history, files := a.preparePrompt(msgs, call.Prompt, call.Attachments...)
-	history = a.injectTieredMemory(ctx, history, call.SessionID)
+	history = a.injectTieredMemory(ctx, history, call.SessionID, int(largeModel.CatwalkCfg.ContextWindow))
 
 	startTime := time.Now()
 	a.eventPromptSent(call.SessionID)
@@ -288,8 +502,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		shouldSummarize  bool
 		stepStartTime    time.Time
 		firstTokenTime   time.Time
+		firstToolName    string
 	)
-	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
+	streamCall := fantasy.AgentStreamCall{
 		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
 		Files:            files,
 		Messages:         history,
@@ -302,6 +517,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			markActivity()
 			stepStartTime = time.Now()
 			firstTokenTime = time.Time{}
 			prepared.Messages = options.Messages
@@ -313,6 +529,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			queuedCalls, _ := a.messageQueue.Get(call.SessionID)
 			a.messageQueue.Del(call.SessionID)
 			for _, queued := range queuedCalls {
+				if queued.SkipUserMessage {
+					continue
+				}
 				userMessage, createErr := a.createUserMessage(callContext, queued)
 				if createErr != nil {
 					return callContext, prepared, createErr
@@ -339,6 +558,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			var systemMessages []fantasy.Message
+			if systemPrompt != "" {
+				systemMessages = append(systemMessages, fantasy.NewSystemMessage(systemPrompt))
+			}
 			if promptPrefix != "" {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(promptPrefix))
 			}
@@ -356,42 +578,72 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			var assistantMsg message.Message
-			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
+			assistantMsg, err = a.createMessage(callContext, call.SessionID, message.CreateMessageParams{
 				Role:     message.Assistant,
 				Parts:    []message.ContentPart{},
 				Model:    largeModel.ModelCfg.Model,
 				Provider: largeModel.ModelCfg.Provider,
-			})
+			}, dbOpTimeout)
 			if err != nil {
 				return callContext, prepared, err
 			}
 			if len(call.ActiveSkills) > 0 {
 				assistantMsg.SetSkillContext(call.ActiveSkills)
-				if err := a.messages.Update(callContext, assistantMsg); err != nil {
+				if err := a.updateMessage(callContext, assistantMsg, dbOpTimeout); err != nil {
 					return callContext, prepared, err
 				}
 			}
 			callContext = context.WithValue(callContext, tools.MessageIDContextKey, assistantMsg.ID)
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
+			callContext = context.WithValue(callContext, tools.WorkingDirContextKey, a.workingDir.Get())
+			callContext = context.WithValue(callContext, tools.WriteScopeContextKey, a.writeScope)
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err
 		},
+		RepairToolCall: func(repairCtx context.Context, options fantasy.ToolCallRepairOptions) (*fantasy.ToolCallContent, error) {
+			call := fantasy.ToolCall{
+				ID:    options.OriginalToolCall.ToolCallID,
+				Name:  options.OriginalToolCall.ToolName,
+				Input: options.OriginalToolCall.Input,
+			}
+			toolMap := make(map[string]fantasy.AgentTool)
+			for _, t := range options.AvailableTools {
+				if t != nil {
+					toolMap[t.Info().Name] = t
+				}
+			}
+			prepared, _, err := tools.PrepareToolCall(repairCtx, call, toolMap)
+			if err != nil {
+				// We can't fix it. Return nil to let fantasy handle the original validation error.
+				return nil, options.ValidationError
+			}
+			return &fantasy.ToolCallContent{
+				ToolCallID: prepared.ID,
+				ToolName:   prepared.Name,
+				Input:      prepared.Input,
+			}, nil
+		},
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
+			markActivity()
+			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
 			}
 			currentAssistant.AppendReasoningContent(reasoning.Text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
 		},
 		OnReasoningDelta: func(id string, text string) error {
+			markActivity()
+			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
 			}
 			currentAssistant.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
+			markActivity()
 			// handle anthropic signature
 			if anthropicData, ok := reasoning.ProviderMetadata[anthropic.Name]; ok {
 				if reasoning, ok := anthropicData.(*anthropic.ReasoningOptionMetadata); ok {
@@ -409,9 +661,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				}
 			}
 			currentAssistant.FinishThinking()
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
 		},
 		OnTextDelta: func(id string, text string) error {
+			markActivity()
+			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
 			}
@@ -423,14 +677,18 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			currentAssistant.AppendContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
+			markActivity()
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
 			}
 			activeTools.Add(toolName)
+			if firstToolName == "" {
+				firstToolName = toolName
+			}
 
 			toolCall := message.ToolCall{
 				ID:               id,
@@ -439,17 +697,24 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Finished:         false,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, true)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
-			// TODO: implement
+			markActivity()
+			if err != nil {
+				slog.Warn("Provider retry scheduled", "error", err.Message, "status", err.StatusCode, "delay", delay)
+			}
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
+			markActivity()
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
 			}
 			activeTools.Add(tc.ToolName)
+			if firstToolName == "" {
+				firstToolName = tc.ToolName
+			}
 
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
@@ -459,9 +724,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Finished:         true,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, true)
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
+			markActivity()
+			runtimeControl.FinishToolExecution(result.ToolName)
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
@@ -503,27 +770,38 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), result.ToolName, rawInput, outStr)
 			}
 
-			_, createMsgErr := a.messages.Create(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
+			_, createMsgErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
-			})
+			}, dbOpTimeout)
 			if createMsgErr != nil {
+				if errors.Is(createMsgErr, context.DeadlineExceeded) || errors.Is(createMsgErr, context.Canceled) || isDBBusyErr(createMsgErr) {
+					slog.Warn("Skipping tool result persistence due to DB timeout", "error", createMsgErr)
+					return nil
+				}
 				return createMsgErr
 			}
 			if grounding := buildToolGrounding(result.ToolName, toolResult.Content); grounding != "" {
-				_, groundErr := a.messages.Create(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
+				_, groundErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
 					Role: message.System,
 					Parts: []message.ContentPart{
 						message.TextContent{Text: grounding},
 					},
-				})
-				return groundErr
+				}, dbOpTimeout)
+				if groundErr != nil {
+					if errors.Is(groundErr, context.DeadlineExceeded) || errors.Is(groundErr, context.Canceled) || isDBBusyErr(groundErr) {
+						slog.Warn("Skipping tool grounding persistence due to DB timeout", "error", groundErr)
+						return nil
+					}
+					return groundErr
+				}
 			}
 			return nil
 		},
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
+			runtimeControl.ObserveAfterStep()
 			finishReason := message.FinishReasonUnknown
 			switch stepResult.FinishReason {
 			case fantasy.FinishReasonLength:
@@ -532,6 +810,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				finishReason = message.FinishReasonEndTurn
 			case fantasy.FinishReasonToolCalls:
 				finishReason = message.FinishReasonToolUse
+			}
+
+			if !a.isSubAgent && a.waitBackground != nil {
+				switch stepResult.FinishReason {
+				case fantasy.FinishReasonStop, fantasy.FinishReasonLength:
+					if err := a.waitBackground(genCtx, call.SessionID); err != nil {
+						return err
+					}
+				}
 			}
 
 			// Capture Gemini-specific usage metadata if available
@@ -573,17 +860,29 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				currentAssistant.AddFinish(finishReason, "", "")
 			}
 
-			updatedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID)
-			if getSessionErr != nil {
-				return getSessionErr
+			if err := updateAssistant(genCtx, currentAssistant, messageFinalUpdateTimeout, true); err != nil {
+				return err
 			}
-			a.updateSessionUsage(largeModel, &updatedSession, stepResult.Usage, a.openrouterCost(stepResult.ProviderMetadata))
-			_, sessionErr := a.sessions.Save(ctx, updatedSession)
-			if sessionErr != nil {
-				return sessionErr
-			}
-			currentSession = updatedSession
-			return a.messages.Update(genCtx, *currentAssistant)
+
+			usage := stepResult.Usage
+			openrouterCost := a.openrouterCost(stepResult.ProviderMetadata)
+			go func(sessionID string, model Model, usage fantasy.Usage, openrouterCost *float64) {
+				saveCtx, cancel := context.WithTimeout(context.Background(), dbOpLongTimeout)
+				defer cancel()
+
+				updatedSession, getSessionErr := a.getSessionWithTimeout(saveCtx, sessionID)
+				if getSessionErr != nil {
+					slog.Warn("Failed to load session usage after final render", "session_id", sessionID, "error", getSessionErr)
+					return
+				}
+				a.updateSessionUsage(model, &updatedSession, usage, openrouterCost)
+				if _, sessionErr := a.saveSessionWithTimeout(saveCtx, updatedSession); sessionErr != nil {
+					slog.Warn("Failed to persist session usage after final render", "session_id", sessionID, "error", sessionErr)
+					return
+				}
+			}(call.SessionID, largeModel, usage, openrouterCost)
+
+			return nil
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(steps []fantasy.StepResult) bool {
@@ -601,17 +900,27 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				} else {
 					threshold = int64(float64(cw) * smallContextWindowRatio)
 				}
+				if threshold < smallContextWindowMinBuffer {
+					threshold = smallContextWindowMinBuffer
+				}
 
 				// 65% Context Window Pre-Compaction Checkpoint
 				if cw > 0 && float64(tokens) >= float64(cw)*0.65 {
 					if a.pmem.ShouldRunCheckpoint() {
 						a.pmem.MarkCheckpointDone()
-						_ = a.pmem.RunPreCompactionCheckpoint(ctx, call.SessionID, "20")
+						go func(sessionID string) {
+							memCtx, cancel := withTimeout(context.Background(), 2*time.Second)
+							defer cancel()
+							_ = a.pmem.RunPreCompactionCheckpoint(memCtx, sessionID, "20")
+						}(call.SessionID)
 					}
 				}
 
 				if cw > 0 && (remaining <= threshold) && !a.disableAutoSummarize {
 					shouldSummarize = true
+					if a.isLongHorizon(call.SessionID) && a.longHorizon != nil {
+						a.longHorizon.AppendAudit(ctx, call.SessionID, fmt.Sprintf("Decision: trigger summarization at tokens=%d threshold=%d", tokens, threshold))
+					}
 					return true
 				}
 				return false
@@ -620,7 +929,24 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
 			},
 		},
-	})
+	}
+
+	var result *fantasy.AgentResult
+	for attempt := 0; attempt <= maxStreamRetries; attempt++ {
+		result, err = agent.Stream(genCtx, streamCall)
+		if err == nil || genCtx.Err() != nil {
+			break
+		}
+		if attempt < maxStreamRetries && shouldRetryStreamError(err) && firstTokenTime.IsZero() {
+			if currentAssistant != nil && len(currentAssistant.ToolCalls()) == 0 && currentAssistant.Content().Text == "" && currentAssistant.ReasoningContent().Thinking == "" {
+				_ = a.messages.Delete(ctx, currentAssistant.ID)
+				currentAssistant = nil
+			}
+			time.Sleep(streamRetryBackoff * time.Duration(attempt+1))
+			continue
+		}
+		break
+	}
 
 	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
 
@@ -634,7 +960,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		currentAssistant.FinishThinking()
 		toolCalls := currentAssistant.ToolCalls()
 		// INFO: we use the parent context here because the genCtx has been cancelled.
-		msgs, createErr := a.messages.List(ctx, currentAssistant.SessionID)
+		var msgs []message.Message
+		createErr := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+			list, err := a.messages.List(opCtx, currentAssistant.SessionID)
+			if err != nil {
+				return err
+			}
+			msgs = list
+			return nil
+		})
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -643,7 +977,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				tc.Finished = true
 				tc.Input = "{}"
 				currentAssistant.AddToolCall(tc)
-				updateErr := a.messages.Update(ctx, *currentAssistant)
+				updateErr := a.updateMessage(ctx, *currentAssistant, dbOpTimeout)
 				if updateErr != nil {
 					return nil, updateErr
 				}
@@ -678,12 +1012,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Content:    content,
 				IsError:    true,
 			}
-			_, createErr = a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			_, createErr = a.createMessage(ctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
 				},
-			})
+			}, dbOpTimeout)
 			if createErr != nil {
 				return nil, createErr
 			}
@@ -719,9 +1053,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		// Note: we use the parent context here because the genCtx has been
 		// cancelled.
-		updateErr := a.messages.Update(ctx, *currentAssistant)
+		updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true)
 		if updateErr != nil {
 			return nil, updateErr
+		}
+		a.activeRequests.Del(call.SessionID)
+		cancel()
+		queuedMessages, ok := a.messageQueue.Get(call.SessionID)
+		if ok && len(queuedMessages) > 0 {
+			firstQueuedMessage := queuedMessages[0]
+			a.messageQueue.Set(call.SessionID, queuedMessages[1:])
+			_, _ = a.Run(ctx, firstQueuedMessage)
 		}
 		return nil, err
 	}
@@ -731,6 +1073,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
 		}
+		a.postCompactionInjection.Set(call.SessionID, true)
 		// Queue the message again so it doesn't get dropped.
 		existing, ok := a.messageQueue.Get(call.SessionID)
 		if !ok {
@@ -765,7 +1108,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	largeModel := a.largeModel.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
 
-	currentSession, err := a.sessions.Get(ctx, sessionID)
+	currentSession, err := a.getSessionWithTimeout(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
@@ -788,12 +1131,12 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	narrativeAgent := fantasy.NewAgent(largeModel.Model,
 		fantasy.WithSystemPrompt(string(summaryPrompt)),
 	)
-	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+	summaryMessage, err := a.createMessage(ctx, sessionID, message.CreateMessageParams{
 		Role:             message.Assistant,
 		Model:            largeModel.Model.Model(),
 		Provider:         largeModel.Model.Provider(),
 		IsSummaryMessage: true,
-	})
+	}, dbOpTimeout)
 	if err != nil {
 		return err
 	}
@@ -812,11 +1155,23 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		},
 		OnReasoningDelta: func(id string, text string) error {
 			summaryMessage.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			if err := a.updateMessage(genCtx, summaryMessage, messageUpdateTimeout); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || isDBBusyErr(err) {
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 		OnTextDelta: func(id, text string) error {
 			summaryMessage.AppendContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			if err := a.updateMessage(genCtx, summaryMessage, messageUpdateTimeout); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || isDBBusyErr(err) {
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	})
 	if err != nil {
@@ -826,40 +1181,40 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	_ = a.messages.Update(genCtx, summaryMessage)
-
-	// 2. Structured Extraction (for tiered memory)
-	structuredAgent := fantasy.NewAgent(largeModel.Model,
-		fantasy.WithSystemPrompt(string(structuredSummaryPromptTmpl)),
-	)
-	structuredResp, err := structuredAgent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:          "Extract current session state to JSON.",
-		Messages:        aiMsgs,
-		ProviderOptions: opts,
-	})
-	if err == nil {
-		var data memory.StructuredSummaryData
-		jsonStr := structuredResp.Response.Content.Text()
-		// Basic JSON extraction from markdown if model wraps it in blocks.
-		if start := strings.Index(jsonStr, "{"); start != -1 {
-			if end := strings.LastIndex(jsonStr, "}"); end != -1 {
-				jsonStr = jsonStr[start : end+1]
-			}
-		}
-		if err := json.Unmarshal([]byte(jsonStr), &data); err == nil {
-			_ = a.memory.CreateStructuredSummary(ctx, sessionID, data)
-		} else {
-			slog.Warn("Failed to unmarshal structured summary", "error", err, "raw", jsonStr)
-		}
-	}
+	_ = a.updateMessage(genCtx, summaryMessage, dbOpLongTimeout)
 
 	a.updateSessionUsage(largeModel, &currentSession, narrativeResp.TotalUsage, nil)
 	currentSession.SummaryMessageID = summaryMessage.ID
 	if a.pmem != nil {
 		a.pmem.ResetCheckpointState()
 	}
-	_, err = a.sessions.Save(genCtx, currentSession)
+	if a.isLongHorizon(sessionID) && a.longHorizon != nil {
+		a.longHorizon.AppendAudit(ctx, sessionID, "Completed summarization checkpoint and structured extraction.")
+	}
+	_, err = a.saveSessionWithTimeout(genCtx, currentSession)
 	return err
+}
+
+func (a *sessionAgent) shouldActivateLongHorizon(call SessionAgentCall) bool {
+	wordCount := len(strings.Fields(call.Prompt))
+	if wordCount >= 80 {
+		return true
+	}
+	if shouldDelegateToSubAgents(call.Prompt) {
+		return true
+	}
+	if len(call.Attachments) > 2 {
+		return true
+	}
+	return false
+}
+
+func (a *sessionAgent) isLongHorizon(sessionID string) bool {
+	if a.longHorizonSessions == nil {
+		return false
+	}
+	val, ok := a.longHorizonSessions.Get(sessionID)
+	return ok && val
 }
 
 func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
@@ -886,10 +1241,10 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 		attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})
 	}
 	parts = append(parts, attachmentParts...)
-	msg, err := a.messages.Create(ctx, call.SessionID, message.CreateMessageParams{
+	msg, err := a.createMessage(ctx, call.SessionID, message.CreateMessageParams{
 		Role:  message.User,
 		Parts: parts,
-	})
+	}, dbOpTimeout)
 	if err != nil {
 		return message.Message{}, fmt.Errorf("failed to create user message: %w", err)
 	}
@@ -940,46 +1295,99 @@ func shouldDelegateToSubAgents(prompt string) bool {
 	return false
 }
 
+func shouldEnforceTodos(prompt string, sess session.Session) bool {
+	if len(sess.Todos) > 0 {
+		return session.HasIncompleteTodos(sess.Todos)
+	}
+	return isMultiStepPrompt(prompt)
+}
+
+func isMultiStepPrompt(prompt string) bool {
+	normalized := strings.TrimSpace(prompt)
+	if normalized == "" {
+		return false
+	}
+	if shouldDelegateToSubAgents(normalized) {
+		return true
+	}
+	words := strings.Fields(normalized)
+	if len(words) >= 40 {
+		return true
+	}
+	lines := strings.Split(normalized, "\n")
+	bullets := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "• ") {
+			bullets++
+			continue
+		}
+		if len(line) >= 2 && line[0] >= '0' && line[0] <= '9' {
+			for i := 1; i < len(line) && i < 4; i++ {
+				if line[i] == '.' || line[i] == ')' {
+					bullets++
+					break
+				}
+				if line[i] < '0' || line[i] > '9' {
+					break
+				}
+			}
+		}
+	}
+	if bullets >= 2 {
+		return true
+	}
+	if len(words) >= 12 && strings.Contains(normalized, " and ") {
+		return true
+	}
+	return false
+}
+
+func appendSkillContext(existing, extra string) string {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return extra
+	}
+	return existing + "\n\n" + extra
+}
+
 func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
 	var history []fantasy.Message
 	if !a.isSubAgent {
 		if shouldDelegateToSubAgents(prompt) {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`Task Planning and Execution Protocol:
-This protocol is mandatory. All multi-step technical tasks must be planned and tracked using the "todos" tool before execution.
+					`Todo protocol for multi-step tasks:
+1. Create the full todo list before technical work.
+2. For each item: start -> execute -> validate -> complete.
+3. Keep exactly one item in_progress.
+4. Prefer task_id only when the current list was just read or created.
+5. If the list was recreated, reset, or ids may be stale: call todos list and use task_content for the target item instead of retrying a stale task_id.
+6. Do not start the next item until the current one is validated and marked complete.
 
-PHASE 1: Initialization
-- Enumerate: Extract actionable items from the user request into a mutually exclusive, collectively exhaustive list. 
-- Constraint: One verb-object pair per item. Do not nest or merge independent actions.
-- Action: Invoke the "todos" tool to create the complete list before undertaking any technical operations.
-
-PHASE 2: Execution and Verification Loop
-You must follow this exact loop sequentially for every item on your list:
-1. Claim: Invoke "todos" to mark the current target item as IN_PROGRESS.
-2. Execute: Perform the necessary file reads, edits, or commands to fulfill the item.
-3. Validate: Verify that the implemented changes fulfill the exact requirement.
-4. Close: Invoke "todos" to mark the item as DONE immediately after successful validation.
-5. Synchronize: Re-read your entire "todos" list. Acknowledge your current state and remaining items before starting the next item.
-
-CRITICAL RULE: Blind execution is forbidden. You must never execute action N+1 until action N is verified and explicitly marked DONE in the tracker.
-
-Exception Clause: Skip this protocol entirely if and only if the task is a single non-destructive read action requiring exactly one tool call.`,
+Skip this only for a single non-destructive read requiring exactly one tool call.`,
 				),
 			))
 
 			history = append(history, fantasy.NewUserMessage(
-				`<system_reminder>Complexity Mode Active:
-- Initialize your plan via the "todos" tool immediately.
-- Consider utilizing parallel sub-agents ("agent" tool) for isolating risk, mapping code, or handling distinct implementation phases.
-- Utilize "agentic_view" for bulk reads and "agentic_edit" for bulk writes. 
-- Rely on "agentic_fetch" for retrieving up-to-date external documentation or API specs instead of speculating on versions or syntax.
-- Crucially: Maintain constant synchronization with your "todos" tracker. Mark items IN_PROGRESS when starting and DONE only when verified.</system_reminder>`,
+				`<system_reminder>Complexity mode:
+- Initialize todos immediately.
+- Keep the todo tracker synchronized after every state change.
+- If a todo start/complete call fails because an id is stale, resync with todos list and continue using task_content for the intended item.
+- Use "single_view" for one file and "agentic_view" for multi-file reads.
+- Use "single_edit" for one file when you only need one replacement. Use "agentic_edit" for batched edits across one or more files.
+- Use agentic_fetch for current external docs instead of guessing.</system_reminder>`,
 			))
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`Your task list is empty. If the incoming request implies multiple sequential steps, you must initialize a plan using the "todos" tool prior to execution.`,
+					`Your task list is empty. If the incoming request implies multiple sequential steps, you must initialize a plan using the "todos" tool (action "create") prior to execution.`,
 				),
 			))
 		}
@@ -987,7 +1395,9 @@ Exception Clause: Skip this protocol entirely if and only if the task is a singl
 		history = append(history, fantasy.NewUserMessage(
 			`<system_reminder>Sub-agent Directive:
 Execute your assigned chunk of the tasks autonomously and efficiently.
+- Single-file reads: Use "single_view".
 - Multi-file reads: Use "agentic_view" (max 50 files, parallel).
+- Single-file edits: Use "single_edit".
 - External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
 - Code Execution: Use "python" tool for complex computations, data processing, or verification.
 - Shell: Use "bash" for terminal commands and background jobs.
@@ -1021,7 +1431,7 @@ Resolve your assigned scope independently and return only verified, concise obje
 	return history, files
 }
 
-func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string) (retHistory []fantasy.Message) {
+func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string, contextWindow int) (retHistory []fantasy.Message) {
 	// Add permanent recovery for any internal panics here.
 	defer func() {
 		if r := recover(); r != nil {
@@ -1043,30 +1453,59 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 		return history
 	}
 
-	// Tier 1: Hot Memory - Project Constitution
-	// Always injected first.
-	constitution, err := a.memory.GetProjectConstitution(ctx, "default")
-	if err == nil && constitution != "" {
+	// Determine whether we're on the first turn after a compaction summary.
+	postCompaction := false
+	charBudget := 0
+	if a.postCompactionInjection != nil {
+		if pending, ok := a.postCompactionInjection.Get(sessionID); ok && pending {
+			postCompaction = true
+			a.postCompactionInjection.Del(sessionID)
+		}
+	}
+	if postCompaction && contextWindow > 0 {
+		charBudget = int(float64(contextWindow) * postCompactionInjectionRatio * postCompactionContextCharsPerTok)
+	}
+
+	// Long-horizon contract injection (runbook/spec/plan/audit)
+	if a.longHorizon != nil && a.isLongHorizon(sessionID) {
+		if lh := a.longHorizon.BuildInjection(sessionID); lh != "" {
+			retHistory = append([]fantasy.Message{
+				fantasy.NewSystemMessage(lh),
+			}, retHistory...)
+		}
+	}
+
+	// Tier 1: Hot Memory - Project Constitution (best-effort).
+	constitution := ""
+	if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+		constitution, _ = a.memory.GetProjectConstitution(memCtx, "default")
+		cancel()
+	}
+	if constitution != "" {
 		retHistory = append([]fantasy.Message{
 			fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
 		}, retHistory...)
 	}
 
-	// Tier 2: Warm Memory - Latest Structured Summary
-	// Rebuilt per-turn to maintain semantic continuity across compaction events.
-	summary, err := a.memory.GetStructuredSummary(ctx, sessionID)
-	if err == nil && summary != nil {
-		rawData, _ := json.MarshalIndent(summary, "", "  ")
-		retHistory = append([]fantasy.Message{
-			fantasy.NewSystemMessage("## LATEST STRUCTURED STATE (Tier 2 Warm Memory)\n" + string(rawData)),
-		}, retHistory...)
-	}
-
 	if a.pmem != nil {
-		pmemInjection := a.pmem.BuildContextInjection(ctx)
+		pmemInjection := ""
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			if charBudget > 0 {
+				pmemInjection = a.pmem.BuildContextInjection(memCtx, charBudget/postCompactionContextCharsPerTok)
+			} else {
+				pmemInjection = a.pmem.BuildContextInjection(memCtx, contextWindow)
+			}
+			cancel()
+		}
 		if pmemInjection != "" {
 			retHistory = append([]fantasy.Message{
 				fantasy.NewSystemMessage(pmemInjection),
+			}, retHistory...)
+		}
+
+		if notice := a.pmem.BackpressureNotice(); notice != "" {
+			retHistory = append([]fantasy.Message{
+				fantasy.NewSystemMessage(notice),
 			}, retHistory...)
 		}
 	}
@@ -1075,7 +1514,15 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 }
 
 func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.Session) ([]message.Message, error) {
-	msgs, err := a.messages.List(ctx, session.ID)
+	var msgs []message.Message
+	err := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+		list, err := a.messages.List(opCtx, session.ID)
+		if err != nil {
+			return err
+		}
+		msgs = list
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list messages: %w", err)
 	}
@@ -1150,7 +1597,9 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 			// Welp, the large model didn't work either. Use the default
 			// session name and return.
 			slog.Error("Error generating title with large model", "err", err)
-			saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, defaultSessionName, 0, 0, 0)
+			saveErr := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+				return a.sessions.UpdateTitleAndUsage(opCtx, sessionID, defaultSessionName, 0, 0, 0)
+			})
 			if saveErr != nil {
 				slog.Error("Failed to save session title and usage", "error", saveErr)
 			}
@@ -1162,7 +1611,9 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 		// Actually, we didn't get a response so we can't. Use the default
 		// session name and return.
 		slog.Error("Response is nil; can't generate title")
-		saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, defaultSessionName, 0, 0, 0)
+		saveErr := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+			return a.sessions.UpdateTitleAndUsage(opCtx, sessionID, defaultSessionName, 0, 0, 0)
+		})
 		if saveErr != nil {
 			slog.Error("Failed to save session title and usage", "error", saveErr)
 		}
@@ -1208,7 +1659,9 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID string, user
 
 	// Atomically update only title and usage fields to avoid overriding other
 	// concurrent session updates.
-	saveErr := a.sessions.UpdateTitleAndUsage(ctx, sessionID, title, promptTokens, completionTokens, cost)
+	saveErr := retryDB(ctx, dbOpTimeout, 2, func(opCtx context.Context) error {
+		return a.sessions.UpdateTitleAndUsage(opCtx, sessionID, title, promptTokens, completionTokens, cost)
+	})
 	if saveErr != nil {
 		slog.Error("Failed to save session title and usage", "error", saveErr)
 		return
@@ -1338,6 +1791,10 @@ func (a *sessionAgent) SetModels(large Model, small Model) {
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
+}
+
+func (a *sessionAgent) SetWorkingDir(workingDir string) {
+	a.workingDir.Set(workingDir)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
@@ -1477,7 +1934,15 @@ func buildSummaryPrompt(todos []session.Todo) string {
 	if len(todos) > 0 {
 		sb.WriteString("\n\n## Current Todo List\n\n")
 		for _, t := range todos {
-			fmt.Fprintf(&sb, "- [%s] %s\n", t.Status, t.Content)
+			if t.ID != "" {
+				fmt.Fprintf(&sb, "- [%s] (%s) %s", t.Status, t.ID, t.Content)
+			} else {
+				fmt.Fprintf(&sb, "- [%s] %s", t.Status, t.Content)
+			}
+			if t.ActiveForm != "" {
+				fmt.Fprintf(&sb, " — %s", t.ActiveForm)
+			}
+			sb.WriteString("\n")
 		}
 		sb.WriteString("\nInclude these tasks and their statuses in your summary. ")
 		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")

@@ -50,7 +50,7 @@ func startClient(ctx context.Context, cfg *config.Config, name string, m config.
 		return err
 	}
 
-	tools, err := getTools(ctx, session)
+	tools, err := getTools(ctx, cfg, name, session)
 	if err != nil {
 		slog.Error("Error listing tools", "error", err)
 		updateState(name, StateError, err, nil, Counts{})
@@ -58,7 +58,7 @@ func startClient(ctx context.Context, cfg *config.Config, name string, m config.
 		return err
 	}
 
-	prompts, err := getPrompts(ctx, session)
+	prompts, err := getPrompts(ctx, cfg, name, session)
 	if err != nil {
 		slog.Error("Error listing prompts", "error", err)
 		updateState(name, StateError, err, nil, Counts{})
@@ -66,7 +66,7 @@ func startClient(ctx context.Context, cfg *config.Config, name string, m config.
 		return err
 	}
 
-	resources, err := getResources(ctx, session)
+	resources, err := getResources(ctx, cfg, name, session)
 	if err != nil {
 		slog.Error("Error listing resources", "error", err)
 		updateState(name, StateError, err, nil, Counts{})

@@ -5,6 +5,7 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/message"
@@ -171,12 +172,16 @@ func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		return pendingTool(sty, "Search", opts.Anim)
 	}
 
-	var params tools.WebSearchParams
+	var params tools.GoogleSearchParams
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
 	}
 
-	toolParams := []string{params.Query}
+	query := strings.TrimSpace(params.Query)
+	if query == "" {
+		query = "Google Search"
+	}
+	toolParams := []string{query}
 	header := toolHeader(sty, opts.Status, "Search", cappedWidth, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header

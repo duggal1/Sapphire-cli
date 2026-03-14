@@ -20,8 +20,8 @@ func pillStyle(focused, panelFocused bool, t *styles.Styles) lipgloss.Style {
 }
 
 const (
-	// pillHeightWithBorder is the height of a pill including its border.
-	pillHeightWithBorder = 3
+	// pillHeightWithBorder tracks the rendered pill row height.
+	pillHeightWithBorder = 1
 	// maxTaskDisplayLength is the maximum length of a task name in the pill.
 	maxTaskDisplayLength = 40
 	// maxQueueDisplayLength is the maximum length of a queue item in the list.

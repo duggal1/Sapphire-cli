@@ -468,13 +468,7 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	expectedTaskTools := make([]string, 0, len(coderAgent.AllowedTools))
-	for _, t := range coderAgent.AllowedTools {
-		if t != "agent" {
-			expectedTaskTools = append(expectedTaskTools, t)
-		}
-	}
-	assert.Equal(t, expectedTaskTools, taskAgent.AllowedTools)
+	assert.Equal(t, expectedTaskTools(coderAgent.AllowedTools), taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -492,17 +486,11 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "recall_memory", "save_memory", "sourcegraph", "python", "todos", "view", "agentic_view", "write", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "recall_memory", "save_memory", "sourcegraph", "python", "todos", "view", "single_view", "agentic_view", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	expectedTaskTools := make([]string, 0, len(coderAgent.AllowedTools))
-	for _, t := range coderAgent.AllowedTools {
-		if t != "agent" {
-			expectedTaskTools = append(expectedTaskTools, t)
-		}
-	}
-	assert.Equal(t, expectedTaskTools, taskAgent.AllowedTools)
+	assert.Equal(t, expectedTaskTools(coderAgent.AllowedTools), taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -521,17 +509,34 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "job_output", "job_kill", "download", "edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "recall_memory", "save_memory", "python", "todos", "agentic_view", "write", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "job_output", "job_kill", "download", "edit", "single_edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "recall_memory", "save_memory", "python", "todos", "agentic_view", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	expectedTaskTools := make([]string, 0, len(coderAgent.AllowedTools))
-	for _, t := range coderAgent.AllowedTools {
-		if t != "agent" {
-			expectedTaskTools = append(expectedTaskTools, t)
-		}
+	assert.Equal(t, expectedTaskTools(coderAgent.AllowedTools), taskAgent.AllowedTools)
+}
+
+func expectedTaskTools(allTools []string) []string {
+	disallowed := map[string]struct{}{
+		"agent":        {},
+		"spawn_agent":  {},
+		"resume_agent": {},
+		"send_input":   {},
+		"wait":         {},
+		"close_agent":  {},
+		"edit":         {},
+		"single_edit":  {},
+		"agentic_edit": {},
+		"write":        {},
 	}
-	assert.Equal(t, expectedTaskTools, taskAgent.AllowedTools)
+	filtered := make([]string, 0, len(allTools))
+	for _, tool := range allTools {
+		if _, blocked := disallowed[tool]; blocked {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
 }
 
 func TestConfig_configureProvidersWithDisabledProvider(t *testing.T) {

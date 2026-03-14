@@ -126,7 +126,11 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 
 			searchPath := cmp.Or(params.Path, workingDir)
 
-			searchCtx, cancel := context.WithTimeout(ctx, config.GetTimeout())
+			timeout := config.GetTimeout()
+			if timeout < 15*time.Second {
+				timeout = 15 * time.Second
+			}
+			searchCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
 			matches, truncated, err := searchFiles(searchCtx, searchPattern, searchPath, params.Include, 100)

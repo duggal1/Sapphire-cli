@@ -1844,6 +1844,7 @@ internal/
 - Cached rendering for performance
 - Animation optimization (pause scrolled-out)
 - Non-blocking updates via `tea.Cmd`
+- File reads render as summary lines in the UI; full file contents are still provided to the model
 
 ---
 

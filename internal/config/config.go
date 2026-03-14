@@ -27,9 +27,11 @@ import (
 )
 
 const (
-	appName              = "sapphire"
-	defaultDataDirectory = ".sapphire"
-	defaultInitializeAs  = "AGENTS.md"
+	appName                = "sapphire"
+	defaultDataDirectory   = ".sapphire"
+	defaultInitializeAs    = "AGENTS.md"
+	defaultAgentMaxDepth   = 2
+	defaultAgentMaxThreads = 6
 )
 
 var defaultContextPaths = []string{
@@ -179,6 +181,7 @@ type MCPConfig struct {
 	Type          MCPType           `json:"type" jsonschema:"required,description=Type of MCP connection,enum=stdio,enum=sse,enum=http,default=stdio"`
 	URL           string            `json:"url,omitempty" jsonschema:"description=URL for HTTP or SSE MCP servers,format=uri,example=http://localhost:3000/mcp"`
 	Disabled      bool              `json:"disabled,omitempty" jsonschema:"description=Whether this MCP server is disabled,default=false"`
+	AutoStart     *bool             `json:"auto_start,omitempty" jsonschema:"description=Whether this MCP server should connect automatically on Sapphire startup,default=true"`
 	DisabledTools []string          `json:"disabled_tools,omitempty" jsonschema:"description=List of tools from this MCP server to disable,example=get-library-doc"`
 	Timeout       int               `json:"timeout,omitempty" jsonschema:"description=Timeout in seconds for MCP server connections,default=15,example=30,example=60,example=120"`
 
@@ -264,6 +267,8 @@ type Options struct {
 	AutoLSP                   *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	GoogleGrounding           bool         `json:"google_grounding,omitempty" jsonschema:"description=Enable Google search grounding for Gemini models,default=false"`
+	AgentMaxDepth             int          `json:"agent_max_depth,omitempty" jsonschema:"description=Maximum nested sub-agent depth,default=2,example=2"`
+	AgentMaxThreads           int          `json:"agent_max_threads,omitempty" jsonschema:"description=Maximum concurrent sub-agents per session,default=6,example=6"`
 }
 
 type MCPs map[string]MCPConfig
@@ -314,6 +319,10 @@ func (l LSPConfig) ResolvedEnv() []string {
 
 func (m MCPConfig) ResolvedEnv() []string {
 	return resolveEnvs(m.Env)
+}
+
+func (m MCPConfig) ShouldAutoStart() bool {
+	return ptrValOr(m.AutoStart, false)
 }
 
 func (m MCPConfig) ResolvedHeaders() map[string]string {
@@ -504,10 +513,6 @@ func (c *Config) SetGoogleGrounding(enabled bool) error {
 	return c.SetConfigField("options.google_grounding", enabled)
 }
 
-func IsGemini25Model(modelID string) bool {
-	return strings.HasPrefix(strings.ToLower(modelID), "gemini-2.5")
-}
-
 func IsGemini3Model(modelID string) bool {
 	id := strings.ToLower(modelID)
 	return strings.HasPrefix(id, "gemini-3") || strings.HasPrefix(id, "gemini-3.")
@@ -541,9 +546,6 @@ func ReasoningChoicesForModel(model *catwalk.Model) []string {
 	if model == nil || !model.CanReason {
 		return nil
 	}
-	if IsGemini25Model(model.ID) {
-		return []string{"thinking_on", "thinking_off"}
-	}
 	if IsGemini3Model(model.ID) {
 		return gemini3ReasoningLevels(model.ID)
 	}
@@ -554,12 +556,6 @@ func CurrentReasoningSelection(model *catwalk.Model, selected SelectedModel) str
 	if model == nil || !model.CanReason {
 		return ""
 	}
-	if IsGemini25Model(model.ID) {
-		if selected.Think {
-			return "thinking_on"
-		}
-		return "thinking_off"
-	}
 	if IsGemini3Model(model.ID) {
 		choices := ReasoningChoicesForModel(model)
 		return normalizeReasoningEffort(selected.ReasoningEffort, choices, model.DefaultReasoningEffort)
@@ -569,11 +565,6 @@ func CurrentReasoningSelection(model *catwalk.Model, selected SelectedModel) str
 
 func ApplyReasoningSelection(model *catwalk.Model, selected SelectedModel, effort string) SelectedModel {
 	if model == nil {
-		return selected
-	}
-	if IsGemini25Model(model.ID) {
-		selected.ReasoningEffort = ""
-		selected.Think = effort != "thinking_off"
 		return selected
 	}
 	if IsGemini3Model(model.ID) {
@@ -589,13 +580,6 @@ func ApplyReasoningSelection(model *catwalk.Model, selected SelectedModel, effor
 
 func NormalizeSelectedModelForModel(model *catwalk.Model, selected SelectedModel) SelectedModel {
 	if model == nil {
-		return selected
-	}
-	if IsGemini25Model(model.ID) {
-		selected.ReasoningEffort = ""
-		if !selected.Think {
-			selected.Think = true
-		}
 		return selected
 	}
 	if IsGemini3Model(model.ID) {
@@ -835,11 +819,20 @@ func (c *Config) recordRecentModel(modelType SelectedModelType, model SelectedMo
 func allToolNames() []string {
 	return []string{
 		"agent",
+		"spawn_agent",
+		"resume_agent",
+		"send_input",
+		"wait",
+		"close_agent",
+		"spawn_agents_on_csv",
+		"report_agent_job_result",
+		"orchestrate_worktrees",
 		"bash",
 		"job_output",
 		"job_kill",
 		"download",
 		"edit",
+		"single_edit",
 		"agentic_edit",
 		"lsp_diagnostics",
 		"lsp_references",
@@ -855,8 +848,15 @@ func allToolNames() []string {
 		"python",
 		"todos",
 		"view",
+		"single_view",
 		"agentic_view",
 		"write",
+		"list_tools",
+		"search_tools",
+		"tool_suggest",
+		"list_available_mcps",
+		"connect_mcp",
+		"call_mcp_tool",
 		"list_mcp_tools",
 		"list_mcp_resources",
 		"read_mcp_resource",
@@ -869,8 +869,15 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 	if disabledTools == nil {
 		return allTools
 	}
+	expandedDisabled := append([]string{}, disabledTools...)
+	if slices.Contains(disabledTools, "edit") && !slices.Contains(expandedDisabled, "single_edit") {
+		expandedDisabled = append(expandedDisabled, "single_edit")
+	}
+	if slices.Contains(disabledTools, "view") && !slices.Contains(expandedDisabled, "single_view") {
+		expandedDisabled = append(expandedDisabled, "single_view")
+	}
 	// filter out disabled tools (exclude mode)
-	return filterSlice(allTools, disabledTools, false)
+	return filterSlice(allTools, expandedDisabled, false)
 }
 
 func filterSlice(data []string, mask []string, include bool) []string {
@@ -889,10 +896,23 @@ func (c *Config) SetupAgents() {
 	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
 
 	taskAllowedTools := make([]string, 0, len(allowedTools))
+	disallowedTaskTools := map[string]struct{}{
+		"agent":        {},
+		"spawn_agent":  {},
+		"resume_agent": {},
+		"send_input":   {},
+		"wait":         {},
+		"close_agent":  {},
+		"edit":         {},
+		"single_edit":  {},
+		"agentic_edit": {},
+		"write":        {},
+	}
 	for _, tool := range allowedTools {
-		if tool != "agentic_edit" {
-			taskAllowedTools = append(taskAllowedTools, tool)
+		if _, blocked := disallowedTaskTools[tool]; blocked {
+			continue
 		}
+		taskAllowedTools = append(taskAllowedTools, tool)
 	}
 
 	agents := map[string]Agent{

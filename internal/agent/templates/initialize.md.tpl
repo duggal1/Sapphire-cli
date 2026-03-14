@@ -1,5 +1,12 @@
 Analyze this codebase and create/update {{.Config.Options.InitializeAs}} to enable future agents to operate effectively in this repository.
 
+Capabilities (use precisely):
+- Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `connect_mcp`.
+- Sub-agents: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`), `resume_agent`, `send_input`, `wait`, `close_agent`, `spawn_agents_on_csv`, `report_agent_job_result`.
+- Worktree orchestration: `orchestrate_worktrees` (parallel worktrees, optional test runners, optional integration agent).
+- Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
+- Execution loop: observe → reason → act (one tool) → wait → observe.
+
 **Pre-flight check**: Run `ls`. If the directory is empty or contains only config files, stop and output: "Directory appears empty or only contains config. Add source code first, then run this command to generate {{.Config.Options.InitializeAs}}."
 
 **Step 1 — Complexity estimation**:
@@ -17,14 +24,14 @@ Classify the repository into one of three tiers:
 
 **Step 2 — Adaptive orchestration**:
 
-Small repo: Analyze directly. Use agentic_view to read all relevant files in parallel. No subagent overhead.
+Small repo: Analyze directly. Use agentic_view to read all relevant files in parallel, but cap each batch to 10–15 files (default 10). Only exceed 15 when files are tiny and the batch is still small in total tokens. No subagent overhead.
 
 Medium repo: Identify the 2–4 highest-value domains. Spawn one subagent per domain. Each subagent uses agentic_view internally to read its assigned files in parallel and returns only synthesized findings.
 
 Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain — do not cap artificially. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent uses agentic_view internally and returns only synthesized, actionable findings — no raw file dumps.
 
 Every subagent must:
-1. Use agentic_view to read assigned files in parallel
+1. Use agentic_view to read assigned files in parallel, capped at 10–15 files per batch (default 10). Only exceed 15 when files are tiny and the batch is still small in total tokens.
 2. Return only synthesized findings — no raw file content
 3. Report only what is explicitly observed — never infer or fabricate
 

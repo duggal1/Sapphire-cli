@@ -2,80 +2,225 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
-	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/config"
 )
 
-type mcpSelection struct {
-	MCPServers []string      `json:"mcp_servers"`
-	Plan       []mcpPlanStep `json:"plan,omitempty"`
+type scoredRegistryMCP struct {
+	Entry   config.RegistryMCPInventoryEntry
+	Score   int
+	Reasons []string
 }
 
-type mcpPlanStep struct {
-	Step      string   `json:"step"`
-	MCP       string   `json:"mcp"`
-	DependsOn []string `json:"depends_on,omitempty"`
+var categoryIntentKeywords = map[config.RegistryMCPCategory][]string{
+	config.RegistryMCPCategoryCloudInfrastructure: {
+		"deploy", "deployment", "cloud", "infrastructure", "container", "containers",
+		"kubernetes", "k8s", "docker", "cluster", "serverless", "cloud run", "gcp",
+		"google cloud", "aws", "render", "netlify", "vercel", "cloudflare",
+	},
+	config.RegistryMCPCategoryDatabases: {
+		"database", "sql", "postgres", "postgresql", "schema", "migration", "query",
+		"table", "branch", "supabase", "neon",
+	},
+	config.RegistryMCPCategoryAIVectorSearch: {
+		"rag", "retrieval", "retrieve", "vector", "embedding", "semantic search",
+		"knowledge base",
+	},
+	config.RegistryMCPCategoryAuthentication: {
+		"auth", "authentication", "oauth", "oidc", "identity", "sso", "login",
+		"user management", "credentials", "secret",
+	},
+	config.RegistryMCPCategoryPayments: {
+		"stripe", "payment", "payments", "billing", "checkout", "subscription",
+		"invoice", "merchant",
+	},
+	config.RegistryMCPCategoryDevelopmentInfra: {
+		"git", "github", "gitlab", "bitbucket", "repository", "repo", "pull request",
+		"pr", "branch", "worktree", "workflow", "actions", "release", "code review",
+		"code search", "code indexing",
+	},
+	config.RegistryMCPCategoryProductivity: {
+		"notion", "docs", "documentation", "knowledge", "wiki", "spec",
+	},
+	config.RegistryMCPCategoryDesign: {
+		"figma", "design", "mock", "prototype", "ui",
+	},
+	config.RegistryMCPCategoryTestingDebugging: {
+		"ci", "cd", "pipeline", "incident", "observability", "monitoring",
+		"logs", "trace", "tracing",
+		"sentry", "datadog", "grafana", "prometheus",
+	},
 }
 
-func (c *coordinator) selectMCPServers(ctx context.Context, userPrompt string) (map[string]struct{}, []string, error) {
-	available := connectedMCPNames()
-	if len(available) == 0 {
-		return nil, nil, nil
+func (c *coordinator) selectMCPServers(ctx context.Context, userPrompt string) (map[string]struct{}, string, error) {
+	defs := c.loadRegistryDefinitions(ctx)
+	if len(defs) == 0 {
+		return nil, "", nil
 	}
 
-	capabilityMap := buildMCPCapabilityMap()
-	systemPrompt := "You are a routing assistant. From the MCP capability map, return JSON with keys: mcp_servers (array of server names from the map) and plan (optional array of steps with fields step, mcp, depends_on) when the task has multiple distinct goals. Use only server names from the map. If none are needed, return {\"mcp_servers\": []}.\n\n" + capabilityMap
-
-	model := c.currentAgent.Model().Model
-	if _, small, err := c.buildAgentModels(ctx, false); err == nil {
-		model = small.Model
+	ranked := rankRegistryMCPsForPrompt(userPrompt, config.CuratedRegistryCatalog(defs))
+	selectedEntries := selectTopRegistryMCPs(ranked)
+	if len(selectedEntries) == 0 {
+		return nil, "", nil
 	}
 
-	agent := fantasy.NewAgent(model, fantasy.WithSystemPrompt(systemPrompt))
-	result, err := agent.Generate(ctx, fantasy.AgentCall{Prompt: userPrompt})
-	if err != nil {
-		return nil, nil, err
+	targets := make([]string, 0, len(selectedEntries))
+	for _, item := range selectedEntries {
+		targets = append(targets, item.Entry.Definition.Name)
 	}
-	selection, err := parseMCPSelection(result.Response.Content.Text())
-	if err != nil {
-		return nil, nil, err
+	if len(targets) == 0 {
+		return nil, "", nil
 	}
 
-	selected, missing := mapDomainsToServers(selection.MCPServers, available)
-	selectedSet := make(map[string]struct{}, len(selected))
-	for _, name := range selected {
+	selectedSet := make(map[string]struct{}, len(targets))
+	for _, name := range targets {
 		selectedSet[name] = struct{}{}
 	}
-	return selectedSet, missing, nil
+
+	if _, err := c.ensureMCPInstalled(ctx, targets); err != nil {
+		return nil, "", err
+	}
+
+	return selectedSet, buildMCPSelectionContext(selectedEntries, selectedSet), nil
 }
 
-func parseMCPSelection(text string) (mcpSelection, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return mcpSelection{}, fmt.Errorf("empty selection")
+func rankRegistryMCPsForPrompt(prompt string, entries []config.RegistryMCPInventoryEntry) []scoredRegistryMCP {
+	prompt = sanitizeMCPPrompt(prompt)
+	if prompt == "" || len(entries) == 0 {
+		return nil
 	}
-	jsonText := extractJSONObject(text)
-	if jsonText == "" {
-		return mcpSelection{}, fmt.Errorf("no JSON in selection")
+
+	tokens := strings.Fields(prompt)
+	tokenLookup := tokenSet(tokens)
+	scored := make([]scoredRegistryMCP, 0, len(entries))
+	for _, entry := range entries {
+		score, reasons := scoreRegistryMCPForPrompt(prompt, tokenLookup, entry)
+		if score <= 0 {
+			continue
+		}
+		scored = append(scored, scoredRegistryMCP{
+			Entry:   entry,
+			Score:   score,
+			Reasons: reasons,
+		})
 	}
-	var sel mcpSelection
-	if err := json.Unmarshal([]byte(jsonText), &sel); err != nil {
-		return mcpSelection{}, err
-	}
-	return sel, nil
+
+	slices.SortFunc(scored, func(a, b scoredRegistryMCP) int {
+		if a.Score != b.Score {
+			return b.Score - a.Score
+		}
+		if a.Entry.Priority != b.Entry.Priority {
+			return b.Entry.Priority - a.Entry.Priority
+		}
+		return strings.Compare(a.Entry.Definition.Name, b.Entry.Definition.Name)
+	})
+	return scored
 }
 
-func extractJSONObject(text string) string {
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start == -1 || end == -1 || end <= start {
+func scoreRegistryMCPForPrompt(prompt string, tokens map[string]struct{}, entry config.RegistryMCPInventoryEntry) (int, []string) {
+	blob := config.RegistryEntrySearchBlob(entry)
+	score := 0
+	reasons := []string{}
+	seenReasons := map[string]struct{}{}
+	addReason := func(reason string) {
+		if _, ok := seenReasons[reason]; ok {
+			return
+		}
+		seenReasons[reason] = struct{}{}
+		reasons = append(reasons, reason)
+	}
+
+	for _, keyword := range categoryIntentKeywords[entry.Category] {
+		if containsKeyword(prompt, tokens, keyword) {
+			score += 4
+			addReason(keyword)
+		}
+	}
+
+	for _, tag := range entry.Tags {
+		if containsKeyword(prompt, tokens, tag) {
+			score += 8
+			addReason(tag)
+		}
+	}
+
+	for token := range tokens {
+		if len(token) < 3 {
+			continue
+		}
+		if strings.Contains(blob, token) {
+			score++
+		}
+	}
+
+	if score == 0 {
+		return 0, nil
+	}
+
+	score += entry.Priority
+	slices.Sort(reasons)
+	return score, reasons
+}
+
+func selectTopRegistryMCPs(ranked []scoredRegistryMCP) []scoredRegistryMCP {
+	if len(ranked) == 0 {
+		return nil
+	}
+
+	selected := make([]scoredRegistryMCP, 0, min(4, len(ranked)))
+	perCategory := map[config.RegistryMCPCategory]int{}
+	seen := map[string]struct{}{}
+	for _, item := range ranked {
+		if len(selected) >= 4 {
+			break
+		}
+		if item.Score < 14 {
+			break
+		}
+		if _, ok := seen[item.Entry.Definition.Name]; ok {
+			continue
+		}
+
+		maxPerCategory := 1
+		if item.Score >= 24 {
+			maxPerCategory = 2
+		}
+		if perCategory[item.Entry.Category] >= maxPerCategory {
+			continue
+		}
+
+		seen[item.Entry.Definition.Name] = struct{}{}
+		perCategory[item.Entry.Category]++
+		selected = append(selected, item)
+	}
+	return selected
+}
+
+func buildMCPSelectionContext(selected []scoredRegistryMCP, active map[string]struct{}) string {
+	if len(selected) == 0 || len(active) == 0 {
 		return ""
 	}
-	return text[start : end+1]
+
+	var sb strings.Builder
+	sb.WriteString("<mcp_task_context>\n")
+	sb.WriteString("Potential MCP servers for this task (not yet connected):\n")
+	for _, item := range selected {
+		name := item.Entry.Definition.Name
+		if _, ok := active[name]; !ok {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("- %s [%s]", name, item.Entry.Category))
+		if len(item.Reasons) > 0 {
+			sb.WriteString(": " + strings.Join(item.Reasons, ", "))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Use list_available_mcps to confirm inventory, then connect_mcp only if you must execute a tool.\n")
+	sb.WriteString("</mcp_task_context>")
+	return sb.String()
 }
 
 func mapDomainsToServers(domains []string, available []string) ([]string, []string) {
@@ -123,45 +268,18 @@ func mapDomainsToServers(domains []string, available []string) ([]string, []stri
 	return selected, missing
 }
 
-func selectRegistryByKeywords(prompt string, defs []config.RegistryMCPDefinition) []string {
+func normalizePrompt(prompt string) string {
 	prompt = strings.ToLower(prompt)
-	if prompt == "" || len(defs) == 0 {
-		return nil
-	}
-
-	keywords := []string{
-		"stripe", "supabase", "postgres", "postgresql", "mysql", "redis", "mongodb", "neon",
-		"aws", "amazon", "s3", "gcp", "google cloud", "azure", "github", "gitlab", "bitbucket",
-		"vercel", "netlify", "cloudflare", "docker", "kubernetes", "k8s", "paddle", "clerk",
-		"auth", "oauth", "payments", "billing", "email", "twilio", "sendgrid", "sentry",
-		"datadog", "grafana", "prometheus", "lambda", "sqs", "sns", "dynamodb", "rds",
-		"bigquery", "firebase", "analytics", "monitoring", "logging", "observability",
-	}
-
-	matchedKeywords := []string{}
-	for _, kw := range keywords {
-		if strings.Contains(prompt, kw) {
-			matchedKeywords = append(matchedKeywords, kw)
-		}
-	}
-	if len(matchedKeywords) == 0 {
-		return nil
-	}
-
-	selected := []string{}
-	seen := map[string]struct{}{}
-	for _, def := range defs {
-		blob := strings.ToLower(def.Name + " " + def.Description)
-		for _, kw := range matchedKeywords {
-			if strings.Contains(blob, kw) {
-				if _, ok := seen[def.Name]; ok {
-					break
-				}
-				seen[def.Name] = struct{}{}
-				selected = append(selected, def.Name)
-				break
-			}
-		}
-	}
-	return selected
+	replacer := strings.NewReplacer(
+		"/", " ",
+		"-", " ",
+		"_", " ",
+		",", " ",
+		".", " ",
+		":", " ",
+		";", " ",
+		"(", " ",
+		")", " ",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(prompt)), " ")
 }

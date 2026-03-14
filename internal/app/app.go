@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -77,9 +78,37 @@ type App struct {
 	cleanupFuncs []func(context.Context) error
 }
 
+func ensureGoBinOnPath() {
+	pathEnv := os.Getenv("PATH")
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+			gopath = filepath.Join(homeDir, "go")
+		}
+	}
+	gobin := os.Getenv("GOBIN")
+	if gobin == "" && gopath != "" {
+		gobin = filepath.Join(gopath, "bin")
+	}
+	if gobin == "" {
+		return
+	}
+	for _, entry := range strings.Split(pathEnv, string(os.PathListSeparator)) {
+		if entry == gobin {
+			return
+		}
+	}
+	if pathEnv == "" {
+		_ = os.Setenv("PATH", gobin)
+		return
+	}
+	_ = os.Setenv("PATH", gobin+string(os.PathListSeparator)+pathEnv)
+}
+
 // New initializes and returns a new application instance with the provided context,
 // database connection, and configuration. It sets up all internal services and background tasks.
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
+	ensureGoBinOnPath()
 	q := db.New(conn)
 	sessions := session.NewService(q, conn)
 	messages := message.NewService(q)
@@ -121,7 +150,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)
 
-	go mcp.Initialize(ctx, app.Permissions, cfg)
+	// MCP clients initialize lazily on first use to avoid startup stalls.
 
 	// cleanup database upon app shutdown
 	app.cleanupFuncs = append(
@@ -217,9 +246,12 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		}
 	}
 
-	// Wait for MCP initialization to complete before reading MCP tools.
-	if err := mcp.WaitForInit(ctx); err != nil {
-		return fmt.Errorf("failed to wait for MCP initialization: %w", err)
+	// Non-interactive runs should not block on MCP startup. We wait briefly to
+	// allow fast initializations, but proceed even if MCPs are still starting.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 1*time.Second)
+	defer waitCancel()
+	if err := mcp.WaitForInit(waitCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		slog.Warn("MCP init wait failed", "error", err)
 	}
 
 	// force update of agent models before running so mcp tools are loaded
@@ -297,6 +329,9 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 					return nil
 				}
 				return fmt.Errorf("agent processing failed: %w", result.err)
+			}
+			if !printed {
+				fmt.Fprint(output, "Done.")
 			}
 			return nil
 

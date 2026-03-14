@@ -5,5 +5,5 @@ This tool is powered by Google Grounding and provides citations and verified sou
 
 ## Parameters
 
-- `query` (string, required): The search query to execute.
+- `query` (string, optional): The search query to execute. If omitted, the tool uses the current user request.
 - `max_results` (integer, optional): Maximum number of results to return (default: 10).

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"path/filepath"
@@ -25,6 +26,31 @@ type BashParams struct {
 	Command         string `json:"command" description:"The command to execute"`
 	WorkingDir      string `json:"working_dir,omitempty" description:"The working directory to execute the command in (defaults to current directory)"`
 	RunInBackground bool   `json:"run_in_background,omitempty" description:"Set to true (boolean) to run this command in the background. Use job_output to read the output later."`
+}
+
+func (p *BashParams) UnmarshalJSON(data []byte) error {
+	type rawBashParams struct {
+		Description      string `json:"description"`
+		Command          string `json:"command"`
+		Cmd              string `json:"cmd"`
+		BashCommand      string `json:"bash_command"`
+		Script           string `json:"script"`
+		WorkingDir       string `json:"working_dir"`
+		WorkingDirectory string `json:"working_directory"`
+		RunInBackground  bool   `json:"run_in_background"`
+		Background       bool   `json:"background"`
+	}
+
+	var raw rawBashParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.Description = strings.TrimSpace(raw.Description)
+	p.Command = strings.TrimSpace(cmp.Or(raw.Command, raw.Cmd, raw.BashCommand, raw.Script))
+	p.WorkingDir = strings.TrimSpace(cmp.Or(raw.WorkingDir, raw.WorkingDirectory))
+	p.RunInBackground = raw.RunInBackground || raw.Background
+	return nil
 }
 
 type BashPermissionsParams struct {
@@ -50,6 +76,7 @@ const (
 	MaxOutputLength = 30000
 	BashNoOutput    = "no output"
 	bashTimeout     = 20 * time.Second
+	foregroundGrace = 750 * time.Millisecond
 )
 
 //go:embed bash.tpl
@@ -203,8 +230,9 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				ctx = toolCtx
 			}
 
+			params.Command = strings.TrimSpace(params.Command)
 			if params.Command == "" {
-				return fantasy.NewTextErrorResponse("missing command"), nil
+				return fantasy.NewTextErrorResponse("command is required"), nil
 			}
 
 			// Determine working directory
@@ -256,9 +284,17 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
+				setLastBackgroundShellID(sessionID, bgShell.ID)
 
 				// Immediate fast-failure check (no waiting).
 				stdout, _, _, stderr, _, _, done, execErr := bgShell.GetOutputSince(0, 0)
+
+				if !done {
+					waitCtx, cancelWait := context.WithTimeout(ctx, foregroundGrace)
+					_ = bgShell.WaitContext(waitCtx)
+					cancelWait()
+					stdout, stderr, done, execErr = bgShell.GetOutput()
+				}
 
 				if done {
 					// Command failed or completed very quickly
@@ -327,6 +363,10 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				}
 			}()
 
+			waitCtx, cancelWait := context.WithTimeout(ctx, foregroundGrace)
+			_ = bgShell.WaitContext(waitCtx)
+			cancelWait()
+
 			var stdout, stderr string
 			var done bool
 			var execErr error
@@ -382,6 +422,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				Background:       true,
 				ShellID:          bgShell.ID,
 			}
+			setLastBackgroundShellID(sessionID, bgShell.ID)
 			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		})

@@ -1,0 +1,8 @@
+internal/skills/embedding.go
+internal/skills/skills.go
+internal/skills/skills_test.go
+internal/skills/bundle.go
+internal/skills/skills/skills.go
+internal/skills/skills/skills_test.go
+internal/skills/skills/bundle.go
+internal/skills/fast_loader.go

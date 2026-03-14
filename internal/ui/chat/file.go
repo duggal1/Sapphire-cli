@@ -1,7 +1,7 @@
 // Package chat provides UI components and message items for the chat interface.
 package chat
 
-// ViewToolMessageItem handles file content display and image rendering.
+// ViewToolMessageItem handles file view summaries and image rendering.
 
 import (
 	"encoding/json"
@@ -43,7 +43,9 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	cappedWidth := cappedMessageWidth(width)
 
 	toolTitle := "View"
-	if opts.ToolCall.Name == tools.AgenticViewToolName {
+	if opts.ToolCall.Name == tools.SingleViewToolName {
+		toolTitle = "Single View"
+	} else if opts.ToolCall.Name == tools.AgenticViewToolName {
 		toolTitle = "Agentic View"
 	}
 
@@ -62,8 +64,12 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	var toolParams []string
-	if opts.ToolCall.Name == tools.AgenticViewToolName && len(filePaths) > 1 {
-		toolParams = append(toolParams, fmt.Sprintf("reading %d code files in parallel", len(filePaths)))
+	if opts.ToolCall.Name == tools.AgenticViewToolName {
+		if len(filePaths) > 1 {
+			toolParams = append(toolParams, fmt.Sprintf("reading %d code files in parallel", len(filePaths)))
+		} else if len(filePaths) == 1 {
+			toolParams = append(toolParams, fsext.PrettyPath(filePaths[0]))
+		}
 	} else if len(filePaths) > 0 {
 		toolParams = append(toolParams, fsext.PrettyPath(filePaths[0]))
 	}
@@ -95,62 +101,55 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	// Try to get content from metadata first (contains actual file content).
-	var meta tools.ViewResponseMetadata
-	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil {
-		bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
-		return joinToolParts(header, body)
-	}
-
-	// Handle skill content.
-	if meta.ResourceType == tools.ViewResourceSkill {
-		body := toolOutputSkillContent(sty, meta.ResourceName, meta.ResourceDescription)
-		return joinToolParts(header, body)
-	}
-
-	// Helper for rendering a single file's content
-	renderFile := func(path, content string, offset int) string {
-		if content == "" {
-			return ""
-		}
-		prettyPath := fsext.PrettyPath(path)
-		// We add a per-file sub-header if there are multiple files
-		fileHeader := ""
-		if len(meta.Files) > 1 {
-			fileHeader = sty.Tool.NameNested.Render(prettyPath) + "\n"
-		}
-		body := toolOutputCodeContent(sty, path, content, offset, cappedWidth, opts.ExpandedContent)
-		return fileHeader + body
-	}
-
-	var bodies []string
-	if len(meta.Files) > 0 {
-		for _, f := range meta.Files {
-			// Skip skill files if they've been handled (though usually they're single)
-			if f.ResourceType == tools.ViewResourceSkill {
-				bodies = append(bodies, toolOutputSkillContent(sty, f.ResourceName, f.ResourceDescription))
-				continue
+	if strings.Contains(opts.Result.Metadata, "resource_type") {
+		var meta tools.ViewResponseMetadata
+		if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err == nil {
+			if meta.ResourceType == tools.ViewResourceSkill {
+				body := toolOutputSkillContent(sty, meta.ResourceName, meta.ResourceDescription)
+				return joinToolParts(header, body)
 			}
-			bodies = append(bodies, renderFile(f.FilePath, f.Content, params.Offset))
+			if len(meta.Files) > 0 {
+				var skills []string
+				for _, file := range meta.Files {
+					if file.ResourceType == tools.ViewResourceSkill {
+						skills = append(skills, toolOutputSkillContent(sty, file.ResourceName, file.ResourceDescription))
+					}
+				}
+				if len(skills) > 0 {
+					return joinToolParts(header, strings.Join(skills, "\n"))
+				}
+			}
 		}
-	} else if meta.Content != "" {
-		// Legacy single file handled here
-		filePathToRender := meta.FilePath
-		if filePathToRender == "" && len(filePaths) > 0 {
-			filePathToRender = filePaths[0]
-		}
-		bodies = append(bodies, renderFile(filePathToRender, meta.Content, params.Offset))
-	} else if opts.Result.Content != "" {
-		// Fallback to result content
-		bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-		bodies = append(bodies, sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)))
 	}
 
-	if len(bodies) == 0 {
+	body := renderViewSummary(sty, filePaths, cappedWidth-toolBodyLeftPaddingTotal)
+	if body == "" {
 		return header
 	}
+	return joinToolParts(header, sty.Tool.Body.Render(body))
+}
 
-	return joinToolParts(header, strings.Join(bodies, "\n\n"))
+func renderViewSummary(sty *styles.Styles, filePaths []string, width int) string {
+	lines := make([]string, 0, len(filePaths))
+	for _, path := range filePaths {
+		if path == "" {
+			continue
+		}
+		summary := fmt.Sprintf("%s %s",
+			sty.HalfMuted.Render("Agent read file:"),
+			sty.Files.Path.Render(fsext.PrettyPath(path)),
+		)
+		line := sty.Tool.FileBlock.Width(width).Render(summary)
+		lines = append(lines, truncateAgenticViewLine(line, width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateAgenticViewLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	return strings.TrimRight(line, "\n")
 }
 
 // -----------------------------------------------------------------------------
@@ -236,7 +235,11 @@ type EditToolRenderContext struct{}
 func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	// Edit tool uses full width for diffs.
 	if opts.IsPending() {
-		return pendingTool(sty, "Edit", opts.Anim)
+		title := "Edit"
+		if opts.ToolCall.Name == tools.SingleEditToolName {
+			title = "Single Edit"
+		}
+		return pendingTool(sty, title, opts.Anim)
 	}
 
 	var params tools.EditParams
@@ -245,7 +248,11 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	file := fsext.PrettyPath(params.FilePath)
-	header := toolHeader(sty, opts.Status, "Edit", width, opts.Compact, file)
+	title := "Edit"
+	if opts.ToolCall.Name == tools.SingleEditToolName {
+		title = "Single Edit"
+	}
+	header := toolHeader(sty, opts.Status, title, width, opts.Compact, file)
 	if opts.Compact {
 		return header
 	}

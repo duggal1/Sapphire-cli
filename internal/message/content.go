@@ -646,37 +646,60 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 			Content: parts,
 		})
 	case Assistant:
+		googleReasoningByToolID := make(map[string]*google.ReasoningMetadata)
+		for _, part := range m.Parts {
+			reasoning, ok := part.(ReasoningContent)
+			if !ok || reasoning.ThoughtSignature == "" || reasoning.ToolID == "" {
+				continue
+			}
+			googleReasoningByToolID[reasoning.ToolID] = &google.ReasoningMetadata{
+				Signature: reasoning.ThoughtSignature,
+				ToolID:    reasoning.ToolID,
+			}
+		}
+
 		var parts []fantasy.MessagePart
-		text := strings.TrimSpace(m.Content().Text)
-		if text != "" {
-			parts = append(parts, fantasy.TextPart{Text: text})
-		}
-		reasoning := m.ReasoningContent()
-		if reasoning.Thinking != "" {
-			reasoningPart := fantasy.ReasoningPart{Text: reasoning.Thinking, ProviderOptions: fantasy.ProviderOptions{}}
-			if reasoning.Signature != "" {
-				reasoningPart.ProviderOptions[anthropic.Name] = &anthropic.ReasoningOptionMetadata{
-					Signature: reasoning.Signature,
+		for _, part := range m.Parts {
+			switch content := part.(type) {
+			case TextContent:
+				text := strings.TrimSpace(content.Text)
+				if text != "" {
+					parts = append(parts, fantasy.TextPart{Text: text})
 				}
-			}
-			if reasoning.ResponsesData != nil {
-				reasoningPart.ProviderOptions[openai.Name] = reasoning.ResponsesData
-			}
-			if reasoning.ThoughtSignature != "" {
-				reasoningPart.ProviderOptions[google.Name] = &google.ReasoningMetadata{
-					Signature: reasoning.ThoughtSignature,
-					ToolID:    reasoning.ToolID,
+			case ReasoningContent:
+				if content.Thinking == "" && content.Signature == "" && content.ResponsesData == nil && content.ThoughtSignature == "" {
+					continue
 				}
+				reasoningPart := fantasy.ReasoningPart{Text: content.Thinking, ProviderOptions: fantasy.ProviderOptions{}}
+				if content.Signature != "" {
+					reasoningPart.ProviderOptions[anthropic.Name] = &anthropic.ReasoningOptionMetadata{
+						Signature: content.Signature,
+					}
+				}
+				if content.ResponsesData != nil {
+					reasoningPart.ProviderOptions[openai.Name] = content.ResponsesData
+				}
+				if content.ThoughtSignature != "" {
+					reasoningPart.ProviderOptions[google.Name] = &google.ReasoningMetadata{
+						Signature: content.ThoughtSignature,
+						ToolID:    content.ToolID,
+					}
+				}
+				parts = append(parts, reasoningPart)
+			case ToolCall:
+				toolCallPart := fantasy.ToolCallPart{
+					ToolCallID:       content.ID,
+					ToolName:         content.Name,
+					Input:            content.Input,
+					ProviderExecuted: content.ProviderExecuted,
+				}
+				if metadata, ok := googleReasoningByToolID[content.ID]; ok {
+					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
+						google.Name: metadata,
+					}
+				}
+				parts = append(parts, toolCallPart)
 			}
-			parts = append(parts, reasoningPart)
-		}
-		for _, call := range m.ToolCalls() {
-			parts = append(parts, fantasy.ToolCallPart{
-				ToolCallID:       call.ID,
-				ToolName:         call.Name,
-				Input:            call.Input,
-				ProviderExecuted: call.ProviderExecuted,
-			})
 		}
 		messages = append(messages, fantasy.Message{
 			Role:    fantasy.MessageRoleAssistant,

@@ -1,6 +1,7 @@
 package list
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -33,12 +34,169 @@ type List struct {
 
 	// renderCallbacks is a list of callbacks to apply when rendering items.
 	renderCallbacks []func(idx, selectedIdx int, item Item) Item
+
+	// Cached heights and prefix sums for fast scrolling.
+	heightCache     []int
+	heightValid     []bool
+	renderCache     []renderedItem
+	renderValid     []bool
+	prefixHeights   []int
+	prefixValidUpTo int
+	cacheWidth      int
 }
 
 // renderedItem holds the rendered content and height of an item.
 type renderedItem struct {
 	content string
 	height  int
+	lines   []string
+}
+
+func (l *List) ensureCacheSize() {
+	if len(l.heightCache) == len(l.items) && len(l.heightValid) == len(l.items) && len(l.renderCache) == len(l.items) && len(l.renderValid) == len(l.items) && len(l.prefixHeights) == len(l.items) {
+		return
+	}
+	oldLen := len(l.heightCache)
+	newLen := len(l.items)
+	heightCache := make([]int, newLen)
+	heightValid := make([]bool, newLen)
+	renderCache := make([]renderedItem, newLen)
+	renderValid := make([]bool, newLen)
+	prefixHeights := make([]int, newLen)
+	if oldLen > 0 {
+		copy(heightCache, l.heightCache)
+		copy(heightValid, l.heightValid)
+		copy(renderCache, l.renderCache)
+		copy(renderValid, l.renderValid)
+		copy(prefixHeights, l.prefixHeights)
+	}
+	l.heightCache = heightCache
+	l.heightValid = heightValid
+	l.renderCache = renderCache
+	l.renderValid = renderValid
+	l.prefixHeights = prefixHeights
+	if newLen == 0 {
+		l.prefixValidUpTo = -1
+		return
+	}
+	if l.prefixValidUpTo >= newLen {
+		l.prefixValidUpTo = newLen - 1
+	}
+}
+
+func (l *List) setHeightCache(idx int, height int) {
+	if idx < 0 || idx >= len(l.items) {
+		return
+	}
+	l.ensureCacheSize()
+	l.heightCache[idx] = height
+	l.heightValid[idx] = true
+	if l.prefixValidUpTo >= idx {
+		l.prefixValidUpTo = idx - 1
+	}
+}
+
+func (l *List) itemHeight(idx int) int {
+	if idx < 0 || idx >= len(l.items) {
+		return 0
+	}
+	if l.cacheWidth != l.width {
+		l.InvalidateAll()
+	}
+	l.ensureCacheSize()
+	if l.renderValid[idx] {
+		return l.renderCache[idx].height
+	}
+
+	item := l.items[idx]
+	if len(l.renderCallbacks) > 0 {
+		for _, cb := range l.renderCallbacks {
+			if it := cb(idx, l.selectedIdx, item); it != nil {
+				item = it
+			}
+		}
+	}
+	rendered := item.Render(l.width)
+	rendered = strings.TrimRight(rendered, "\n")
+	lines := strings.Split(rendered, "\n")
+	height := len(lines)
+	ri := renderedItem{content: rendered, height: height, lines: lines}
+	l.renderCache[idx] = ri
+	l.renderValid[idx] = true
+	l.heightCache[idx] = height
+	l.heightValid[idx] = true
+	return height
+}
+
+func (l *List) ensurePrefixUpTo(idx int) {
+	if len(l.items) == 0 {
+		l.prefixValidUpTo = -1
+		return
+	}
+	if idx >= len(l.items) {
+		idx = len(l.items) - 1
+	}
+	if l.cacheWidth != l.width {
+		l.InvalidateAll()
+	}
+	l.ensureCacheSize()
+	if l.prefixValidUpTo >= idx {
+		return
+	}
+	for i := l.prefixValidUpTo + 1; i <= idx; i++ {
+		height := l.itemHeight(i)
+		blockHeight := height
+		if l.gap > 0 && i < len(l.items)-1 {
+			blockHeight += l.gap
+		}
+		if i == 0 {
+			l.prefixHeights[i] = blockHeight
+		} else {
+			l.prefixHeights[i] = l.prefixHeights[i-1] + blockHeight
+		}
+	}
+	l.prefixValidUpTo = idx
+}
+
+func (l *List) totalHeight() int {
+	if len(l.items) == 0 {
+		return 0
+	}
+	l.ensurePrefixUpTo(len(l.items) - 1)
+	return l.prefixHeights[len(l.items)-1]
+}
+
+func (l *List) heightBeforeIndex(idx int) int {
+	if idx <= 0 {
+		return 0
+	}
+	l.ensurePrefixUpTo(idx - 1)
+	return l.prefixHeights[idx-1]
+}
+
+func (l *List) findIndexForLine(line int) (int, int) {
+	if len(l.items) == 0 {
+		return 0, 0
+	}
+	if line <= 0 {
+		return 0, 0
+	}
+	l.ensurePrefixUpTo(len(l.items) - 1)
+	idx := sort.Search(len(l.items), func(i int) bool {
+		return l.prefixHeights[i] > line
+	})
+	if idx >= len(l.items) {
+		idx = len(l.items) - 1
+	}
+	heightBefore := 0
+	if idx > 0 {
+		heightBefore = l.prefixHeights[idx-1]
+	}
+	offset := line - heightBefore
+	if offset < 0 {
+		offset = 0
+	}
+	return idx, offset
 }
 
 // NewList creates a new lazy-loaded list.
@@ -46,6 +204,7 @@ func NewList(items ...Item) *List {
 	l := new(List)
 	l.items = items
 	l.selectedIdx = -1
+	l.prefixValidUpTo = -1
 	return l
 }
 
@@ -63,11 +222,15 @@ func (l *List) RegisterRenderCallback(cb RenderCallback) {
 func (l *List) SetSize(width, height int) {
 	l.width = width
 	l.height = height
+	if l.cacheWidth != width {
+		l.InvalidateAll()
+	}
 }
 
 // SetGap sets the gap between items.
 func (l *List) SetGap(gap int) {
 	l.gap = gap
+	l.InvalidateAll()
 }
 
 // Gap returns the gap between items.
@@ -81,22 +244,10 @@ func (l *List) AtBottom() bool {
 		return true
 	}
 
-	// Calculate the height from offsetIdx to the end.
-	var totalHeight int
-	for idx := l.offsetIdx; idx < len(l.items); idx++ {
-		if totalHeight > l.height {
-			// No need to calculate further, we're already past the viewport height
-			return false
-		}
-		item := l.getItem(idx)
-		itemHeight := item.height
-		if l.gap > 0 && idx > l.offsetIdx {
-			itemHeight += l.gap
-		}
-		totalHeight += itemHeight
-	}
-
-	return totalHeight-l.offsetLine <= l.height
+	totalHeight := l.totalHeight()
+	heightBefore := l.heightBeforeIndex(l.offsetIdx)
+	visibleHeight := totalHeight - heightBefore - l.offsetLine
+	return visibleHeight <= l.height
 }
 
 // SetReverse shows the list in reverse order.
@@ -122,24 +273,9 @@ func (l *List) Len() int {
 // lastOffsetItem returns the index and line offsets of the last item that can
 // be partially visible in the viewport.
 func (l *List) lastOffsetItem() (int, int, int) {
-	var totalHeight int
-	var idx int
-	for idx = len(l.items) - 1; idx >= 0; idx-- {
-		item := l.getItem(idx)
-		itemHeight := item.height
-		if l.gap > 0 && idx < len(l.items)-1 {
-			itemHeight += l.gap
-		}
-		totalHeight += itemHeight
-		if totalHeight > l.height {
-			break
-		}
-	}
-
-	// Calculate line offset within the item
-	lineOffset := max(totalHeight-l.height, 0)
-	idx = max(idx, 0)
-
+	totalHeight := l.totalHeight()
+	startLine := max(totalHeight-l.height, 0)
+	idx, lineOffset := l.findIndexForLine(startLine)
 	return idx, lineOffset, totalHeight
 }
 
@@ -147,6 +283,14 @@ func (l *List) lastOffsetItem() (int, int, int) {
 func (l *List) getItem(idx int) renderedItem {
 	if idx < 0 || idx >= len(l.items) {
 		return renderedItem{}
+	}
+
+	if l.cacheWidth != l.width {
+		l.InvalidateAll()
+	}
+	l.ensureCacheSize()
+	if l.renderValid[idx] {
+		return l.renderCache[idx]
 	}
 
 	item := l.items[idx]
@@ -160,12 +304,16 @@ func (l *List) getItem(idx int) renderedItem {
 
 	rendered := item.Render(l.width)
 	rendered = strings.TrimRight(rendered, "\n")
-	height := strings.Count(rendered, "\n") + 1
+	lines := strings.Split(rendered, "\n")
+	height := len(lines)
 	ri := renderedItem{
 		content: rendered,
 		height:  height,
+		lines:   lines,
 	}
-
+	l.renderCache[idx] = ri
+	l.renderValid[idx] = true
+	l.setHeightCache(idx, height)
 	return ri
 }
 
@@ -191,56 +339,66 @@ func (l *List) ScrollBy(lines int) {
 		lines = -lines
 	}
 
-	if lines > 0 {
-		if l.AtBottom() {
-			// Already at bottom
-			return
-		}
-
-		// Scroll down
-		l.offsetLine += lines
-		currentItem := l.getItem(l.offsetIdx)
-		for l.offsetLine >= currentItem.height {
-			l.offsetLine -= currentItem.height
-			if l.gap > 0 {
-				l.offsetLine = max(0, l.offsetLine-l.gap)
-			}
-
-			// Move to next item
-			l.offsetIdx++
-			if l.offsetIdx > len(l.items)-1 {
-				// Reached bottom
-				l.ScrollToBottom()
+	if l.reverse {
+		// Fallback to the original behavior for reverse lists.
+		if lines > 0 {
+			if l.AtBottom() {
 				return
 			}
-			currentItem = l.getItem(l.offsetIdx)
-		}
-
-		lastOffsetIdx, lastOffsetLine, _ := l.lastOffsetItem()
-		if l.offsetIdx > lastOffsetIdx || (l.offsetIdx == lastOffsetIdx && l.offsetLine > lastOffsetLine) {
-			// Clamp to bottom
-			l.offsetIdx = lastOffsetIdx
-			l.offsetLine = lastOffsetLine
-		}
-	} else if lines < 0 {
-		// Scroll up
-		l.offsetLine += lines // lines is negative
-		for l.offsetLine < 0 {
-			// Move to previous item
-			l.offsetIdx--
-			if l.offsetIdx < 0 {
-				// Reached top
-				l.ScrollToTop()
-				break
+			l.offsetLine += lines
+			currentItem := l.getItem(l.offsetIdx)
+			for l.offsetLine >= currentItem.height {
+				l.offsetLine -= currentItem.height
+				if l.gap > 0 {
+					l.offsetLine = max(0, l.offsetLine-l.gap)
+				}
+				l.offsetIdx++
+				if l.offsetIdx > len(l.items)-1 {
+					l.ScrollToBottom()
+					return
+				}
+				currentItem = l.getItem(l.offsetIdx)
 			}
-			prevItem := l.getItem(l.offsetIdx)
-			totalHeight := prevItem.height
-			if l.gap > 0 {
-				totalHeight += l.gap
+			lastOffsetIdx, lastOffsetLine, _ := l.lastOffsetItem()
+			if l.offsetIdx > lastOffsetIdx || (l.offsetIdx == lastOffsetIdx && l.offsetLine > lastOffsetLine) {
+				l.offsetIdx = lastOffsetIdx
+				l.offsetLine = lastOffsetLine
 			}
-			l.offsetLine += totalHeight
+		} else if lines < 0 {
+			l.offsetLine += lines
+			for l.offsetLine < 0 {
+				l.offsetIdx--
+				if l.offsetIdx < 0 {
+					l.ScrollToTop()
+					break
+				}
+				prevItem := l.getItem(l.offsetIdx)
+				totalHeight := prevItem.height
+				if l.gap > 0 {
+					totalHeight += l.gap
+				}
+				l.offsetLine += totalHeight
+			}
 		}
+		return
 	}
+
+	totalHeight := l.totalHeight()
+	if totalHeight == 0 {
+		l.ScrollToTop()
+		return
+	}
+	currentTop := l.heightBeforeIndex(l.offsetIdx) + l.offsetLine
+	newTop := currentTop + lines
+	maxTop := max(totalHeight-l.height, 0)
+	if newTop < 0 {
+		newTop = 0
+	} else if newTop > maxTop {
+		newTop = maxTop
+	}
+	newIdx, newOffset := l.findIndexForLine(newTop)
+	l.offsetIdx = newIdx
+	l.offsetLine = newOffset
 }
 
 // VisibleItemIndices finds the range of items that are visible in the viewport.
@@ -289,26 +447,32 @@ func (l *List) Render() string {
 
 	for linesNeeded > 0 && currentIdx < len(l.items) {
 		item := l.getItem(currentIdx)
-		itemLines := strings.Split(item.content, "\n")
+		itemLines := item.lines
+		if itemLines == nil {
+			itemLines = strings.Split(item.content, "\n")
+		}
 		itemHeight := len(itemLines)
 
 		if currentOffset >= 0 && currentOffset < itemHeight {
-			// Add visible content lines
-			lines = append(lines, itemLines[currentOffset:]...)
+			// Add only the visible content lines needed for this viewport.
+			end := min(itemHeight, currentOffset+linesNeeded)
+			lines = append(lines, itemLines[currentOffset:end]...)
+			linesNeeded = l.height - len(lines)
 
-			// Add gap if this is not the absolute last visual element (conceptually gaps are between items)
-			// But in the loop we can just add it and trim later
-			if l.gap > 0 {
-				for i := 0; i < l.gap; i++ {
+			if linesNeeded > 0 && l.gap > 0 {
+				gapToAdd := min(l.gap, linesNeeded)
+				for i := 0; i < gapToAdd; i++ {
 					lines = append(lines, "")
 				}
+				linesNeeded = l.height - len(lines)
 			}
 		} else {
 			// offsetLine starts in the gap
 			gapOffset := currentOffset - itemHeight
 			gapRemaining := l.gap - gapOffset
 			if gapRemaining > 0 {
-				for range gapRemaining {
+				gapToAdd := min(gapRemaining, linesNeeded)
+				for i := 0; i < gapToAdd; i++ {
 					lines = append(lines, "")
 				}
 			}
@@ -338,6 +502,7 @@ func (l *List) Render() string {
 // PrependItems prepends items to the list.
 func (l *List) PrependItems(items ...Item) {
 	l.items = append(items, l.items...)
+	l.InvalidateAll()
 
 	// Keep view position relative to the content that was visible
 	l.offsetIdx += len(items)
@@ -346,6 +511,35 @@ func (l *List) PrependItems(items ...Item) {
 	if l.selectedIdx != -1 {
 		l.selectedIdx += len(items)
 	}
+}
+
+// InsertItemsAt inserts items at the given index.
+func (l *List) InsertItemsAt(index int, items ...Item) {
+	if len(items) == 0 {
+		return
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index > len(l.items) {
+		index = len(l.items)
+	}
+
+	if index == len(l.items) {
+		l.items = append(l.items, items...)
+	} else {
+		l.items = append(l.items, make([]Item, len(items))...)
+		copy(l.items[index+len(items):], l.items[index:len(l.items)-len(items)])
+		copy(l.items[index:], items)
+	}
+
+	if l.offsetIdx >= index {
+		l.offsetIdx += len(items)
+	}
+	if l.selectedIdx >= index {
+		l.selectedIdx += len(items)
+	}
+	l.InvalidateAll()
 }
 
 // SetItems sets the items in the list.
@@ -360,11 +554,25 @@ func (l *List) setItems(evict bool, items ...Item) {
 	l.selectedIdx = min(l.selectedIdx, len(l.items)-1)
 	l.offsetIdx = min(l.offsetIdx, len(l.items)-1)
 	l.offsetLine = 0
+	if evict {
+		l.InvalidateAll()
+	}
 }
 
 // AppendItems appends items to the list.
 func (l *List) AppendItems(items ...Item) {
+	if len(items) == 0 {
+		return
+	}
+	start := len(l.items)
 	l.items = append(l.items, items...)
+	l.ensureCacheSize()
+	for i := start; i < len(l.items); i++ {
+		l.heightValid[i] = false
+		if i < len(l.renderValid) {
+			l.renderValid[i] = false
+		}
+	}
 }
 
 // RemoveItem removes the item at the given index from the list.
@@ -390,6 +598,36 @@ func (l *List) RemoveItem(idx int) {
 		l.offsetIdx = max(0, len(l.items)-1)
 		l.offsetLine = 0
 	}
+	l.InvalidateAll()
+}
+
+// InvalidateItem clears cached layout data for a single item.
+func (l *List) InvalidateItem(idx int) {
+	if idx < 0 {
+		return
+	}
+	l.ensureCacheSize()
+	if idx >= len(l.heightValid) {
+		return
+	}
+	l.heightValid[idx] = false
+	if idx < len(l.renderValid) {
+		l.renderValid[idx] = false
+	}
+	if l.prefixValidUpTo >= idx {
+		l.prefixValidUpTo = idx - 1
+	}
+}
+
+// InvalidateAll clears all cached layout data.
+func (l *List) InvalidateAll() {
+	l.heightCache = nil
+	l.heightValid = nil
+	l.renderCache = nil
+	l.renderValid = nil
+	l.prefixHeights = nil
+	l.prefixValidUpTo = -1
+	l.cacheWidth = l.width
 }
 
 // Focused returns whether the list is focused.

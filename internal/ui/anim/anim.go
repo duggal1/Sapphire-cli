@@ -375,6 +375,11 @@ func (a *Anim) Render() string {
 	return b.String()
 }
 
+// Frame returns the current animation frame index.
+func (a *Anim) Frame() int {
+	return int(a.step.Load())
+}
+
 // Step is a command that triggers the next step in the animation.
 func (a *Anim) Step() tea.Cmd {
 	return tea.Tick(time.Second/time.Duration(fps), func(t time.Time) tea.Msg {

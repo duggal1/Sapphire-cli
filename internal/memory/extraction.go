@@ -22,6 +22,12 @@ type ExtractionResult struct {
 	CodebaseDiscoveries    []CodebaseDiscovery     `json:"codebase_discoveries"`
 }
 
+// MemoryExtractor defines the extraction interface for persistent memory.
+type MemoryExtractor interface {
+	Extract(ctx context.Context, rawSource string) (*ExtractionResult, error)
+	Name() string
+}
+
 // ArchitecturalDecision records a design decision and its rationale.
 type ArchitecturalDecision struct {
 	Decision      string   `json:"decision"`
@@ -332,3 +338,6 @@ func truncate(s string, maxLen int) string {
 }
 
 func float32Ptr(v float32) *float32 { return &v }
+
+// Name returns the extractor identifier.
+func (e *Extractor) Name() string { return "gemini" }

@@ -12,14 +12,49 @@ import (
 )
 
 func (c *coordinator) loadRegistryDefinitions(ctx context.Context) []config.RegistryMCPDefinition {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	const refreshInterval = 30 * time.Minute
+
+	c.mcpRegistryMu.Lock()
+	cached := append([]config.RegistryMCPDefinition(nil), c.mcpRegistryDefs...)
+	lastFetch := c.mcpRegistryLastFetch
+	inFlight := c.mcpRegistryFetchInFlight
+	c.mcpRegistryMu.Unlock()
+
+	if len(cached) > 0 && time.Since(lastFetch) < refreshInterval {
+		return cached
+	}
+
+	if !inFlight {
+		c.mcpRegistryMu.Lock()
+		if !c.mcpRegistryFetchInFlight {
+			c.mcpRegistryFetchInFlight = true
+			c.mcpRegistryMu.Unlock()
+			go c.refreshRegistryDefinitions()
+		} else {
+			c.mcpRegistryMu.Unlock()
+		}
+	}
+
+	if len(cached) > 0 {
+		return cached
+	}
+
+	return config.CuratedRegistryDefinitions(config.RegistryMCPDefinitions)
+}
+
+func (c *coordinator) refreshRegistryDefinitions() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	defs, err := config.FetchRegistryDefinitions(ctx)
-	if err == nil && len(defs) > 0 {
-		return defs
+	defs := config.DefaultRegistryDefinitions(ctx)
+
+	c.mcpRegistryMu.Lock()
+	if len(defs) > 0 {
+		c.mcpRegistryDefs = defs
+		c.mcpRegistryLastFetch = time.Now()
 	}
-	return config.RegistryMCPDefinitions
+	c.mcpRegistryFetchInFlight = false
+	c.mcpRegistryMu.Unlock()
 }
 
 func (c *coordinator) ensureMCPInstalled(ctx context.Context, names []string) ([]string, error) {
@@ -51,13 +86,9 @@ func (c *coordinator) ensureMCPInstalled(ctx context.Context, names []string) ([
 				continue
 			}
 			envMap, missingEnv := buildEnvPlaceholders(def.EnvKeys)
-			cfgEntry = config.MCPConfig{
-				Type:     def.Type,
-				Command:  def.Command,
-				Args:     append([]string{}, def.Args...),
-				Env:      envMap,
-				Disabled: len(def.EnvKeys) > 0 && len(missingEnv) > 0,
-			}
+			cfgEntry = config.RegistryDefinitionToMCPConfig(def, false)
+			cfgEntry.Env = envMap
+			cfgEntry.Disabled = len(def.EnvKeys) > 0 && len(missingEnv) > 0
 			if err := cfg.UpsertMCPConfig(def.Name, cfgEntry); err != nil {
 				return missing, err
 			}

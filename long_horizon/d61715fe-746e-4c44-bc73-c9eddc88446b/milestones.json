@@ -1,0 +1,25 @@
+{
+  "session": "d61715fe-746e-4c44-bc73-c9eddc88446b",
+  "generated_at": "2026-03-14T19:44:35Z",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ],
+  "source_prompt": "I want you to create a demo folder and also create 10 files. What I want you to do is create a new demo folder, create 10 files, edit them, read them, and everything. I'm telling you to do so because I want to know your tool calling capabilities. If they are giving an error, are you, or can you use tool calling with no error and reliably?"
+}

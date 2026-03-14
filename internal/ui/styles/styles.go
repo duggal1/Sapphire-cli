@@ -725,6 +725,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	syntaxGrayMuted := "#8E8379"
 	syntaxOrange := "#E79A5B"
 	syntaxPurple := "#B78AE8"
+	syntaxBlue := "#7BA2F7"
 	syntaxPink := "#E28AB0"
 	syntaxGreen := "#7FBE78"
 	syntaxLime := "#B8CC72"
@@ -875,10 +876,10 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(syntaxPurple),
 				},
 				KeywordNamespace: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				KeywordType: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 					Bold:  boolPtr(true),
 				},
 				Operator: ansi.StylePrimitive{
@@ -888,19 +889,19 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(syntaxGrayMuted),
 				},
 				Name: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				NameBuiltin: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGreen),
+					Color: stringPtr(syntaxBlue),
 				},
 				NameTag: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				NameAttribute: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				NameClass: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 					Bold:  boolPtr(true),
 				},
 				NameConstant: ansi.StylePrimitive{
@@ -915,10 +916,10 @@ func DefaultStyles(yellowMode bool) Styles {
 					Bold:  boolPtr(true),
 				},
 				NameException: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				NameOther: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGray),
+					Color: stringPtr(syntaxBlue),
 				},
 				LiteralNumber: ansi.StylePrimitive{
 					Color: stringPtr(syntaxLime),
@@ -1281,9 +1282,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.StateWaiting = base.Foreground(fgSubtle)
 	s.Tool.StateCancelled = base.Foreground(fgSubtle)
 
-	softErrorBg := red
-	s.Tool.ErrorTag = base.Padding(0, 1).Background(softErrorBg).Foreground(white)
-	s.Tool.ErrorMessage = base.Foreground(white).Background(softErrorBg).Padding(0, 1)
+	s.Tool.ErrorTag = base.Foreground(red).Bold(true)
+	s.Tool.ErrorMessage = base.Foreground(fgBase)
 
 	// Diff and multi-edit styles
 	s.Tool.DiffTruncation = s.Muted.Background(bgBaseLighter).PaddingLeft(2)
@@ -1421,16 +1421,14 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(secondary).BorderStyle(messageFocussedBorder)
 	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
-	s.Chat.Message.ErrorTag = lipgloss.NewStyle().Padding(0, 1).
-		Background(softErrorBg).Foreground(white)
+	s.Chat.Message.ErrorTag = lipgloss.NewStyle().
+		Foreground(red).
+		Bold(true)
 	s.Chat.Message.ErrorTitle = lipgloss.NewStyle().
-		Foreground(white).
-		Background(softErrorBg).
-		Padding(0, 1)
+		Foreground(fgBase)
 	s.Chat.Message.ErrorDetails = lipgloss.NewStyle().
-		Foreground(white).
-		Background(softErrorBg).
-		Padding(0, 1)
+		Foreground(fgHalfMuted).
+		PaddingLeft(2)
 
 	// Message item styles
 	s.Chat.Message.ToolCallFocused = s.Muted.PaddingLeft(1).
@@ -1464,7 +1462,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Dialog.TitleText = base.Foreground(primary)
 	s.Dialog.TitleError = base.Foreground(red)
 	s.Dialog.TitleAccent = base.Foreground(secondary).Bold(true)
-	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Background(bgBaseLighter)
+	dialogSurface := lipgloss.Color("#181412")
+	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Background(dialogSurface)
 	s.Dialog.PrimaryText = base.Padding(0, 1).Foreground(primary)
 	s.Dialog.SecondaryText = base.Padding(0, 1).Foreground(fgSubtle)
 	s.Dialog.HelpView = base.Padding(0, 1).AlignHorizontal(lipgloss.Left)
@@ -1480,11 +1479,11 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Dialog.InputPrompt = base.Margin(1, 1)
 
 	s.Dialog.List = base.Margin(0, 0, 1, 0)
-	s.Dialog.ContentPanel = base.Background(bgSubtle).Foreground(fgBase).Padding(1, 2)
+	s.Dialog.ContentPanel = base.Background(dialogSurface).Foreground(fgBase).Padding(1, 2)
 	s.Dialog.Spinner = base.Foreground(secondary)
 	s.Dialog.ScrollbarThumb = base.Foreground(secondary)
 	s.Dialog.ScrollbarTrack = base.Foreground(border)
-	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Background(bgBaseLighter)
+	s.Dialog.View = base.Border(lipgloss.RoundedBorder()).BorderForeground(secondary).Background(dialogSurface)
 
 	s.Dialog.ImagePreview = lipgloss.NewStyle().Padding(0, 1).Foreground(fgSubtle)
 

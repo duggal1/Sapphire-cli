@@ -172,6 +172,43 @@ func TestPrepareToolCallDoesNotRewriteMultiPathViewToAgenticView(t *testing.T) {
 	require.Equal(t, ViewToolName, prepared.Name)
 }
 
+func TestPrepareToolCallPromotesLargeViewBatchToAgenticView(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		ViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		ViewToolName:        viewTool,
+		AgenticViewToolName: agenticViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "view-2b",
+		Name:  ViewToolName,
+		Input: `{"file_paths":["a.go","b.go","c.go"]}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticViewToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	gotPaths, ok := input["file_paths"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotPaths, 3)
+}
+
 func TestPrepareToolCallDoesNotRewriteSingleAgenticEditToEdit(t *testing.T) {
 	t.Parallel()
 

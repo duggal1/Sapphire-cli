@@ -267,6 +267,24 @@ func renderBashCommandBlock(sty *styles.Styles, command string, width int) strin
 
 func renderBashOutputBlock(sty *styles.Styles, output string, width int, expanded bool) string {
 	label := sty.Tool.BashOutputLabel.Render("Output")
+	if !expanded {
+		return strings.Join([]string{label, renderBashOutputSummary(sty, output, width)}, "\n")
+	}
 	content := toolOutputPlainContent(sty, output, width, expanded)
 	return strings.Join([]string{label, content}, "\n")
+}
+
+func renderBashOutputSummary(sty *styles.Styles, output string, width int) string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || trimmed == tools.BashNoOutput {
+		return sty.Tool.ContentLine.Width(width).Render(sty.HalfMuted.Render("│ No output"))
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	summary := fmt.Sprintf("Output hidden by default · %d line", len(lines))
+	if len(lines) != 1 {
+		summary += "s"
+	}
+	summary += fmt.Sprintf(" · %d chars · expand to inspect", len(trimmed))
+	return sty.Tool.ContentLine.Width(width).Render(sty.HalfMuted.Render("│ ") + ansi.Truncate(summary, max(0, width-2), "…"))
 }

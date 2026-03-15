@@ -430,7 +430,6 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 		case fantasy.MessageRoleAssistant:
 			var parts []*genai.Part
 			var currentReasoningMetadata *ReasoningMetadata
-			firstFunctionCallInMessage := true
 			for _, part := range msg.Content {
 				switch part.GetType() {
 				case fantasy.ContentTypeReasoning:
@@ -482,10 +481,8 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 						},
 					}
 
-					// Priority order for thought signatures:
-					// 1. Tool-call-specific metadata (stored directly on the tool call)
-					// 2. Current reasoning metadata from preceding reasoning content
-					// 3. For Gemini 3: at least the first FC in a turn MUST have a signature
+					// Thought signatures must be replayed exactly as received.
+					// Do not invent fallback signatures.
 					var appliedSignature string
 					if metadata, ok := toolCall.ProviderOptions[Name]; ok {
 						if googleMetadata, ok := metadata.(*ReasoningMetadata); ok && googleMetadata.Signature != "" {
@@ -498,13 +495,9 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 						appliedSignature = currentReasoningMetadata.Signature
 						currentReasoningMetadata = nil
 					}
-					if appliedSignature == "" && firstFunctionCallInMessage {
-						appliedSignature = MissingThoughtSignatureFallback
-					}
 					if appliedSignature != "" {
 						geminiPart.ThoughtSignature = []byte(appliedSignature)
 					}
-					firstFunctionCallInMessage = false
 					parts = append(parts, geminiPart)
 				}
 			}

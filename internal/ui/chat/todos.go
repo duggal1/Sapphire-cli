@@ -56,12 +56,12 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err == nil {
-		completedCount := 0
+		resolvedCount := 0
 		inProgressTask := ""
 		items = displayTodoItems(params)
 		for _, todo := range items {
-			if todo.Status == "completed" {
-				completedCount++
+			if session.IsTodoTerminalStatus(session.TodoStatus(todo.Status)) {
+				resolvedCount++
 			}
 			if todo.Status == "in_progress" {
 				if todo.ActiveForm != "" {
@@ -73,7 +73,7 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		}
 
 		if !metaOK && len(items) > 0 {
-			ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", completedCount, len(items)))
+			ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", resolvedCount, len(items)))
 			headerText = ratio
 			if inProgressTask != "" {
 				headerText = fmt.Sprintf("%s · %s", ratio, inProgressTask)
@@ -93,26 +93,25 @@ func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 			// Build header based on what changed.
 			hasCompleted := len(meta.JustCompleted) > 0
 			hasStarted := meta.JustStarted != ""
-			allCompleted := meta.Completed == meta.Total && meta.Total > 0
+			allResolved := meta.Resolved == meta.Total && meta.Total > 0
 
-			ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", meta.Completed, meta.Total))
+			ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", meta.Resolved, meta.Total))
 			if hasCompleted && hasStarted {
 				text := sty.Subtle.Render(fmt.Sprintf(" · completed %d, starting next", len(meta.JustCompleted)))
 				headerText = fmt.Sprintf("%s%s", ratio, text)
 			} else if hasCompleted {
 				text := sty.Subtle.Render(fmt.Sprintf(" · completed %d", len(meta.JustCompleted)))
-				if allCompleted {
-					text = sty.Subtle.Render(" · completed all")
-				} else {
-					headerText = fmt.Sprintf("%s%s", ratio, text)
+				if allResolved {
+					text = sty.Subtle.Render(" · resolved all")
 				}
+				headerText = fmt.Sprintf("%s%s", ratio, text)
 			} else if hasStarted {
 				headerText = fmt.Sprintf("%s%s", ratio, sty.Subtle.Render(" · starting task"))
 			} else {
 				headerText = ratio
 			}
 
-			if allCompleted {
+			if allResolved {
 				body = FormatTodosList(sty, meta.Todos, styles.ArrowRightIcon, cappedWidth)
 			} else if meta.JustStarted != "" {
 				body = sty.Tool.TodoInProgressIcon.Render(styles.ArrowRightIcon+" ") +
@@ -166,6 +165,12 @@ func FormatTodosList(sty *styles.Styles, todos []session.Todo, inProgressIcon st
 			textStyle = sty.Muted
 		case session.TodoStatusInProgress:
 			prefix = sty.Tool.TodoInProgressIcon.Render(inProgressIcon + " ")
+		case session.TodoStatusFailed:
+			prefix = sty.Tool.TodoFailedIcon.Render("× ")
+			textStyle = sty.Subtle
+		case session.TodoStatusCanceled:
+			prefix = sty.Tool.TodoCanceledIcon.Render("− ")
+			textStyle = sty.Subtle
 		default:
 			prefix = sty.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon) + " "
 			textStyle = sty.Subtle
@@ -236,7 +241,7 @@ func nonEmptyTodoItems(items []tools.TodoItem) []tools.TodoItem {
 	return out
 }
 
-// sortTodos sorts todos by status: completed, in_progress, pending.
+// sortTodos sorts todos by status: in_progress, pending, failed/cancelled, completed.
 func sortTodos(todos []session.Todo) {
 	slices.SortStableFunc(todos, func(a, b session.Todo) int {
 		return statusOrder(a.Status) - statusOrder(b.Status)
@@ -250,7 +255,13 @@ func statusOrder(s session.TodoStatus) int {
 		return 0
 	case session.TodoStatusPending:
 		return 1
-	default:
+	case session.TodoStatusFailed:
 		return 2
+	case session.TodoStatusCanceled:
+		return 3
+	case session.TodoStatusCompleted:
+		return 4
+	default:
+		return 5
 	}
 }

@@ -333,6 +333,14 @@ func repairViewCall(
 		input["file_paths"] = paths
 		return call, tool, input, nil
 	}
+	if len(paths) > 2 {
+		if next, ok := tools[AgenticViewToolName]; ok {
+			call.Name = AgenticViewToolName
+			tool = next
+			input["file_paths"] = paths
+			return call, tool, input, nil
+		}
+	}
 
 	input["file_path"] = paths[0]
 	if offset != 0 {

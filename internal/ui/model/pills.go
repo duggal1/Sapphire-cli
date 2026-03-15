@@ -72,7 +72,7 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 		return ""
 	}
 
-	completed := 0
+	resolved := 0
 	total := 0
 	var currentTodo *session.Todo
 	for i := range todos {
@@ -81,8 +81,8 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 		}
 		total++
 		switch todos[i].Status {
-		case session.TodoStatusCompleted:
-			completed++
+		case session.TodoStatusCompleted, session.TodoStatusFailed, session.TodoStatusCanceled:
+			resolved++
 		case session.TodoStatusInProgress:
 			if currentTodo == nil {
 				currentTodo = &todos[i]
@@ -94,7 +94,7 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 	}
 
 	label := t.Base.Render("To-Do")
-	progress := t.Muted.Render(fmt.Sprintf("%d/%d", completed, total))
+	progress := t.Muted.Render(fmt.Sprintf("%d/%d", resolved, total))
 
 	var content string
 	if panelFocused {

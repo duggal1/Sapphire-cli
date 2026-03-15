@@ -20,6 +20,8 @@ const (
 	TodoStatusPending    TodoStatus = "pending"
 	TodoStatusInProgress TodoStatus = "in_progress"
 	TodoStatusCompleted  TodoStatus = "completed"
+	TodoStatusFailed     TodoStatus = "failed"
+	TodoStatusCanceled   TodoStatus = "cancelled"
 )
 
 type Todo struct {
@@ -34,6 +36,24 @@ func IsRenderableTodo(todo Todo) bool {
 	return strings.TrimSpace(todo.Content) != "" || strings.TrimSpace(todo.ActiveForm) != ""
 }
 
+func IsTodoTerminalStatus(status TodoStatus) bool {
+	switch status {
+	case TodoStatusCompleted, TodoStatusFailed, TodoStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsTodoIncompleteStatus(status TodoStatus) bool {
+	switch status {
+	case TodoStatusPending, TodoStatusInProgress:
+		return true
+	default:
+		return false
+	}
+}
+
 // HasIncompleteTodos returns true if there are any visible tasks that have not
 // been completed.
 func HasIncompleteTodos(todos []Todo) bool {
@@ -41,7 +61,7 @@ func HasIncompleteTodos(todos []Todo) bool {
 		if !IsRenderableTodo(todo) {
 			continue
 		}
-		if todo.Status != TodoStatusCompleted {
+		if IsTodoIncompleteStatus(todo.Status) {
 			return true
 		}
 	}

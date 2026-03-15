@@ -86,11 +86,14 @@ func (c *coordinator) ensureSubAgentDepth(ctx context.Context, sessionID string,
 func (c *coordinator) activeSubAgentCount(sessionID string) int {
 	count := 0
 	for _, runner := range c.ensureSubAgentRegistry().list() {
-		if runner.parentSession != sessionID {
+		runner.mu.Lock()
+		parentSession := runner.parentSession
+		status := runner.status
+		runner.mu.Unlock()
+		if parentSession != sessionID {
 			continue
 		}
-		status := runner.status
-		if status == subAgentStatusRunning || status == subAgentStatusQueued || status == subAgentStatusIdle {
+		if isSubAgentActiveStatus(status) {
 			count++
 		}
 	}
@@ -99,12 +102,16 @@ func (c *coordinator) activeSubAgentCount(sessionID string) int {
 
 func (c *coordinator) hasDuplicateSubAgent(sessionID, taskKey string) bool {
 	for _, runner := range c.ensureSubAgentRegistry().list() {
-		if runner.parentSession != sessionID {
+		runner.mu.Lock()
+		parentSession := runner.parentSession
+		runnerTaskKey := runner.assignment.TaskKey
+		status := runner.status
+		runner.mu.Unlock()
+		if parentSession != sessionID {
 			continue
 		}
-		if runner.assignment.TaskKey == taskKey && taskKey != "" {
-			status := runner.status
-			if status == subAgentStatusRunning || status == subAgentStatusQueued || status == subAgentStatusIdle {
+		if runnerTaskKey == taskKey && taskKey != "" {
+			if isSubAgentActiveStatus(status) {
 				return true
 			}
 		}

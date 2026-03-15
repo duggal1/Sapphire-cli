@@ -114,7 +114,7 @@ func (c *coordinator) activeSubAgentUsingWorktree(worktreeDir, excludeAgentID st
 			continue
 		}
 		runner.mu.Lock()
-		active := !runner.closed && (runner.status == subAgentStatusQueued || runner.status == subAgentStatusRunning || runner.status == subAgentStatusIdle)
+		active := !runner.closed && isSubAgentActiveStatus(runner.status)
 		samePath := filepath.Clean(runner.workDir) == worktreeDir
 		runner.mu.Unlock()
 		if active && samePath {
@@ -134,7 +134,7 @@ func (c *coordinator) activeSubAgentUsingBranch(branch, worktreeDir, excludeAgen
 			continue
 		}
 		runner.mu.Lock()
-		active := !runner.closed && (runner.status == subAgentStatusQueued || runner.status == subAgentStatusRunning || runner.status == subAgentStatusIdle)
+		active := !runner.closed && isSubAgentActiveStatus(runner.status)
 		sameBranch := strings.TrimSpace(runner.assignment.Branch) == branch
 		samePath := filepath.Clean(runner.workDir) == worktreeDir
 		runner.mu.Unlock()

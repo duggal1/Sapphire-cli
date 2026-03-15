@@ -116,14 +116,8 @@ func repairToolCall(
 
 	// ── Todos ────────────────────────────────────────────────────────
 	case TodosToolName:
-		normalizeKey(input, "text", "todo")
-		normalizeKey(input, "tasks", "todos", "items")
-		normalizeKey(input, "action", "type", "operation", "op")
-		normalizeKey(input, "task_id", "id", "taskId", "task_identifier")
-		normalizeKey(input, "task_key", "key", "taskKey", "task_name")
-		normalizeKey(input, "task_content", "content", "title", "name")
+		normalizeKey(input, "todos", "tasks", "items")
 		normalizeTodosInput(input)
-		ensureTodosPayload(input)
 
 	// ── Bash ─────────────────────────────────────────────────────────
 	case BashToolName:
@@ -816,77 +810,26 @@ func normalizeTodosInput(input map[string]any) {
 	if input == nil {
 		return
 	}
-	action, _ := input["action"].(string)
-	action = strings.ToLower(strings.TrimSpace(action))
-
 	items := extractTodosPayload(input)
-	if len(items) > 0 {
-		normalized := make([]any, 0, len(items))
-		for _, item := range items {
-			if entry, ok := normalizeTodoEntry(item); ok {
-				normalized = append(normalized, entry)
-			}
-		}
-		if len(normalized) > 0 {
-			input["tasks"] = normalized
-			if action == "" {
-				input["action"] = "create"
-			} else {
-				input["action"] = action
-			}
-		}
-		delete(input, "todos")
-		delete(input, "items")
-		delete(input, "text")
-		return
-	}
-
-	if action != "" {
-		input["action"] = action
-		return
-	}
-
-	if _, ok := input["task"]; ok {
-		input["action"] = "update"
-	}
-}
-
-func ensureTodosPayload(input map[string]any) {
-	if input == nil {
-		return
-	}
-	if hasTodosPayload(input) {
-		return
-	}
-	input["action"] = "create"
-	input["tasks"] = []any{
-		map[string]any{
-			"content":     "Proceed with the requested task",
-			"status":      "in_progress",
-			"active_form": "Working on the requested task",
-		},
-	}
-}
-
-func hasTodosPayload(input map[string]any) bool {
-	if raw, ok := input["action"].(string); ok {
-		if strings.TrimSpace(raw) != "" {
-			return true
+	normalized := make([]any, 0, len(items))
+	for _, item := range items {
+		if entry, ok := normalizeTodoEntry(item); ok {
+			normalized = append(normalized, entry)
 		}
 	}
-	for _, key := range []string{"tasks", "todos", "items"} {
-		if raw, ok := input[key]; ok {
-			if list, ok := raw.([]any); ok && len(list) > 0 {
-				return true
-			}
-		}
+	if len(normalized) > 0 {
+		input["todos"] = normalized
+	} else if _, ok := input["todos"]; !ok {
+		input["todos"] = []any{}
 	}
-	if raw, ok := input["text"].(string); ok {
-		if strings.TrimSpace(raw) != "" {
-			return true
-		}
-	}
-	return false
+	delete(input, "tasks")
+	delete(input, "items")
+	delete(input, "text")
+	delete(input, "action")
+	delete(input, "task")
+	delete(input, "task_id")
+	delete(input, "task_key")
+	delete(input, "task_content")
 }
 
 func extractTodosPayload(input map[string]any) []any {

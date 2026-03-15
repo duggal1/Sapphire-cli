@@ -375,68 +375,6 @@ func (a *sessionAgent) saveSessionWithTimeout(ctx context.Context, sess session.
 	return out, err
 }
 
-type todoRunOutcome uint8
-
-const (
-	todoRunSucceeded todoRunOutcome = iota
-	todoRunFailed
-	todoRunCanceled
-)
-
-func finalizeTodosForOutcome(todos []session.Todo, outcome todoRunOutcome) ([]session.Todo, bool) {
-	if !session.HasIncompleteTodos(todos) {
-		return todos, false
-	}
-
-	updated := make([]session.Todo, len(todos))
-	copy(updated, todos)
-	changed := false
-
-	for i := range updated {
-		if !session.IsRenderableTodo(updated[i]) || !session.IsTodoIncompleteStatus(updated[i].Status) {
-			continue
-		}
-
-		switch outcome {
-		case todoRunSucceeded:
-			if updated[i].Status == session.TodoStatusInProgress {
-				updated[i].Status = session.TodoStatusCompleted
-			} else {
-				updated[i].Status = session.TodoStatusCanceled
-			}
-		case todoRunCanceled:
-			updated[i].Status = session.TodoStatusCanceled
-		case todoRunFailed:
-			if updated[i].Status == session.TodoStatusInProgress {
-				updated[i].Status = session.TodoStatusFailed
-			} else {
-				updated[i].Status = session.TodoStatusCanceled
-			}
-		}
-
-		updated[i].ActiveForm = ""
-		changed = true
-	}
-
-	return updated, changed
-}
-
-func (a *sessionAgent) finalizeSessionTodos(ctx context.Context, sessionID string, outcome todoRunOutcome) error {
-	sess, err := a.getSessionWithTimeout(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-	updatedTodos, changed := finalizeTodosForOutcome(sess.Todos, outcome)
-	if !changed {
-		return nil
-	}
-
-	sess.Todos = updatedTodos
-	_, err = a.saveSessionWithTimeout(ctx, sess)
-	return err
-}
-
 func isGeminiCodeExecutionModel(model Model) bool {
 	if !strings.EqualFold(model.ModelCfg.Provider, gemini.Name) &&
 		!strings.EqualFold(model.ModelCfg.Provider, "gemini") &&
@@ -1193,13 +1131,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if updateErr != nil {
 			return nil, updateErr
 		}
-		outcome := todoRunFailed
-		if isCancelErr || isPermissionErr {
-			outcome = todoRunCanceled
-		}
-		if todoErr := a.finalizeSessionTodos(ctx, call.SessionID, outcome); todoErr != nil {
-			slog.Warn("Failed to finalize todos after request error", "session_id", call.SessionID, "error", todoErr)
-		}
 		a.activeRequests.Del(call.SessionID)
 		cancel()
 		queuedMessages, ok := a.messageQueue.Get(call.SessionID)
@@ -1240,9 +1171,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
-		if todoErr := a.finalizeSessionTodos(ctx, call.SessionID, todoRunSucceeded); todoErr != nil {
-			slog.Warn("Failed to finalize todos after successful request", "session_id", call.SessionID, "error", todoErr)
-		}
 		return result, err
 	}
 	// There are queued messages restart the loop.
@@ -1447,13 +1375,6 @@ func shouldDelegateToSubAgents(prompt string) bool {
 	return false
 }
 
-func shouldEnforceTodos(prompt string, sess session.Session) bool {
-	if len(sess.Todos) > 0 {
-		return session.HasIncompleteTodos(sess.Todos)
-	}
-	return isMultiStepPrompt(prompt)
-}
-
 func isMultiStepPrompt(prompt string) bool {
 	normalized := strings.TrimSpace(prompt)
 	if normalized == "" {
@@ -1516,13 +1437,11 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
 					`Todo protocol for multi-step tasks:
-1. Create the full todo list before technical work.
-2. For each item: start -> execute -> validate -> complete.
+1. Create a minimal todo list before technical work.
+2. The todos tool replaces the entire list on each update.
 3. Keep exactly one item in_progress.
-4. Prefer task_key when the planner/runtime provides one.
-5. Prefer task_id only when the current list was just read or created.
-6. If the list was recreated, reset, or ids may be stale: call todos list and use task_content for the target item instead of retrying a stale task_id.
-7. Do not start the next item until the current one is validated and marked complete.
+4. Mark an item completed immediately after validation.
+5. If a todo list is created, do not abandon it. Finish with every remaining item completed or removed from the list.
 
 Skip this only for a single non-destructive read requiring exactly one tool call.`,
 				),
@@ -1531,8 +1450,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 			history = append(history, fantasy.NewUserMessage(
 				`<system_reminder>Complexity mode:
 - Initialize todos immediately.
-- Keep the todo tracker synchronized after every state change.
-- If a todo start/complete call fails because an id is stale, resync with todos list and continue using task_content for the intended item.
+- Keep the todo tracker synchronized after every state change by sending the full current list.
 - Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
 - Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
 - Use agentic_fetch for current external docs instead of guessing.</system_reminder>`,
@@ -1540,7 +1458,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`Your task list is empty. If the incoming request implies multiple sequential steps, you must initialize a plan using the "todos" tool (action "create") prior to execution.`,
+					`If the incoming request implies multiple sequential steps, initialize a minimal todo list with the "todos" tool before execution. Update the full list as it changes. If you create a todo list, do not abandon it.`,
 				),
 			))
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/sapphire/internal/session"
 )
 
 func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fantasy.ToolCall, input map[string]any) error {
@@ -37,50 +38,28 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 	return nil
 }
 
-// validateTodosInputMap validates todos parameters from the already-normalized
-// input map. This avoids re-parsing the raw JSON, ensuring middleware normalization
-// (alias resolution, action inference) is honored.
+// validateTodosInputMap validates the normalized full-list todos contract.
 func validateTodosInputMap(input map[string]any) error {
 	if input == nil {
 		return errors.New("todos input must be a JSON object")
 	}
 
-	// Prevent malformed structure like task as string
-	if taskObj, ok := input["task"]; ok && taskObj != nil {
-		if _, isMap := taskObj.(map[string]any); !isMap {
-			return errors.New("task must be a JSON object, not a string or array")
-		}
-	}
-
-	// Decode from the already-normalized map
 	var params TodosParams
 	if err := decodeInto(input, &params); err != nil {
 		return fmt.Errorf("invalid parameters: %w", err)
 	}
 
-	if params.Action == "" {
-		switch {
-		case len(params.Tasks) > 0 || len(params.Todos) > 0:
-			params.Action = "create"
-		case params.Task != nil || strings.TrimSpace(params.TaskID) != "" || strings.TrimSpace(params.TaskContent) != "":
-			params.Action = "update"
+	for _, todo := range params.Todos {
+		content := strings.TrimSpace(todo.Content)
+		activeForm := strings.TrimSpace(todo.ActiveForm)
+		if content == "" && activeForm == "" {
+			continue
+		}
+		switch strings.TrimSpace(todo.Status) {
+		case string(session.TodoStatusPending), string(session.TodoStatusInProgress), string(session.TodoStatusCompleted):
 		default:
-			params.Action = "list"
+			return fmt.Errorf("invalid status %q for todo %q", todo.Status, todo.Content)
 		}
-	}
-
-	action := strings.ToLower(strings.TrimSpace(params.Action))
-	switch action {
-	case "create", "reset":
-		if strings.TrimSpace(params.TaskContent) == "" && len(params.Tasks) == 0 && len(params.Todos) == 0 && params.Task == nil {
-			return errors.New("task_content is required for create")
-		}
-	case "update", "start", "complete":
-		return nil
-	case "list":
-		return nil
-	default:
-		return fmt.Errorf("invalid action %q", params.Action)
 	}
 	return nil
 }

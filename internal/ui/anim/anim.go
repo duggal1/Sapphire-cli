@@ -45,8 +45,8 @@ const (
 
 // Default colors for gradient.
 var (
-	defaultGradColorA = color.RGBA{R: 0xff, G: 0x88, B: 0x00, A: 0xff} // Orange
-	defaultGradColorB = color.RGBA{R: 0xff, G: 0x33, B: 0x00, A: 0xff} // Reddish-orange
+	defaultGradColorA = color.RGBA{R: 0x8b, G: 0x3d, B: 0xff, A: 0xff}
+	defaultGradColorB = color.RGBA{R: 0xf2, G: 0xa2, B: 0xde, A: 0xff}
 	defaultLabelColor = color.RGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 )
 

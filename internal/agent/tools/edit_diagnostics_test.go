@@ -127,6 +127,15 @@ func TestEditGuardDoesNotBlockOtherFilesAfterDiagnostics(t *testing.T) {
 	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/second.go", true))
 }
 
+func TestEditGuardDoesNotBlockUnreadFile(t *testing.T) {
+	t.Parallel()
+
+	guard := NewEditGuard()
+
+	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/unread.go", true))
+	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/unread.go", true))
+}
+
 func TestMultiEditAcceptsSingleEditShape(t *testing.T) {
 	t.Parallel()
 

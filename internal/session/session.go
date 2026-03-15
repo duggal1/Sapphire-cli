@@ -30,10 +30,17 @@ type Todo struct {
 	ActiveForm string     `json:"active_form"`
 }
 
-// HasIncompleteTodos returns true if there are any non-completed todos.
-// HasIncompleteTodos returns true if there are any tasks that have not been completed.
+func IsRenderableTodo(todo Todo) bool {
+	return strings.TrimSpace(todo.Content) != "" || strings.TrimSpace(todo.ActiveForm) != ""
+}
+
+// HasIncompleteTodos returns true if there are any visible tasks that have not
+// been completed.
 func HasIncompleteTodos(todos []Todo) bool {
 	for _, todo := range todos {
+		if !IsRenderableTodo(todo) {
+			continue
+		}
 		if todo.Status != TodoStatusCompleted {
 			return true
 		}

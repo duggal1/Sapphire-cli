@@ -91,10 +91,10 @@ func (s *Status) Draw(scr uv.Screen, area uv.Rectangle) {
 		toastBg = s.com.Styles.Toast.WarnColor
 		label = "WARN"
 	case util.InfoTypeUpdate:
-		toastBg = s.com.Styles.Toast.SuccessColor
+		toastBg = s.com.Styles.Toast.InfoColor
 		label = "UPDATE"
 	case util.InfoTypeInfo:
-		toastBg = s.com.Styles.Toast.SuccessColor
+		toastBg = s.com.Styles.Toast.InfoColor
 		label = "INFO"
 	case util.InfoTypeSuccess:
 		toastBg = s.com.Styles.Toast.SuccessColor

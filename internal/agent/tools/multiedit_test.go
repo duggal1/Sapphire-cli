@@ -340,6 +340,29 @@ func TestMultiEditParamsDecodeFileEditsObject(t *testing.T) {
 	require.Equal(t, "LINE 1", normalized.FileEdits[0].Edits[0].NewString)
 }
 
+func TestMultiEditParamsPromotesTopLevelEditsFileEditShape(t *testing.T) {
+	t.Parallel()
+
+	var params MultiEditParams
+	err := json.Unmarshal([]byte(`{
+		"edits": [{
+			"file_path": "/tmp/test.txt",
+			"old_string": "line 1",
+			"new_string": "LINE 1"
+		}]
+	}`), &params)
+	require.NoError(t, err)
+
+	normalized, err := normalizeMultiEditParams(params)
+	require.NoError(t, err)
+	require.Len(t, normalized.FileEdits, 1)
+	require.Equal(t, "/tmp/test.txt", normalized.FileEdits[0].FilePath)
+	require.Len(t, normalized.FileEdits[0].Edits, 1)
+	require.Equal(t, "line 1", normalized.FileEdits[0].Edits[0].OldString)
+	require.Equal(t, "LINE 1", normalized.FileEdits[0].Edits[0].NewString)
+	require.Empty(t, normalized.Edits)
+}
+
 func TestMultiEditParamsRejectNestedEmptyEditsDeterministically(t *testing.T) {
 	t.Parallel()
 
@@ -413,4 +436,55 @@ func TestMultiEditRuntimeNormalizesNestedShorthandWithoutRepair(t *testing.T) {
 	}
 	require.Len(t, toolResults, 1)
 	require.Equal(t, AgenticEditToolName, toolResults[0].ToolName)
+}
+
+func TestMultiEditRuntimePromotesTopLevelEditsFileEditShapeWithoutRepair(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	err := os.WriteFile(testFile, []byte("line 1\nline 2\n"), 0o644)
+	require.NoError(t, err)
+
+	fileTracker := &mockFileTracker{lastRead: map[string]time.Time{
+		testFile: time.Now().Add(time.Minute),
+	}}
+	editGuard := NewEditGuard()
+	editGuard.RecordView("session-1", testFile, true)
+
+	tool := NewMultiEditTool(
+		nil,
+		editGuard,
+		&mockPermissionService{},
+		&mockHistoryService{},
+		fileTracker,
+		tmpDir,
+	)
+
+	model := &stubLanguageModel{
+		generate: func(ctx context.Context, call fantasy.Call) (*fantasy.Response, error) {
+			return &fantasy.Response{
+				Content: []fantasy.Content{
+					fantasy.ToolCallContent{
+						ToolCallID: "call-1",
+						ToolName:   AgenticEditToolName,
+						Input:      `{"edits":[{"file_path":"` + testFile + `","old_string":"line 1","new_string":"LINE 1"}]}`,
+					},
+				},
+				Usage:        fantasy.Usage{TotalTokens: 10},
+				FinishReason: fantasy.FinishReasonStop,
+			}, nil
+		},
+	}
+
+	agent := fantasy.NewAgent(model, fantasy.WithTools(tool))
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "session-1")
+
+	result, err := agent.Generate(ctx, fantasy.AgentCall{Prompt: "update the file"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	content, err := os.ReadFile(testFile)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "LINE 1")
 }

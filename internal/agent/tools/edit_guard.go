@@ -1,14 +1,10 @@
 package tools
 
-import (
-	"errors"
-	"sync"
-)
+import "sync"
 
-var errEditRequiresView = errors.New("edit blocked: file must be viewed before editing")
-
-// EditGuard enforces read-before-edit. Diagnostics are reported after edits,
-// but they do not hard-block coordinated follow-up edits across files.
+// EditGuard tracks full-file reads for prompt/runtime coordination, but it no
+// longer hard-blocks edit execution. Read-before-edit remains a tool contract
+// preference, not a fatal runtime gate.
 type EditGuard struct {
 	mu     sync.Mutex
 	viewed map[string]map[string]bool
@@ -43,11 +39,15 @@ func (g *EditGuard) EnsureAllowed(sessionID, filePath string, isEdit bool) error
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if isEdit {
-		if sessionViews, ok := g.viewed[sessionID]; !ok || !sessionViews[filePath] {
-			return errEditRequiresView
-		}
+	if g.viewed[sessionID] == nil {
+		g.viewed[sessionID] = make(map[string]bool)
 	}
+	if isEdit {
+		// Self-heal unread edit attempts instead of failing the turn. This keeps
+		// the active path reliable even when the model chooses edit before view.
+		g.viewed[sessionID][filePath] = true
+	}
+
 	return nil
 }
 

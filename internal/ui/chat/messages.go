@@ -350,14 +350,10 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 
 	sep := a.sty.Base.Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", max(0, width)))
 
-	duration := a.renderDurationSeconds(finish)
+	duration := a.renderDurationFormatted(finish)
 
 	parts := []string{
-		fmt.Sprintf("%.1fs", duration),
-	}
-
-	if finish != nil && finish.TokensPerSecond > 0 {
-		parts = append(parts, fmt.Sprintf("%.0f tok/s", finish.TokensPerSecond))
+		duration,
 	}
 
 	if finish != nil && finish.AvgLatencyMs > 0 {
@@ -385,6 +381,20 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	dataLine := a.sty.Base.Foreground(lipgloss.Color("244")).Render(dataText)
 
 	return fmt.Sprintf("%s\n%s\n%s", sep, modelHeader, dataLine)
+}
+
+func (a *AssistantInfoItem) renderDurationFormatted(finish *message.Finish) string {
+	seconds := a.renderDurationSeconds(finish)
+	if seconds < 60 {
+		return fmt.Sprintf("%.1fs", seconds)
+	}
+	mins := int(seconds) / 60
+	secs := int(seconds) % 60
+
+	if secs == 0 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	return fmt.Sprintf("%dm %ds", mins, secs)
 }
 
 func (a *AssistantInfoItem) renderDurationSeconds(finish *message.Finish) float64 {
@@ -448,11 +458,6 @@ func cappedMessageWidth(availableWidth int) int {
 	return min(availableWidth-MessageLeftPaddingTotal, maxTextWidth)
 }
 
-// ExtractMessageItems extracts [MessageItem]s from a [message.Message]. It
-// returns all parts of the message as [MessageItem]s.
-//
-// For assistant messages with tool calls, pass a toolResults map to link results.
-// Use BuildToolResultMap to create this map from all messages in a session.
 func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult) []MessageItem {
 	switch msg.Role {
 	case message.User:

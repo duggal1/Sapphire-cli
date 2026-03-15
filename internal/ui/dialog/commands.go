@@ -412,7 +412,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 			selectedModel := cfg.Models[agentCfg.Model]
 			reasoningChoices := config.ReasoningChoicesForModel(model)
 
-			// Anthropic models: thinking toggle
+			// Models with on/off thinking toggle (Anthropic, Gemini 2.5, etc.)
 			if model.CanReason && len(reasoningChoices) == 0 {
 				status := "Enable"
 				if selectedModel.Think {
@@ -421,9 +421,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 				commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", status+" Thinking Mode", "", ActionToggleThinking{}))
 			}
 
+			// Models with granular reasoning levels (Gemini 3 Flash/Pro, OpenAI, etc.)
 			if len(reasoningChoices) > 0 {
 				label := "Select Reasoning Effort"
-				if config.IsGemini3Model(model.ID) {
+				if config.IsGeminiReasoningModel(model.ID) {
 					label = "Select Thinking Mode"
 				}
 				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", label, "", ActionOpenDialog{

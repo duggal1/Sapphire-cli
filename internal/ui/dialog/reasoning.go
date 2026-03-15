@@ -265,7 +265,7 @@ func (r *Reasoning) dialogTitle() string {
 		return "Select Reasoning"
 	}
 	model := cfg.GetModelByType(agentCfg.Model)
-	if model != nil && config.IsGemini3Model(model.ID) {
+	if model != nil && config.IsGeminiReasoningModel(model.ID) {
 		return "Select Thinking Mode"
 	}
 	return "Select Reasoning Effort"

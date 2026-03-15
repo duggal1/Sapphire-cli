@@ -297,6 +297,9 @@ func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	if !t.isSpinning() {
 		return nil
 	}
+	if msg.ID == t.ID() {
+		t.clearCache()
+	}
 	return t.anim.Animate(msg)
 }
 
@@ -459,17 +462,17 @@ func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) 
 	return msg, true
 }
 
-// toolErrorContent formats an error message using a minimal Codex-style prefix.
+// toolErrorContent formats an error message using Codex's compact error block.
 func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int) string {
 	if result == nil {
 		return ""
 	}
 	errContent := strings.ReplaceAll(result.Content, "\n", " ")
-	lines := wrapPrefixedText(errContent, width, "✗ ", "  ")
+	lines := wrapPrefixedText(errContent, width, "■ ", "  ")
 	rendered := make([]string, 0, len(lines))
 	for i, line := range lines {
-		if i == 0 && strings.HasPrefix(line, "✗ ") {
-			rendered = append(rendered, sty.Tool.ErrorTag.Render("✗ ")+sty.Tool.ErrorMessage.Render(strings.TrimPrefix(line, "✗ ")))
+		if i == 0 && strings.HasPrefix(line, "■ ") {
+			rendered = append(rendered, sty.Tool.ErrorTag.Render("■ ")+sty.Tool.ErrorMessage.Render(strings.TrimPrefix(line, "■ ")))
 			continue
 		}
 		rendered = append(rendered, sty.Tool.ErrorMessage.Render(line))
@@ -533,6 +536,13 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 	nameStyle := sty.Tool.NameNormal
 	if nested {
 		nameStyle = sty.Tool.NameNested
+	}
+	if status == ToolStatusSuccess {
+		if nested {
+			nameStyle = sty.Tool.NameSuccessNested
+		} else {
+			nameStyle = sty.Tool.NameSuccess
+		}
 	}
 	toolName := nameStyle.Render(name)
 	prefix := fmt.Sprintf("%s %s", icon, toolName)

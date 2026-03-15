@@ -320,11 +320,11 @@ func loadingPhraseForMessage(messageID string) string {
 // renderError renders an error message.
 func (a *AssistantMessageItem) renderError(width int) string {
 	finishPart := a.message.FinishPart()
-	titleLines := wrapPrefixedText(finishPart.Message, width, "✗ ", "  ")
+	titleLines := wrapPrefixedText(finishPart.Message, width, "■ ", "  ")
 	rendered := make([]string, 0, len(titleLines)+1)
 	for i, line := range titleLines {
-		if i == 0 && strings.HasPrefix(line, "✗ ") {
-			rendered = append(rendered, a.sty.Chat.Message.ErrorTag.Render("✗ ")+a.sty.Chat.Message.ErrorTitle.Render(strings.TrimPrefix(line, "✗ ")))
+		if i == 0 && strings.HasPrefix(line, "■ ") {
+			rendered = append(rendered, a.sty.Chat.Message.ErrorTag.Render("■ ")+a.sty.Chat.Message.ErrorTitle.Render(strings.TrimPrefix(line, "■ ")))
 			continue
 		}
 		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render(line))

@@ -56,7 +56,7 @@ func queuePill(queue int, focused, panelFocused bool, t *styles.Styles) string {
 	if queue <= 0 {
 		return ""
 	}
-	triangles := styles.ForegroundGrad(t, "▶▶▶▶▶▶▶▶▶", false, t.RedDark, t.Secondary)
+	triangles := styles.ForegroundGrad(t, "▶▶▶▶▶▶▶▶▶", false, t.Primary, t.Tertiary)
 	if queue < len(triangles) {
 		triangles = triangles[:queue]
 	}
@@ -73,8 +73,13 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 	}
 
 	completed := 0
+	total := 0
 	var currentTodo *session.Todo
 	for i := range todos {
+		if !session.IsRenderableTodo(todos[i]) {
+			continue
+		}
+		total++
 		switch todos[i].Status {
 		case session.TodoStatusCompleted:
 			completed++
@@ -84,8 +89,9 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 			}
 		}
 	}
-
-	total := len(todos)
+	if total == 0 {
+		return ""
+	}
 
 	label := t.Base.Render("To-Do")
 	progress := t.Muted.Render(fmt.Sprintf("%d/%d", completed, total))
@@ -197,7 +203,11 @@ func (m *UI) pillsAreaHeight() int {
 	pillsAreaHeight := pillHeightWithBorder
 	if m.pillsExpanded {
 		if m.focusedPillSection == pillSectionTodos && hasIncomplete {
-			pillsAreaHeight += len(m.session.Todos)
+			for _, todo := range m.session.Todos {
+				if session.IsRenderableTodo(todo) {
+					pillsAreaHeight++
+				}
+			}
 		} else if m.focusedPillSection == pillSectionQueue && hasQueue {
 			pillsAreaHeight += m.promptQueue
 		}

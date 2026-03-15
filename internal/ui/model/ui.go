@@ -499,7 +499,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		default:
 			m.sendState = sendLifecycleRunning
-			m.startRequestTimer()
+			// We no longer start the timer here - wait for output
 		}
 
 	case userCommandsLoadedMsg:
@@ -1078,8 +1078,10 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
-		if !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+		if msg.IsFinished() && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
 			m.completeRequestTimer()
+		} else if m.requestStartedAt.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
+			m.startRequestTimer()
 		}
 		hadFooter := m.assistantFooter != nil
 		if cmd := m.setAssistantFooter(&msg); cmd != nil {
@@ -1145,8 +1147,12 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			m.chat.InvalidateMessage(msg.ID)
 		}
 	}
-	if msg.Role == message.Assistant && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
-		m.completeRequestTimer()
+	if msg.Role == message.Assistant {
+		if msg.IsFinished() && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+			m.completeRequestTimer()
+		} else if m.requestStartedAt.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
+			m.startRequestTimer()
+		}
 	}
 	if cmd := m.setAssistantFooter(&msg); cmd != nil {
 		cmds = append(cmds, cmd)

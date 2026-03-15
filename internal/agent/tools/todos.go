@@ -88,7 +88,8 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 			normalizeTodosParams(&typed)
 
 			action := typed.Action
-			oldTodos := currentSession.Todos
+			oldTodos := sanitizeSessionTodos(currentSession.Todos)
+			hadInvalidTodos := len(oldTodos) != len(currentSession.Todos)
 
 			var (
 				newTodos      []session.Todo
@@ -163,7 +164,9 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("invalid action: use create, update, start, complete, list, or reset"), nil
 			}
 
-			if action != todosActionList {
+			newTodos = sanitizeSessionTodos(newTodos)
+
+			if action != todosActionList || hadInvalidTodos {
 				currentSession.Todos = newTodos
 				saveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				_, err := sessions.Save(saveCtx, currentSession)
@@ -622,6 +625,35 @@ func countStatuses(todos []session.Todo) (pending, inProgress, completed int) {
 		}
 	}
 	return pending, inProgress, completed
+}
+
+func sanitizeSessionTodos(todos []session.Todo) []session.Todo {
+	out := make([]session.Todo, 0, len(todos))
+	for _, todo := range todos {
+		if !session.IsRenderableTodo(todo) {
+			continue
+		}
+		todo.Content = strings.TrimSpace(todo.Content)
+		todo.ActiveForm = strings.TrimSpace(todo.ActiveForm)
+		if todo.Content == "" {
+			todo.Content = todo.ActiveForm
+		}
+		switch todo.Status {
+		case session.TodoStatusPending, session.TodoStatusInProgress, session.TodoStatusCompleted:
+		default:
+			todo.Status = session.TodoStatusPending
+		}
+		if strings.TrimSpace(todo.ID) == "" {
+			todo.ID = uuid.NewString()
+		}
+		todo.Key = normalizeTodoKey(todo.Key, todo.Content)
+		if todo.Status == session.TodoStatusInProgress && todo.ActiveForm == "" {
+			todo.ActiveForm = "Working on " + todo.Content
+		}
+		out = append(out, todo)
+	}
+	enforceSingleInProgress(&out)
+	return out
 }
 
 func defaultTodoItem() TodoItem {

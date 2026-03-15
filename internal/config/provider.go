@@ -222,6 +222,18 @@ func augmentProviderCatalog(providers []catwalk.Provider) {
 		switch providers[i].ID {
 		case "openrouter":
 			ensureModels(&providers[i], openRouterModelAugments)
+			for j := range providers[i].Models {
+				id := strings.TrimPrefix(providers[i].Models[j].ID, "google/")
+				if IsGeminiReasoningModel(id) {
+					providers[i].Models[j].CanReason = true
+				}
+			}
+		case "gemini", "google":
+			for j := range providers[i].Models {
+				if IsGeminiReasoningModel(providers[i].Models[j].ID) {
+					providers[i].Models[j].CanReason = true
+				}
+			}
 		}
 	}
 }

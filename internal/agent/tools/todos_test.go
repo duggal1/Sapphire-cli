@@ -275,6 +275,48 @@ func TestTodosToolFallsBackFromStaleTaskIDToOnlyInProgressComplete(t *testing.T)
 	require.Equal(t, session.TodoStatusCompleted, updated.Todos[0].Status)
 }
 
+func TestTodosToolListSanitizesBlankTodos(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+
+	sess, err := sessions.Create(t.Context(), "Todos Sanitize")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{ID: "todo-blank", Status: session.TodoStatusPending},
+		{ID: "todo-1", Content: "Run tests", Status: session.TodoStatusInProgress, ActiveForm: "Running tests"},
+	}
+	_, err = sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
+	tool := NewTodosTool(sessions)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "todos-list-sanitize",
+		Name:  TodosToolName,
+		Input: `{"action":"list"}`,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	updated, err := sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Len(t, updated.Todos, 1)
+	require.Equal(t, "Run tests", updated.Todos[0].Content)
+
+	var meta TodosResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, 1, meta.Total)
+}
+
 func TestTodosToolMatchesPlannerPrefixedTaskContent(t *testing.T) {
 	t.Parallel()
 

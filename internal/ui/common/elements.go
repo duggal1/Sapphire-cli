@@ -45,8 +45,7 @@ type ModelContextInfo struct {
 // settings, and optional context usage/cost.
 func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, context *ModelContextInfo, width int) string {
 	modelIcon := t.Subtle.Render(styles.ModelIcon)
-	// Model name in orange
-	modelName = t.Base.Foreground(t.Secondary).Render(modelName)
+	modelName = t.Base.Foreground(t.Primary).Render(modelName)
 
 	// Build first line with model name and optionally provider on the same line
 	var firstLine string
@@ -98,8 +97,7 @@ func formatTokensAndCost(t *styles.Styles, tokens, contextWindow int64, cost flo
 	// Format cost in green to stand out
 	formattedCost := t.Base.Foreground(t.Green).Render(fmt.Sprintf("$%.2f", cost))
 
-	// Format token count in orange
-	formattedTokens = t.Base.Foreground(t.Secondary).Render(fmt.Sprintf("(%s)", formattedTokens))
+	formattedTokens = t.Base.Foreground(t.Tertiary).Render(fmt.Sprintf("(%s)", formattedTokens))
 	formattedPercentage := t.Muted.Render(fmt.Sprintf("%d%%", int(percentage)))
 	formattedTokens = fmt.Sprintf("%s %s", formattedPercentage, formattedTokens)
 	if percentage > 80 {

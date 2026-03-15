@@ -71,6 +71,38 @@ func TestAppendThoughtSignatureWithoutReasoningBlockPreservesToolID(t *testing.T
 	require.Equal(t, "call-1", googleMetadata.ToolID)
 }
 
+func TestToAIMessageAssistantInjectsGeminiFallbackThoughtSignatureForFirstToolCall(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role:     Assistant,
+		Provider: "google",
+		Model:    "gemini-3-flash-preview",
+		Parts: []ContentPart{
+			ToolCall{ID: "call-1", Name: "todos", Input: `{"tasks":["a"]}`},
+			ToolCall{ID: "call-2", Name: "view", Input: `{"file_path":"a.go"}`},
+		},
+	}
+
+	aiMessages := msg.ToAIMessage()
+	require.Len(t, aiMessages, 1)
+	require.Len(t, aiMessages[0].Content, 2)
+
+	firstToolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[0])
+	require.True(t, ok)
+	firstMetadata, ok := firstToolCall.ProviderOptions[gemini.Name]
+	require.True(t, ok)
+	firstGoogleMetadata, ok := firstMetadata.(*gemini.ReasoningMetadata)
+	require.True(t, ok)
+	require.Equal(t, geminiMissingThoughtSignatureFallback, firstGoogleMetadata.Signature)
+	require.Equal(t, "call-1", firstGoogleMetadata.ToolID)
+
+	secondToolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[1])
+	require.True(t, ok)
+	_, ok = secondToolCall.ProviderOptions[gemini.Name]
+	require.False(t, ok)
+}
+
 func makeTestAttachments(n int, contentSize int) []Attachment {
 	attachments := make([]Attachment, n)
 	content := []byte(strings.Repeat("x", contentSize))

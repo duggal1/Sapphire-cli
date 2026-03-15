@@ -19,24 +19,24 @@ func ForegroundGrad(t *Styles, input string, bold bool, color1, color2 color.Col
 	if input == "" {
 		return []string{""}
 	}
-	if len(input) == 1 {
+
+	clusters := splitGraphemeClusters(input)
+	if len(clusters) == 0 {
+		return []string{""}
+	}
+	if len(clusters) == 1 {
 		style := t.Base.Foreground(color1)
 		if bold {
-			style.Bold(true)
+			style = style.Bold(true)
 		}
-		return []string{style.Render(input)}
-	}
-	var clusters []string
-	gr := uniseg.NewGraphemes(input)
-	for gr.Next() {
-		clusters = append(clusters, string(gr.Runes()))
+		return []string{style.Render(clusters[0])}
 	}
 
 	ramp := blendColors(len(clusters), color1, color2)
 	for i, c := range ramp {
 		style := t.Base.Foreground(c)
 		if bold {
-			style.Bold(true)
+			style = style.Bold(true)
 		}
 		clusters[i] = style.Render(clusters[i])
 	}
@@ -49,6 +49,7 @@ func ApplyForegroundGrad(t *Styles, input string, color1, color2 color.Color) st
 	if input == "" {
 		return ""
 	}
+
 	var o strings.Builder
 	clusters := ForegroundGrad(t, input, false, color1, color2)
 	for _, c := range clusters {
@@ -63,6 +64,7 @@ func ApplyBoldForegroundGrad(t *Styles, input string, color1, color2 color.Color
 	if input == "" {
 		return ""
 	}
+
 	var o strings.Builder
 	clusters := ForegroundGrad(t, input, true, color1, color2)
 	for _, c := range clusters {
@@ -81,11 +83,7 @@ func ApplyBoldForegroundGradShifted(t *Styles, input string, shift int, stops ..
 		return t.Base.Bold(true).Render(input)
 	}
 
-	var clusters []string
-	gr := uniseg.NewGraphemes(input)
-	for gr.Next() {
-		clusters = append(clusters, string(gr.Runes()))
-	}
+	clusters := splitGraphemeClusters(input)
 	if len(clusters) == 0 {
 		return ""
 	}
@@ -118,11 +116,7 @@ func ApplyForegroundGradShifted(t *Styles, input string, shift int, stops ...col
 		return t.Base.Render(input)
 	}
 
-	var clusters []string
-	gr := uniseg.NewGraphemes(input)
-	for gr.Next() {
-		clusters = append(clusters, string(gr.Runes()))
-	}
+	clusters := splitGraphemeClusters(input)
 	if len(clusters) == 0 {
 		return ""
 	}
@@ -153,87 +147,66 @@ type shimmerRGB struct {
 	b float64
 }
 
-// shimmerState holds the process start time for time-based shimmer animation.
+// shimmerStartTime anchors the shimmer sweep to process lifetime.
 var shimmerStartTime = time.Now()
 
-// shimmerTextWithPalette renders text with a time-based shimmer effect.
-// This implementation follows the Codex Rust shimmer.rs logic:
-// - Time-based sweep (not frame counter) for smooth animation
-// - Cosine interpolation for smooth bell-curve shimmer band
-// - Band half-width of 5 characters with smooth fade
-func shimmerTextWithPalette(t *Styles, input string, shift int, palette []shimmerRGB, durationSec float64) string {
-	if input == "" {
-		return ""
-	}
-
+func splitGraphemeClusters(input string) []string {
 	var clusters []string
 	gr := uniseg.NewGraphemes(input)
 	for gr.Next() {
 		clusters = append(clusters, string(gr.Runes()))
 	}
-	if len(clusters) == 0 {
-		return ""
-	}
+	return clusters
+}
 
-	n := len(clusters)
-	
-	// Codex-style time-based sweep
-	padding := 10
-	period := n + padding*2
-	sweepSeconds := float32(2.0)
-	
-	// Use elapsed time for smooth animation (like Codex)
-	elapsed := time.Since(shimmerStartTime).Seconds()
-	posF := float32(math.Mod(float64(elapsed), float64(sweepSeconds))) / sweepSeconds * float32(period)
-	pos := int(posF)
-	
-	// Band half-width for cosine interpolation (Codex uses 5.0)
-	const bandHalfWidth = 5.0
-	
-	// Base and highlight colors from palette
-	// palette[0] = base (dim), palette[len-1] = highlight (bright)
-	baseColor := palette[0]
-	highlightColor := palette[len(palette)-1]
-	
-	var o strings.Builder
-	for i := range clusters {
-		// Distance from shimmer band center (Codex formula)
-		iPos := float64(i) + float64(padding)
-		dist := math.Abs(iPos - float64(pos))
-		
-		// Cosine interpolation for smooth bell-curve (Codex formula)
-		var interp float64
-		if dist <= bandHalfWidth {
-			// Cosine fade: 0.5 * (1 + cos(PI * dist / bandHalfWidth))
-			x := math.Pi * (dist / bandHalfWidth)
-			interp = 0.5 * (1.0 + math.Cos(x))
-		} else {
-			interp = 0.0
-		}
-		
-		// Blend highlight with base based on cosine value
-		highlight := math.Max(0.0, math.Min(1.0, interp*0.9))
-		blended := lerpShimmer(baseColor, highlightColor, highlight)
-		
-		style := t.Base.Foreground(color.RGBA{
-			R: uint8(math.Round(blended.r)),
-			G: uint8(math.Round(blended.g)),
-			B: uint8(math.Round(blended.b)),
-			A: 0xff,
-		})
-		fmt.Fprint(&o, style.Render(clusters[i]))
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
 	}
-	return o.String()
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func clampFloat(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// cosineBell returns a smooth 0..1 intensity for a distance within a half-width.
+func cosineBell(dist, halfWidth float64) float64 {
+	if halfWidth <= 0 || dist >= halfWidth {
+		return 0
+	}
+	x := math.Pi * (dist / halfWidth)
+	return 0.5 * (1.0 + math.Cos(x))
+}
+
+func shimmerColor(c shimmerRGB) color.Color {
+	return color.RGBA{
+		R: uint8(math.Round(clampFloat(c.r, 0, 255))),
+		G: uint8(math.Round(clampFloat(c.g, 0, 255))),
+		B: uint8(math.Round(clampFloat(c.b, 0, 255))),
+		A: 0xff,
+	}
 }
 
 // lerpShimmer linearly interpolates between two shimmerRGB colors.
 func lerpShimmer(a, b shimmerRGB, t float64) shimmerRGB {
-	if t < 0 {
-		t = 0
-	}
-	if t > 1 {
-		t = 1
-	}
+	t = clamp01(t)
 	return shimmerRGB{
 		r: a.r + (b.r-a.r)*t,
 		g: a.g + (b.g-a.g)*t,
@@ -241,16 +214,91 @@ func lerpShimmer(a, b shimmerRGB, t float64) shimmerRGB {
 	}
 }
 
-// shimmerNeutralPalette: base (dim gray) to highlight (bright white).
-var shimmerNeutralPalette = []shimmerRGB{
-	{90, 90, 90},    // Dim base gray
-	{255, 255, 255}, // Bright white highlight
+// shimmerTextWithPalette renders luxurious off-white text with a cool metallic
+// shimmer band that has grey shoulders and a brighter core.
+//
+// palette[0] = base text
+// palette[1] = shimmer shoulder
+// palette[2] = shimmer core
+func shimmerTextWithPalette(t *Styles, input string, shift int, palette []shimmerRGB, durationSec float64) string {
+	if input == "" {
+		return ""
+	}
+
+	clusters := splitGraphemeClusters(input)
+	if len(clusters) == 0 {
+		return ""
+	}
+
+	if len(palette) < 3 {
+		return t.Base.Bold(true).Render(input)
+	}
+
+	n := len(clusters)
+
+	// Extra runway so the shimmer enters and exits cleanly instead of clipping.
+	padding := maxInt(8, int(math.Ceil(float64(n)*0.55)))
+	period := float64(n + padding*2)
+
+	if durationSec <= 0 {
+		durationSec = 1.85
+	}
+
+	// Primary motion is time-based for smoothness.
+	// shift is used only as a subtle phase offset so external ticks can still
+	// influence the sweep without making motion jumpy.
+	elapsed := time.Since(shimmerStartTime).Seconds()
+	basePos := math.Mod((elapsed/durationSec)*period, period)
+	phaseOffset := math.Mod(float64(shift)*0.025, period)
+	pos := math.Mod(basePos+phaseOffset, period)
+	if pos < 0 {
+		pos += period
+	}
+
+	// Tighter and cleaner than the original wide wash.
+	// This makes the shimmer actually read on short labels.
+	bandHalfWidth := clampFloat(float64(n)*0.40, 3.5, 8.0)
+	coreHalfWidth := clampFloat(bandHalfWidth*0.34, 1.15, 2.8)
+
+	baseColor := palette[0]
+	shoulderColor := palette[1]
+	coreColor := palette[2]
+
+	var o strings.Builder
+	for i, cluster := range clusters {
+		iPos := float64(i + padding)
+		dist := math.Abs(iPos - pos)
+
+		// Broad silver shoulder.
+		shoulder := math.Pow(cosineBell(dist, bandHalfWidth), 1.12)
+
+		// Bright tighter center.
+		core := math.Pow(cosineBell(dist, coreHalfWidth), 1.04)
+
+		// Build the shimmer in layers:
+		// base -> grey shoulder -> soft-white core.
+		c := lerpShimmer(baseColor, shoulderColor, shoulder*0.78)
+		c = lerpShimmer(c, coreColor, core*0.96)
+
+		style := t.Base.Foreground(shimmerColor(c)).Bold(true)
+		fmt.Fprint(&o, style.Render(cluster))
+	}
+
+	return o.String()
 }
 
-// shimmerWarmPalette: base (warm dim) to highlight (warm bright).
+// Neutral palette: off-white resting text with a cool grey/silver shimmer.
+var shimmerNeutralPalette = []shimmerRGB{
+	{245, 245, 244}, // base: neutral-100
+	{214, 211, 209}, // shoulder: neutral-300
+	{255, 255, 253}, // core: soft white
+}
+
+// Warm palette: slightly warmer off-white for softer UI surfaces.
 var shimmerWarmPalette = []shimmerRGB{
-	{120, 80, 60},   // Dim warm brown
-	{255, 220, 180}, // Bright warm white
+	{245, 240, 235}, // base
+	{221, 210, 198}, // shoulder
+	{255, 249, 242}, // core
 }
 
 func ShimmerText(t *Styles, input string, shift int) string {
@@ -258,17 +306,17 @@ func ShimmerText(t *Styles, input string, shift int) string {
 }
 
 func ShimmerTextNeutral(t *Styles, input string, shift int) string {
-	return shimmerTextWithPalette(t, input, shift, shimmerNeutralPalette, 1.2)
+	return shimmerTextWithPalette(t, input, shift, shimmerNeutralPalette, 1.85)
 }
 
 func ShimmerTextWarm(t *Styles, input string, shift int) string {
-	return shimmerTextWithPalette(t, input, shift, shimmerWarmPalette, 1.2)
+	return shimmerTextWithPalette(t, input, shift, shimmerWarmPalette, 2.0)
 }
 
 // blendColors returns a slice of colors blended between the given keys.
 // Blending is done in RGB space to avoid hue shifts through purple.
 func blendColors(size int, stops ...color.Color) []color.Color {
-	if len(stops) < 2 {
+	if size <= 0 || len(stops) < 2 {
 		return nil
 	}
 
@@ -286,7 +334,7 @@ func blendColors(size int, stops ...color.Color) []color.Color {
 	remainder := size % numSegments
 
 	// Distribute the remainder across segments.
-	for i := range numSegments {
+	for i := 0; i < numSegments; i++ {
 		segmentSizes[i] = baseSize
 		if i < remainder {
 			segmentSizes[i]++
@@ -294,17 +342,16 @@ func blendColors(size int, stops ...color.Color) []color.Color {
 	}
 
 	// Generate colors for each segment using RGB blending to avoid purple shift.
-	for i := range numSegments {
+	for i := 0; i < numSegments; i++ {
 		c1 := stopsPrime[i]
 		c2 := stopsPrime[i+1]
 		segmentSize := segmentSizes[i]
 
-		for j := range segmentSize {
+		for j := 0; j < segmentSize; j++ {
 			var t float64
 			if segmentSize > 1 {
 				t = float64(j) / float64(segmentSize-1)
 			}
-			// Use BlendRgb instead of BlendHcl to avoid purple hue shift
 			c := c1.BlendRgb(c2, t)
 			blended = append(blended, c)
 		}

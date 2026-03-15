@@ -25,6 +25,8 @@ const (
 	Tool      MessageRole = "tool"
 )
 
+const geminiMissingThoughtSignatureFallback = "skip_thought_signature_validator"
+
 type FinishReason string
 
 const (
@@ -137,7 +139,7 @@ type Finish struct {
 	// Timing metrics for Gemini
 	StartTimeMs     int64   `json:"start_time_ms,omitempty"`
 	EndTimeMs       int64   `json:"end_time_ms,omitempty"`
-	TokensPerSecond float64 `json:"tokens_per_second,omitempty"`
+	// Removed TokensPerSecond as requested
 	AvgLatencyMs    float64 `json:"avg_latency_ms,omitempty"`
 	ThinkingEffort  string  `json:"thinking_effort,omitempty"`
 }
@@ -296,7 +298,7 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 		if c, ok := part.(ReasoningContent); ok {
 			m.Parts[i] = ReasoningContent{
 				Thinking:         c.Thinking,
-				ThoughtSignature: c.ThoughtSignature + signature,
+				ThoughtSignature: cmp.Or(signature, c.ThoughtSignature),
 				ToolID:           cmp.Or(toolCallID, c.ToolID),
 				Signature:        c.Signature,
 				StartedAt:        c.StartedAt,
@@ -394,9 +396,7 @@ func (m *Message) GeminiUsageMetadata() map[string]any {
 	if finish.CachedTokens > 0 {
 		metadata["cachedTokens"] = finish.CachedTokens
 	}
-	if finish.TokensPerSecond > 0 {
-		metadata["tokensPerSecond"] = fmt.Sprintf("%.2f", finish.TokensPerSecond)
-	}
+	// Removed tokensPerSecond
 	if finish.AvgLatencyMs > 0 {
 		metadata["avgLatencyMs"] = fmt.Sprintf("%.0fms", finish.AvgLatencyMs)
 	}
@@ -524,7 +524,7 @@ func (m *Message) AddFinishWithMetadata(
 
 	// Calculate performance metrics
 	durationMs := endTimeMs - startTimeMs
-	tokensPerSecond := float64(0)
+	// Removed tokensPerSecond calculation
 	avgLatencyMs := float64(0)
 
 	if durationMs > 0 {
@@ -532,7 +532,6 @@ func (m *Message) AddFinishWithMetadata(
 		// For very short responses, these metrics can appear skewed due to fixed overhead.
 		const minMeaningfulTokens = 5
 		if completionTokens >= minMeaningfulTokens {
-			tokensPerSecond = float64(completionTokens) / (float64(durationMs) / 1000.0)
 			avgLatencyMs = float64(durationMs) / float64(completionTokens)
 		}
 	}
@@ -549,7 +548,7 @@ func (m *Message) AddFinishWithMetadata(
 		CachedTokens:     cachedTokens,
 		StartTimeMs:      startTimeMs,
 		EndTimeMs:        endTimeMs,
-		TokensPerSecond:  tokensPerSecond,
+		// Removed TokensPerSecond
 		AvgLatencyMs:     avgLatencyMs,
 		ThinkingEffort:   thinkingEffort,
 	})
@@ -651,6 +650,7 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		})
 	case Assistant:
 		googleReasoningByToolID := make(map[string]*gemini.ReasoningMetadata)
+		firstToolCallID := ""
 		for _, part := range m.Parts {
 			reasoning, ok := part.(ReasoningContent)
 			if !ok || reasoning.ThoughtSignature == "" || reasoning.ToolID == "" {
@@ -663,6 +663,9 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		}
 
 		var parts []fantasy.MessagePart
+		assistantLooksGemini := strings.EqualFold(m.Provider, gemini.Name) ||
+			strings.EqualFold(m.Provider, "google") ||
+			strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.Model)), "gemini")
 		for _, part := range m.Parts {
 			switch content := part.(type) {
 			case TextContent:
@@ -691,6 +694,9 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				}
 				parts = append(parts, reasoningPart)
 			case ToolCall:
+				if firstToolCallID == "" {
+					firstToolCallID = content.ID
+				}
 				toolCallPart := fantasy.ToolCallPart{
 					ToolCallID:       content.ID,
 					ToolName:         content.Name,
@@ -700,6 +706,13 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				if metadata, ok := googleReasoningByToolID[content.ID]; ok {
 					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
 						gemini.Name: metadata,
+					}
+				} else if assistantLooksGemini && content.ID == firstToolCallID {
+					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
+						gemini.Name: &gemini.ReasoningMetadata{
+							Signature: geminiMissingThoughtSignatureFallback,
+							ToolID:    content.ID,
+						},
 					}
 				}
 				parts = append(parts, toolCallPart)

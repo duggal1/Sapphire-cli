@@ -4,12 +4,45 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/pubsub"
 )
 
 const subAgentStatusUpdatedEvent pubsub.EventType = "subagent_status_updated"
+
+type subAgentControlPlane struct {
+	coordinator *coordinator
+}
+
+func (c *coordinator) subAgentControl() subAgentControlPlane {
+	return subAgentControlPlane{coordinator: c}
+}
+
+func (p subAgentControlPlane) spawn(ctx context.Context, parentSessionID string, opts spawnAgentOptions) (string, string, error) {
+	return p.coordinator.spawnSubAgent(ctx, parentSessionID, opts)
+}
+
+func (p subAgentControlPlane) resume(ctx context.Context, parentSessionID, agentID, prompt string) (string, subAgentStatus, error) {
+	return p.coordinator.resumeSubAgent(ctx, parentSessionID, agentID, prompt)
+}
+
+func (p subAgentControlPlane) sendInput(ctx context.Context, agentID, prompt string, items []string, interrupt bool) (string, error) {
+	return p.coordinator.sendSubAgentInput(ctx, agentID, prompt, items, interrupt)
+}
+
+func (p subAgentControlPlane) wait(ctx context.Context, ids []string, timeout time.Duration) ([]subAgentStatusEntry, bool) {
+	return p.coordinator.waitSubAgentStatuses(ctx, ids, timeout)
+}
+
+func (p subAgentControlPlane) collectResult(ids []string) []subAgentCollectedResult {
+	return p.coordinator.collectSubAgentResults(ids)
+}
+
+func (p subAgentControlPlane) close(agentID string) error {
+	return p.coordinator.closeSubAgent(agentID)
+}
 
 func isSubAgentFinalStatus(status subAgentStatus) bool {
 	return !isSubAgentActiveStatus(status)

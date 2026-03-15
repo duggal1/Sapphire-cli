@@ -1108,12 +1108,10 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		}
 		if isSubAgent {
 			tools = filterTools(tools, map[string]struct{}{
-				AgentToolName:       {},
-				SpawnAgentToolName:  {},
-				ResumeAgentToolName: {},
-				SendInputToolName:   {},
-				WaitAgentsToolName:  {},
-				CloseAgentToolName:  {},
+				AgentToolName:                {},
+				SpawnAgentsOnCSVToolName:     {},
+				ReportAgentJobResultToolName: {},
+				OrchestrateWorktreesToolName: {},
 			})
 		}
 		result.SetTools(tools)
@@ -1202,6 +1200,13 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 			return nil, err
 		}
 		allTools = append(allTools, waitTool)
+	}
+	if slices.Contains(agent.AllowedTools, CollectResultToolName) {
+		collectTool, err := c.collectResultTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, collectTool)
 	}
 	if slices.Contains(agent.AllowedTools, CloseAgentToolName) {
 		closeTool, err := c.closeAgentTool(ctx)

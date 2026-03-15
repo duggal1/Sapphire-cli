@@ -25,15 +25,19 @@ var sendInputDescription []byte
 //go:embed tools/wait.md
 var waitAgentsDescription []byte
 
+//go:embed tools/collect_result.md
+var collectResultDescription []byte
+
 //go:embed tools/close_agent.md
 var closeAgentDescription []byte
 
 const (
-	SpawnAgentToolName  = "spawn_agent"
-	ResumeAgentToolName = "resume_agent"
-	SendInputToolName   = "send_input"
-	WaitAgentsToolName  = "wait"
-	CloseAgentToolName  = "close_agent"
+	SpawnAgentToolName    = "spawn_agent"
+	ResumeAgentToolName   = "resume_agent"
+	SendInputToolName     = "send_input"
+	WaitAgentsToolName    = "wait"
+	CollectResultToolName = "collect_result"
+	CloseAgentToolName    = "close_agent"
 )
 
 type SpawnAgentParams struct {
@@ -67,6 +71,10 @@ type SendInputParams struct {
 type WaitAgentsParams struct {
 	IDs       []string `json:"ids,omitempty" description:"Agent ids to wait for"`
 	TimeoutMS int64    `json:"timeout_ms,omitempty" description:"Timeout in milliseconds (default 30000)"`
+}
+
+type CollectResultParams struct {
+	IDs []string `json:"ids,omitempty" description:"Agent ids to collect results from"`
 }
 
 type CloseAgentParams struct {
@@ -233,6 +241,21 @@ func (p *WaitAgentsParams) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (p *CollectResultParams) UnmarshalJSON(data []byte) error {
+	type rawCollectResultParams struct {
+		IDs      []string `json:"ids,omitempty"`
+		AgentIDs []string `json:"agent_ids,omitempty"`
+	}
+
+	var raw rawCollectResultParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.IDs = firstNonEmptyStringSlice(raw.IDs, raw.AgentIDs)
+	return nil
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -270,6 +293,7 @@ func normalizeStringSlice(values []string) []string {
 
 func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
+	control := c.subAgentControl()
 	return fantasy.NewParallelAgentTool(
 		SpawnAgentToolName,
 		string(spawnAgentDescription),
@@ -290,7 +314,7 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			if params.ForkContext != nil {
 				forkContext = *params.ForkContext
 			}
-			agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+			agentID, submissionID, err := control.spawn(ctx, sessionID, spawnAgentOptions{
 				Prompt:           params.Message,
 				PromptItems:      params.Items,
 				Title:            params.Title,
@@ -323,6 +347,7 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 
 func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
+	control := c.subAgentControl()
 	return fantasy.NewParallelAgentTool(
 		ResumeAgentToolName,
 		string(resumeAgentDescription),
@@ -335,7 +360,7 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
-			submissionID, status, err := c.resumeSubAgent(ctx, sessionID, params.ID, firstNonEmptyString(params.Message, strings.Join(params.Items, "\n")))
+			submissionID, status, err := control.resume(ctx, sessionID, params.ID, firstNonEmptyString(params.Message, strings.Join(params.Items, "\n")))
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -354,6 +379,7 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 
 func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
+	control := c.subAgentControl()
 	return fantasy.NewParallelAgentTool(
 		SendInputToolName,
 		string(sendInputDescription),
@@ -365,7 +391,7 @@ func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, err
 			if strings.TrimSpace(params.Message) == "" {
 				return fantasy.NewTextErrorResponse("message is required"), nil
 			}
-			submissionID, err := c.sendSubAgentInput(ctx, params.ID, params.Message, params.Items, params.Interrupt)
+			submissionID, err := control.sendInput(ctx, params.ID, params.Message, params.Items, params.Interrupt)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -379,6 +405,7 @@ func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, err
 
 func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
+	control := c.subAgentControl()
 	return fantasy.NewParallelAgentTool(
 		WaitAgentsToolName,
 		string(waitAgentsDescription),
@@ -391,10 +418,29 @@ func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, er
 			if params.TimeoutMS > 0 {
 				timeout = time.Duration(params.TimeoutMS) * time.Millisecond
 			}
-			snapshots, timedOut := c.waitSubAgents(ctx, params.IDs, timeout)
+			statuses, timedOut := control.wait(ctx, params.IDs, timeout)
 			payload, _ := json.Marshal(map[string]any{
-				"agents":    snapshots,
+				"agents":    statuses,
 				"timed_out": timedOut,
+			})
+			return fantasy.NewTextResponse(string(payload)), nil
+		},
+	), nil
+}
+
+func (c *coordinator) collectResultTool(ctx context.Context) (fantasy.AgentTool, error) {
+	_ = ctx
+	control := c.subAgentControl()
+	return fantasy.NewParallelAgentTool(
+		CollectResultToolName,
+		string(collectResultDescription),
+		func(ctx context.Context, params CollectResultParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			_ = call
+			if len(params.IDs) == 0 {
+				return fantasy.NewTextErrorResponse("ids are required"), nil
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"agents": control.collectResult(params.IDs),
 			})
 			return fantasy.NewTextResponse(string(payload)), nil
 		},
@@ -403,6 +449,7 @@ func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, er
 
 func (c *coordinator) closeAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
+	control := c.subAgentControl()
 	return fantasy.NewParallelAgentTool(
 		CloseAgentToolName,
 		string(closeAgentDescription),
@@ -411,7 +458,7 @@ func (c *coordinator) closeAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			if params.ID == "" {
 				return fantasy.NewTextErrorResponse("id is required"), nil
 			}
-			if err := c.closeSubAgent(params.ID); err != nil {
+			if err := control.close(params.ID); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			payload, _ := json.Marshal(map[string]any{

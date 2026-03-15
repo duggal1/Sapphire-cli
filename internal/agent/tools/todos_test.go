@@ -84,9 +84,8 @@ func TestTodosToolRejectsInvalidStatus(t *testing.T) {
 		Name:  TodosToolName,
 		Input: `{"todos":[{"content":"Inspect","status":"blocked","active_form":"Inspecting"}]}`,
 	})
-	require.NoError(t, err)
-	require.True(t, resp.IsError)
-	require.Contains(t, resp.Content, `invalid status "blocked"`)
+	require.ErrorContains(t, err, `invalid status "blocked"`)
+	require.False(t, resp.IsError)
 
 	updated, err := sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
@@ -137,38 +136,4 @@ func TestTodosToolReplacesExistingListInsteadOfMutatingImplicitly(t *testing.T) 
 	require.Equal(t, []string{"Read codebase"}, meta.JustCompleted)
 	require.Equal(t, "Running tests", meta.JustStarted)
 	require.Equal(t, 1, meta.Completed)
-}
-
-func TestTodosToolNormalizesTasksAliasWithoutAutoStarting(t *testing.T) {
-	t.Parallel()
-
-	conn, err := db.Connect(t.Context(), t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, conn.Close())
-	})
-
-	q := db.New(conn)
-	sessions := session.NewService(q, conn)
-
-	sess, err := sessions.Create(t.Context(), "Todos Tasks Alias")
-	require.NoError(t, err)
-
-	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
-	tool := NewTodosTool(sessions)
-
-	resp, err := tool.Run(ctx, fantasy.ToolCall{
-		ID:    "todos-tasks-alias",
-		Name:  TodosToolName,
-		Input: `{"tasks":[{"content":"Read codebase","status":"pending"},{"content":"Run tests","status":"pending"}]}`,
-	})
-	require.NoError(t, err)
-	require.False(t, resp.IsError)
-
-	updated, err := sessions.Get(t.Context(), sess.ID)
-	require.NoError(t, err)
-	require.Equal(t, []session.Todo{
-		{Content: "Read codebase", Status: session.TodoStatusPending},
-		{Content: "Run tests", Status: session.TodoStatusPending},
-	}, updated.Todos)
 }

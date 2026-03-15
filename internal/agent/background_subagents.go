@@ -227,31 +227,33 @@ func (c *coordinator) pollBackgroundSubAgents(sessionID string) {
 }
 
 func (c *coordinator) monitorBackgroundSubAgent(ctx context.Context, sessionID, taskName, agentID string) {
+	control := c.subAgentControl()
 	waitCtx, cancel := context.WithTimeout(ctx, backgroundSubAgentTimeout)
 	defer cancel()
-	snapshots, timedOut := c.waitSubAgents(waitCtx, []string{agentID}, backgroundSubAgentTimeout)
+	statuses, timedOut := control.wait(waitCtx, []string{agentID}, backgroundSubAgentTimeout)
+	results := control.collectResult([]string{agentID})
 	var (
 		content string
 		runErr  error
 	)
 	if timedOut {
 		runErr = fmt.Errorf("background sub-agent %q timed out after %s", taskName, backgroundSubAgentTimeout)
-	} else if len(snapshots) == 0 {
+	} else if len(statuses) == 0 || len(results) == 0 {
 		runErr = fmt.Errorf("background sub-agent %q did not report a final snapshot", taskName)
 	} else {
-		snap := snapshots[0]
-		if snap.LastError != "" {
-			runErr = fmt.Errorf("%s", snap.LastError)
-		} else if snap.LastResult != "" {
-			content = snap.LastResult
-		} else if snap.LastProgress != "" {
-			content = snap.LastProgress
+		result := results[0]
+		if result.Error != "" {
+			runErr = fmt.Errorf("%s", result.Error)
+		} else if result.Result != "" {
+			content = result.Result
+		} else if result.Progress != "" {
+			content = result.Progress
 		} else {
 			content = "completed without a summary"
 		}
 	}
 	c.publishBackgroundSubAgentResult(ctx, sessionID, taskName, content, runErr)
-	_ = c.closeSubAgent(agentID)
+	_ = control.close(agentID)
 	c.completeBackgroundTasks(ctx, sessionID, 1)
 }
 

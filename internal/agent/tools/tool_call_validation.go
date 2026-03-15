@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/session"
 )
 
 func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fantasy.ToolCall, input map[string]any) error {
@@ -16,11 +15,6 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 	}
 
 	switch call.Name {
-	case TodosToolName:
-		// Validate using the normalized input map, NOT the original call.Input.
-		// The middleware has already repaired aliases and structure; validating
-		// the raw string would undo all normalization work.
-		return validateTodosInputMap(input)
 	case ViewToolName, SingleViewToolName, AgenticViewToolName:
 		if len(extractViewPaths(input)) == 0 {
 			return errors.New("file_path is required")
@@ -35,32 +29,6 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 		return nil
 	}
 
-	return nil
-}
-
-// validateTodosInputMap validates the normalized full-list todos contract.
-func validateTodosInputMap(input map[string]any) error {
-	if input == nil {
-		return errors.New("todos input must be a JSON object")
-	}
-
-	var params TodosParams
-	if err := decodeInto(input, &params); err != nil {
-		return fmt.Errorf("invalid parameters: %w", err)
-	}
-
-	for _, todo := range params.Todos {
-		content := strings.TrimSpace(todo.Content)
-		activeForm := strings.TrimSpace(todo.ActiveForm)
-		if content == "" && activeForm == "" {
-			continue
-		}
-		switch strings.TrimSpace(todo.Status) {
-		case string(session.TodoStatusPending), string(session.TodoStatusInProgress), string(session.TodoStatusCompleted):
-		default:
-			return fmt.Errorf("invalid status %q for todo %q", todo.Status, todo.Content)
-		}
-	}
 	return nil
 }
 

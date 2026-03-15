@@ -63,12 +63,13 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 			if params.Worktree != nil {
 				useWorktree = *params.Worktree
 			}
+			control := c.subAgentControl()
 
 			if params.Background {
 				if err := c.addBackgroundTasks(context.Background(), sessionID, 1); err != nil {
 					return fantasy.ToolResponse{}, err
 				}
-				agentID, _, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+				agentID, _, err := control.spawn(ctx, sessionID, spawnAgentOptions{
 					Prompt:           params.Prompt,
 					Title:            "Background Agent Session",
 					Worktree:         useWorktree,
@@ -85,7 +86,7 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				go c.monitorBackgroundSubAgent(context.Background(), sessionID, "agent", agentID)
 				return fantasy.NewTextResponse("running in background"), nil
 			}
-			agentID, _, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+			agentID, _, err := control.spawn(ctx, sessionID, spawnAgentOptions{
 				Prompt:           params.Prompt,
 				Title:            "New Agent Session",
 				Worktree:         useWorktree,
@@ -98,18 +99,22 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			snapshots, timedOut := c.waitSubAgents(ctx, []string{agentID}, 0)
-			if timedOut || len(snapshots) == 0 {
+			statuses, timedOut := control.wait(ctx, []string{agentID}, 0)
+			if timedOut || len(statuses) == 0 {
 				return fantasy.NewTextErrorResponse("sub-agent did not finish cleanly"), nil
 			}
-			snap := snapshots[0]
-			defer func() { _ = c.closeSubAgent(agentID) }()
-			if snap.LastError != "" {
-				return fantasy.NewTextErrorResponse(snap.LastError), nil
+			results := control.collectResult([]string{agentID})
+			defer func() { _ = control.close(agentID) }()
+			if len(results) == 0 {
+				return fantasy.NewTextErrorResponse("sub-agent did not report a final result"), nil
 			}
-			if snap.LastResult != "" {
-				return fantasy.NewTextResponse(snap.LastResult), nil
+			result := results[0]
+			if result.Error != "" {
+				return fantasy.NewTextErrorResponse(result.Error), nil
 			}
-			return fantasy.NewTextResponse(snap.LastProgress), nil
+			if result.Result != "" {
+				return fantasy.NewTextResponse(result.Result), nil
+			}
+			return fantasy.NewTextResponse(result.Progress), nil
 		}), nil
 }

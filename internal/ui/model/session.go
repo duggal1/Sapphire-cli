@@ -215,7 +215,19 @@ func fileList(t *styles.Styles, cwd string, filesWithChanges []SessionFile, widt
 		filePath = fsext.DirTrim(filePath, 2)
 		filePath = ansi.Truncate(filePath, width-(lipgloss.Width(extraContent)-2), "…")
 
-		line := t.Files.Path.Render(filePath)
+		pathStyle := t.Files.Path
+		switch {
+		case f.Deletions > 0 && f.Additions == 0:
+			pathStyle = t.Files.Deletions
+		case f.Additions > 0 && f.Deletions == 0:
+			pathStyle = t.Files.Additions
+		case f.Deletions > f.Additions:
+			pathStyle = t.Base.Foreground(t.Red)
+		case f.Additions > f.Deletions:
+			pathStyle = t.Base.Foreground(t.GreenLight)
+		}
+
+		line := pathStyle.Render(filePath)
 		if extraContent != "" {
 			line = fmt.Sprintf("%s %s", line, extraContent)
 		}

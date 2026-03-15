@@ -28,13 +28,8 @@ type Opts struct {
 	Width        int         // width of the rendered logo, used for truncation
 }
 
-// Render renders the Sapphire logo. Set the argument to true to render the narrow
-// version, intended for use in a sidebar.
-//
-// The compact argument determines whether it renders compact for the sidebar
-// or wider for the main pane.
 func Render(s *styles.Styles, version string, compact bool, o Opts) string {
-	const charm = " Beta"
+	const charm = ""
 
 	fg := func(c color.Color, s string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(s)
@@ -108,12 +103,11 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 // SmallRender renders a smaller version of the Sapphire logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int) string {
-	title := t.Base.Foreground(t.Secondary).Render("Beta")
-	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t, "Sapphire", t.Secondary, t.Primary))
+	title := styles.ApplyBoldForegroundGrad(t, "Sapphire", t.LogoTitleColorA, t.LogoTitleColorB)
 	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after "Sapphire"
 	if remainingWidth > 0 {
 		lines := strings.Repeat("╱", remainingWidth)
-		title = fmt.Sprintf("%s %s", title, t.Base.Foreground(t.Primary).Render(lines))
+		title = fmt.Sprintf("%s %s", title, lipgloss.NewStyle().Foreground(t.LogoFieldColor).Render(lines))
 	}
 	return title
 }

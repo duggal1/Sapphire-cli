@@ -134,14 +134,14 @@ func renderMCPSummary(t *styles.Styles, width, active, installed, total, visible
 		return fmt.Sprintf(
 			"%s %s",
 			t.ResourceStatus.Render(label+":"),
-			t.Base.Foreground(t.Secondary).Render(fmt.Sprintf("%d", value)),
+			t.Base.Foreground(t.Tertiary).Render(fmt.Sprintf("%d", value)),
 		)
 	}
 
 	visibleSummary := fmt.Sprintf(
 		"%s %s",
 		t.ResourceStatus.Render("MCPs:"),
-		t.Base.Foreground(t.Secondary).Render(fmt.Sprintf("%d shown", visible)),
+		t.Base.Foreground(t.Tertiary).Render(fmt.Sprintf("%d shown", visible)),
 	)
 	if hidden := installed - visible; hidden > 0 {
 		visibleSummary += t.ResourceAdditionalText.Render(fmt.Sprintf(" · %d more", hidden))

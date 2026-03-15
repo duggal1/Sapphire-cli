@@ -48,7 +48,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
-	openaisdk "github.com/openai/openai-go/v2/option"
+	openaisdk "github.com/openai/openai-go/v3/option"
 	"github.com/qjebbs/go-jsons"
 	"google.golang.org/genai"
 )
@@ -984,20 +984,20 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 		_, hasReasoning := mergedOptions["thinking_config"]
 		if !hasReasoning {
 			if config.IsGemini3Model(model.CatwalkCfg.ID) {
-				thinkingBudget := 0
-				includeThoughts := false
-				if model.ModelCfg.Think {
-					thinkingBudget = 2000
-					includeThoughts = true
+				level := model.ModelCfg.ReasoningEffort
+				if level == "" {
+					level = "medium" // default
 				}
 				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_budget":  thinkingBudget,
-					"include_thoughts": includeThoughts,
-				}
-			} else {
-				mergedOptions["thinking_config"] = map[string]any{
-					"thinking_level":   model.ModelCfg.ReasoningEffort,
+					"thinking_level":   level,
 					"include_thoughts": true,
+				}
+			} else if config.IsGemini25Model(model.CatwalkCfg.ID) {
+				if model.ModelCfg.Think {
+					mergedOptions["thinking_config"] = map[string]any{
+						"thinking_budget":  2048,
+						"include_thoughts": true,
+					}
 				}
 			}
 		}

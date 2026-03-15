@@ -80,13 +80,14 @@ type Models struct {
 	providers []catwalk.Provider
 
 	keyMap struct {
-		Tab      key.Binding
-		UpDown   key.Binding
-		Select   key.Binding
-		Edit     key.Binding
-		Next     key.Binding
-		Previous key.Binding
-		Close    key.Binding
+		Tab       key.Binding
+		UpDown    key.Binding
+		Select    key.Binding
+		Edit      key.Binding
+		Reasoning key.Binding
+		Next      key.Binding
+		Previous  key.Binding
+		Close     key.Binding
 	}
 	list  *ModelsList
 	input textinput.Model
@@ -127,6 +128,10 @@ func NewModels(com *common.Common, isOnboarding bool) (*Models, error) {
 	m.keyMap.Edit = key.NewBinding(
 		key.WithKeys("ctrl+e"),
 		key.WithHelp("ctrl+e", "edit"),
+	)
+	m.keyMap.Reasoning = key.NewBinding(
+		key.WithKeys("ctrl+r"),
+		key.WithHelp("ctrl+r", "thinking"),
 	)
 	m.keyMap.UpDown = key.NewBinding(
 		key.WithKeys("up", "down"),
@@ -202,6 +207,16 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 				ModelType:      modelItem.SelectedModelType(),
 				ReAuthenticate: isEdit,
 			}
+		case key.Matches(msg, m.keyMap.Reasoning):
+			selectedItem := m.list.SelectedItem()
+			modelItem, ok := selectedItem.(*ModelItem)
+			if !ok || modelItem == nil || !modelItem.model.CanReason {
+				break
+			}
+			if len(config.ReasoningChoicesForModel(&modelItem.model)) == 0 && !modelItem.model.CanReason {
+				break
+			}
+			return ActionOpenDialog{DialogID: ReasoningID}
 		case key.Matches(msg, m.keyMap.Tab):
 			if m.isOnboarding {
 				break
@@ -321,6 +336,12 @@ func (m *Models) ShortHelp() []key.Binding {
 	}
 	if m.isSelectedConfigured() {
 		h = append(h, m.keyMap.Edit)
+	}
+	selectedItem := m.list.SelectedItem()
+	if modelItem, ok := selectedItem.(*ModelItem); ok && modelItem.model.CanReason {
+		if len(config.ReasoningChoicesForModel(&modelItem.model)) > 0 || modelItem.model.CanReason {
+			h = append(h, m.keyMap.Reasoning)
+		}
 	}
 	h = append(h, m.keyMap.Close)
 	return h

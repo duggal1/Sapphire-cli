@@ -58,6 +58,7 @@ func (a *AgentToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 		return nil
 	}
 	if msg.ID == a.ID() {
+		a.clearCache()
 		return a.anim.Animate(msg)
 	}
 	for _, nestedTool := range a.nestedTools {

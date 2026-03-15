@@ -518,6 +518,18 @@ func IsGemini3Model(modelID string) bool {
 	return strings.HasPrefix(id, "gemini-3") || strings.HasPrefix(id, "gemini-3.")
 }
 
+// IsGemini25Model returns true for Gemini 2.5 series models (Flash/Pro).
+func IsGemini25Model(modelID string) bool {
+	id := strings.ToLower(modelID)
+	return strings.HasPrefix(id, "gemini-2.5")
+}
+
+// IsGeminiReasoningModel returns true for any Gemini model that supports
+// thinking/reasoning (2.5+, 3+, 3.1+).
+func IsGeminiReasoningModel(modelID string) bool {
+	return IsGemini3Model(modelID) || IsGemini25Model(modelID)
+}
+
 func isGeminiFlashModel(modelID string) bool {
 	return strings.Contains(strings.ToLower(modelID), "flash")
 }
@@ -548,6 +560,11 @@ func ReasoningChoicesForModel(model *catwalk.Model) []string {
 	}
 	if IsGemini3Model(model.ID) {
 		return gemini3ReasoningLevels(model.ID)
+	}
+	// Gemini 2.5 models: no granular levels, just on/off (handled via toggle)
+	// but if the model has ReasoningLevels from catalog, use those
+	if IsGemini25Model(model.ID) && len(model.ReasoningLevels) == 0 {
+		return nil // will be handled by on/off toggle instead
 	}
 	return slices.Clone(model.ReasoningLevels)
 }

@@ -179,9 +179,21 @@ func (p *MultiEditParams) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	edits, err := decodeMultiEditOperations(raw.Edits)
+
+	promotedFileEdits, promoted, err := decodePromotedTopLevelFileEdits(raw.Edits)
 	if err != nil {
 		return err
+	}
+	if len(fileEdits) == 0 && promoted {
+		fileEdits = promotedFileEdits
+	}
+
+	edits, err := decodeMultiEditOperations(raw.Edits)
+	if err != nil && !promoted {
+		return err
+	}
+	if promoted {
+		edits = nil
 	}
 
 	p.FileEdits = fileEdits
@@ -201,6 +213,26 @@ func (p *MultiEditParams) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func decodePromotedTopLevelFileEdits(raw json.RawMessage) ([]FileEdit, bool, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false, nil
+	}
+
+	fileEdits, err := decodeFileEdits(raw)
+	if err != nil {
+		return nil, false, nil
+	}
+	if len(fileEdits) == 0 {
+		return nil, false, nil
+	}
+	for _, fileEdit := range fileEdits {
+		if strings.TrimSpace(fileEdit.FilePath) != "" {
+			return fileEdits, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 const AgenticEditToolName = "agentic_edit"

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"charm.land/fantasy"
@@ -105,6 +106,168 @@ func TestPrepareToolCallNormalizesSaveMemoryAliases(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
 	require.Equal(t, "failure_mode", input["event_type"])
 	require.IsType(t, map[string]any{}, input["content"])
+}
+
+func TestPrepareToolCallDoesNotRewriteSingleAgenticViewToView(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		ViewToolName,
+		"",
+		func(ctx context.Context, params struct {
+			FilePath string `json:"file_path"`
+		}, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		ViewToolName:        viewTool,
+		AgenticViewToolName: agenticViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "view-1",
+		Name:  AgenticViewToolName,
+		Input: `{"file_path":"README.md"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticViewToolName, prepared.Name)
+}
+
+func TestPrepareToolCallDoesNotRewriteMultiPathViewToAgenticView(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		ViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		ViewToolName:        viewTool,
+		AgenticViewToolName: agenticViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "view-2",
+		Name:  ViewToolName,
+		Input: `{"file_paths":["a.go","b.go"]}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, ViewToolName, prepared.Name)
+}
+
+func TestPrepareToolCallDoesNotRewriteSingleAgenticEditToEdit(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticEditTool := fantasy.NewAgentTool(
+		AgenticEditToolName,
+		"",
+		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		EditToolName:        editTool,
+		AgenticEditToolName: agenticEditTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "edit-3",
+		Name:  AgenticEditToolName,
+		Input: `{"file_path":"README.md","old_string":"alpha","new_string":"beta"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticEditToolName, prepared.Name)
+}
+
+func TestPrepareToolCallDoesNotRewriteMultiEditToAgenticEdit(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticEditTool := fantasy.NewAgentTool(
+		AgenticEditToolName,
+		"",
+		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		EditToolName:        editTool,
+		AgenticEditToolName: agenticEditTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "edit-4",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","edits":[{"old_string":"alpha","new_string":"beta"},{"old_string":"gamma","new_string":"delta"}]}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, EditToolName, prepared.Name)
+}
+
+func TestPrepareToolCallDoesNotTruncateAgenticViewPaths(t *testing.T) {
+	t.Parallel()
+
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		AgenticViewToolName: agenticViewTool,
+	}
+
+	paths := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		paths = append(paths, fmt.Sprintf("file_%02d.go", i))
+	}
+	inputBytes, err := json.Marshal(map[string]any{"file_paths": paths})
+	require.NoError(t, err)
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "view-3",
+		Name:  AgenticViewToolName,
+		Input: string(inputBytes),
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticViewToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	gotPaths, ok := input["file_paths"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotPaths, 30)
 }
 
 func TestPrepareToolCallNormalizesFetchAndDownloadAliases(t *testing.T) {

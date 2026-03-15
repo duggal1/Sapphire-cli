@@ -36,3 +36,17 @@ func TestValidateAgenticEditInputMapAllowsCreateOperation(t *testing.T) {
 		},
 	}))
 }
+
+func TestValidateAgenticEditInputMapAllowsObjectShorthandShapes(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validateAgenticEditInputMap(map[string]any{
+		"file_edits": map[string]any{
+			"file_path": "notes.txt",
+			"edits": map[string]any{
+				"old_string": "hello",
+				"new_string": "world",
+			},
+		},
+	}))
+}

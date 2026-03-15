@@ -131,27 +131,33 @@ func validateAgenticEditInputMap(input map[string]any) error {
 		return errors.New("agentic_edit input must be a JSON object")
 	}
 
-	// Check for file_edits array structure
 	if fileEdits, ok := input["file_edits"]; ok {
-		edits, ok := fileEdits.([]any)
-		if !ok {
-			return errors.New("agentic_edit file_edits must be an array")
+		editItems, err := coerceObjectSlice(fileEdits)
+		if err != nil {
+			return errors.New("agentic_edit file_edits must be an object or array")
 		}
-		if len(edits) == 0 {
+		if len(editItems) == 0 {
 			return errors.New("at least one file edit operation is required")
 		}
-		for _, item := range edits {
-			editMap, ok := item.(map[string]any)
-			if !ok {
-				return errors.New("each file_edit must be a JSON object")
-			}
+		validItems := 0
+		for _, editMap := range editItems {
 			filePath, _ := editMap["file_path"].(string)
+			if strings.TrimSpace(filePath) == "" && !hasAgenticEditOperations(editMap) {
+				continue
+			}
+			if err := validateAgenticEditOperationsMap(editMap); err != nil {
+				if strings.TrimSpace(filePath) == "" {
+					continue
+				}
+				return fmt.Errorf("%s: %w", filePath, err)
+			}
 			if strings.TrimSpace(filePath) == "" {
 				return errors.New("file_path is required in each file_edit")
 			}
-			if err := validateAgenticEditOperationsMap(editMap); err != nil {
-				return err
-			}
+			validItems++
+		}
+		if validItems == 0 {
+			return errors.New("at least one file edit operation is required")
 		}
 		return nil
 	}
@@ -170,18 +176,15 @@ func validateAgenticEditInputMap(input map[string]any) error {
 
 func validateAgenticEditOperationsMap(editMap map[string]any) error {
 	if edits, ok := editMap["edits"]; ok {
-		editList, ok := edits.([]any)
-		if !ok {
-			return errors.New("agentic_edit edits must be an array")
+		editList, err := coerceObjectSlice(edits)
+		if err != nil {
+			return errors.New("agentic_edit edits must be an object or array")
 		}
 		if len(editList) == 0 {
 			return errors.New("at least one file edit operation is required")
 		}
 		for _, op := range editList {
-			opMap, ok := op.(map[string]any)
-			if !ok {
-				return errors.New("each edit must be a JSON object")
-			}
+			opMap := op
 			if _, hasOld := opMap["old_string"]; !hasOld {
 				if _, hasNew := opMap["new_string"]; !hasNew {
 					return errors.New("each edit must include old_string or new_string")
@@ -198,6 +201,41 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 		return nil
 	}
 	return errors.New("at least one file edit operation is required")
+}
+
+func hasAgenticEditOperations(editMap map[string]any) bool {
+	if editMap == nil {
+		return false
+	}
+	if _, ok := editMap["edits"]; ok {
+		return true
+	}
+	if _, ok := editMap["old_string"]; ok {
+		return true
+	}
+	if _, ok := editMap["new_string"]; ok {
+		return true
+	}
+	return false
+}
+
+func coerceObjectSlice(v any) ([]map[string]any, error) {
+	switch value := v.(type) {
+	case map[string]any:
+		return []map[string]any{value}, nil
+	case []any:
+		out := make([]map[string]any, 0, len(value))
+		for _, item := range value {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				return nil, errors.New("value must contain JSON objects")
+			}
+			out = append(out, obj)
+		}
+		return out, nil
+	default:
+		return nil, errors.New("value must be an object or array")
+	}
 }
 
 func coerceStringSlice(v any) []string {

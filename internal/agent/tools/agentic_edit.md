@@ -1,4 +1,4 @@
-Makes batched edits across one or more files in one operation. Built on Edit tool for efficient multiple find-and-replace operations across a file set. Prefer `single_edit` for a single replacement in one file.
+Makes batched edits across one or more files in one operation. Built on Edit tool for efficient multiple find-and-replace operations across a file set.
 
 **Note**: This tool is only available to the main agent. Sub-agents do not have multi-edit capability to prevent token explosion.
 
@@ -77,7 +77,7 @@ If some edits fail:
 - Use replace_all only when you're certain; otherwise provide unique context.
 - Match existing style exactly (spaces, tabs, blank lines).
 - Review failed edits in the response and retry with corrections.
-- Prefer smaller precise batches over large speculative ones. Use `agentic_edit` when batching improves clarity, not just to fill capacity.
+- Prefer smaller precise batches over large speculative ones. Use `agentic_edit` whenever batching improves clarity or reliability, even for one file with multiple linked edits.
 - **Verify target context**: Ensure the surrounding context exactly matches the file before calling the tool.
 - **NEVER GUESS**: If a batch edit fails, re-read the file. Guessing whitespace or context in a multi-edit operation is guaranteed to fail.
 </best_practices>

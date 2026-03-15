@@ -90,7 +90,8 @@ func TestTodosToolNormalizesInvalidStatus(t *testing.T) {
 	updated, err := sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
 	require.Len(t, updated.Todos, 1)
-	require.Equal(t, session.TodoStatusPending, updated.Todos[0].Status)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[0].Status)
+	require.Equal(t, "Inspecting", updated.Todos[0].ActiveForm)
 }
 
 func TestTodosToolCompletesImplicitInProgressTodo(t *testing.T) {
@@ -128,6 +129,43 @@ func TestTodosToolCompletesImplicitInProgressTodo(t *testing.T) {
 	updated, err := sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, session.TodoStatusCompleted, updated.Todos[0].Status)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[1].Status)
+	require.Equal(t, "Working on Run tests", updated.Todos[1].ActiveForm)
+}
+
+func TestTodosToolAutoStartsFirstPendingOnCreate(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+
+	sess, err := sessions.Create(t.Context(), "Todos Auto Start")
+	require.NoError(t, err)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
+	tool := NewTodosTool(sessions)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:   "todos-auto-start-create",
+		Name: TodosToolName,
+		Input: `{"action":"create","tasks":[
+			{"content":"Read codebase","status":"pending"},
+			{"content":"Run tests","status":"pending"}
+		]}`,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	updated, err := sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[0].Status)
+	require.Equal(t, session.TodoStatusPending, updated.Todos[1].Status)
 }
 
 func TestTodosToolStartsFirstPendingTodoWhenUnambiguous(t *testing.T) {
@@ -424,4 +462,92 @@ func TestTodosToolFuzzyMatchesTaskKeyAgainstTodoContent(t *testing.T) {
 	updated, err := sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
 	require.Equal(t, session.TodoStatusInProgress, updated.Todos[0].Status)
+}
+
+func TestTodosToolFailResolvesTodoAndStartsNext(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+
+	sess, err := sessions.Create(t.Context(), "Todos Fail")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{ID: "todo-1", Content: "Read codebase", Status: session.TodoStatusInProgress, ActiveForm: "Reading codebase"},
+		{ID: "todo-2", Content: "Run tests", Status: session.TodoStatusPending},
+	}
+	_, err = sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
+	tool := NewTodosTool(sessions)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "todos-fail",
+		Name:  TodosToolName,
+		Input: `{"action":"fail"}`,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	updated, err := sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.TodoStatusFailed, updated.Todos[0].Status)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[1].Status)
+
+	var meta TodosResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, 1, meta.Failed)
+	require.Equal(t, 1, meta.Resolved)
+	require.Equal(t, 2, meta.Total)
+}
+
+func TestTodosToolCancelResolvesTodoAndStartsNext(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+
+	sess, err := sessions.Create(t.Context(), "Todos Cancel")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{ID: "todo-1", Content: "Read codebase", Status: session.TodoStatusInProgress, ActiveForm: "Reading codebase"},
+		{ID: "todo-2", Content: "Run tests", Status: session.TodoStatusPending},
+	}
+	_, err = sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
+	tool := NewTodosTool(sessions)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "todos-cancel",
+		Name:  TodosToolName,
+		Input: `{"action":"cancel"}`,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	updated, err := sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.TodoStatusCanceled, updated.Todos[0].Status)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[1].Status)
+
+	var meta TodosResponseMetadata
+	require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+	require.Equal(t, 1, meta.Canceled)
+	require.Equal(t, 1, meta.Resolved)
+	require.Equal(t, 2, meta.Total)
 }

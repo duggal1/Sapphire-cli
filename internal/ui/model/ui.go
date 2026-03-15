@@ -105,8 +105,6 @@ type openEditorMsg struct {
 }
 
 type (
-	// cancelTimerExpiredMsg is sent when the cancel timer expires.
-	cancelTimerExpiredMsg struct{}
 	// userCommandsLoadedMsg is sent when user commands are loaded.
 	userCommandsLoadedMsg struct {
 		Commands []commands.CustomCommand
@@ -152,8 +150,7 @@ type UI struct {
 	sessionFileReads []string
 
 	lastUserMessageTime int64
-	requestStartedAt    time.Time
-	requestCompletedAt  time.Time
+	requestLifecycle    requestLifecycle
 	sendState           sendLifecycleState
 	pendingSendContent  string
 	pendingAttachments  []message.Attachment
@@ -174,15 +171,7 @@ type UI struct {
 	dialog *dialog.Overlay
 	status *Status
 
-	// isCanceling tracks whether the user has pressed escape once to cancel.
-	isCanceling bool
-
 	header *header
-
-	// sendProgressBar instructs the TUI to send progress bar updates to the
-	// terminal.
-	sendProgressBar    bool
-	progressBarEnabled bool
 
 	// caps hold different terminal capabilities that we query for.
 	caps common.Capabilities
@@ -349,8 +338,6 @@ func New(com *common.Common) *UI {
 
 	opts := com.Config().Options
 
-	// disable indeterminate progress bar
-	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
 
@@ -420,15 +407,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.sendState == sendLifecycleQueued && m.promptQueue == 0 && !m.isAgentBusy() {
 		m.sendState = sendLifecycleIdle
+		m.clearCancelConfirmation()
 	}
 	// Update terminal capabilities
 	m.caps.Update(msg)
 	switch msg := msg.(type) {
 	case tea.EnvMsg:
-		// Is this Windows Terminal?
-		if !m.sendProgressBar {
-			m.sendProgressBar = slices.Contains(msg, "WT_SESSION")
-		}
 		cmds = append(cmds, common.QueryCmd(uv.Environ(msg)))
 	case loadSessionMsg:
 		if m.forceCompactMode {
@@ -472,6 +456,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sendSubmissionResultMsg:
 		if msg.Err != nil {
 			m.sendState = sendLifecycleFailed
+			m.clearCancelConfirmation()
 			m.completeRequestTimer()
 			if m.pendingSendContent != "" || len(m.pendingAttachments) > 0 {
 				m.textarea.SetValue(m.pendingSendContent)
@@ -589,6 +574,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.isAgentBusy() && m.promptQueue == 0 {
 			m.sendState = sendLifecycleIdle
+			m.clearCancelConfirmation()
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
@@ -616,14 +602,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
-	case cancelTimerExpiredMsg:
-		m.isCanceling = false
+	case requestCancelExpiredMsg:
+		m.handleCancelExpiry(msg)
 	case tea.TerminalVersionMsg:
-		termVersion := strings.ToLower(msg.Name)
-		// Only enable progress bar for the following terminals.
-		if !m.sendProgressBar {
-			m.sendProgressBar = strings.Contains(termVersion, "ghostty")
-		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -881,8 +862,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 	if !m.isAgentBusy() {
-		m.requestStartedAt = time.Time{}
-		m.requestCompletedAt = time.Time{}
+		m.resetRequestTimer()
 	}
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
@@ -943,34 +923,15 @@ func (m *UI) setAssistantFooter(msg *message.Message) tea.Cmd {
 	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
 		m.assistantFooter.SetMessage(msg)
 		m.assistantFooter.SetLastUserMessageTime(start)
-		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+		requestStart, requestEnd := m.requestTiming()
+		m.assistantFooter.SetRequestTiming(requestStart, requestEnd)
 		return nil
 	}
 
 	m.assistantFooter = chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), start).(*chat.AssistantInfoItem)
-	m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
+	requestStart, requestEnd := m.requestTiming()
+	m.assistantFooter.SetRequestTiming(requestStart, requestEnd)
 	return m.assistantFooter.StartAnimation()
-}
-
-func (m *UI) startRequestTimer() {
-	if !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
-		return
-	}
-	m.requestStartedAt = time.Now()
-	m.requestCompletedAt = time.Time{}
-	if m.assistantFooter != nil {
-		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
-	}
-}
-
-func (m *UI) completeRequestTimer() {
-	if m.requestStartedAt.IsZero() || !m.requestCompletedAt.IsZero() {
-		return
-	}
-	m.requestCompletedAt = time.Now()
-	if m.assistantFooter != nil {
-		m.assistantFooter.SetRequestTiming(m.requestStartedAt, m.requestCompletedAt)
-	}
 }
 
 func (m *UI) refreshModelStateDialogs() {
@@ -1078,9 +1039,10 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
-		if msg.IsFinished() && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+		requestStart, requestEnd := m.requestTiming()
+		if msg.IsFinished() && !requestStart.IsZero() && requestEnd.IsZero() {
 			m.completeRequestTimer()
-		} else if m.requestStartedAt.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
+		} else if requestStart.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
 			m.startRequestTimer()
 		}
 		hadFooter := m.assistantFooter != nil
@@ -1148,9 +1110,10 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 	if msg.Role == message.Assistant {
-		if msg.IsFinished() && !m.requestStartedAt.IsZero() && m.requestCompletedAt.IsZero() {
+		requestStart, requestEnd := m.requestTiming()
+		if msg.IsFinished() && !requestStart.IsZero() && requestEnd.IsZero() {
 			m.completeRequestTimer()
-		} else if m.requestStartedAt.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
+		} else if requestStart.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
 			m.startRequestTimer()
 		}
 	}
@@ -2318,11 +2281,6 @@ func (m *UI) View() tea.View {
 	content = strings.Join(contentLines, "\n")
 
 	v.Content = content
-	if m.progressBarEnabled && m.sendProgressBar && m.isAgentBusy() {
-		// HACK: use a random percentage to prevent ghostty from hiding it
-		// after a timeout.
-		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, rand.Intn(100))
-	}
 
 	return v
 }
@@ -2344,7 +2302,7 @@ func (m *UI) ShortHelp() []key.Binding {
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
-			if m.isCanceling {
+			if m.requestLifecycle.cancelArmed {
 				cancelBinding.SetHelp("esc", "press again to cancel")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
@@ -2431,7 +2389,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
-			if m.isCanceling {
+			if m.requestLifecycle.cancelArmed {
 				cancelBinding.SetHelp("esc", "press again to cancel")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
@@ -3177,50 +3135,6 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return sendSubmissionResultMsg{Result: result}
 	})
 	return tea.Batch(cmds...)
-}
-
-const cancelTimerDuration = 2 * time.Second
-
-// cancelTimerCmd creates a command that expires the cancel timer.
-func cancelTimerCmd() tea.Cmd {
-	return tea.Tick(cancelTimerDuration, func(time.Time) tea.Msg {
-		return cancelTimerExpiredMsg{}
-	})
-}
-
-// cancelAgent handles the cancel key press. The first press sets isCanceling to true
-// and starts a timer. The second press (before the timer expires) actually
-// cancels the agent.
-func (m *UI) cancelAgent() tea.Cmd {
-	if !m.hasSession() {
-		return nil
-	}
-
-	coordinator := m.com.App.AgentCoordinator
-	if coordinator == nil {
-		return nil
-	}
-
-	if m.isCanceling {
-		// Second escape press - actually cancel the agent.
-		m.isCanceling = false
-		coordinator.Cancel(m.session.ID)
-		m.completeRequestTimer()
-		// Stop the spinning todo indicator.
-		m.todoIsSpinning = false
-		m.renderPills()
-		return nil
-	}
-
-	// Check if there are queued prompts - if so, clear the queue.
-	if coordinator.QueuedPrompts(m.session.ID) > 0 {
-		coordinator.ClearQueue(m.session.ID)
-		return nil
-	}
-
-	// First escape press - set canceling state and start timer.
-	m.isCanceling = true
-	return cancelTimerCmd()
 }
 
 // openDialog opens a dialog by its ID.

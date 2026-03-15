@@ -334,6 +334,8 @@ type Styles struct {
 		TodoCompletedIcon  lipgloss.Style // Completed todo icon
 		TodoInProgressIcon lipgloss.Style // In-progress todo icon
 		TodoPendingIcon    lipgloss.Style // Pending todo icon
+		TodoFailedIcon     lipgloss.Style // Failed todo icon
+		TodoCanceledIcon   lipgloss.Style // Canceled todo icon
 
 		// MCP tools
 		MCPName     lipgloss.Style // The mcp name
@@ -1326,6 +1328,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.TodoCompletedIcon = base.Foreground(greenLight)
 	s.Tool.TodoInProgressIcon = base.Foreground(greenLight)
 	s.Tool.TodoPendingIcon = base.Foreground(fgMuted)
+	s.Tool.TodoFailedIcon = base.Foreground(error)
+	s.Tool.TodoCanceledIcon = base.Foreground(secondary)
 
 	// MCP styles
 	s.Tool.MCPName = base.Foreground(primary)

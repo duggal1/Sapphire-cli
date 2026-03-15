@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -23,14 +24,16 @@ const (
 	todosActionUpdate   = "update"
 	todosActionStart    = "start"
 	todosActionComplete = "complete"
+	todosActionFail     = "fail"
+	todosActionCancel   = "cancel"
 	todosActionList     = "list"
 	todosActionReset    = "reset"
 )
 
 type TodosParams struct {
-	Action      string     `json:"action,omitempty" description:"create, update, start, complete, list, reset"`
-	TaskID      string     `json:"task_id,omitempty" description:"Target task id for start/update/complete"`
-	TaskKey     string     `json:"task_key,omitempty" description:"Stable target task key for start/update/complete"`
+	Action      string     `json:"action,omitempty" description:"create, update, start, complete, fail, cancel, list, reset"`
+	TaskID      string     `json:"task_id,omitempty" description:"Target task id for start/update/complete/fail/cancel"`
+	TaskKey     string     `json:"task_key,omitempty" description:"Stable target task key for start/update/complete/fail/cancel"`
 	TaskContent string     `json:"task_content,omitempty" description:"Target task content when id is unavailable"`
 	Task        *TodoItem  `json:"task,omitempty" description:"Single task payload"`
 	Tasks       []TodoItem `json:"tasks,omitempty" description:"Task list for create/reset"`
@@ -41,7 +44,7 @@ type TodoItem struct {
 	ID         string `json:"id,omitempty" description:"Task id (auto-generated if omitted)"`
 	Key        string `json:"key,omitempty" description:"Stable task key shared across planner/runtime updates"`
 	Content    string `json:"content" description:"What needs to be done (imperative form)"`
-	Status     string `json:"status,omitempty" description:"Task status: pending, in_progress, or completed"`
+	Status     string `json:"status,omitempty" description:"Task status: pending, in_progress, completed, failed, or cancelled"`
 	ActiveForm string `json:"active_form,omitempty" description:"Present continuous form (e.g., 'Running tests')"`
 }
 
@@ -56,6 +59,9 @@ type TodosResponseMetadata struct {
 	Completed     int            `json:"completed"`
 	InProgress    int            `json:"in_progress"`
 	Pending       int            `json:"pending"`
+	Failed        int            `json:"failed"`
+	Canceled      int            `json:"cancelled"`
+	Resolved      int            `json:"resolved"`
 	Total         int            `json:"total"`
 }
 
@@ -89,7 +95,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 
 			action := typed.Action
 			oldTodos := sanitizeSessionTodos(currentSession.Todos)
-			hadInvalidTodos := len(oldTodos) != len(currentSession.Todos)
+			hadInvalidTodos := !reflect.DeepEqual(oldTodos, currentSession.Todos)
 
 			var (
 				newTodos      []session.Todo
@@ -111,7 +117,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 					newTodos = append(newTodos, toSessionTodo(item))
 					createdIDs = append(createdIDs, item.ID)
 				}
-				enforceSingleInProgress(&newTodos)
+				stabilizeTodos(&newTodos, true)
 				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionReset:
 				items := sanitizeTodoItems(typed.Tasks, typed.Task)
@@ -123,7 +129,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				for _, item := range items {
 					newTodos = append(newTodos, toSessionTodo(item))
 				}
-				enforceSingleInProgress(&newTodos)
+				stabilizeTodos(&newTodos, true)
 				createdIDs = collectIDs(items)
 				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionUpdate:
@@ -137,6 +143,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				if started != "" {
 					justStarted = started
 				}
+				stabilizeTodos(&newTodos, true)
 				justCompleted, _ = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionStart:
 				newTodos = append([]session.Todo{}, oldTodos...)
@@ -157,11 +164,29 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				completeTodo(&newTodos, idx)
 				updatedIDs = append(updatedIDs, newTodos[idx].ID)
 				justCompleted, _ = detectStatusTransitions(oldTodos, newTodos)
+			case todosActionFail:
+				newTodos = append([]session.Todo{}, oldTodos...)
+				idx, err := resolveTodoIndex(newTodos, todosActionFail, typed.TaskID, typed.TaskKey, typed.TaskContent, typed.Task)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				failTodo(&newTodos, idx)
+				updatedIDs = append(updatedIDs, newTodos[idx].ID)
+				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
+			case todosActionCancel:
+				newTodos = append([]session.Todo{}, oldTodos...)
+				idx, err := resolveTodoIndex(newTodos, todosActionCancel, typed.TaskID, typed.TaskKey, typed.TaskContent, typed.Task)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
+				cancelTodo(&newTodos, idx)
+				updatedIDs = append(updatedIDs, newTodos[idx].ID)
+				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionList:
 				newTodos = oldTodos
 				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
 			default:
-				return fantasy.NewTextErrorResponse("invalid action: use create, update, start, complete, list, or reset"), nil
+				return fantasy.NewTextErrorResponse("invalid action: use create, update, start, complete, fail, cancel, list, or reset"), nil
 			}
 
 			newTodos = sanitizeSessionTodos(newTodos)
@@ -176,7 +201,8 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				}
 			}
 
-			pending, inProgress, completed := countStatuses(newTodos)
+			pending, inProgress, completed, failed, canceled := countStatuses(newTodos)
+			resolved := completed + failed + canceled
 			meta := TodosResponseMetadata{
 				Action:        action,
 				IsNew:         len(oldTodos) == 0 && len(newTodos) > 0,
@@ -188,13 +214,16 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				Completed:     completed,
 				InProgress:    inProgress,
 				Pending:       pending,
+				Failed:        failed,
+				Canceled:      canceled,
+				Resolved:      resolved,
 				Total:         len(newTodos),
 			}
 
 			payload, _ := json.Marshal(map[string]any{
 				"action":         action,
 				"todos":          newTodos,
-				"counts":         map[string]int{"pending": pending, "in_progress": inProgress, "completed": completed, "total": len(newTodos)},
+				"counts":         map[string]int{"pending": pending, "in_progress": inProgress, "completed": completed, "failed": failed, "cancelled": canceled, "resolved": resolved, "total": len(newTodos)},
 				"just_started":   justStarted,
 				"just_completed": justCompleted,
 			})
@@ -283,6 +312,10 @@ func normalizeStatus(status string) string {
 		return string(session.TodoStatusInProgress)
 	case string(session.TodoStatusCompleted):
 		return string(session.TodoStatusCompleted)
+	case string(session.TodoStatusFailed):
+		return string(session.TodoStatusFailed)
+	case "canceled", string(session.TodoStatusCanceled):
+		return string(session.TodoStatusCanceled)
 	default:
 		return ""
 	}
@@ -443,6 +476,14 @@ func resolveTodoIndex(todos []session.Todo, action, taskID, taskKey, taskContent
 			return incomplete[0], nil
 		}
 		return -1, fmt.Errorf("task_id, task_key, or task content is required to complete a specific todo")
+	case todosActionFail, todosActionCancel:
+		if len(inProgress) == 1 {
+			return inProgress[0], nil
+		}
+		if len(incomplete) == 1 {
+			return incomplete[0], nil
+		}
+		return -1, fmt.Errorf("task_id, task_key, or task content is required to update a specific todo")
 	case todosActionStart:
 		if len(inProgress) == 1 && len(pending) == 0 {
 			return inProgress[0], nil
@@ -545,6 +586,8 @@ func applyUpdate(todos *[]session.Todo, idx int, task *TodoItem) (string, string
 				(*todos)[i].ActiveForm = ""
 			}
 		}
+	} else if session.IsTodoTerminalStatus(updated.Status) {
+		updated.ActiveForm = ""
 	}
 
 	(*todos)[idx] = updated
@@ -570,6 +613,19 @@ func startTodo(todos *[]session.Todo, idx int) {
 func completeTodo(todos *[]session.Todo, idx int) {
 	(*todos)[idx].Status = session.TodoStatusCompleted
 	(*todos)[idx].ActiveForm = ""
+	startFirstPendingTodo(todos)
+}
+
+func failTodo(todos *[]session.Todo, idx int) {
+	(*todos)[idx].Status = session.TodoStatusFailed
+	(*todos)[idx].ActiveForm = ""
+	startFirstPendingTodo(todos)
+}
+
+func cancelTodo(todos *[]session.Todo, idx int) {
+	(*todos)[idx].Status = session.TodoStatusCanceled
+	(*todos)[idx].ActiveForm = ""
+	startFirstPendingTodo(todos)
 }
 
 func enforceSingleInProgress(todos *[]session.Todo) {
@@ -587,6 +643,28 @@ func enforceSingleInProgress(todos *[]session.Todo) {
 		}
 		(*todos)[i].Status = session.TodoStatusPending
 		(*todos)[i].ActiveForm = ""
+	}
+}
+
+func stabilizeTodos(todos *[]session.Todo, ensureActive bool) {
+	enforceSingleInProgress(todos)
+	if ensureActive {
+		startFirstPendingTodo(todos)
+	}
+}
+
+func startFirstPendingTodo(todos *[]session.Todo) {
+	for _, todo := range *todos {
+		if todo.Status == session.TodoStatusInProgress {
+			return
+		}
+	}
+	for i := range *todos {
+		if (*todos)[i].Status != session.TodoStatusPending {
+			continue
+		}
+		startTodo(todos, i)
+		return
 	}
 }
 
@@ -613,7 +691,7 @@ func detectStatusTransitions(oldTodos, newTodos []session.Todo) ([]string, strin
 	return justCompleted, justStarted
 }
 
-func countStatuses(todos []session.Todo) (pending, inProgress, completed int) {
+func countStatuses(todos []session.Todo) (pending, inProgress, completed, failed, canceled int) {
 	for _, todo := range todos {
 		switch todo.Status {
 		case session.TodoStatusPending:
@@ -622,9 +700,13 @@ func countStatuses(todos []session.Todo) (pending, inProgress, completed int) {
 			inProgress++
 		case session.TodoStatusCompleted:
 			completed++
+		case session.TodoStatusFailed:
+			failed++
+		case session.TodoStatusCanceled:
+			canceled++
 		}
 	}
-	return pending, inProgress, completed
+	return pending, inProgress, completed, failed, canceled
 }
 
 func sanitizeSessionTodos(todos []session.Todo) []session.Todo {
@@ -639,7 +721,7 @@ func sanitizeSessionTodos(todos []session.Todo) []session.Todo {
 			todo.Content = todo.ActiveForm
 		}
 		switch todo.Status {
-		case session.TodoStatusPending, session.TodoStatusInProgress, session.TodoStatusCompleted:
+		case session.TodoStatusPending, session.TodoStatusInProgress, session.TodoStatusCompleted, session.TodoStatusFailed, session.TodoStatusCanceled:
 		default:
 			todo.Status = session.TodoStatusPending
 		}
@@ -650,9 +732,12 @@ func sanitizeSessionTodos(todos []session.Todo) []session.Todo {
 		if todo.Status == session.TodoStatusInProgress && todo.ActiveForm == "" {
 			todo.ActiveForm = "Working on " + todo.Content
 		}
+		if session.IsTodoTerminalStatus(todo.Status) {
+			todo.ActiveForm = ""
+		}
 		out = append(out, todo)
 	}
-	enforceSingleInProgress(&out)
+	stabilizeTodos(&out, len(out) > 0)
 	return out
 }
 

@@ -110,6 +110,44 @@ type SessionAgentCall struct {
 	PresencePenalty  *float64
 }
 
+func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message) SessionAgentCall {
+	continuation := call
+	originalPrompt := strings.TrimSpace(call.Prompt)
+	if partialAssistant == nil {
+		continuation.Prompt = fmt.Sprintf(
+			"The previous turn was compacted because the session got too long. Continue the original request without repeating prior work.\n\nOriginal user request:\n%s",
+			originalPrompt,
+		)
+		return continuation
+	}
+
+	partialText := strings.TrimSpace(partialAssistant.Content().Text)
+	if len(partialText) > 1200 {
+		partialText = partialText[len(partialText)-1200:]
+	}
+
+	switch {
+	case len(partialAssistant.ToolCalls()) > 0:
+		continuation.Prompt = fmt.Sprintf(
+			"The previous turn was compacted while tools were in flight. Resume from the current session state and continue the original request without repeating completed work.\n\nOriginal user request:\n%s",
+			originalPrompt,
+		)
+	case partialText != "":
+		continuation.Prompt = fmt.Sprintf(
+			"The previous response was compacted before it finished. Continue from where it stopped without repeating prior text.\n\nOriginal user request:\n%s\n\nAlready sent partial response tail:\n%s",
+			originalPrompt,
+			partialText,
+		)
+	default:
+		continuation.Prompt = fmt.Sprintf(
+			"The previous turn was compacted before completion. Continue the original request without restarting it.\n\nOriginal user request:\n%s",
+			originalPrompt,
+		)
+	}
+
+	return continuation
+}
+
 type SessionAgent interface {
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
 	SetModels(large Model, small Model)
@@ -335,6 +373,68 @@ func (a *sessionAgent) saveSessionWithTimeout(ctx context.Context, sess session.
 		return nil
 	})
 	return out, err
+}
+
+type todoRunOutcome uint8
+
+const (
+	todoRunSucceeded todoRunOutcome = iota
+	todoRunFailed
+	todoRunCanceled
+)
+
+func finalizeTodosForOutcome(todos []session.Todo, outcome todoRunOutcome) ([]session.Todo, bool) {
+	if !session.HasIncompleteTodos(todos) {
+		return todos, false
+	}
+
+	updated := make([]session.Todo, len(todos))
+	copy(updated, todos)
+	changed := false
+
+	for i := range updated {
+		if !session.IsRenderableTodo(updated[i]) || !session.IsTodoIncompleteStatus(updated[i].Status) {
+			continue
+		}
+
+		switch outcome {
+		case todoRunSucceeded:
+			if updated[i].Status == session.TodoStatusInProgress {
+				updated[i].Status = session.TodoStatusCompleted
+			} else {
+				updated[i].Status = session.TodoStatusCanceled
+			}
+		case todoRunCanceled:
+			updated[i].Status = session.TodoStatusCanceled
+		case todoRunFailed:
+			if updated[i].Status == session.TodoStatusInProgress {
+				updated[i].Status = session.TodoStatusFailed
+			} else {
+				updated[i].Status = session.TodoStatusCanceled
+			}
+		}
+
+		updated[i].ActiveForm = ""
+		changed = true
+	}
+
+	return updated, changed
+}
+
+func (a *sessionAgent) finalizeSessionTodos(ctx context.Context, sessionID string, outcome todoRunOutcome) error {
+	sess, err := a.getSessionWithTimeout(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	updatedTodos, changed := finalizeTodosForOutcome(sess.Todos, outcome)
+	if !changed {
+		return nil
+	}
+
+	sess.Todos = updatedTodos
+	_, err = a.saveSessionWithTimeout(ctx, sess)
+	return err
 }
 
 func isGeminiCodeExecutionModel(model Model) bool {
@@ -1093,6 +1193,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if updateErr != nil {
 			return nil, updateErr
 		}
+		outcome := todoRunFailed
+		if isCancelErr || isPermissionErr {
+			outcome = todoRunCanceled
+		}
+		if todoErr := a.finalizeSessionTodos(ctx, call.SessionID, outcome); todoErr != nil {
+			slog.Warn("Failed to finalize todos after request error", "session_id", call.SessionID, "error", todoErr)
+		}
 		a.activeRequests.Del(call.SessionID)
 		cancel()
 		queuedMessages, ok := a.messageQueue.Get(call.SessionID)
@@ -1105,6 +1212,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 
 	if shouldSummarize {
+		if currentAssistant != nil {
+			currentAssistant.FinishThinking()
+			currentAssistant.AddFinish(message.FinishReasonMaxTokens, "Context compacted", "Continuing after session compaction.")
+			if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
+				return nil, updateErr
+			}
+		}
 		a.activeRequests.Del(call.SessionID)
 		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
@@ -1115,9 +1229,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if !ok {
 			existing = []SessionAgentCall{}
 		}
-		if len(currentAssistant.ToolCalls()) > 0 {
-			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
-		}
+		call = buildCompactionContinuationCall(call, currentAssistant)
 		existing = append(existing, call)
 		a.messageQueue.Set(call.SessionID, existing)
 	}
@@ -1128,6 +1240,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
+		if todoErr := a.finalizeSessionTodos(ctx, call.SessionID, todoRunSucceeded); todoErr != nil {
+			slog.Warn("Failed to finalize todos after successful request", "session_id", call.SessionID, "error", todoErr)
+		}
 		return result, err
 	}
 	// There are queued messages restart the loop.

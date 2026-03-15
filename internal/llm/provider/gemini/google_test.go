@@ -7,46 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestToGooglePromptUsesToolCallThoughtSignatureMetadata(t *testing.T) {
+func TestToGooglePromptUsesReasoningThoughtSignatureForFirstFunctionCall(t *testing.T) {
 	t.Parallel()
 
 	_, content, warnings := toGooglePrompt(fantasy.Prompt{
 		{
 			Role: fantasy.MessageRoleAssistant,
 			Content: []fantasy.MessagePart{
-				fantasy.TextPart{Text: "preface"},
-				fantasy.ToolCallPart{
-					ToolCallID: "call-1",
-					ToolName:   "list_available_mcps",
-					Input:      `{"query":"stripe"}`,
-					ProviderOptions: fantasy.ProviderOptions{
-						Name: &ReasoningMetadata{
-							Signature: "sig-123",
-							ToolID:    "call-1",
-						},
-					},
-				},
-			},
-		},
-	})
-
-	require.Empty(t, warnings)
-	require.Len(t, content, 1)
-	require.Len(t, content[0].Parts, 2)
-	require.Equal(t, []byte("sig-123"), content[0].Parts[1].ThoughtSignature)
-}
-
-func TestToGooglePromptDoesNotEmitEmptyThoughtSignatureForParallelFollowupCall(t *testing.T) {
-	t.Parallel()
-
-	_, content, warnings := toGooglePrompt(fantasy.Prompt{
-		{
-			Role: fantasy.MessageRoleAssistant,
-			Content: []fantasy.MessagePart{
-				fantasy.ToolCallPart{
-					ToolCallID: "call-1",
-					ToolName:   "list_available_mcps",
-					Input:      `{"query":"supabase"}`,
+				fantasy.ReasoningPart{
+					Text: "thinking",
 					ProviderOptions: fantasy.ProviderOptions{
 						Name: &ReasoningMetadata{
 							Signature: "sig-123",
@@ -55,9 +24,9 @@ func TestToGooglePromptDoesNotEmitEmptyThoughtSignatureForParallelFollowupCall(t
 					},
 				},
 				fantasy.ToolCallPart{
-					ToolCallID: "call-2",
-					ToolName:   "list_available_mcps",
-					Input:      `{"query":"stripe"}`,
+					ToolCallID: "call-1",
+					ToolName:   "view",
+					Input:      `{"file_path":"a.go"}`,
 				},
 			},
 		},
@@ -65,12 +34,11 @@ func TestToGooglePromptDoesNotEmitEmptyThoughtSignatureForParallelFollowupCall(t
 
 	require.Empty(t, warnings)
 	require.Len(t, content, 1)
-	require.Len(t, content[0].Parts, 2)
+	require.Len(t, content[0].Parts, 1)
 	require.Equal(t, []byte("sig-123"), content[0].Parts[0].ThoughtSignature)
-	require.Nil(t, content[0].Parts[1].ThoughtSignature)
 }
 
-func TestToGooglePromptInjectsFallbackOnlyForFirstFunctionCallWhenMissing(t *testing.T) {
+func TestToGooglePromptDoesNotInventFallbackThoughtSignature(t *testing.T) {
 	t.Parallel()
 
 	_, content, warnings := toGooglePrompt(fantasy.Prompt{
@@ -79,13 +47,8 @@ func TestToGooglePromptInjectsFallbackOnlyForFirstFunctionCallWhenMissing(t *tes
 			Content: []fantasy.MessagePart{
 				fantasy.ToolCallPart{
 					ToolCallID: "call-1",
-					ToolName:   "list_available_mcps",
-					Input:      `{"query":"stripe"}`,
-				},
-				fantasy.ToolCallPart{
-					ToolCallID: "call-2",
-					ToolName:   "list_available_mcps",
-					Input:      `{"query":"supabase"}`,
+					ToolName:   "view",
+					Input:      `{"file_path":"a.go"}`,
 				},
 			},
 		},
@@ -93,7 +56,34 @@ func TestToGooglePromptInjectsFallbackOnlyForFirstFunctionCallWhenMissing(t *tes
 
 	require.Empty(t, warnings)
 	require.Len(t, content, 1)
-	require.Len(t, content[0].Parts, 2)
-	require.Equal(t, []byte(MissingThoughtSignatureFallback), content[0].Parts[0].ThoughtSignature)
-	require.Nil(t, content[0].Parts[1].ThoughtSignature)
+	require.Len(t, content[0].Parts, 1)
+	require.Nil(t, content[0].Parts[0].ThoughtSignature)
+}
+
+func TestToGooglePromptAcceptsLegacyToolCallThoughtSignatureMetadata(t *testing.T) {
+	t.Parallel()
+
+	_, content, warnings := toGooglePrompt(fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: "call-1",
+					ToolName:   "view",
+					Input:      `{"file_path":"a.go"}`,
+					ProviderOptions: fantasy.ProviderOptions{
+						Name: &ReasoningMetadata{
+							Signature: "sig-legacy",
+							ToolID:    "call-1",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	require.Empty(t, warnings)
+	require.Len(t, content, 1)
+	require.Len(t, content[0].Parts, 1)
+	require.Equal(t, []byte("sig-legacy"), content[0].Parts[0].ThoughtSignature)
 }

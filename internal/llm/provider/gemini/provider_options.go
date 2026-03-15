@@ -9,9 +9,8 @@ import (
 
 // Global type identifiers for Google-specific provider data.
 const (
-	TypeProviderOptions             = Name + ".options"
-	TypeReasoningMetadata           = Name + ".reasoning_metadata"
-	MissingThoughtSignatureFallback = "skip_thought_signature_validator"
+	TypeProviderOptions   = Name + ".options"
+	TypeReasoningMetadata = Name + ".reasoning_metadata"
 )
 
 // Register Google provider-specific types with the global registry.

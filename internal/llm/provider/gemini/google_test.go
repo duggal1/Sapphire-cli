@@ -69,3 +69,31 @@ func TestToGooglePromptDoesNotEmitEmptyThoughtSignatureForParallelFollowupCall(t
 	require.Equal(t, []byte("sig-123"), content[0].Parts[0].ThoughtSignature)
 	require.Nil(t, content[0].Parts[1].ThoughtSignature)
 }
+
+func TestToGooglePromptInjectsFallbackOnlyForFirstFunctionCallWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	_, content, warnings := toGooglePrompt(fantasy.Prompt{
+		{
+			Role: fantasy.MessageRoleAssistant,
+			Content: []fantasy.MessagePart{
+				fantasy.ToolCallPart{
+					ToolCallID: "call-1",
+					ToolName:   "list_available_mcps",
+					Input:      `{"query":"stripe"}`,
+				},
+				fantasy.ToolCallPart{
+					ToolCallID: "call-2",
+					ToolName:   "list_available_mcps",
+					Input:      `{"query":"supabase"}`,
+				},
+			},
+		},
+	})
+
+	require.Empty(t, warnings)
+	require.Len(t, content, 1)
+	require.Len(t, content[0].Parts, 2)
+	require.Equal(t, []byte(MissingThoughtSignatureFallback), content[0].Parts[0].ThoughtSignature)
+	require.Nil(t, content[0].Parts[1].ThoughtSignature)
+}

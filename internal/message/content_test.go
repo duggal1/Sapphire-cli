@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
@@ -71,7 +72,92 @@ func TestAppendThoughtSignatureWithoutReasoningBlockPreservesToolID(t *testing.T
 	require.Equal(t, "call-1", googleMetadata.ToolID)
 }
 
-func TestToAIMessageAssistantInjectsGeminiFallbackThoughtSignatureForFirstToolCall(t *testing.T) {
+func TestAppendContentOnlyExtendsLatestTextBlock(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			TextContent{Text: "first"},
+			ToolCall{ID: "call-1", Name: "view", Input: `{"file_path":"a.go"}`},
+			TextContent{Text: "second"},
+		},
+	}
+
+	msg.AppendContent(" + delta")
+
+	aiMessages := msg.ToAIMessage()
+	require.Len(t, aiMessages, 1)
+	require.Len(t, aiMessages[0].Content, 3)
+
+	firstText, ok := fantasy.AsMessagePart[fantasy.TextPart](aiMessages[0].Content[0])
+	require.True(t, ok)
+	require.Equal(t, "first", firstText.Text)
+
+	toolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[1])
+	require.True(t, ok)
+	require.Equal(t, "call-1", toolCall.ToolCallID)
+
+	secondText, ok := fantasy.AsMessagePart[fantasy.TextPart](aiMessages[0].Content[2])
+	require.True(t, ok)
+	require.Equal(t, "second + delta", secondText.Text)
+}
+
+func TestAppendReasoningContentPreservesLatestReasoningMetadata(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{
+				Thinking:         "first",
+				ThoughtSignature: "sig-first",
+				ToolID:           "call-1",
+				FinishedAt:       time.Now().Unix(),
+			},
+			ToolCall{ID: "call-1", Name: "view", Input: `{"file_path":"a.go"}`},
+			ReasoningContent{
+				Thinking:         "second",
+				ThoughtSignature: "sig-second",
+				ToolID:           "call-2",
+				Signature:        "anthropic-sig",
+			},
+		},
+	}
+
+	msg.AppendReasoningContent(" + delta")
+
+	lastReasoning := msg.Parts[len(msg.Parts)-1].(ReasoningContent)
+	require.Equal(t, "second + delta", lastReasoning.Thinking)
+	require.Equal(t, "sig-second", lastReasoning.ThoughtSignature)
+	require.Equal(t, "call-2", lastReasoning.ToolID)
+	require.Equal(t, "anthropic-sig", lastReasoning.Signature)
+}
+
+func TestAppendThoughtSignatureTargetsLatestReasoningBlock(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ReasoningContent{Thinking: "first", ThoughtSignature: "sig-first", ToolID: "call-1"},
+			TextContent{Text: "separator"},
+			ReasoningContent{Thinking: "second"},
+		},
+	}
+
+	msg.AppendThoughtSignature("sig-second", "call-2")
+
+	firstReasoning := msg.Parts[0].(ReasoningContent)
+	require.Equal(t, "sig-first", firstReasoning.ThoughtSignature)
+	require.Equal(t, "call-1", firstReasoning.ToolID)
+
+	lastReasoning := msg.Parts[2].(ReasoningContent)
+	require.Equal(t, "sig-second", lastReasoning.ThoughtSignature)
+	require.Equal(t, "call-2", lastReasoning.ToolID)
+}
+
+func TestToAIMessageAssistantDoesNotInjectGeminiFallbackThoughtSignature(t *testing.T) {
 	t.Parallel()
 
 	msg := &Message{
@@ -90,16 +176,7 @@ func TestToAIMessageAssistantInjectsGeminiFallbackThoughtSignatureForFirstToolCa
 
 	firstToolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[0])
 	require.True(t, ok)
-	firstMetadata, ok := firstToolCall.ProviderOptions[gemini.Name]
-	require.True(t, ok)
-	firstGoogleMetadata, ok := firstMetadata.(*gemini.ReasoningMetadata)
-	require.True(t, ok)
-	require.Equal(t, geminiMissingThoughtSignatureFallback, firstGoogleMetadata.Signature)
-	require.Equal(t, "call-1", firstGoogleMetadata.ToolID)
-
-	secondToolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[1])
-	require.True(t, ok)
-	_, ok = secondToolCall.ProviderOptions[gemini.Name]
+	_, ok = firstToolCall.ProviderOptions[gemini.Name]
 	require.False(t, ok)
 }
 

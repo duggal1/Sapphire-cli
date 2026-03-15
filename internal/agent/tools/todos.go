@@ -30,6 +30,7 @@ const (
 type TodosParams struct {
 	Action      string     `json:"action,omitempty" description:"create, update, start, complete, list, reset"`
 	TaskID      string     `json:"task_id,omitempty" description:"Target task id for start/update/complete"`
+	TaskKey     string     `json:"task_key,omitempty" description:"Stable target task key for start/update/complete"`
 	TaskContent string     `json:"task_content,omitempty" description:"Target task content when id is unavailable"`
 	Task        *TodoItem  `json:"task,omitempty" description:"Single task payload"`
 	Tasks       []TodoItem `json:"tasks,omitempty" description:"Task list for create/reset"`
@@ -38,6 +39,7 @@ type TodosParams struct {
 
 type TodoItem struct {
 	ID         string `json:"id,omitempty" description:"Task id (auto-generated if omitted)"`
+	Key        string `json:"key,omitempty" description:"Stable task key shared across planner/runtime updates"`
 	Content    string `json:"content" description:"What needs to be done (imperative form)"`
 	Status     string `json:"status,omitempty" description:"Task status: pending, in_progress, or completed"`
 	ActiveForm string `json:"active_form,omitempty" description:"Present continuous form (e.g., 'Running tests')"`
@@ -125,7 +127,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				justCompleted, justStarted = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionUpdate:
 				newTodos = append([]session.Todo{}, oldTodos...)
-				idx, err := resolveTodoIndex(newTodos, todosActionUpdate, typed.TaskID, typed.TaskContent, typed.Task)
+				idx, err := resolveTodoIndex(newTodos, todosActionUpdate, typed.TaskID, typed.TaskKey, typed.TaskContent, typed.Task)
 				if err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
@@ -137,7 +139,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				justCompleted, _ = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionStart:
 				newTodos = append([]session.Todo{}, oldTodos...)
-				idx, err := resolveTodoIndex(newTodos, todosActionStart, typed.TaskID, typed.TaskContent, typed.Task)
+				idx, err := resolveTodoIndex(newTodos, todosActionStart, typed.TaskID, typed.TaskKey, typed.TaskContent, typed.Task)
 				if err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
@@ -147,7 +149,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				justCompleted, _ = detectStatusTransitions(oldTodos, newTodos)
 			case todosActionComplete:
 				newTodos = append([]session.Todo{}, oldTodos...)
-				idx, err := resolveTodoIndex(newTodos, todosActionComplete, typed.TaskID, typed.TaskContent, typed.Task)
+				idx, err := resolveTodoIndex(newTodos, todosActionComplete, typed.TaskID, typed.TaskKey, typed.TaskContent, typed.Task)
 				if err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
@@ -210,6 +212,9 @@ func normalizeTodosParams(params *TodosParams) {
 		if params.Task.ID == "" && strings.TrimSpace(params.TaskID) != "" {
 			params.Task.ID = strings.TrimSpace(params.TaskID)
 		}
+		if params.Task.Key == "" && strings.TrimSpace(params.TaskKey) != "" {
+			params.Task.Key = strings.TrimSpace(params.TaskKey)
+		}
 		if params.Task.Content == "" && strings.TrimSpace(params.TaskContent) != "" {
 			params.Task.Content = strings.TrimSpace(params.TaskContent)
 		}
@@ -218,7 +223,7 @@ func normalizeTodosParams(params *TodosParams) {
 		switch {
 		case len(params.Tasks) > 0:
 			params.Action = todosActionCreate
-		case params.Task != nil || strings.TrimSpace(params.TaskID) != "" || strings.TrimSpace(params.TaskContent) != "":
+		case params.Task != nil || strings.TrimSpace(params.TaskID) != "" || strings.TrimSpace(params.TaskKey) != "" || strings.TrimSpace(params.TaskContent) != "":
 			params.Action = todosActionUpdate
 		default:
 			params.Action = todosActionList
@@ -258,6 +263,7 @@ func sanitizeTodoItems(items []TodoItem, single *TodoItem) []TodoItem {
 		}
 		out = append(out, TodoItem{
 			ID:         strings.TrimSpace(item.ID),
+			Key:        normalizeTodoKey(item.Key, content),
 			Content:    content,
 			Status:     status,
 			ActiveForm: activeForm,
@@ -284,6 +290,9 @@ func ensureTodoIDs(items []TodoItem) []TodoItem {
 		if strings.TrimSpace(items[i].ID) == "" {
 			items[i].ID = uuid.NewString()
 		}
+		if strings.TrimSpace(items[i].Key) == "" {
+			items[i].Key = normalizeTodoKey("", items[i].Content)
+		}
 	}
 	return items
 }
@@ -301,14 +310,16 @@ func collectIDs(items []TodoItem) []string {
 func toSessionTodo(item TodoItem) session.Todo {
 	return session.Todo{
 		ID:         item.ID,
+		Key:        item.Key,
 		Content:    item.Content,
 		Status:     session.TodoStatus(item.Status),
 		ActiveForm: item.ActiveForm,
 	}
 }
 
-func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoItem) (int, error) {
+func findTodoIndex(todos []session.Todo, taskID, taskKey, taskContent string, task *TodoItem) (int, error) {
 	id := strings.TrimSpace(taskID)
+	key := strings.TrimSpace(taskKey)
 	content := strings.TrimSpace(taskContent)
 	activeForm := ""
 	if task != nil {
@@ -317,6 +328,9 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 		}
 		if content == "" {
 			content = strings.TrimSpace(task.Content)
+		}
+		if key == "" {
+			key = strings.TrimSpace(task.Key)
 		}
 		if activeForm == "" {
 			activeForm = strings.TrimSpace(task.ActiveForm)
@@ -330,6 +344,15 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 			}
 		}
 		idErr = fmt.Errorf("task_id not found: %s", id)
+	}
+	if key != "" {
+		normalizedKey := normalizeTodoKey(key, "")
+		for i, todo := range todos {
+			if normalizeTodoKey(todo.Key, todo.Content) == normalizedKey {
+				return i, nil
+			}
+		}
+		return -1, fmt.Errorf("task_key not found: %s", key)
 	}
 	if content != "" {
 		contentCandidates := todoLookupCandidates(content)
@@ -352,14 +375,21 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 		return -1, fmt.Errorf("task not found by content: %s", content)
 	}
 	if activeForm != "" {
+		activeFormCandidates := todoLookupCandidates(activeForm)
 		for i, todo := range todos {
-			if strings.EqualFold(strings.TrimSpace(todo.ActiveForm), activeForm) {
-				return i, nil
+			current := strings.TrimSpace(todo.ActiveForm)
+			for _, candidate := range activeFormCandidates {
+				if strings.EqualFold(current, candidate) {
+					return i, nil
+				}
 			}
 		}
 		for i, todo := range todos {
-			if strings.Contains(strings.ToLower(strings.TrimSpace(todo.ActiveForm)), strings.ToLower(activeForm)) {
-				return i, nil
+			current := strings.ToLower(strings.TrimSpace(todo.ActiveForm))
+			for _, candidate := range activeFormCandidates {
+				if strings.Contains(current, strings.ToLower(candidate)) {
+					return i, nil
+				}
 			}
 		}
 		return -1, fmt.Errorf("task not found by active_form: %s", activeForm)
@@ -367,7 +397,7 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 	if idErr != nil {
 		return -1, idErr
 	}
-	return -1, fmt.Errorf("task_id or task content is required")
+	return -1, fmt.Errorf("task_id, task_key, or task content is required")
 }
 
 func todoLookupCandidates(value string) []string {
@@ -385,10 +415,10 @@ func todoLookupCandidates(value string) []string {
 	return candidates
 }
 
-func resolveTodoIndex(todos []session.Todo, action, taskID, taskContent string, task *TodoItem) (int, error) {
-	if idx, err := findTodoIndex(todos, taskID, taskContent, task); err == nil {
+func resolveTodoIndex(todos []session.Todo, action, taskID, taskKey, taskContent string, task *TodoItem) (int, error) {
+	if idx, err := findTodoIndex(todos, taskID, taskKey, taskContent, task); err == nil {
 		return idx, nil
-	} else if !shouldFallbackTodoResolution(err, taskID, taskContent, task) {
+	} else if !shouldFallbackTodoResolution(err, taskID, taskKey, taskContent, task) {
 		return -1, err
 	}
 
@@ -404,7 +434,7 @@ func resolveTodoIndex(todos []session.Todo, action, taskID, taskContent string, 
 		if len(incomplete) == 1 {
 			return incomplete[0], nil
 		}
-		return -1, fmt.Errorf("task_id or task content is required to complete a specific todo")
+		return -1, fmt.Errorf("task_id, task_key, or task content is required to complete a specific todo")
 	case todosActionStart:
 		if len(inProgress) == 1 && len(pending) == 0 {
 			return inProgress[0], nil
@@ -415,7 +445,7 @@ func resolveTodoIndex(todos []session.Todo, action, taskID, taskContent string, 
 		if len(inProgress) == 0 && len(pending) > 0 {
 			return pending[0], nil
 		}
-		return -1, fmt.Errorf("task_id or task content is required to start a specific todo")
+		return -1, fmt.Errorf("task_id, task_key, or task content is required to start a specific todo")
 	case todosActionUpdate:
 		if len(inProgress) == 1 {
 			return inProgress[0], nil
@@ -423,13 +453,13 @@ func resolveTodoIndex(todos []session.Todo, action, taskID, taskContent string, 
 		if len(todos) == 1 {
 			return 0, nil
 		}
-		return -1, fmt.Errorf("task_id or task content is required to update a specific todo")
+		return -1, fmt.Errorf("task_id, task_key, or task content is required to update a specific todo")
 	default:
-		return -1, fmt.Errorf("task_id or task content is required")
+		return -1, fmt.Errorf("task_id, task_key, or task content is required")
 	}
 }
 
-func shouldFallbackTodoResolution(err error, taskID, taskContent string, task *TodoItem) bool {
+func shouldFallbackTodoResolution(err error, taskID, taskKey, taskContent string, task *TodoItem) bool {
 	if err == nil {
 		return false
 	}
@@ -437,9 +467,13 @@ func shouldFallbackTodoResolution(err error, taskID, taskContent string, task *T
 	contentHint := strings.TrimSpace(taskContent)
 	activeFormHint := ""
 	idHint := strings.TrimSpace(taskID)
+	keyHint := strings.TrimSpace(taskKey)
 	if task != nil {
 		if contentHint == "" {
 			contentHint = strings.TrimSpace(task.Content)
+		}
+		if keyHint == "" {
+			keyHint = strings.TrimSpace(task.Key)
 		}
 		if activeFormHint == "" {
 			activeFormHint = strings.TrimSpace(task.ActiveForm)
@@ -449,7 +483,7 @@ func shouldFallbackTodoResolution(err error, taskID, taskContent string, task *T
 		}
 	}
 
-	if contentHint != "" || activeFormHint != "" {
+	if contentHint != "" || activeFormHint != "" || keyHint != "" {
 		return false
 	}
 
@@ -477,6 +511,9 @@ func applyUpdate(todos *[]session.Todo, idx int, task *TodoItem) (string, string
 	updated := (*todos)[idx]
 	if strings.TrimSpace(task.Content) != "" {
 		updated.Content = strings.TrimSpace(task.Content)
+	}
+	if strings.TrimSpace(task.Key) != "" {
+		updated.Key = normalizeTodoKey(task.Key, updated.Content)
 	}
 	if strings.TrimSpace(task.Status) != "" {
 		updated.Status = session.TodoStatus(normalizeStatus(task.Status))
@@ -585,7 +622,43 @@ func countStatuses(todos []session.Todo) (pending, inProgress, completed int) {
 func defaultTodoItem() TodoItem {
 	return TodoItem{
 		Content:    "Proceed with the requested task",
+		Key:        "proceed_with_the_requested_task",
 		Status:     string(session.TodoStatusInProgress),
 		ActiveForm: "Working on the requested task",
 	}
+}
+
+func normalizeTodoKey(key, content string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		if idx := strings.Index(content, ":"); idx > 0 {
+			prefix := strings.TrimSpace(content[:idx])
+			if isSimpleTodoKey(prefix) {
+				key = prefix
+			}
+		}
+	}
+	if key == "" {
+		key = content
+	}
+	key = strings.ToLower(strings.TrimSpace(key))
+	replacer := strings.NewReplacer(" ", "_", "-", "_", "/", "_", "\\", "_", ":", "_", ".", "_")
+	key = replacer.Replace(key)
+	for strings.Contains(key, "__") {
+		key = strings.ReplaceAll(key, "__", "_")
+	}
+	return strings.Trim(key, "_")
+}
+
+func isSimpleTodoKey(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }

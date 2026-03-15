@@ -24,6 +24,7 @@ const (
 
 type Todo struct {
 	ID         string     `json:"id"`
+	Key        string     `json:"key,omitempty"`
 	Content    string     `json:"content"`
 	Status     TodoStatus `json:"status"`
 	ActiveForm string     `json:"active_form"`

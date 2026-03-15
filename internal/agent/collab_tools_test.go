@@ -56,7 +56,8 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 	t.Parallel()
 
 	coord := &coordinator{
-		subAgents: make(map[string]*subAgentRunner),
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
 	}
 	runner := &subAgentRunner{
 		id:          "agent-1",
@@ -65,7 +66,7 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 		submissions: make(map[string]*subAgentSubmission),
 		assignment:  subAgentAssignment{Task: "Investigate"},
 	}
-	coord.subAgents["agent-1"] = runner
+	coord.subAgentRegistry.upsert("agent-1", runner)
 
 	done := make(chan struct{})
 	go func() {

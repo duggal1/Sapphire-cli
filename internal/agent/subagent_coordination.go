@@ -104,7 +104,7 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 	return assignment, builder.String()
 }
 
-func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string) string {
+func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string, items []string) string {
 	builder := &strings.Builder{}
 	builder.WriteString("You are continuing a sub-agent assignment.\n\n")
 	builder.WriteString(fmt.Sprintf("Assignment ID: %s\n", assignment.ID))
@@ -119,6 +119,18 @@ func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string)
 	builder.WriteString(assignment.Task)
 	builder.WriteString("\n\nFollow-up request:\n")
 	builder.WriteString(strings.TrimSpace(followup))
+	if len(items) > 0 {
+		builder.WriteString("\n\nStructured input items:\n")
+		for _, item := range items {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			builder.WriteString("- ")
+			builder.WriteString(item)
+			builder.WriteString("\n")
+		}
+	}
 	if assignment.DefinitionOfDone != "" {
 		builder.WriteString("\n\nDefinition of done:\n")
 		builder.WriteString(assignment.DefinitionOfDone)

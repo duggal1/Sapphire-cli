@@ -106,6 +106,9 @@ type coordinator struct {
 	backgroundIndicators      map[string]*backgroundIndicatorState
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
+	subAgentRegistry          *subAgentRegistry
+	worktreeOpsMu             sync.Mutex
+	worktreeOps               map[string]*sync.Mutex
 	agentJobs                 *agentJobManager
 	mcpRegistryMu             sync.Mutex
 	mcpRegistryDefs           []config.RegistryMCPDefinition
@@ -183,6 +186,8 @@ func NewCoordinator(
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 		backgroundIndicators:      make(map[string]*backgroundIndicatorState),
 		subAgents:                 make(map[string]*subAgentRunner),
+		subAgentRegistry:          newSubAgentRegistry(),
+		worktreeOps:               make(map[string]*sync.Mutex),
 		agentJobs:                 newAgentJobManager(),
 		mcpPreflightCache:         make(map[string]mcpPreflightSnapshot),
 		mcpPreflightInFlight:      make(map[string]bool),

@@ -44,6 +44,7 @@ type subAgentSubmission struct {
 type subAgentInput struct {
 	submissionID string
 	prompt       string
+	items        []string
 }
 
 type subAgentRunner struct {
@@ -76,6 +77,64 @@ func newSubAgentRegistry() *subAgentRegistry {
 	return &subAgentRegistry{agents: make(map[string]*subAgentRunner)}
 }
 
+func (r *subAgentRegistry) upsert(agentID string, runner *subAgentRunner) {
+	if r == nil || agentID == "" || runner == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.agents == nil {
+		r.agents = make(map[string]*subAgentRunner)
+	}
+	r.agents[agentID] = runner
+	r.mu.Unlock()
+}
+
+func (r *subAgentRegistry) get(agentID string) *subAgentRunner {
+	if r == nil || agentID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.agents[agentID]
+}
+
+func (r *subAgentRegistry) delete(agentID string) {
+	if r == nil || agentID == "" {
+		return
+	}
+	r.mu.Lock()
+	delete(r.agents, agentID)
+	r.mu.Unlock()
+}
+
+func (r *subAgentRegistry) list() []*subAgentRunner {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	runners := make([]*subAgentRunner, 0, len(r.agents))
+	for _, runner := range r.agents {
+		runners = append(runners, runner)
+	}
+	return runners
+}
+
+func (c *coordinator) ensureSubAgentRegistry() *subAgentRegistry {
+	if c.subAgentRegistry != nil {
+		return c.subAgentRegistry
+	}
+	c.subAgentsMu.Lock()
+	defer c.subAgentsMu.Unlock()
+	if c.subAgentRegistry == nil {
+		c.subAgentRegistry = newSubAgentRegistry()
+		for agentID, runner := range c.subAgents {
+			c.subAgentRegistry.agents[agentID] = runner
+		}
+	}
+	return c.subAgentRegistry
+}
+
 func (r *subAgentRunner) snapshot() subAgentSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -99,7 +158,7 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 	}
 }
 
-func (r *subAgentRunner) enqueue(prompt string) string {
+func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 	submissionID := uuid.New().String()
 	r.mu.Lock()
 	if r.closed {
@@ -115,7 +174,7 @@ func (r *subAgentRunner) enqueue(prompt string) string {
 	r.status = subAgentStatusQueued
 	r.assignment.UpdatedAt = time.Now()
 	r.mu.Unlock()
-	if !r.sendInput(subAgentInput{submissionID: submissionID, prompt: prompt}) {
+	if !r.sendInput(subAgentInput{submissionID: submissionID, prompt: prompt, items: append([]string{}, items...)}) {
 		r.mu.Lock()
 		delete(r.submissions, submissionID)
 		if r.pending > 0 {
@@ -186,6 +245,7 @@ type subAgentSnapshot struct {
 
 type spawnAgentOptions struct {
 	Prompt           string
+	PromptItems      []string
 	Title            string
 	Worktree         bool
 	ReuseWorktree    bool
@@ -200,7 +260,7 @@ type spawnAgentOptions struct {
 }
 
 func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string, opts spawnAgentOptions) (string, string, error) {
-	if opts.Prompt == "" {
+	if opts.Prompt == "" && len(opts.PromptItems) == 0 {
 		return "", "", errors.New("prompt is required")
 	}
 	if parentSessionID != "" {
@@ -209,7 +269,11 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		}
 	}
 
-	decision := evaluateSubAgentLaunch(opts.Prompt)
+	promptText := opts.Prompt
+	if promptText == "" && len(opts.PromptItems) > 0 {
+		promptText = strings.Join(opts.PromptItems, "\n")
+	}
+	decision := evaluateSubAgentLaunch(promptText)
 
 	agentID := "agent-" + uuid.New().String()
 	workDir := c.cfg.WorkingDir()
@@ -242,7 +306,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 
 	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, opts.WriteManifest)
 	writeScope := tools.NewWriteScope(workDir, normalizedManifest)
-	assignment, assignmentPrompt := buildSubAgentAssignment(parentSessionID, opts.Title, opts.Prompt, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone)
+	assignment, assignmentPrompt := buildSubAgentAssignment(parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone)
 
 	promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
 	if err != nil {
@@ -302,18 +366,13 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		assignment:    assignment,
 	}
 
-	c.subAgentsMu.Lock()
-	if c.subAgents == nil {
-		c.subAgents = make(map[string]*subAgentRunner)
-	}
-	c.subAgents[agentID] = runner
-	c.subAgentsMu.Unlock()
+	c.ensureSubAgentRegistry().upsert(agentID, runner)
 
 	c.publishSubAgentEvent(SubAgentSpawnedEvent, runner, "", SubAgentStageSpawned, "")
 
 	go c.runSubAgentLoop(runner)
 
-	submissionID := runner.enqueue(assignmentPrompt)
+	submissionID := runner.enqueue(assignmentPrompt, opts.PromptItems)
 	if submissionID != "" {
 		c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
 	}
@@ -443,7 +502,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		if message == "" {
 			return "", status, nil
 		}
-		submissionID, err := c.sendSubAgentInput(ctx, agentID, message, false)
+		submissionID, err := c.sendSubAgentInput(ctx, agentID, message, nil, false)
 		if err != nil {
 			return "", status, err
 		}
@@ -524,12 +583,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		assignment:    assignment,
 	}
 
-	c.subAgentsMu.Lock()
-	if c.subAgents == nil {
-		c.subAgents = make(map[string]*subAgentRunner)
-	}
-	c.subAgents[agentID] = runner
-	c.subAgentsMu.Unlock()
+	c.ensureSubAgentRegistry().upsert(agentID, runner)
 
 	c.publishSubAgentEvent(SubAgentSpawnedEvent, runner, "", SubAgentStageSpawned, "")
 
@@ -538,14 +592,14 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	if message == "" {
 		return "", runner.status, nil
 	}
-	submissionID, err := c.sendSubAgentInput(ctx, agentID, message, false)
+	submissionID, err := c.sendSubAgentInput(ctx, agentID, message, nil, false)
 	if err != nil {
 		return "", runner.status, err
 	}
 	return submissionID, runner.status, nil
 }
 
-func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt string, interrupt bool) (string, error) {
+func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt string, items []string, interrupt bool) (string, error) {
 	runner, err := c.getSubAgent(agentID)
 	if err != nil {
 		return "", err
@@ -557,9 +611,9 @@ func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt str
 	assignment := runner.assignment
 	runner.mu.Unlock()
 	if assignment.Task != "" {
-		prompt = buildSubAgentFollowupPrompt(assignment, prompt)
+		prompt = buildSubAgentFollowupPrompt(assignment, prompt, items)
 	}
-	submissionID := runner.enqueue(prompt)
+	submissionID := runner.enqueue(prompt, items)
 	if submissionID == "" {
 		return "", errors.New("agent is closed")
 	}
@@ -629,16 +683,12 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 	}
 	runner.close()
 	c.publishSubAgentEvent(SubAgentClosedEvent, runner, "", SubAgentStageClosed, "")
-	c.subAgentsMu.Lock()
-	delete(c.subAgents, agentID)
-	c.subAgentsMu.Unlock()
+	c.ensureSubAgentRegistry().delete(agentID)
 	return nil
 }
 
 func (c *coordinator) getSubAgent(agentID string) (*subAgentRunner, error) {
-	c.subAgentsMu.Lock()
-	runner := c.subAgents[agentID]
-	c.subAgentsMu.Unlock()
+	runner := c.ensureSubAgentRegistry().get(agentID)
 	if runner == nil {
 		return nil, fmt.Errorf("agent %s not found", agentID)
 	}

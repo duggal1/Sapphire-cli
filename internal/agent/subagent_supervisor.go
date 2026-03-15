@@ -84,10 +84,8 @@ func (c *coordinator) ensureSubAgentDepth(ctx context.Context, sessionID string,
 }
 
 func (c *coordinator) activeSubAgentCount(sessionID string) int {
-	c.subAgentsMu.Lock()
-	defer c.subAgentsMu.Unlock()
 	count := 0
-	for _, runner := range c.subAgents {
+	for _, runner := range c.ensureSubAgentRegistry().list() {
 		if runner.parentSession != sessionID {
 			continue
 		}
@@ -100,9 +98,7 @@ func (c *coordinator) activeSubAgentCount(sessionID string) int {
 }
 
 func (c *coordinator) hasDuplicateSubAgent(sessionID, taskKey string) bool {
-	c.subAgentsMu.Lock()
-	defer c.subAgentsMu.Unlock()
-	for _, runner := range c.subAgents {
+	for _, runner := range c.ensureSubAgentRegistry().list() {
 		if runner.parentSession != sessionID {
 			continue
 		}
@@ -141,13 +137,12 @@ func (c *coordinator) buildSubAgentStatusContext(sessionID string) string {
 }
 
 func (c *coordinator) listSubAgentSnapshots(sessionID string) []subAgentSnapshot {
-	c.subAgentsMu.Lock()
-	defer c.subAgentsMu.Unlock()
-	if len(c.subAgents) == 0 {
+	runners := c.ensureSubAgentRegistry().list()
+	if len(runners) == 0 {
 		return nil
 	}
-	snapshots := make([]subAgentSnapshot, 0, len(c.subAgents))
-	for _, runner := range c.subAgents {
+	snapshots := make([]subAgentSnapshot, 0, len(runners))
+	for _, runner := range runners {
 		if sessionID != "" && runner.parentSession != sessionID {
 			continue
 		}

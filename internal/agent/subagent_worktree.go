@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,6 +35,8 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 		worktreeDir = filepath.Join(root, worktreeDir)
 	}
 	worktreeDir = filepath.Clean(worktreeDir)
+	release := c.lockWorktreePath(worktreeDir)
+	defer release()
 
 	branch := sanitizeBranchName(spec.Branch)
 	if branch == "" {
@@ -48,6 +51,13 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 			branch = current
 		}
 		return worktreeDir, branch, func() {}, nil
+	}
+
+	if owner := c.activeSubAgentUsingWorktree(worktreeDir, agentID); owner != "" {
+		return "", "", func() {}, fmt.Errorf("worktree %s is already owned by active sub-agent %s", worktreeDir, owner)
+	}
+	if owner := c.activeSubAgentUsingBranch(branch, worktreeDir, agentID); owner != "" {
+		return "", "", func() {}, fmt.Errorf("branch %s is already owned by active sub-agent %s", branch, owner)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
@@ -74,10 +84,65 @@ func (c *coordinator) subAgentWorktreeRoot(root string) string {
 
 func (c *coordinator) subAgentWorktreeCleanup(root, worktreeDir string) func() {
 	return func() {
+		release := c.lockWorktreePath(worktreeDir)
+		defer release()
 		if err := removeWorktree(root, worktreeDir); err != nil {
 			slog.Warn("Failed to remove sub-agent worktree", "error", err)
 		}
 	}
+}
+
+func (c *coordinator) lockWorktreePath(worktreeDir string) func() {
+	c.worktreeOpsMu.Lock()
+	if c.worktreeOps == nil {
+		c.worktreeOps = make(map[string]*sync.Mutex)
+	}
+	lock := c.worktreeOps[worktreeDir]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		c.worktreeOps[worktreeDir] = lock
+	}
+	c.worktreeOpsMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (c *coordinator) activeSubAgentUsingWorktree(worktreeDir, excludeAgentID string) string {
+	for _, runner := range c.ensureSubAgentRegistry().list() {
+		id := runner.id
+		if id == excludeAgentID || runner == nil {
+			continue
+		}
+		runner.mu.Lock()
+		active := !runner.closed && (runner.status == subAgentStatusQueued || runner.status == subAgentStatusRunning || runner.status == subAgentStatusIdle)
+		samePath := filepath.Clean(runner.workDir) == worktreeDir
+		runner.mu.Unlock()
+		if active && samePath {
+			return id
+		}
+	}
+	return ""
+}
+
+func (c *coordinator) activeSubAgentUsingBranch(branch, worktreeDir, excludeAgentID string) string {
+	if branch == "" {
+		return ""
+	}
+	for _, runner := range c.ensureSubAgentRegistry().list() {
+		id := runner.id
+		if id == excludeAgentID || runner == nil {
+			continue
+		}
+		runner.mu.Lock()
+		active := !runner.closed && (runner.status == subAgentStatusQueued || runner.status == subAgentStatusRunning || runner.status == subAgentStatusIdle)
+		sameBranch := strings.TrimSpace(runner.assignment.Branch) == branch
+		samePath := filepath.Clean(runner.workDir) == worktreeDir
+		runner.mu.Unlock()
+		if active && sameBranch && !samePath {
+			return id
+		}
+	}
+	return ""
 }
 
 func isSubAgentWorktree(worktreeDir string) bool {

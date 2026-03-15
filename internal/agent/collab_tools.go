@@ -52,14 +52,16 @@ type SpawnAgentParams struct {
 }
 
 type ResumeAgentParams struct {
-	ID      string `json:"id" description:"Agent id returned by spawn_agent"`
-	Message string `json:"message,omitempty" description:"Optional prompt to continue the resumed sub-agent"`
+	ID      string   `json:"id" description:"Agent id returned by spawn_agent"`
+	Message string   `json:"message,omitempty" description:"Optional prompt to continue the resumed sub-agent"`
+	Items   []string `json:"items,omitempty" description:"Optional structured follow-up input items"`
 }
 
 type SendInputParams struct {
-	ID        string `json:"id" description:"Agent id returned by spawn_agent"`
-	Message   string `json:"message,omitempty" description:"Follow-up task or prompt for the sub-agent"`
-	Interrupt bool   `json:"interrupt,omitempty" description:"Interrupt current run before sending"`
+	ID        string   `json:"id" description:"Agent id returned by spawn_agent"`
+	Message   string   `json:"message,omitempty" description:"Follow-up task or prompt for the sub-agent"`
+	Items     []string `json:"items,omitempty" description:"Optional structured follow-up input items"`
+	Interrupt bool     `json:"interrupt,omitempty" description:"Interrupt current run before sending"`
 }
 
 type WaitAgentsParams struct {
@@ -109,8 +111,11 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task, raw.Instruction, flattenSpawnAgentItems(raw.Items))
-	p.Items = nil
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task, raw.Instruction)
+	p.Items = parseCollabInputItems(raw.Items)
+	if p.Message == "" && len(p.Items) > 0 {
+		p.Message = strings.Join(p.Items, "\n")
+	}
 	p.Title = strings.TrimSpace(raw.Title)
 	p.Worktree = raw.Worktree
 	p.WorktreePath = firstNonEmptyString(raw.WorktreePath, raw.WorktreeDir, raw.WorktreeDirAlt)
@@ -125,8 +130,62 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 }
 
 func flattenSpawnAgentItems(items []json.RawMessage) string {
+	return strings.Join(parseCollabInputItems(items), "\n")
+}
+
+func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {
+	type rawResumeAgentParams struct {
+		ID      string `json:"id,omitempty"`
+		AgentID string `json:"agent_id,omitempty"`
+		Message string `json:"message,omitempty"`
+		Prompt  string `json:"prompt,omitempty"`
+		Task    string `json:"task,omitempty"`
+		Items   []json.RawMessage `json:"items,omitempty"`
+	}
+
+	var raw rawResumeAgentParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
+	p.Items = parseCollabInputItems(raw.Items)
+	if p.Message == "" && len(p.Items) > 0 {
+		p.Message = strings.Join(p.Items, "\n")
+	}
+	return nil
+}
+
+func (p *SendInputParams) UnmarshalJSON(data []byte) error {
+	type rawSendInputParams struct {
+		ID        string `json:"id,omitempty"`
+		AgentID   string `json:"agent_id,omitempty"`
+		Message   string `json:"message,omitempty"`
+		Prompt    string `json:"prompt,omitempty"`
+		Task      string `json:"task,omitempty"`
+		Items     []json.RawMessage `json:"items,omitempty"`
+		Interrupt bool   `json:"interrupt,omitempty"`
+	}
+
+	var raw rawSendInputParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
+	p.Items = parseCollabInputItems(raw.Items)
+	if p.Message == "" && len(p.Items) > 0 {
+		p.Message = strings.Join(p.Items, "\n")
+	}
+	p.Interrupt = raw.Interrupt
+	return nil
+}
+
+func parseCollabInputItems(items []json.RawMessage) []string {
 	if len(items) == 0 {
-		return ""
+		return nil
 	}
 	lines := make([]string, 0, len(items))
 	for _, raw := range items {
@@ -151,47 +210,10 @@ func flattenSpawnAgentItems(items []json.RawMessage) string {
 			}
 		}
 	}
-	return strings.Join(lines, "\n")
-}
-
-func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {
-	type rawResumeAgentParams struct {
-		ID      string `json:"id,omitempty"`
-		AgentID string `json:"agent_id,omitempty"`
-		Message string `json:"message,omitempty"`
-		Prompt  string `json:"prompt,omitempty"`
-		Task    string `json:"task,omitempty"`
+	if len(lines) == 0 {
+		return nil
 	}
-
-	var raw rawResumeAgentParams
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
-	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
-	return nil
-}
-
-func (p *SendInputParams) UnmarshalJSON(data []byte) error {
-	type rawSendInputParams struct {
-		ID        string `json:"id,omitempty"`
-		AgentID   string `json:"agent_id,omitempty"`
-		Message   string `json:"message,omitempty"`
-		Prompt    string `json:"prompt,omitempty"`
-		Task      string `json:"task,omitempty"`
-		Interrupt bool   `json:"interrupt,omitempty"`
-	}
-
-	var raw rawSendInputParams
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	p.ID = firstNonEmptyString(raw.ID, raw.AgentID)
-	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task)
-	p.Interrupt = raw.Interrupt
-	return nil
+	return lines
 }
 
 func (p *WaitAgentsParams) UnmarshalJSON(data []byte) error {
@@ -270,6 +292,7 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			}
 			agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
 				Prompt:           params.Message,
+				PromptItems:      params.Items,
 				Title:            params.Title,
 				Worktree:         useWorktree,
 				WorktreePath:     params.WorktreePath,
@@ -308,7 +331,7 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
-			submissionID, status, err := c.resumeSubAgent(ctx, sessionID, params.ID, params.Message)
+			submissionID, status, err := c.resumeSubAgent(ctx, sessionID, params.ID, firstNonEmptyString(params.Message, strings.Join(params.Items, "\n")))
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -338,7 +361,7 @@ func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, err
 			if strings.TrimSpace(params.Message) == "" {
 				return fantasy.NewTextErrorResponse("message is required"), nil
 			}
-			submissionID, err := c.sendSubAgentInput(ctx, params.ID, params.Message, params.Interrupt)
+			submissionID, err := c.sendSubAgentInput(ctx, params.ID, params.Message, params.Items, params.Interrupt)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}

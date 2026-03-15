@@ -17,7 +17,7 @@ import (
 // published events from the broker to the output channel under normal conditions.
 func TestSetupSubscriber_NormalFlow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		f := newSubscriberFixture(t, 10)
+		f := newSubscriberFixture(t, 10, subscriberBestEffort)
 
 		time.Sleep(10 * time.Millisecond)
 		synctest.Wait()
@@ -42,7 +42,7 @@ func TestSetupSubscriber_NormalFlow(t *testing.T) {
 // where the consumer is too slow by dropping messages rather than blocking indefinitely.
 func TestSetupSubscriber_SlowConsumer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		f := newSubscriberFixture(t, 0)
+		f := newSubscriberFixture(t, 0, subscriberBestEffort)
 
 		const numEvents = 5
 
@@ -78,7 +78,7 @@ func TestSetupSubscriber_SlowConsumer(t *testing.T) {
 // terminates correctly when the provided context is cancelled.
 func TestSetupSubscriber_ContextCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		f := newSubscriberFixture(t, 10)
+		f := newSubscriberFixture(t, 10, subscriberBestEffort)
 
 		f.broker.Publish(pubsub.CreatedEvent, "event1")
 		time.Sleep(100 * time.Millisecond)
@@ -93,7 +93,7 @@ func TestSetupSubscriber_ContextCancellation(t *testing.T) {
 // and ensures that subsequent events do not cause a deadlock in the timer drain logic.
 func TestSetupSubscriber_DrainAfterDrop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		f := newSubscriberFixture(t, 0)
+		f := newSubscriberFixture(t, 0, subscriberBestEffort)
 
 		time.Sleep(10 * time.Millisecond)
 		synctest.Wait()
@@ -127,12 +127,35 @@ func TestSetupSubscriber_DrainAfterDrop(t *testing.T) {
 func TestSetupSubscriber_NoTimerLeak(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	synctest.Test(t, func(t *testing.T) {
-		f := newSubscriberFixture(t, 100)
+		f := newSubscriberFixture(t, 100, subscriberBestEffort)
 
 		for range 100 {
 			f.broker.Publish(pubsub.CreatedEvent, "event")
 			time.Sleep(5 * time.Millisecond)
 			synctest.Wait()
+		}
+
+		f.cancel()
+		f.wg.Wait()
+	})
+}
+
+func TestSetupSubscriber_CriticalDoesNotDropMessages(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newSubscriberFixture(t, 2, subscriberCritical)
+
+		time.Sleep(10 * time.Millisecond)
+		synctest.Wait()
+
+		f.broker.Publish(pubsub.CreatedEvent, "event1")
+		f.broker.Publish(pubsub.CreatedEvent, "event2")
+
+		for range 2 {
+			select {
+			case <-f.outputCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Timed out waiting for critical message")
+			}
 		}
 
 		f.cancel()
@@ -147,7 +170,7 @@ type subscriberFixture struct {
 	cancel   context.CancelFunc
 }
 
-func newSubscriberFixture(t *testing.T, bufSize int) *subscriberFixture {
+func newSubscriberFixture(t *testing.T, bufSize int, mode subscriberMode) *subscriberFixture {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -161,7 +184,7 @@ func newSubscriberFixture(t *testing.T, bufSize int) *subscriberFixture {
 
 	setupSubscriber(ctx, &f.wg, "test", func(ctx context.Context) <-chan pubsub.Event[string] {
 		return f.broker.Subscribe(ctx)
-	}, f.outputCh)
+	}, f.outputCh, mode)
 
 	return f
 }

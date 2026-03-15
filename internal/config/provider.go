@@ -210,9 +210,83 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 			}
 		}
 
+		augmentProviderCatalog(providerList)
+
 		providerErr = errors.Join(errs...)
 	})
 	return providerList, providerErr
+}
+
+func augmentProviderCatalog(providers []catwalk.Provider) {
+	for i := range providers {
+		switch providers[i].ID {
+		case "openrouter":
+			ensureModels(&providers[i], openRouterModelAugments)
+		}
+	}
+}
+
+func ensureModels(provider *catwalk.Provider, expected []catwalk.Model) {
+	if provider == nil {
+		return
+	}
+
+	existing := make(map[string]struct{}, len(provider.Models))
+	for _, model := range provider.Models {
+		existing[model.ID] = struct{}{}
+	}
+
+	for _, model := range expected {
+		if _, ok := existing[model.ID]; ok {
+			continue
+		}
+		provider.Models = append(provider.Models, model)
+		existing[model.ID] = struct{}{}
+	}
+}
+
+var openRouterModelAugments = []catwalk.Model{
+	{
+		ID:                 "nvidia/nemotron-3-super-120b-a12b:free",
+		Name:               "NVIDIA: Nemotron 3 Super (free)",
+		ContextWindow:      262144,
+		DefaultMaxTokens:   26214,
+		CostPer1MIn:        0,
+		CostPer1MOut:       0,
+		CostPer1MInCached:  0,
+		CostPer1MOutCached: 0,
+		CanReason:          false,
+		SupportsImages:     false,
+		Options:            catwalk.ModelOptions{},
+	},
+	{
+		ID:                     "nousresearch/hermes-3-llama-3.1-405b:free",
+		Name:                   "Nous: Hermes 3 405B Instruct (free)",
+		ContextWindow:          131072,
+		DefaultMaxTokens:       32768,
+		CostPer1MIn:            0,
+		CostPer1MOut:           0,
+		CostPer1MInCached:      0,
+		CostPer1MOutCached:     0,
+		CanReason:              true,
+		ReasoningLevels:        []string{"low", "medium", "high"},
+		DefaultReasoningEffort: "medium",
+		SupportsImages:         false,
+		Options:                catwalk.ModelOptions{},
+	},
+	{
+		ID:                 "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+		Name:               "Venice: Uncensored (free)",
+		ContextWindow:      32768,
+		DefaultMaxTokens:   32768,
+		CostPer1MIn:        0,
+		CostPer1MOut:       0,
+		CostPer1MInCached:  0,
+		CostPer1MOutCached: 0,
+		CanReason:          false,
+		SupportsImages:     false,
+		Options:            catwalk.ModelOptions{},
+	},
 }
 
 func loadCachedCatwalkProviders() ([]catwalk.Provider, error) {

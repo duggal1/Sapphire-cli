@@ -18,6 +18,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,7 @@ type SessionAgentCall struct {
 	ActiveTools      []string
 	ProviderOptions  fantasy.ProviderOptions
 	Attachments      []message.Attachment
+	PrecreatedUser   *message.Message
 	SkipUserMessage  bool
 	MaxOutputTokens  int64
 	Temperature      *float64
@@ -119,9 +121,23 @@ type SessionAgent interface {
 	QueuedPrompts(sessionID string) int
 	QueuedPromptsList(sessionID string) []string
 	ClearQueue(sessionID string)
+	Enqueue(call SessionAgentCall) error
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
 	Model() Model
 	SetWorkingDir(string)
+}
+
+type SubmissionStatus string
+
+const (
+	SubmissionStatusRunning SubmissionStatus = "running"
+	SubmissionStatusQueued  SubmissionStatus = "queued"
+)
+
+type SubmissionResult struct {
+	Status        SubmissionStatus
+	SessionID     string
+	UserMessageID string
 }
 
 type Model struct {
@@ -335,8 +351,24 @@ func isGeminiCodeExecutionModel(model Model) bool {
 	return strings.HasPrefix(modelID, "gemini")
 }
 
+func (a *sessionAgent) Enqueue(call SessionAgentCall) error {
+	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) && call.PrecreatedUser == nil {
+		return ErrEmptyPrompt
+	}
+	if call.SessionID == "" {
+		return ErrSessionMissing
+	}
+	existing, ok := a.messageQueue.Get(call.SessionID)
+	if !ok {
+		existing = []SessionAgentCall{}
+	}
+	existing = append(existing, call)
+	a.messageQueue.Set(call.SessionID, existing)
+	return nil
+}
+
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
-	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) {
+	if call.Prompt == "" && !message.ContainsTextAttachment(call.Attachments) && call.PrecreatedUser == nil {
 		return nil, ErrEmptyPrompt
 	}
 	if call.SessionID == "" {
@@ -348,18 +380,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Queue the message if busy
 	if a.IsSessionBusy(call.SessionID) {
-		if !call.SkipUserMessage {
+		if !call.SkipUserMessage && call.PrecreatedUser == nil {
 			if _, err := a.createUserMessage(ctx, call); err != nil {
 				return nil, err
 			}
 			call.SkipUserMessage = true
 		}
-		existing, ok := a.messageQueue.Get(call.SessionID)
-		if !ok {
-			existing = []SessionAgentCall{}
+		if err := a.Enqueue(call); err != nil {
+			return nil, err
 		}
-		existing = append(existing, call)
-		a.messageQueue.Set(call.SessionID, existing)
 		return nil, nil
 	}
 
@@ -434,6 +463,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
 	}
+	if call.PrecreatedUser != nil {
+		msgs = slices.DeleteFunc(msgs, func(msg message.Message) bool {
+			return msg.ID == call.PrecreatedUser.ID
+		})
+	}
 
 	var wg sync.WaitGroup
 	// Generate title if first message.
@@ -446,11 +480,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	defer wg.Wait()
 
 	// Add the user message to the session unless it was created earlier.
-	if !call.SkipUserMessage {
-		_, err = a.createUserMessage(ctx, call)
-		if err != nil {
-			return nil, err
+	if !call.SkipUserMessage && call.PrecreatedUser == nil {
+		created, createErr := a.createUserMessage(ctx, call)
+		if createErr != nil {
+			return nil, createErr
 		}
+		call.PrecreatedUser = &created
 	}
 
 	// Add the session to the context.
@@ -933,7 +968,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	var result *fantasy.AgentResult
 	for attempt := 0; attempt <= maxStreamRetries; attempt++ {
-		result, err = agent.Stream(genCtx, streamCall)
+	result, err = agent.Stream(genCtx, streamCall)
 		if err == nil || genCtx.Err() != nil {
 			break
 		}

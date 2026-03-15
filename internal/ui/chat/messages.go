@@ -259,7 +259,13 @@ func (a *AssistantInfoItem) ID() string {
 // RawRender implements MessageItem.
 func (a *AssistantInfoItem) RawRender(width int) string {
 	innerWidth := max(0, width-MessageLeftPaddingTotal)
-	return a.renderContent(innerWidth)
+	content, _, ok := a.getCachedRender(innerWidth)
+	if !ok {
+		content = a.renderContent(innerWidth)
+		height := lipgloss.Height(content)
+		a.setCachedRender(content, innerWidth, height)
+	}
+	return content
 }
 
 // Render implements MessageItem.

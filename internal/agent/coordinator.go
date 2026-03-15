@@ -57,6 +57,7 @@ type Coordinator interface {
 	// INFO: (kujtim) this is not used yet we will use this when we have multiple agents
 	// SetMainAgent(string)
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	Submit(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (SubmissionResult, error)
 	OrchestrateWorktrees(ctx context.Context, sessionID string, params OrchestrateWorktreesParams) (OrchestrateWorktreesResult, error)
 	Cancel(sessionID string)
 	CancelAll()
@@ -129,6 +130,23 @@ type autonomousSubAgentTask struct {
 	Name         string
 	SessionTitle string
 	Prompt       string
+}
+
+type submissionEnvelope struct {
+	sessionID      string
+	userPrompt     string
+	attachments    []message.Attachment
+	userMessage    message.Message
+	model          Model
+	providerCfg    config.ProviderConfig
+	mergedOptions  fantasy.ProviderOptions
+	temp           *float64
+	topP           *float64
+	topK           *int64
+	freqPenalty    *float64
+	presPenalty    *float64
+	maxTokens      int64
+	deferPreflight bool
 }
 
 func isNonInteractiveMode() bool {
@@ -260,146 +278,12 @@ func NewCoordinator(
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	if userPrompt == "" && !message.ContainsTextAttachment(attachments) {
-		return nil, ErrEmptyPrompt
-	}
-
-	// NOTE: We used to call UpdateModels and refreshSystemPrompt here, but
-	// they are redundant. The coordinator state is already initialized,
-	// and we only need to refresh if the config explicitly changed.
-	model := c.currentAgent.Model()
-	maxTokens := model.CatwalkCfg.DefaultMaxTokens
-	if model.ModelCfg.MaxTokens != 0 {
-		maxTokens = model.ModelCfg.MaxTokens
-	}
-
-	if !model.CatwalkCfg.SupportsImages && attachments != nil {
-		// filter out image attachments
-		filteredAttachments := make([]message.Attachment, 0, len(attachments))
-		for _, att := range attachments {
-			if att.IsText() {
-				filteredAttachments = append(filteredAttachments, att)
-			}
-		}
-		attachments = filteredAttachments
-	}
-
-	createdUserMsg := false
-	{
-		parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
-		for _, attachment := range attachments {
-			parts = append(parts, message.BinaryContent{
-				Path:     attachment.FilePath,
-				MIMEType: attachment.MimeType,
-				Data:     attachment.Content,
-			})
-		}
-		if _, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-			Role:  message.User,
-			Parts: parts,
-		}); err != nil {
-			return nil, fmt.Errorf("failed to create user message: %w", err)
-		}
-		createdUserMsg = true
-	}
-
-	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
-	if !ok {
-		return nil, errors.New("model provider not configured")
-	}
-
-	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := c.mergeCallOptions(model, providerCfg, sessionID)
-
-	if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
-		slog.Debug("Token needs to be refreshed", "provider", providerCfg.ID)
-		if err := c.refreshOAuth2Token(ctx, providerCfg); err != nil {
-			return nil, err
-		}
-	}
-
-	// Ensure background initialization is complete before heavy execution,
-	// but only after the user message is recorded so the UI renders instantly.
-	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
+	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false)
+	if err != nil {
 		return nil, err
 	}
-
-	var skillContext string
-	var activeSkillNames []string
-
-	// NOTE: Automatic skill injection and discovery removed for performance.
-	// We now rely on explicit skill tooling (load_skill) to manage context.
-	// This reduces context pollution and speeds up model reasoning.
-
-	if shouldPrimeAutonomousSubAgents(userPrompt) {
-		subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, sessionID, userPrompt)
-		if err != nil {
-			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
-		} else if strings.TrimSpace(subAgentContext) != "" {
-			if skillContext != "" {
-				skillContext += "\n\n"
-			}
-			skillContext += subAgentContext
-		}
-	}
-
-	preflightContext := ""
-	if requiresMCPDiscovery(userPrompt) {
-		preflightContext = c.getMCPPreflightContext(sessionID, userPrompt)
-	}
-	if strings.TrimSpace(preflightContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += preflightContext
-	}
-
-	selectedMCP := map[string]struct{}(nil)
-	mcpContext := ""
-	if requiresMCPDiscovery(userPrompt) {
-		selectedMCP, mcpContext = c.getMCPSelection(sessionID, userPrompt)
-	}
-	if strings.TrimSpace(mcpContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += mcpContext
-	}
-	if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += inventoryContext
-	}
-	if subAgentContext := c.buildSubAgentStatusContext(sessionID); strings.TrimSpace(subAgentContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += subAgentContext
-	}
-	c.refreshMCPPreflightAsync(sessionID, userPrompt)
-	c.refreshMCPSelectionAsync(sessionID, userPrompt)
-
-	cachedTools, _ := c.getToolCache()
-	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
-	call := SessionAgentCall{
-		SessionID:        sessionID,
-		Prompt:           userPrompt,
-		SkillContext:     skillContext,
-		ActiveSkills:     activeSkillNames,
-		ActiveTools:      activeTools,
-		Attachments:      attachments,
-		SkipUserMessage:  createdUserMsg,
-		MaxOutputTokens:  maxTokens,
-		ProviderOptions:  mergedOptions,
-		Temperature:      temp,
-		TopP:             topP,
-		TopK:             topK,
-		FrequencyPenalty: freqPenalty,
-		PresencePenalty:  presPenalty,
-	}
-
 	run := func() (*fantasy.AgentResult, error) {
-		return c.currentAgent.Run(ctx, call)
+		return c.executeSubmission(ctx, env)
 	}
 	wasUsingGrounding := func(opts fantasy.ProviderOptions) bool {
 		if gOpts, ok := opts[gemini.Name]; ok {
@@ -413,7 +297,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 	result, originalErr := run()
 
 	// Google Search fallback logic: If Google Grounding is enabled and it fails, increment failure count and retry.
-	if originalErr != nil && wasUsingGrounding(mergedOptions) {
+	if originalErr != nil && wasUsingGrounding(env.mergedOptions) {
 		failures := 0
 		if v, ok := c.googleSearchFailures.Load(sessionID); ok {
 			failures = v.(int)
@@ -424,7 +308,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 		if failures <= 2 {
 			slog.Info("Google Grounding failed, retrying", "sessionID", sessionID, "failures", failures, "error", originalErr)
 			// Re-merge options. mergeCallOptions will handle disabling grounding if failures >= 2.
-			mergedOptions, _, _, _, _, _ = c.mergeCallOptions(model, providerCfg, sessionID)
+			env.mergedOptions, _, _, _, _, _ = c.mergeCallOptions(env.model, env.providerCfg, sessionID)
 			result, originalErr = run()
 		}
 	}
@@ -436,24 +320,215 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 
 	if c.isUnauthorized(originalErr) {
 		switch {
-		case providerCfg.OAuthToken != nil:
-			slog.Debug("Received 401. Refreshing token and retrying", "provider", providerCfg.ID)
-			if err := c.refreshOAuth2Token(ctx, providerCfg); err != nil {
+		case env.providerCfg.OAuthToken != nil:
+			slog.Debug("Received 401. Refreshing token and retrying", "provider", env.providerCfg.ID)
+			if err := c.refreshOAuth2Token(ctx, env.providerCfg); err != nil {
 				return nil, originalErr
 			}
-			slog.Debug("Retrying request with refreshed OAuth token", "provider", providerCfg.ID)
+			slog.Debug("Retrying request with refreshed OAuth token", "provider", env.providerCfg.ID)
 			return run()
-		case strings.Contains(providerCfg.APIKeyTemplate, "$"):
-			slog.Debug("Received 401. Refreshing API Key template and retrying", "provider", providerCfg.ID)
-			if err := c.refreshApiKeyTemplate(ctx, providerCfg); err != nil {
+		case strings.Contains(env.providerCfg.APIKeyTemplate, "$"):
+			slog.Debug("Received 401. Refreshing API Key template and retrying", "provider", env.providerCfg.ID)
+			if err := c.refreshApiKeyTemplate(ctx, env.providerCfg); err != nil {
 				return nil, originalErr
 			}
-			slog.Debug("Retrying request with refreshed API key", "provider", providerCfg.ID)
+			slog.Debug("Retrying request with refreshed API key", "provider", env.providerCfg.ID)
 			return run()
 		}
 	}
 
 	return result, originalErr
+}
+
+func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, attachments ...message.Attachment) (SubmissionResult, error) {
+	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
+
+	if c.currentAgent.IsSessionBusy(sessionID) {
+		call := SessionAgentCall{
+			SessionID:       env.sessionID,
+			Prompt:          env.userPrompt,
+			Attachments:     env.attachments,
+			PrecreatedUser:  &env.userMessage,
+			SkipUserMessage: true,
+		}
+		if err := c.currentAgent.Enqueue(call); err != nil {
+			return SubmissionResult{}, err
+		}
+		return SubmissionResult{
+			Status:        SubmissionStatusQueued,
+			SessionID:     env.sessionID,
+			UserMessageID: env.userMessage.ID,
+		}, nil
+	}
+
+	go func(detached submissionEnvelope) {
+		runCtx := context.WithoutCancel(ctx)
+		if _, runErr := c.executeSubmission(runCtx, detached); runErr != nil && !errors.Is(runErr, context.Canceled) {
+			slog.Error("detached submission failed", "session_id", detached.sessionID, "error", runErr)
+		}
+	}(env)
+
+	return SubmissionResult{
+		Status:        SubmissionStatusRunning,
+		SessionID:     env.sessionID,
+		UserMessageID: env.userMessage.ID,
+	}, nil
+}
+
+func (c *coordinator) prepareSubmission(
+	ctx context.Context,
+	sessionID string,
+	userPrompt string,
+	attachments []message.Attachment,
+	deferPreflight bool,
+) (submissionEnvelope, error) {
+	if userPrompt == "" && !message.ContainsTextAttachment(attachments) {
+		return submissionEnvelope{}, ErrEmptyPrompt
+	}
+
+	model := c.currentAgent.Model()
+	maxTokens := model.CatwalkCfg.DefaultMaxTokens
+	if model.ModelCfg.MaxTokens != 0 {
+		maxTokens = model.ModelCfg.MaxTokens
+	}
+
+	if !model.CatwalkCfg.SupportsImages && attachments != nil {
+		filteredAttachments := make([]message.Attachment, 0, len(attachments))
+		for _, att := range attachments {
+			if att.IsText() {
+				filteredAttachments = append(filteredAttachments, att)
+			}
+		}
+		attachments = filteredAttachments
+	}
+
+	parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
+	for _, attachment := range attachments {
+		parts = append(parts, message.BinaryContent{
+			Path:     attachment.FilePath,
+			MIMEType: attachment.MimeType,
+			Data:     attachment.Content,
+		})
+	}
+	userMessage, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: parts,
+	})
+	if err != nil {
+		return submissionEnvelope{}, fmt.Errorf("failed to create user message: %w", err)
+	}
+
+	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
+	if !ok {
+		return submissionEnvelope{}, errors.New("model provider not configured")
+	}
+	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := c.mergeCallOptions(model, providerCfg, sessionID)
+
+	return submissionEnvelope{
+		sessionID:      sessionID,
+		userPrompt:     userPrompt,
+		attachments:    attachments,
+		userMessage:    userMessage,
+		model:          model,
+		providerCfg:    providerCfg,
+		mergedOptions:  mergedOptions,
+		temp:           temp,
+		topP:           topP,
+		topK:           topK,
+		freqPenalty:    freqPenalty,
+		presPenalty:    presPenalty,
+		maxTokens:      maxTokens,
+		deferPreflight: deferPreflight,
+	}, nil
+}
+
+func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvelope) (*fantasy.AgentResult, error) {
+	if env.providerCfg.OAuthToken != nil && env.providerCfg.OAuthToken.IsExpired() {
+		slog.Debug("Token needs to be refreshed", "provider", env.providerCfg.ID)
+		if err := c.refreshOAuth2Token(ctx, env.providerCfg); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
+		return nil, err
+	}
+
+	var skillContext string
+	var activeSkillNames []string
+	selectedMCP := map[string]struct{}(nil)
+
+	if !env.deferPreflight {
+		if shouldPrimeAutonomousSubAgents(env.userPrompt) {
+			subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, env.sessionID, env.userPrompt)
+			if err != nil {
+				slog.Debug("Autonomous sub-agent priming skipped", "error", err)
+			} else if strings.TrimSpace(subAgentContext) != "" {
+				skillContext = subAgentContext
+			}
+		}
+
+		preflightContext := ""
+		if requiresMCPDiscovery(env.userPrompt) {
+			preflightContext = c.getMCPPreflightContext(env.sessionID, env.userPrompt)
+		}
+		if strings.TrimSpace(preflightContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += preflightContext
+		}
+
+		mcpContext := ""
+		if requiresMCPDiscovery(env.userPrompt) {
+			selectedMCP, mcpContext = c.getMCPSelection(env.sessionID, env.userPrompt)
+		}
+		if strings.TrimSpace(mcpContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += mcpContext
+		}
+		if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += inventoryContext
+		}
+		if subAgentContext := c.buildSubAgentStatusContext(env.sessionID); strings.TrimSpace(subAgentContext) != "" {
+			if skillContext != "" {
+				skillContext += "\n\n"
+			}
+			skillContext += subAgentContext
+		}
+	} else {
+		c.refreshMCPPreflightAsync(env.sessionID, env.userPrompt)
+		c.refreshMCPSelectionAsync(env.sessionID, env.userPrompt)
+	}
+
+	cachedTools, _ := c.getToolCache()
+	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
+	call := SessionAgentCall{
+		SessionID:        env.sessionID,
+		Prompt:           env.userPrompt,
+		SkillContext:     skillContext,
+		ActiveSkills:     activeSkillNames,
+		ActiveTools:      activeTools,
+		Attachments:      env.attachments,
+		PrecreatedUser:   &env.userMessage,
+		SkipUserMessage:  true,
+		MaxOutputTokens:  env.maxTokens,
+		ProviderOptions:  env.mergedOptions,
+		Temperature:      env.temp,
+		TopP:             env.topP,
+		TopK:             env.topK,
+		FrequencyPenalty: env.freqPenalty,
+		PresencePenalty:  env.presPenalty,
+	}
+	return c.currentAgent.Run(ctx, call)
 }
 
 // initEmbeddingService resolves the Gemini API key from configured providers

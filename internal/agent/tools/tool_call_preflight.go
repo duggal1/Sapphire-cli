@@ -120,6 +120,7 @@ func repairToolCall(
 		normalizeKey(input, "tasks", "todos", "items")
 		normalizeKey(input, "action", "type", "operation", "op")
 		normalizeKey(input, "task_id", "id", "taskId", "task_identifier")
+		normalizeKey(input, "task_key", "key", "taskKey", "task_name")
 		normalizeKey(input, "task_content", "content", "title", "name")
 		normalizeTodosInput(input)
 		ensureTodosPayload(input)

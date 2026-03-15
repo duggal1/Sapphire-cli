@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/google/uuid"
@@ -53,8 +51,7 @@ func (c *coordinator) autonomousSubAgentContextMaybeBackground(ctx context.Conte
 }
 
 func (c *coordinator) launchBackgroundAutonomousSubAgents(ctx context.Context, sessionID, _ string, tasks []autonomousSubAgentTask) error {
-	agentCfg, ok := c.cfg.Agents[config.AgentTask]
-	if !ok {
+	if _, ok := c.cfg.Agents[config.AgentTask]; !ok {
 		return fmt.Errorf("task agent not configured")
 	}
 
@@ -69,59 +66,19 @@ func (c *coordinator) launchBackgroundAutonomousSubAgents(ctx context.Context, s
 		for _, task := range tasks {
 			task := task
 			go func() {
-				c.acquireBackgroundSubAgentSlot()
-				defer c.releaseBackgroundSubAgentSlot()
-
-				subCtx, cancel := context.WithTimeout(bgCtx, backgroundSubAgentTimeout)
-				defer cancel()
-
-				workDir := c.cfg.WorkingDir()
-				branch := ""
-				cleanup := func() {}
-				decision := evaluateSubAgentLaunch(task.Prompt)
-				agentKey := fmt.Sprintf("bg-%s-%s", task.Name, uuid.New().String())
-				if wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(subCtx, sessionID, agentKey, subAgentWorktreeSpec{
-					TaskKey: decision.TaskKey,
-				}); err == nil {
-					workDir = wtDir
-					branch = wtBranch
-					cleanup = wtCleanup
-				} else {
-					slog.Warn("Failed to create background sub-agent worktree; falling back to repo root", "error", err)
-				}
-
-				promptTemplate, err := taskPrompt(prompt.WithWorkingDir(workDir))
-				if err != nil {
-					slog.Error("Failed to build background sub-agent prompt", "error", err)
-					c.completeBackgroundTasks(bgCtx, sessionID, 1)
-					cleanup()
-					return
-				}
-
-				agent, buildErr := c.buildAgentWithWorkingDir(subCtx, promptTemplate, agentCfg, true, workDir)
-				if buildErr != nil {
-					slog.Error("Failed to build background sub-agent", "error", buildErr)
-					c.completeBackgroundTasks(bgCtx, sessionID, 1)
-					cleanup()
-					return
-				}
-
-				_, assignmentPrompt := buildSubAgentAssignment(sessionID, task.SessionTitle, task.Prompt, workDir, decision, nil, branch, "")
-				resp, runErr := c.runSubAgent(subCtx, subAgentParams{
-					Agent:          agent,
-					SessionID:      sessionID,
-					AgentMessageID: "background-sub-agent",
-					ToolCallID:     fmt.Sprintf("background-%s-%s", task.Name, uuid.New().String()),
-					Prompt:         assignmentPrompt,
-					SessionTitle:   task.SessionTitle,
+				agentID, _, err := c.spawnSubAgent(bgCtx, sessionID, spawnAgentOptions{
+					Prompt:   task.Prompt,
+					Title:    task.SessionTitle,
+					Worktree: true,
+					AgentID:  config.AgentTask,
 				})
-				if subCtx.Err() == context.DeadlineExceeded {
-					runErr = fmt.Errorf("background sub-agent %q timed out after %s", task.Name, backgroundSubAgentTimeout)
-					resp = fantasy.ToolResponse{}
+				if err != nil {
+					slog.Error("Failed to spawn background sub-agent", "error", err)
+					c.publishBackgroundSubAgentResult(bgCtx, sessionID, task.Name, "", err)
+					c.completeBackgroundTasks(bgCtx, sessionID, 1)
+					return
 				}
-				cleanup()
-				c.publishBackgroundSubAgentResult(bgCtx, sessionID, task, resp, runErr)
-				c.completeBackgroundTasks(bgCtx, sessionID, 1)
+				c.monitorBackgroundSubAgent(bgCtx, sessionID, task.Name, agentID)
 			}()
 		}
 	}()
@@ -269,21 +226,43 @@ func (c *coordinator) pollBackgroundSubAgents(sessionID string) {
 	}
 }
 
-func (c *coordinator) publishBackgroundSubAgentResult(
-	ctx context.Context,
-	sessionID string,
-	task autonomousSubAgentTask,
-	resp fantasy.ToolResponse,
-	runErr error,
-) {
-	content := resp.Content
-	isError := resp.IsError
+func (c *coordinator) monitorBackgroundSubAgent(ctx context.Context, sessionID, taskName, agentID string) {
+	waitCtx, cancel := context.WithTimeout(ctx, backgroundSubAgentTimeout)
+	defer cancel()
+	snapshots, timedOut := c.waitSubAgents(waitCtx, []string{agentID}, backgroundSubAgentTimeout)
+	var (
+		content string
+		runErr  error
+	)
+	if timedOut {
+		runErr = fmt.Errorf("background sub-agent %q timed out after %s", taskName, backgroundSubAgentTimeout)
+	} else if len(snapshots) == 0 {
+		runErr = fmt.Errorf("background sub-agent %q did not report a final snapshot", taskName)
+	} else {
+		snap := snapshots[0]
+		if snap.LastError != "" {
+			runErr = fmt.Errorf("%s", snap.LastError)
+		} else if snap.LastResult != "" {
+			content = snap.LastResult
+		} else if snap.LastProgress != "" {
+			content = snap.LastProgress
+		} else {
+			content = "completed without a summary"
+		}
+	}
+	c.publishBackgroundSubAgentResult(ctx, sessionID, taskName, content, runErr)
+	_ = c.closeSubAgent(agentID)
+	c.completeBackgroundTasks(ctx, sessionID, 1)
+}
+
+func (c *coordinator) publishBackgroundSubAgentResult(ctx context.Context, sessionID, taskName, content string, runErr error) {
+	isError := false
 	if runErr != nil {
 		content = runErr.Error()
 		isError = true
 	}
-	if task.Name != "" {
-		content = fmt.Sprintf("Background sub-agent (%s):\n\n%s", task.Name, content)
+	if taskName != "" {
+		content = fmt.Sprintf("Background sub-agent (%s):\n\n%s", taskName, content)
 	}
 	if isError {
 		content = fmt.Sprintf("Background sub-agent error:\n\n%s", content)

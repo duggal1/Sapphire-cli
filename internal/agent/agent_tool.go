@@ -4,13 +4,10 @@ import (
 	"context"
 	_ "embed"
 	"errors"
-	"fmt"
-	"log/slog"
 	"strings"
 
 	"charm.land/fantasy"
 
-	"github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
 )
@@ -64,111 +61,57 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				return fantasy.NewTextErrorResponse(msg), nil
 			}
 
-			agentMessageID := tools.GetMessageFromContext(ctx)
-			if agentMessageID == "" {
-				return fantasy.ToolResponse{}, errors.New("agent message id missing from context")
-			}
-
 			useWorktree := true
 			if params.Worktree != nil {
 				useWorktree = *params.Worktree
 			}
 
-			workDir := c.cfg.WorkingDir()
-			cleanup := func() {}
-			branch := strings.TrimSpace(params.Branch)
-			if useWorktree {
-				wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, sessionID, call.ID, subAgentWorktreeSpec{
-					WorktreePath: params.WorktreePath,
-					Branch:       branch,
-					Reuse:        false,
-					TaskKey:      decision.TaskKey,
+			if params.Background {
+				if err := c.addBackgroundTasks(context.Background(), sessionID, 1); err != nil {
+					return fantasy.ToolResponse{}, err
+				}
+				agentID, _, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+					Prompt:           params.Prompt,
+					Title:            "Background Agent Session",
+					Worktree:         useWorktree,
+					WorktreePath:     params.WorktreePath,
+					Branch:           params.Branch,
+					WriteManifest:    params.WriteManifest,
+					DefinitionOfDone: params.DefinitionOfDone,
+					AgentID:          config.AgentTask,
 				})
 				if err != nil {
+					c.completeBackgroundTasks(context.Background(), sessionID, 1)
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
-				workDir = wtDir
-				branch = wtBranch
-				cleanup = wtCleanup
-			}
-			normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, params.WriteManifest)
-			writeScope := tools.NewWriteScope(workDir, normalizedManifest)
-
-			if params.Background {
-				bgTask := autonomousSubAgentTask{
-					Name:         "agent",
-					SessionTitle: "Background Agent Session",
-					Prompt:       params.Prompt,
-				}
-				go func() {
-					bgCtx := context.Background()
-					if err := c.addBackgroundTasks(bgCtx, sessionID, 1); err != nil {
-						slog.Error("Failed to publish background sub-agent indicator", "error", err)
-					}
-
-					prompt, err := taskPrompt(prompt.WithWorkingDir(workDir))
-					if err != nil {
-						slog.Error("Failed to build background sub-agent prompt", "error", err)
-						c.completeBackgroundTasks(bgCtx, sessionID, 1)
-						cleanup()
-						return
-					}
-
-					agent, err := c.buildAgentWithWorkingDirOverrides(bgCtx, prompt, agentCfg, true, workDir, nil, writeScope)
-					if err != nil {
-						slog.Error("Failed to build background sub-agent", "error", err)
-						c.completeBackgroundTasks(bgCtx, sessionID, 1)
-						cleanup()
-						return
-					}
-
-					c.acquireBackgroundSubAgentSlot()
-					defer c.releaseBackgroundSubAgentSlot()
-					subCtx, cancel := context.WithTimeout(bgCtx, backgroundSubAgentTimeout)
-					defer cancel()
-					_, assignmentPrompt := buildSubAgentAssignment(sessionID, bgTask.SessionTitle, params.Prompt, workDir, decision, normalizedManifest, branch, params.DefinitionOfDone)
-					resp, runErr := c.runSubAgent(subCtx, subAgentParams{
-						Agent:          agent,
-						SessionID:      sessionID,
-						AgentMessageID: agentMessageID,
-						ToolCallID:     call.ID,
-						Prompt:         assignmentPrompt,
-						SessionTitle:   bgTask.SessionTitle,
-					})
-					if subCtx.Err() == context.DeadlineExceeded {
-						runErr = fmt.Errorf("background sub-agent timed out after %s", backgroundSubAgentTimeout)
-						resp = fantasy.ToolResponse{}
-					}
-					cleanup()
-					c.publishBackgroundSubAgentResult(bgCtx, sessionID, bgTask, resp, runErr)
-					c.completeBackgroundTasks(bgCtx, sessionID, 1)
-				}()
+				go c.monitorBackgroundSubAgent(context.Background(), sessionID, "agent", agentID)
 				return fantasy.NewTextResponse("running in background"), nil
 			}
-
-			// Build agent lazily when tool is executed to avoid recursive initialization.
-			prompt, err := taskPrompt(prompt.WithWorkingDir(workDir))
-			if err != nil {
-				cleanup()
-				return fantasy.ToolResponse{}, err
-			}
-
-			agent, err := c.buildAgentWithWorkingDirOverrides(ctx, prompt, agentCfg, true, workDir, nil, writeScope)
-			if err != nil {
-				cleanup()
-				return fantasy.ToolResponse{}, err
-			}
-
-			_, assignmentPrompt := buildSubAgentAssignment(sessionID, "New Agent Session", params.Prompt, workDir, decision, normalizedManifest, branch, params.DefinitionOfDone)
-			resp, err := c.runSubAgent(ctx, subAgentParams{
-				Agent:          agent,
-				SessionID:      sessionID,
-				AgentMessageID: agentMessageID,
-				ToolCallID:     call.ID,
-				Prompt:         assignmentPrompt,
-				SessionTitle:   "New Agent Session",
+			agentID, _, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+				Prompt:           params.Prompt,
+				Title:            "New Agent Session",
+				Worktree:         useWorktree,
+				WorktreePath:     params.WorktreePath,
+				Branch:           params.Branch,
+				WriteManifest:    params.WriteManifest,
+				DefinitionOfDone: params.DefinitionOfDone,
+				AgentID:          config.AgentTask,
 			})
-			cleanup()
-			return resp, err
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
+			snapshots, timedOut := c.waitSubAgents(ctx, []string{agentID}, 0)
+			if timedOut || len(snapshots) == 0 {
+				return fantasy.NewTextErrorResponse("sub-agent did not finish cleanly"), nil
+			}
+			snap := snapshots[0]
+			defer func() { _ = c.closeSubAgent(agentID) }()
+			if snap.LastError != "" {
+				return fantasy.NewTextErrorResponse(snap.LastError), nil
+			}
+			if snap.LastResult != "" {
+				return fantasy.NewTextResponse(snap.LastResult), nil
+			}
+			return fantasy.NewTextResponse(snap.LastProgress), nil
 		}), nil
 }

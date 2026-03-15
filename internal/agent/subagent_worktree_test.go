@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/charmbracelet/sapphire/internal/config"
@@ -49,6 +50,38 @@ func TestRemoveWorktreeUnlocksLockedTree(t *testing.T) {
 	_, err := os.Stat(worktreeDir)
 	require.Error(t, err)
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestPrepareSubAgentWorktreeRejectsActivePathCollision(t *testing.T) {
+	t.Parallel()
+
+	root := initGitRepo(t)
+	cfg, err := config.Init(root, "", false)
+	require.NoError(t, err)
+
+	coord := &coordinator{
+		cfg:              cfg,
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+		worktreeOps:      make(map[string]*sync.Mutex),
+	}
+	worktreeDir := filepath.Join(root, "worktrees", "shared")
+	coord.subAgentRegistry.upsert("agent-existing", &subAgentRunner{
+		id:      "agent-existing",
+		workDir: worktreeDir,
+		status:  subAgentStatusRunning,
+		assignment: subAgentAssignment{
+			Branch: "subagent/shared",
+		},
+	})
+
+	_, _, _, err = coord.prepareSubAgentWorktree(context.Background(), "session-1", "agent-new", subAgentWorktreeSpec{
+		WorktreePath: worktreeDir,
+		Branch:       "subagent/shared",
+		TaskKey:      "shared",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already owned by active sub-agent")
 }
 
 func initGitRepo(t *testing.T) string {

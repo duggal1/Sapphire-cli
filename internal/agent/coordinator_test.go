@@ -453,6 +453,10 @@ func TestShouldPrimeAutonomousSubAgents(t *testing.T) {
 	t.Run("complex prompt primes sub-agents", func(t *testing.T) {
 		assert.True(t, shouldPrimeAutonomousSubAgents("Investigate the root cause across the codebase, trace dependencies, and review risks before refactoring the architecture."))
 	})
+
+	t.Run("explicit worktree orchestration does not double-prime", func(t *testing.T) {
+		assert.False(t, shouldPrimeAutonomousSubAgents("Large repo: spawn 5-12 subagents, one per distinct domain, and use worktree orchestration for each task."))
+	})
 }
 
 func TestBuildAutonomousSubAgentTasks(t *testing.T) {

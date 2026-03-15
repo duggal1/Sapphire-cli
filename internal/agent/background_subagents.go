@@ -18,7 +18,7 @@ const BackgroundSubAgentsToolName = "background_subagents"
 const maxBackgroundSubAgents = 100
 
 // Maximum time a single background sub-agent can run before being cancelled.
-const backgroundSubAgentTimeout = 60 * time.Second
+const backgroundSubAgentTimeout = 10 * time.Minute
 
 type backgroundIndicatorState struct {
 	count               int

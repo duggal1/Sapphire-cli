@@ -695,7 +695,28 @@ func (c *coordinator) ensureSkillsDiscovered() {
 
 func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
 	allowed, _ := shouldAllowSubAgentLaunch(userPrompt)
-	return allowed
+	return allowed && !hasExplicitSubAgentOrWorktreePlan(userPrompt)
+}
+
+func hasExplicitSubAgentOrWorktreePlan(userPrompt string) bool {
+	prompt := strings.ToLower(userPrompt)
+	signals := []string{
+		"spawn_agent",
+		"spawn subagent",
+		"spawn sub-agent",
+		"use subagents",
+		"use sub-agents",
+		"subagent",
+		"sub-agent",
+		"orchestrate_worktrees",
+		"worktree orchestration",
+		"worktree",
+		"spawn 2-4 targeted subagents",
+		"spawn 5-12 subagents",
+		"one subagent per domain",
+		"one per distinct domain",
+	}
+	return hasAnySignal(prompt, signals)
 }
 
 func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {

@@ -38,6 +38,7 @@ const (
 
 type SpawnAgentParams struct {
 	Message          string   `json:"message,omitempty" description:"Initial task or prompt for the sub-agent"`
+	Items            []string `json:"items,omitempty" description:"Optional structured input items; text items are flattened into the initial prompt"`
 	Title            string   `json:"title,omitempty" description:"Optional session title for the sub-agent"`
 	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default true)"`
 	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/worktrees/<task>)"`
@@ -76,6 +77,7 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 		Prompt           string   `json:"prompt,omitempty"`
 		Task             string   `json:"task,omitempty"`
 		Instruction      string   `json:"instruction,omitempty"`
+		Items            []json.RawMessage `json:"items,omitempty"`
 		Title            string   `json:"title,omitempty"`
 		Worktree         *bool    `json:"worktree,omitempty"`
 		WorktreePath     string   `json:"worktree_path,omitempty"`
@@ -107,7 +109,8 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task, raw.Instruction)
+	p.Message = firstNonEmptyString(raw.Message, raw.Prompt, raw.Task, raw.Instruction, flattenSpawnAgentItems(raw.Items))
+	p.Items = nil
 	p.Title = strings.TrimSpace(raw.Title)
 	p.Worktree = raw.Worktree
 	p.WorktreePath = firstNonEmptyString(raw.WorktreePath, raw.WorktreeDir, raw.WorktreeDirAlt)
@@ -119,6 +122,36 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 	p.ReasoningEffort = firstNonEmptyString(raw.ReasoningEffort, raw.Reasoning)
 	p.ForkContext = raw.ForkContext
 	return nil
+}
+
+func flattenSpawnAgentItems(items []json.RawMessage) string {
+	if len(items) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(items))
+	for _, raw := range items {
+		if len(raw) == 0 {
+			continue
+		}
+		var plain string
+		if err := json.Unmarshal(raw, &plain); err == nil {
+			if text := strings.TrimSpace(plain); text != "" {
+				lines = append(lines, text)
+			}
+			continue
+		}
+		var item struct {
+			Text    string `json:"text,omitempty"`
+			Content string `json:"content,omitempty"`
+			Message string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &item); err == nil {
+			if text := firstNonEmptyString(item.Text, item.Content, item.Message); text != "" {
+				lines = append(lines, text)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {

@@ -274,3 +274,39 @@ func TestTodosToolFallsBackFromStaleTaskIDToOnlyInProgressComplete(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, session.TodoStatusCompleted, updated.Todos[0].Status)
 }
+
+func TestTodosToolMatchesPlannerPrefixedTaskContent(t *testing.T) {
+	t.Parallel()
+
+	conn, err := db.Connect(t.Context(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	q := db.New(conn)
+	sessions := session.NewService(q, conn)
+
+	sess, err := sessions.Create(t.Context(), "Todos Planner Prefix")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{ID: "todo-1", Content: "Analyze repository scale, languages, and structural patterns.", Status: session.TodoStatusPending},
+	}
+	_, err = sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, sess.ID)
+	tool := NewTodosTool(sessions)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "todos-prefixed-content",
+		Name:  TodosToolName,
+		Input: `{"action":"start","task_content":"complexity_estimation: Analyze repository scale, languages, and structural patterns."}`,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError)
+
+	updated, err := sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.TodoStatusInProgress, updated.Todos[0].Status)
+}

@@ -54,19 +54,14 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 		return "", "", func() {}, fmt.Errorf("create worktree parent failed: %w", err)
 	}
 
-	_ = removeWorktree(root, worktreeDir)
-
 	wtCtx, cancel := context.WithTimeout(ctx, subAgentWorktreeTimeout)
 	defer cancel()
+	if err := resetWorktreeState(wtCtx, root, worktreeDir); err != nil {
+		return "", "", func() {}, err
+	}
 
-	if branchExists(root, branch) {
-		if err := runGit(wtCtx, root, "worktree", "add", worktreeDir, branch); err != nil {
-			return "", "", func() {}, err
-		}
-	} else {
-		if err := runGit(wtCtx, root, "worktree", "add", "-b", branch, worktreeDir, "HEAD"); err != nil {
-			return "", "", func() {}, err
-		}
+	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch); err != nil {
+		return "", "", func() {}, err
 	}
 
 	cleanup := c.subAgentWorktreeCleanup(root, worktreeDir)
@@ -163,22 +158,101 @@ func currentWorktreeBranch(ctx context.Context, worktreeDir string) (string, err
 }
 
 func runGit(ctx context.Context, root string, args ...string) error {
+	_, err := runGitOutput(ctx, root, args...)
+	return err
+}
+
+func runGitOutput(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(output)))
+		return strings.TrimSpace(string(output)), fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(output)))
 	}
-	return nil
+	return strings.TrimSpace(string(output)), nil
 }
 
 func removeWorktree(root, worktreeDir string) error {
-	rmCmd := exec.Command("git", "-C", root, "worktree", "remove", "--force", worktreeDir)
-	rmOut, rmErr := rmCmd.CombinedOutput()
-	if rmErr != nil {
-		slog.Warn("Failed to remove sub-agent worktree", "error", rmErr, "output", strings.TrimSpace(string(rmOut)))
+	ctx, cancel := context.WithTimeout(context.Background(), subAgentWorktreeTimeout)
+	defer cancel()
+	if err := forceRemoveWorktree(ctx, root, worktreeDir); err != nil {
+		slog.Warn("Failed to remove sub-agent worktree", "error", err)
+		return err
 	}
 	if err := os.RemoveAll(worktreeDir); err != nil {
 		slog.Debug("Failed to remove sub-agent worktree directory", "error", err)
 	}
-	return rmErr
+	return nil
+}
+
+func addWorktreeWithRecovery(ctx context.Context, root, worktreeDir, branch string) error {
+	if err := runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, false)...); err == nil {
+		return nil
+	}
+	if err := resetWorktreeState(ctx, root, worktreeDir); err != nil {
+		return err
+	}
+	return runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, true)...)
+}
+
+func worktreeAddArgs(root, branch, worktreeDir string, force bool) []string {
+	args := []string{"worktree", "add"}
+	if force {
+		args = append(args, "-f", "-f")
+	}
+	if branchExists(root, branch) {
+		return append(args, worktreeDir, branch)
+	}
+	return append(args, "-b", branch, worktreeDir, "HEAD")
+}
+
+func resetWorktreeState(ctx context.Context, root, worktreeDir string) error {
+	if err := unlockWorktree(ctx, root, worktreeDir); err != nil {
+		return err
+	}
+	if err := forceRemoveWorktree(ctx, root, worktreeDir); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(worktreeDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale worktree directory: %w", err)
+	}
+	if _, err := runGitOutput(ctx, root, "worktree", "prune", "--expire", "now"); err != nil && !isIgnorableWorktreeStateError(err) {
+		return err
+	}
+	return nil
+}
+
+func unlockWorktree(ctx context.Context, root, worktreeDir string) error {
+	_, err := runGitOutput(ctx, root, "worktree", "unlock", worktreeDir)
+	if err != nil && !isIgnorableWorktreeStateError(err) {
+		return err
+	}
+	return nil
+}
+
+func forceRemoveWorktree(ctx context.Context, root, worktreeDir string) error {
+	_, err := runGitOutput(ctx, root, "worktree", "remove", "--force", "--force", worktreeDir)
+	if err == nil || isIgnorableWorktreeStateError(err) {
+		return nil
+	}
+	if err := unlockWorktree(ctx, root, worktreeDir); err != nil {
+		return err
+	}
+	_, err = runGitOutput(ctx, root, "worktree", "remove", "--force", "--force", worktreeDir)
+	if err != nil && !isIgnorableWorktreeStateError(err) {
+		return err
+	}
+	return nil
+}
+
+func isIgnorableWorktreeStateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not a working tree") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "cannot find worktree") ||
+		strings.Contains(msg, "is not registered") ||
+		strings.Contains(msg, "worktree prune")
 }

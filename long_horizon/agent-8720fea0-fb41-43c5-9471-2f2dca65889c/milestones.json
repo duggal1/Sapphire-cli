@@ -1,0 +1,25 @@
+{
+  "session": "agent-8720fea0-fb41-43c5-9471-2f2dca65889c",
+  "generated_at": "2026-03-15T19:33:12Z",
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ],
+  "source_prompt": "You are a dedicated sub-agent. Execute the assignment below autonomously.\n\nAssignment ID: subagent-1773603192365379000\nParent session: 0e124ca0-4c08-485a-a6c8-c7411640e753\nWorkdir: /Users/harshitduggal/desktop/sapphire-cli/worktrees/please-audit-the-internalagenttools-directory-i-need-a-report-identifying-every-tool-implemented-there-a-summary-of-their\nBranch: subagent/please-audit-the-internalagenttools-directory-i-need-a-report-identifying-every-tool-implemented-there-a-summary-of-their-8720fea0\nDomains: infra, docs\n\nTask:\nPlease audit the 'internal/agent/tools' directory. I need a report identifying every tool implemented there, a summary of their functionality, and a specific check for safety constraints or restricted commands within their Go source files.\n\nDefinition of done:\nProvide a detailed audit of the tools defined in internal/agent/tools. Identify each tool, its primary function, and any safety constraints implemented in the source code.\n\nConstraints:\n- Stay within the assigned domain and task scope.\n- Use tools and terminal commands as needed; run commands inside the workdir.\n- Write access is restricted: no writes outside the provided manifest.\n- Report absolute file paths for any findings or edits.\n- If blocked, say so explicitly and state the missing information.\n\nOutput format (strict):\nSTATUS: done | blocked | needs_followup\nSUMMARY: <one paragraph>\nPROGRESS: <short status update>\nFILES: <comma-separated absolute paths or 'none'>\nCOMMANDS: <comma-separated commands or 'none'>\nRISKS: <brief risks or 'none'>\nNEXT: <next steps or 'none'>\nBLOCKERS: <what is missing, or 'none'>\n"
+}

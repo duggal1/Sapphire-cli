@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/sapphire/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,11 +75,12 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 		subAgentRegistry: newSubAgentRegistry(),
 	}
 	runner := &subAgentRunner{
-		id:          "agent-1",
-		sessionID:   "session-1",
-		status:      subAgentStatusRunning,
-		submissions: make(map[string]*subAgentSubmission),
-		assignment:  subAgentAssignment{Task: "Investigate"},
+		id:           "agent-1",
+		sessionID:    "session-1",
+		status:       subAgentStatusRunning,
+		submissions:  make(map[string]*subAgentSubmission),
+		assignment:   subAgentAssignment{Task: "Investigate"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
 	}
 	coord.subAgentRegistry.upsert("agent-1", runner)
 
@@ -87,10 +89,12 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 		defer close(done)
 		time.Sleep(25 * time.Millisecond)
 		runner.mu.Lock()
-		runner.status = subAgentStatusIdle
+		runner.status = subAgentStatusCompleted
 		runner.lastResult = "done"
+		broker := runner.statusBroker
 		payload := runner.lifecycleEventLocked("submission-1", SubAgentStageCompleted, "")
 		runner.mu.Unlock()
+		publishSubAgentStatus(broker, subAgentStatusCompleted)
 		publishSubAgentLifecycleEvent(SubAgentCompletedEvent, payload)
 	}()
 
@@ -98,7 +102,7 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-1"}, 2*time.Second)
 	require.False(t, timedOut)
 	require.Len(t, snapshots, 1)
-	require.Equal(t, subAgentStatusIdle, snapshots[0].Status)
+	require.Equal(t, subAgentStatusCompleted, snapshots[0].Status)
 	require.Less(t, time.Since(start), 500*time.Millisecond)
 	<-done
 }

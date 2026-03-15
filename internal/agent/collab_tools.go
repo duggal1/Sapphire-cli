@@ -75,35 +75,35 @@ type CloseAgentParams struct {
 
 func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 	type rawSpawnAgentParams struct {
-		Message          string   `json:"message,omitempty"`
-		Prompt           string   `json:"prompt,omitempty"`
-		Task             string   `json:"task,omitempty"`
-		Instruction      string   `json:"instruction,omitempty"`
+		Message          string            `json:"message,omitempty"`
+		Prompt           string            `json:"prompt,omitempty"`
+		Task             string            `json:"task,omitempty"`
+		Instruction      string            `json:"instruction,omitempty"`
 		Items            []json.RawMessage `json:"items,omitempty"`
-		Title            string   `json:"title,omitempty"`
-		Worktree         *bool    `json:"worktree,omitempty"`
-		WorktreePath     string   `json:"worktree_path,omitempty"`
-		WorktreeDir      string   `json:"worktree_dir,omitempty"`
-		WorktreeDirAlt   string   `json:"worktree_directory,omitempty"`
-		Branch           string   `json:"branch,omitempty"`
-		BranchName       string   `json:"branch_name,omitempty"`
-		WriteManifest    []string `json:"write_manifest,omitempty"`
-		Manifest         []string `json:"manifest,omitempty"`
-		AllowedFiles     []string `json:"allowed_files,omitempty"`
-		AllowedPaths     []string `json:"allowed_paths,omitempty"`
-		OwnedFiles       []string `json:"owned_files,omitempty"`
-		DefinitionOfDone string   `json:"definition_of_done,omitempty"`
-		Done             string   `json:"done,omitempty"`
-		Acceptance       string   `json:"acceptance_criteria,omitempty"`
-		Agent            string   `json:"agent,omitempty"`
-		AgentType        string   `json:"agent_type,omitempty"`
-		AgentID          string   `json:"agent_id,omitempty"`
-		AgentProfile     string   `json:"agent_profile,omitempty"`
-		Model            string   `json:"model,omitempty"`
-		ModelName        string   `json:"model_name,omitempty"`
-		ReasoningEffort  string   `json:"reasoning_effort,omitempty"`
-		Reasoning        string   `json:"reasoning,omitempty"`
-		ForkContext      *bool    `json:"fork_context,omitempty"`
+		Title            string            `json:"title,omitempty"`
+		Worktree         *bool             `json:"worktree,omitempty"`
+		WorktreePath     string            `json:"worktree_path,omitempty"`
+		WorktreeDir      string            `json:"worktree_dir,omitempty"`
+		WorktreeDirAlt   string            `json:"worktree_directory,omitempty"`
+		Branch           string            `json:"branch,omitempty"`
+		BranchName       string            `json:"branch_name,omitempty"`
+		WriteManifest    []string          `json:"write_manifest,omitempty"`
+		Manifest         []string          `json:"manifest,omitempty"`
+		AllowedFiles     []string          `json:"allowed_files,omitempty"`
+		AllowedPaths     []string          `json:"allowed_paths,omitempty"`
+		OwnedFiles       []string          `json:"owned_files,omitempty"`
+		DefinitionOfDone string            `json:"definition_of_done,omitempty"`
+		Done             string            `json:"done,omitempty"`
+		Acceptance       string            `json:"acceptance_criteria,omitempty"`
+		Agent            string            `json:"agent,omitempty"`
+		AgentType        string            `json:"agent_type,omitempty"`
+		AgentID          string            `json:"agent_id,omitempty"`
+		AgentProfile     string            `json:"agent_profile,omitempty"`
+		Model            string            `json:"model,omitempty"`
+		ModelName        string            `json:"model_name,omitempty"`
+		ReasoningEffort  string            `json:"reasoning_effort,omitempty"`
+		Reasoning        string            `json:"reasoning,omitempty"`
+		ForkContext      *bool             `json:"fork_context,omitempty"`
 	}
 
 	var raw rawSpawnAgentParams
@@ -135,11 +135,11 @@ func flattenSpawnAgentItems(items []json.RawMessage) string {
 
 func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {
 	type rawResumeAgentParams struct {
-		ID      string `json:"id,omitempty"`
-		AgentID string `json:"agent_id,omitempty"`
-		Message string `json:"message,omitempty"`
-		Prompt  string `json:"prompt,omitempty"`
-		Task    string `json:"task,omitempty"`
+		ID      string            `json:"id,omitempty"`
+		AgentID string            `json:"agent_id,omitempty"`
+		Message string            `json:"message,omitempty"`
+		Prompt  string            `json:"prompt,omitempty"`
+		Task    string            `json:"task,omitempty"`
 		Items   []json.RawMessage `json:"items,omitempty"`
 	}
 
@@ -159,13 +159,13 @@ func (p *ResumeAgentParams) UnmarshalJSON(data []byte) error {
 
 func (p *SendInputParams) UnmarshalJSON(data []byte) error {
 	type rawSendInputParams struct {
-		ID        string `json:"id,omitempty"`
-		AgentID   string `json:"agent_id,omitempty"`
-		Message   string `json:"message,omitempty"`
-		Prompt    string `json:"prompt,omitempty"`
-		Task      string `json:"task,omitempty"`
+		ID        string            `json:"id,omitempty"`
+		AgentID   string            `json:"agent_id,omitempty"`
+		Message   string            `json:"message,omitempty"`
+		Prompt    string            `json:"prompt,omitempty"`
+		Task      string            `json:"task,omitempty"`
 		Items     []json.RawMessage `json:"items,omitempty"`
-		Interrupt bool   `json:"interrupt,omitempty"`
+		Interrupt bool              `json:"interrupt,omitempty"`
 	}
 
 	var raw rawSendInputParams
@@ -307,10 +307,14 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
+			status := subAgentStatusQueued
+			if runner, getErr := c.getSubAgent(agentID); getErr == nil {
+				status = runner.snapshot().Status
+			}
 			payload, _ := json.Marshal(map[string]any{
 				"agent_id":      agentID,
 				"submission_id": submissionID,
-				"status":        subAgentStatusRunning,
+				"status":        status,
 			})
 			return fantasy.NewTextResponse(string(payload)), nil
 		},

@@ -15,13 +15,13 @@ import (
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/message"
+	"github.com/charmbracelet/sapphire/internal/pubsub"
 	"github.com/charmbracelet/sapphire/internal/session"
 )
 
 type subAgentStatus string
 
 const (
-	subAgentStatusIdle      subAgentStatus = "idle"
 	subAgentStatusQueued    subAgentStatus = "queued"
 	subAgentStatusRunning   subAgentStatus = "running"
 	subAgentStatusCompleted subAgentStatus = "completed"
@@ -65,6 +65,7 @@ type subAgentRunner struct {
 	pending        int
 	cancel         context.CancelFunc
 	assignment     subAgentAssignment
+	statusBroker   *pubsub.Broker[subAgentStatus]
 	mu             sync.Mutex
 }
 
@@ -172,15 +173,26 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 	}
 	r.pending++
 	r.status = subAgentStatusQueued
+	r.lastResult = ""
+	r.lastError = ""
+	r.lastProgress = ""
 	r.assignment.UpdatedAt = time.Now()
+	broker := r.statusBroker
 	r.mu.Unlock()
+	publishSubAgentStatus(broker, subAgentStatusQueued)
 	if !r.sendInput(subAgentInput{submissionID: submissionID, prompt: prompt, items: append([]string{}, items...)}) {
 		r.mu.Lock()
 		delete(r.submissions, submissionID)
 		if r.pending > 0 {
 			r.pending--
 		}
+		broker = nil
+		if r.pending == 0 && r.status == subAgentStatusQueued {
+			r.status = subAgentStatusCompleted
+			broker = r.statusBroker
+		}
 		r.mu.Unlock()
+		publishSubAgentStatus(broker, subAgentStatusCompleted)
 		return ""
 	}
 	return submissionID
@@ -214,11 +226,25 @@ func (r *subAgentRunner) close() {
 	r.closed = true
 	cancel := r.cancel
 	r.status = subAgentStatusClosed
+	now := time.Now()
+	for _, submission := range r.submissions {
+		if submission == nil || isSubAgentFinalStatus(submission.Status) {
+			continue
+		}
+		submission.Status = subAgentStatusClosed
+		submission.Err = "agent closed"
+		submission.EndedAt = now
+	}
+	broker := r.statusBroker
 	r.mu.Unlock()
+	publishSubAgentStatus(broker, subAgentStatusClosed)
 	if cancel != nil {
 		cancel()
 	}
 	close(r.inputCh)
+	if broker != nil {
+		broker.Shutdown()
+	}
 	if r.cleanup != nil {
 		r.cleanup()
 	}
@@ -359,10 +385,11 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		workDir:       workDir,
 		cleanup:       cleanup,
 		agent:         agent,
-		status:        subAgentStatusIdle,
+		status:        subAgentStatusQueued,
 		submissions:   make(map[string]*subAgentSubmission),
 		inputCh:       make(chan subAgentInput, 16),
 		assignment:    assignment,
+		statusBroker:  pubsub.NewBroker[subAgentStatus](),
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
@@ -374,6 +401,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	submissionID := runner.enqueue(assignmentPrompt, opts.PromptItems)
 	if submissionID != "" {
 		c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
+		c.startSubAgentCompletionWatcher(runner, submissionID)
 	}
 	return agentID, submissionID, nil
 }
@@ -401,8 +429,12 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.pending--
 		}
 		runner.lastSubmission = input.submissionID
+		runner.lastError = ""
+		runner.lastProgress = ""
 		runner.assignment.UpdatedAt = time.Now()
+		broker := runner.statusBroker
 		runner.mu.Unlock()
+		publishSubAgentStatus(broker, subAgentStatusRunning)
 
 		c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
 
@@ -433,7 +465,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		} else {
 			submission.Status = subAgentStatusCompleted
 			submission.Result = result
-			runner.status = subAgentStatusIdle
+			runner.status = subAgentStatusCompleted
 			report := parseSubAgentReport(result)
 			if report.Summary != "" {
 				runner.lastResult = report.Summary
@@ -446,8 +478,10 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.lastError = ""
 		}
 		runner.assignment.UpdatedAt = time.Now()
+		broker = runner.statusBroker
 		payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
 		runner.mu.Unlock()
+		publishSubAgentStatus(broker, payload.Status)
 		publishSubAgentLifecycleEvent(eventType, payload)
 	}
 }
@@ -491,9 +525,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		return "", subAgentStatusError, errors.New("agent id is required")
 	}
 
-	c.subAgentsMu.Lock()
-	runner := c.subAgents[agentID]
-	c.subAgentsMu.Unlock()
+	runner := c.ensureSubAgentRegistry().get(agentID)
 	if runner != nil {
 		runner.mu.Lock()
 		status := runner.status
@@ -505,7 +537,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		if err != nil {
 			return "", status, err
 		}
-		return submissionID, status, nil
+		return submissionID, runner.snapshot().Status, nil
 	}
 
 	loadCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -576,10 +608,11 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		workDir:       workDir,
 		cleanup:       cleanup,
 		agent:         agent,
-		status:        subAgentStatusIdle,
+		status:        subAgentStatusCompleted,
 		submissions:   make(map[string]*subAgentSubmission),
 		inputCh:       make(chan subAgentInput, 16),
 		assignment:    assignment,
+		statusBroker:  pubsub.NewBroker[subAgentStatus](),
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
@@ -595,7 +628,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	if err != nil {
 		return "", runner.status, err
 	}
-	return submissionID, runner.status, nil
+	return submissionID, runner.snapshot().Status, nil
 }
 
 func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt string, items []string, interrupt bool) (string, error) {
@@ -617,6 +650,7 @@ func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt str
 		return "", errors.New("agent is closed")
 	}
 	c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
+	c.startSubAgentCompletionWatcher(runner, submissionID)
 	return submissionID, nil
 }
 
@@ -631,35 +665,55 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 	}
 	defer cancel()
 
-	watched := make(map[string]struct{}, len(ids))
+	merged := make(chan struct{}, len(ids))
 	for _, id := range ids {
-		watched[id] = struct{}{}
+		runner, err := c.getSubAgent(id)
+		if err != nil {
+			continue
+		}
+		initialStatus, updates := runner.subscribeStatus(waitCtx)
+		if isSubAgentFinalStatus(initialStatus) {
+			continue
+		}
+		go func(ch <-chan pubsub.Event[subAgentStatus]) {
+			for {
+				select {
+				case <-waitCtx.Done():
+					return
+				case _, ok := <-ch:
+					if !ok {
+						select {
+						case merged <- struct{}{}:
+						default:
+						}
+						return
+					}
+					select {
+					case merged <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}(updates)
 	}
-	events := SubscribeSubAgentEvents(waitCtx)
 
 	for {
-		snapshots, allIdle := c.snapshotSubAgentsByID(ids)
-		if allIdle {
+		snapshots, allFinal := c.snapshotSubAgentsByID(ids)
+		if allFinal {
 			return snapshots, false
 		}
 
 		select {
 		case <-waitCtx.Done():
 			return snapshots, true
-		case event, ok := <-events:
-			if !ok {
-				return snapshots, true
-			}
-			if _, ok := watched[event.Payload.AgentID]; !ok {
-				continue
-			}
+		case <-merged:
 		}
 	}
 }
 
 func (c *coordinator) snapshotSubAgentsByID(ids []string) ([]subAgentSnapshot, bool) {
 	snapshots := make([]subAgentSnapshot, 0, len(ids))
-	allIdle := true
+	allFinal := true
 	for _, id := range ids {
 		runner, err := c.getSubAgent(id)
 		if err != nil {
@@ -668,11 +722,11 @@ func (c *coordinator) snapshotSubAgentsByID(ids []string) ([]subAgentSnapshot, b
 		}
 		snap := runner.snapshot()
 		snapshots = append(snapshots, snap)
-		if snap.Status == subAgentStatusRunning || snap.Status == subAgentStatusQueued {
-			allIdle = false
+		if !isSubAgentFinalStatus(snap.Status) {
+			allFinal = false
 		}
 	}
-	return snapshots, allIdle
+	return snapshots, allFinal
 }
 
 func (c *coordinator) closeSubAgent(agentID string) error {

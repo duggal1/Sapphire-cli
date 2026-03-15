@@ -1,18 +1,65 @@
-Track multi-step work with a strict todo list.
+Creates and manages a structured task list for tracking progress on complex, multi-step coding tasks.
 
-Use `todos` when the task has multiple steps, multiple files, or any non-trivial execution sequence.
+<when_to_use>
+Use this tool proactively in these scenarios:
 
-Rules:
-- Create the full list before technical work.
-- Keep exactly one task `in_progress`.
-- For each item: `start` before work, `complete` immediately after validation.
-- Use `list` to resync before the next item when needed.
-- Prefer `task_key` as the stable selector when the planner/runtime provides one.
-- Prefer `task_id` only when the current list was just read or created.
-- If the list was recreated, reset, or ids/keys may be stale, use `task_content` for `start` or `complete` after a `list` resync.
-- Do not mention the todo list in normal response text; the UI already shows it.
+- Complex multi-step tasks requiring 3+ distinct steps or actions
+- Non-trivial tasks requiring careful planning or multiple operations
+- User explicitly requests todo list management
+- User provides multiple tasks (numbered or comma-separated list)
+- After receiving new instructions to capture requirements
+- When starting work on a task (mark as in_progress BEFORE beginning)
+- After completing a task (mark completed and add new follow-up tasks)
+</when_to_use>
 
-Task fields:
-- `content`: imperative form, for example `Run tests`
-- `key`: stable machine-friendly task key, for example `run_tests`
-- `active_form`: present-continuous form, for example `Running tests`
+<when_not_to_use>
+Skip this tool when:
+
+- Single, straightforward task
+- Trivial task with no organizational benefit
+- Task completable in less than 3 trivial steps
+- Purely conversational or informational request
+</when_not_to_use>
+
+<task_states>
+- **pending**: Task not yet started
+- **in_progress**: Currently working on (limit to ONE task at a time)
+- **completed**: Task finished successfully
+
+**IMPORTANT**: Each task requires two forms:
+- **content**: Imperative form describing what needs to be done (e.g., "Run tests", "Build the project")
+- **active_form**: Present continuous form shown during execution (e.g., "Running tests", "Building the project")
+</task_states>
+
+<task_management>
+- Update the entire todo list each time it changes
+- Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
+- Exactly ONE task must be in_progress at any time (not less, not more)
+- Complete current tasks before starting new ones
+- Remove tasks that are no longer relevant from the list entirely
+</task_management>
+
+<completion_requirements>
+ONLY mark a task as completed when you have FULLY accomplished it.
+
+Never mark completed if:
+- Tests are failing
+- Implementation is partial
+- You encountered unresolved errors
+- You couldn't find necessary files or dependencies
+
+If blocked:
+- Keep task as in_progress
+- Create new task describing what needs to be resolved
+</completion_requirements>
+
+<task_breakdown>
+- Create specific, actionable items
+- Break complex tasks into smaller, manageable steps
+- Use clear, descriptive task names
+- Always provide both content and active_form
+</task_breakdown>
+
+<output_behavior>
+**NEVER** print or list todos in your response text. The user sees the todo list in real-time in the UI.
+</output_behavior>

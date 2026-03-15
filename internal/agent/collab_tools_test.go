@@ -52,6 +52,20 @@ func TestSendInputParamsAcceptTaskAlias(t *testing.T) {
 	require.True(t, params.Interrupt)
 }
 
+func TestSendInputParamsAcceptItemsPayload(t *testing.T) {
+	t.Parallel()
+
+	var params SendInputParams
+	err := params.UnmarshalJSON([]byte(`{
+		"agent_id":"agent-123",
+		"items":[{"text":"continue analysis"},{"content":"return a concise status"}]
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "agent-123", params.ID)
+	require.Equal(t, "continue analysis\nreturn a concise status", params.Message)
+	require.Equal(t, []string{"continue analysis", "return a concise status"}, params.Items)
+}
+
 func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 	t.Parallel()
 

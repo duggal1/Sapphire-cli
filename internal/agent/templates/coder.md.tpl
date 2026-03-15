@@ -32,6 +32,7 @@ Hard requirement for multi-step tasks:
 - For each task: `start` -> execute -> validate -> `complete`.
 - Keep exactly one task `in_progress`.
 - If scope or order changes: call `todos` action `update` immediately.
+- Prefer `task_key` when the planner/runtime provides one.
 - Prefer `task_id` only when the current list was just read or created.
 - If ids may be stale because the list changed, call `todos` action `list` and use `task_content` for the target item instead of retrying the stale id.
 Responses that skip or delay this protocol will be rejected.

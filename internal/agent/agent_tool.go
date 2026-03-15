@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"errors"
-	"strings"
 
 	"charm.land/fantasy"
 
@@ -30,8 +29,7 @@ const (
 )
 
 func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) {
-	agentCfg, ok := c.cfg.Agents[config.AgentTask]
-	if !ok {
+	if _, ok := c.cfg.Agents[config.AgentTask]; !ok {
 		return nil, errors.New("task agent not configured")
 	}
 

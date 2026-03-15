@@ -1367,9 +1367,10 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 1. Create the full todo list before technical work.
 2. For each item: start -> execute -> validate -> complete.
 3. Keep exactly one item in_progress.
-4. Prefer task_id only when the current list was just read or created.
-5. If the list was recreated, reset, or ids may be stale: call todos list and use task_content for the target item instead of retrying a stale task_id.
-6. Do not start the next item until the current one is validated and marked complete.
+4. Prefer task_key when the planner/runtime provides one.
+5. Prefer task_id only when the current list was just read or created.
+6. If the list was recreated, reset, or ids may be stale: call todos list and use task_content for the target item instead of retrying a stale task_id.
+7. Do not start the next item until the current one is validated and marked complete.
 
 Skip this only for a single non-destructive read requiring exactly one tool call.`,
 				),

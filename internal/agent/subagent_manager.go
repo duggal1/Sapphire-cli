@@ -263,15 +263,14 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	if opts.Prompt == "" && len(opts.PromptItems) == 0 {
 		return "", "", errors.New("prompt is required")
 	}
-	if parentSessionID != "" {
-		if _, err := c.validateSubAgentLaunch(ctx, parentSessionID, opts.Prompt); err != nil {
-			return "", "", err
-		}
-	}
-
 	promptText := opts.Prompt
 	if promptText == "" && len(opts.PromptItems) > 0 {
 		promptText = strings.Join(opts.PromptItems, "\n")
+	}
+	if parentSessionID != "" {
+		if _, err := c.validateSubAgentLaunch(ctx, parentSessionID, promptText); err != nil {
+			return "", "", err
+		}
 	}
 	decision := evaluateSubAgentLaunch(promptText)
 

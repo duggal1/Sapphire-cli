@@ -332,14 +332,21 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 		idErr = fmt.Errorf("task_id not found: %s", id)
 	}
 	if content != "" {
+		contentCandidates := todoLookupCandidates(content)
 		for i, todo := range todos {
-			if strings.EqualFold(strings.TrimSpace(todo.Content), content) {
-				return i, nil
+			current := strings.TrimSpace(todo.Content)
+			for _, candidate := range contentCandidates {
+				if strings.EqualFold(current, candidate) {
+					return i, nil
+				}
 			}
 		}
 		for i, todo := range todos {
-			if strings.Contains(strings.ToLower(strings.TrimSpace(todo.Content)), strings.ToLower(content)) {
-				return i, nil
+			current := strings.ToLower(strings.TrimSpace(todo.Content))
+			for _, candidate := range contentCandidates {
+				if strings.Contains(current, strings.ToLower(candidate)) {
+					return i, nil
+				}
 			}
 		}
 		return -1, fmt.Errorf("task not found by content: %s", content)
@@ -361,6 +368,21 @@ func findTodoIndex(todos []session.Todo, taskID, taskContent string, task *TodoI
 		return -1, idErr
 	}
 	return -1, fmt.Errorf("task_id or task content is required")
+}
+
+func todoLookupCandidates(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	candidates := []string{value}
+	if idx := strings.Index(value, ":"); idx >= 0 {
+		suffix := strings.TrimSpace(value[idx+1:])
+		if suffix != "" && !strings.EqualFold(suffix, value) {
+			candidates = append(candidates, suffix)
+		}
+	}
+	return candidates
 }
 
 func resolveTodoIndex(todos []session.Todo, action, taskID, taskContent string, task *TodoItem) (int, error) {

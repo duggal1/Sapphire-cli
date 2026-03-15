@@ -27,6 +27,20 @@ func TestSpawnAgentParamsAcceptPromptAlias(t *testing.T) {
 	require.Equal(t, "tests pass", params.DefinitionOfDone)
 }
 
+func TestSpawnAgentParamsAcceptItemsPayload(t *testing.T) {
+	t.Parallel()
+
+	var params SpawnAgentParams
+	err := params.UnmarshalJSON([]byte(`{
+		"items":[
+			{"type":"text","text":"Investigate the failing worktree flow"},
+			{"content":"Return a concise report"}
+		]
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "Investigate the failing worktree flow\nReturn a concise report", params.Message)
+}
+
 func TestSendInputParamsAcceptTaskAlias(t *testing.T) {
 	t.Parallel()
 

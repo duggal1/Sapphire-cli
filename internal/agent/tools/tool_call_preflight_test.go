@@ -203,7 +203,7 @@ func TestPrepareToolCallDoesNotRewriteSingleAgenticEditToEdit(t *testing.T) {
 	require.Equal(t, AgenticEditToolName, prepared.Name)
 }
 
-func TestPrepareToolCallDoesNotRewriteMultiEditToAgenticEdit(t *testing.T) {
+func TestPrepareToolCallPromotesExplicitMultiEditShapeToAgenticEdit(t *testing.T) {
 	t.Parallel()
 
 	editTool := fantasy.NewAgentTool(
@@ -231,7 +231,7 @@ func TestPrepareToolCallDoesNotRewriteMultiEditToAgenticEdit(t *testing.T) {
 		Input: `{"file_path":"README.md","edits":[{"old_string":"alpha","new_string":"beta"},{"old_string":"gamma","new_string":"delta"}]}`,
 	}, registry)
 	require.NoError(t, err)
-	require.Equal(t, EditToolName, prepared.Name)
+	require.Equal(t, AgenticEditToolName, prepared.Name)
 }
 
 func TestPrepareToolCallDoesNotTruncateAgenticViewPaths(t *testing.T) {

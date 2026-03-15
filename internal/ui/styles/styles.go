@@ -556,8 +556,8 @@ func DefaultStyles(yellowMode bool) Styles {
 		tertiaryHex  = "#8B5A2B"
 		tertiary     = lipgloss.Color(tertiaryHex)
 		// Markdown accent pair (primary orange + complementary accent)
-		markdownSecondaryHex = "#9165ffff"
-		markdownTertiaryHex  = "#ff8b65ff"
+		markdownSecondaryHex = "#A855F7" // Purple for secondary headings
+		markdownTertiaryHex  = "#F97316" // Orange for tertiary/accents
 
 		// Backgrounds
 		bgBase        = lipgloss.Color("#15110f")
@@ -614,7 +614,8 @@ func DefaultStyles(yellowMode bool) Styles {
 		yellowHex = "#F59E0B"
 		yellow    = lipgloss.Color(yellowHex)
 
-		greenLight = charmtone.Guac
+		// Bright green for todo ticks and success states
+		greenLight = lipgloss.Color("#4ADE80") // Bright green (Tailwind green-400)
 		green      = charmtone.Guac
 		greenDark  = charmtone.Guac
 
@@ -724,12 +725,12 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	syntaxGray := "#D4D0CB"
 	syntaxGrayMuted := "#8E8379"
-	syntaxOrange := "#E79A5B"
-	syntaxPurple := "#B78AE8"
+	syntaxOrange := "#F59E0B"    // Bright orange for strings and escapes
+	syntaxPurple := "#C084FC"    // Vibrant purple for keywords
 	syntaxBlue := "#7BA2F7"
-	syntaxPink := "#E28AB0"
-	syntaxGreen := "#7FBE78"
-	syntaxLime := "#B8CC72"
+	syntaxPink := "#FB7185"      // Bright pink for functions
+	syntaxGreen := "#4ADE80"     // Bright green for constants
+	syntaxLime := "#A3E635"      // Vibrant lime for numbers
 
 	s.Markdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -739,7 +740,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr(markdownSecondaryHex),
+				Color: stringPtr("#4ADE80"), // Bright green for blockquotes
 			},
 			Indent:      uintPtr(1),
 			IndentToken: stringPtr("│ "),
@@ -764,7 +765,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "## ",
-				Color:  stringPtr(markdownSecondaryHex),
+				Color:  stringPtr("#A855F7"), // Purple for H2
 				Bold:   boolPtr(true),
 			},
 		},
@@ -813,11 +814,11 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		Item: ansi.StylePrimitive{
 			BlockPrefix: "• ",
-			Color:       stringPtr(markdownSecondaryHex),
+			Color:       stringPtr("#4ADE80"), // Bright green for list items
 		},
 		Enumeration: ansi.StylePrimitive{
 			BlockPrefix: ". ",
-			Color:       stringPtr(markdownSecondaryHex),
+			Color:       stringPtr("#F97316"), // Orange for enumerations
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{},
@@ -825,11 +826,11 @@ func DefaultStyles(yellowMode bool) Styles {
 			Unticked:       "[ ] ",
 		},
 		Link: ansi.StylePrimitive{
-			Color:     stringPtr(markdownSecondaryHex),
+			Color:     stringPtr("#A855F7"), // Purple for links
 			Underline: boolPtr(true),
 		},
 		LinkText: ansi.StylePrimitive{
-			Color: stringPtr(markdownTertiaryHex),
+			Color: stringPtr("#F97316"), // Orange for link text
 			Bold:  boolPtr(false),
 		},
 		Image: ansi.StylePrimitive{

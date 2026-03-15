@@ -12,6 +12,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1217,6 +1218,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	}
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
 	_ = a.updateMessage(genCtx, summaryMessage, dbOpLongTimeout)
+	a.persistStructuredSummary(genCtx, sessionID, aiMsgs, currentSession.Todos, opts, systemPromptPrefix, largeModel.Model)
 
 	a.updateSessionUsage(largeModel, &currentSession, narrativeResp.TotalUsage, nil)
 	currentSession.SummaryMessageID = summaryMessage.ID
@@ -1520,6 +1522,26 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	if constitution != "" {
 		retHistory = append([]fantasy.Message{
 			fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
+		}, retHistory...)
+	}
+
+	var structuredSummary *memory.StructuredSummaryData
+	if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+		if data, err := a.memory.GetStructuredSummary(memCtx, sessionID); err == nil {
+			structuredSummary = data
+		}
+		cancel()
+	}
+	var currentSession session.Session
+	if sessionCtx, cancel := withTimeout(ctx, memoryCallTimeout); sessionCtx != nil {
+		if loadedSession, err := a.getSessionWithTimeout(sessionCtx, sessionID); err == nil {
+			currentSession = loadedSession
+		}
+		cancel()
+	}
+	if continuity := buildSessionContinuityInjection(structuredSummary, currentSession.Todos); continuity != "" {
+		retHistory = append([]fantasy.Message{
+			fantasy.NewSystemMessage(continuity),
 		}, retHistory...)
 	}
 
@@ -1984,4 +2006,176 @@ func buildSummaryPrompt(todos []session.Todo) string {
 		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
 	}
 	return sb.String()
+}
+
+func buildStructuredSummaryPrompt(todos []session.Todo) string {
+	var sb strings.Builder
+	sb.WriteString("Extract the current session state from the conversation above as structured JSON.")
+	if len(todos) > 0 {
+		sb.WriteString("\n\n## Current Todo List\n\n")
+		for _, t := range todos {
+			if !session.IsRenderableTodo(t) {
+				continue
+			}
+			fmt.Fprintf(&sb, "- [%s] %s", t.Status, cmp.Or(strings.TrimSpace(t.ActiveForm), strings.TrimSpace(t.Content)))
+			if t.ID != "" {
+				fmt.Fprintf(&sb, " (%s)", t.ID)
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\nUse the todo list above as the source of truth for current task state.")
+	}
+	return sb.String()
+}
+
+func (a *sessionAgent) persistStructuredSummary(
+	ctx context.Context,
+	sessionID string,
+	aiMsgs []fantasy.Message,
+	todos []session.Todo,
+	opts fantasy.ProviderOptions,
+	systemPromptPrefix string,
+	model fantasy.LanguageModel,
+) {
+	if a.memory == nil {
+		return
+	}
+
+	structuredAgent := fantasy.NewAgent(model,
+		fantasy.WithSystemPrompt(string(structuredSummaryPromptTmpl)),
+	)
+	resp, err := structuredAgent.Generate(ctx, fantasy.AgentCall{
+		Prompt:          buildStructuredSummaryPrompt(todos),
+		Messages:        aiMsgs,
+		ProviderOptions: opts,
+		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			prepared.Messages = options.Messages
+			if systemPromptPrefix != "" {
+				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
+			}
+			return callContext, prepared, nil
+		},
+	})
+	if err != nil {
+		slog.Warn("Failed to generate structured session summary", "session_id", sessionID, "error", err)
+		return
+	}
+
+	data, err := parseStructuredSummaryData(resp.Response.Content.Text(), todos)
+	if err != nil {
+		slog.Warn("Failed to parse structured session summary", "session_id", sessionID, "error", err)
+		return
+	}
+
+	memCtx, cancel := withTimeout(ctx, memoryCallTimeout)
+	if memCtx == nil {
+		return
+	}
+	defer cancel()
+
+	if err := a.memory.CreateStructuredSummary(memCtx, sessionID, data); err != nil {
+		slog.Warn("Failed to persist structured session summary", "session_id", sessionID, "error", err)
+	}
+}
+
+func parseStructuredSummaryData(raw string, todos []session.Todo) (memory.StructuredSummaryData, error) {
+	trimmed := strings.TrimSpace(raw)
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end > start {
+		trimmed = trimmed[start : end+1]
+	}
+
+	var data memory.StructuredSummaryData
+	if err := json.Unmarshal([]byte(trimmed), &data); err != nil {
+		return memory.StructuredSummaryData{}, err
+	}
+
+	data.TodoStates = todoStatesFromSessionTodos(todos)
+	return data, nil
+}
+
+func todoStatesFromSessionTodos(todos []session.Todo) []memory.TodoState {
+	states := make([]memory.TodoState, 0, len(todos))
+	for _, todo := range todos {
+		if !session.IsRenderableTodo(todo) {
+			continue
+		}
+		states = append(states, memory.TodoState{
+			Content:      cmp.Or(strings.TrimSpace(todo.Content), strings.TrimSpace(todo.ActiveForm)),
+			Status:       string(todo.Status),
+			Dependencies: nil,
+		})
+	}
+	return states
+}
+
+func buildSessionContinuityInjection(structured *memory.StructuredSummaryData, todos []session.Todo) string {
+	if structured == nil {
+		structured = &memory.StructuredSummaryData{}
+	}
+
+	todoStates := structured.TodoStates
+	if len(todoStates) == 0 {
+		todoStates = todoStatesFromSessionTodos(todos)
+	}
+
+	var sb strings.Builder
+	if len(structured.Decisions) > 0 || len(structured.FileChanges) > 0 || len(structured.FailureModes) > 0 || len(todoStates) > 0 {
+		sb.WriteString("## SESSION CONTINUITY\n")
+		sb.WriteString("Use this as the stable handoff state for provider/model switches and post-compaction recovery.\n")
+	}
+
+	if len(todoStates) > 0 {
+		sb.WriteString("\n### Active Todo State\n")
+		for _, todo := range todoStates {
+			if strings.TrimSpace(todo.Content) == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- [%s] %s\n", todo.Status, todo.Content)
+		}
+	}
+
+	if len(structured.Decisions) > 0 {
+		sb.WriteString("\n### Key Decisions\n")
+		for _, decision := range structured.Decisions {
+			if strings.TrimSpace(decision.Decision) == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- %s", decision.Decision)
+			if decision.File != "" {
+				fmt.Fprintf(&sb, " (%s)", decision.File)
+			}
+			if decision.Rationale != "" {
+				fmt.Fprintf(&sb, " — %s", decision.Rationale)
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	if len(structured.FileChanges) > 0 {
+		sb.WriteString("\n### Recent File Changes\n")
+		for _, change := range structured.FileChanges {
+			if strings.TrimSpace(change.File) == "" || strings.TrimSpace(change.SemanticChange) == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- %s: %s\n", change.File, change.SemanticChange)
+		}
+	}
+
+	if len(structured.FailureModes) > 0 {
+		sb.WriteString("\n### Known Failure Modes\n")
+		for _, failure := range structured.FailureModes {
+			if strings.TrimSpace(failure.Issue) == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- %s", failure.Issue)
+			if failure.Resolution != "" {
+				fmt.Fprintf(&sb, " — %s", failure.Resolution)
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
 }

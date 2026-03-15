@@ -430,6 +430,7 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 		case fantasy.MessageRoleAssistant:
 			var parts []*genai.Part
 			var currentReasoningMetadata *ReasoningMetadata
+			firstFunctionCallInMessage := true
 			for _, part := range msg.Content {
 				switch part.GetType() {
 				case fantasy.ContentTypeReasoning:
@@ -497,9 +498,13 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 						appliedSignature = currentReasoningMetadata.Signature
 						currentReasoningMetadata = nil
 					}
+					if appliedSignature == "" && firstFunctionCallInMessage {
+						appliedSignature = MissingThoughtSignatureFallback
+					}
 					if appliedSignature != "" {
 						geminiPart.ThoughtSignature = []byte(appliedSignature)
 					}
+					firstFunctionCallInMessage = false
 					parts = append(parts, geminiPart)
 				}
 			}
@@ -722,7 +727,7 @@ func (g *languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.
 					switch {
 					case part.Text != "" || part.Thought || (part.ThoughtSignature != nil && part.FunctionCall == nil && part.ExecutableCode == nil && part.CodeExecutionResult == nil):
 						delta := part.Text
-						
+
 						// Check if this is a reasoning/thought part
 						if part.Thought {
 							// End any active text block before starting reasoning
@@ -760,7 +765,7 @@ func (g *languageModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.
 							if delta == "" && part.ThoughtSignature == nil {
 								continue
 							}
-							
+
 							// Start new text block if not already active
 							if !isActiveText {
 								isActiveText = true

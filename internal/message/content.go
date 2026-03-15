@@ -25,8 +25,6 @@ const (
 	Tool      MessageRole = "tool"
 )
 
-const geminiMissingThoughtSignatureFallback = "skip_thought_signature_validator"
-
 type FinishReason string
 
 const (
@@ -137,11 +135,11 @@ type Finish struct {
 	ThoughtsTokens   int64 `json:"thoughts_tokens,omitempty"`
 	CachedTokens     int64 `json:"cached_tokens,omitempty"`
 	// Timing metrics for Gemini
-	StartTimeMs     int64   `json:"start_time_ms,omitempty"`
-	EndTimeMs       int64   `json:"end_time_ms,omitempty"`
+	StartTimeMs int64 `json:"start_time_ms,omitempty"`
+	EndTimeMs   int64 `json:"end_time_ms,omitempty"`
 	// Removed TokensPerSecond as requested
-	AvgLatencyMs    float64 `json:"avg_latency_ms,omitempty"`
-	ThinkingEffort  string  `json:"thinking_effort,omitempty"`
+	AvgLatencyMs   float64 `json:"avg_latency_ms,omitempty"`
+	ThinkingEffort string  `json:"thinking_effort,omitempty"`
 }
 
 func (Finish) isPart() {}
@@ -260,50 +258,43 @@ func (m *Message) IsThinking() bool {
 }
 
 func (m *Message) AppendContent(delta string) {
-	found := false
-	for i, part := range m.Parts {
-		if c, ok := part.(TextContent); ok {
-			m.Parts[i] = TextContent{Text: c.Text + delta}
-			found = true
+	if len(m.Parts) > 0 {
+		if c, ok := m.Parts[len(m.Parts)-1].(TextContent); ok {
+			m.Parts[len(m.Parts)-1] = TextContent{Text: c.Text + delta}
+			return
 		}
 	}
-	if !found {
-		m.Parts = append(m.Parts, TextContent{Text: delta})
-	}
+	m.Parts = append(m.Parts, TextContent{Text: delta})
 }
 
 func (m *Message) AppendReasoningContent(delta string) {
-	found := false
-	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:   c.Thinking + delta,
-				Signature:  c.Signature,
-				StartedAt:  c.StartedAt,
-				FinishedAt: c.FinishedAt,
-			}
-			found = true
+	for i := len(m.Parts) - 1; i >= 0; i-- {
+		c, ok := m.Parts[i].(ReasoningContent)
+		if !ok {
+			break
 		}
+		if c.FinishedAt != 0 {
+			break
+		}
+		c.Thinking += delta
+		if c.StartedAt == 0 {
+			c.StartedAt = time.Now().Unix()
+		}
+		m.Parts[i] = c
+		return
 	}
-	if !found {
-		m.Parts = append(m.Parts, ReasoningContent{
-			Thinking:  delta,
-			StartedAt: time.Now().Unix(),
-		})
-	}
+	m.Parts = append(m.Parts, ReasoningContent{
+		Thinking:  delta,
+		StartedAt: time.Now().Unix(),
+	})
 }
 
 func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
-	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:         c.Thinking,
-				ThoughtSignature: cmp.Or(signature, c.ThoughtSignature),
-				ToolID:           cmp.Or(toolCallID, c.ToolID),
-				Signature:        c.Signature,
-				StartedAt:        c.StartedAt,
-				FinishedAt:       c.FinishedAt,
-			}
+	for i := len(m.Parts) - 1; i >= 0; i-- {
+		if c, ok := m.Parts[i].(ReasoningContent); ok {
+			c.ThoughtSignature = cmp.Or(signature, c.ThoughtSignature)
+			c.ToolID = cmp.Or(toolCallID, c.ToolID)
+			m.Parts[i] = c
 			return
 		}
 	}
@@ -314,14 +305,10 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 }
 
 func (m *Message) AppendReasoningSignature(signature string) {
-	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:   c.Thinking,
-				Signature:  c.Signature + signature,
-				StartedAt:  c.StartedAt,
-				FinishedAt: c.FinishedAt,
-			}
+	for i := len(m.Parts) - 1; i >= 0; i-- {
+		if c, ok := m.Parts[i].(ReasoningContent); ok {
+			c.Signature += signature
+			m.Parts[i] = c
 			return
 		}
 	}
@@ -329,29 +316,21 @@ func (m *Message) AppendReasoningSignature(signature string) {
 }
 
 func (m *Message) SetReasoningResponsesData(data *openai.ResponsesReasoningMetadata) {
-	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{
-				Thinking:      c.Thinking,
-				ResponsesData: data,
-				StartedAt:     c.StartedAt,
-				FinishedAt:    c.FinishedAt,
-			}
+	for i := len(m.Parts) - 1; i >= 0; i-- {
+		if c, ok := m.Parts[i].(ReasoningContent); ok {
+			c.ResponsesData = data
+			m.Parts[i] = c
 			return
 		}
 	}
 }
 
 func (m *Message) FinishThinking() {
-	for i, part := range m.Parts {
-		if c, ok := part.(ReasoningContent); ok {
+	for i := len(m.Parts) - 1; i >= 0; i-- {
+		if c, ok := m.Parts[i].(ReasoningContent); ok {
 			if c.FinishedAt == 0 {
-				m.Parts[i] = ReasoningContent{
-					Thinking:   c.Thinking,
-					Signature:  c.Signature,
-					StartedAt:  c.StartedAt,
-					FinishedAt: time.Now().Unix(),
-				}
+				c.FinishedAt = time.Now().Unix()
+				m.Parts[i] = c
 			}
 			return
 		}
@@ -549,8 +528,8 @@ func (m *Message) AddFinishWithMetadata(
 		StartTimeMs:      startTimeMs,
 		EndTimeMs:        endTimeMs,
 		// Removed TokensPerSecond
-		AvgLatencyMs:     avgLatencyMs,
-		ThinkingEffort:   thinkingEffort,
+		AvgLatencyMs:   avgLatencyMs,
+		ThinkingEffort: thinkingEffort,
 	})
 }
 
@@ -650,7 +629,6 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		})
 	case Assistant:
 		googleReasoningByToolID := make(map[string]*gemini.ReasoningMetadata)
-		firstToolCallID := ""
 		for _, part := range m.Parts {
 			reasoning, ok := part.(ReasoningContent)
 			if !ok || reasoning.ThoughtSignature == "" || reasoning.ToolID == "" {
@@ -663,9 +641,6 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 		}
 
 		var parts []fantasy.MessagePart
-		assistantLooksGemini := strings.EqualFold(m.Provider, gemini.Name) ||
-			strings.EqualFold(m.Provider, "google") ||
-			strings.HasPrefix(strings.ToLower(strings.TrimSpace(m.Model)), "gemini")
 		for _, part := range m.Parts {
 			switch content := part.(type) {
 			case TextContent:
@@ -694,9 +669,6 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				}
 				parts = append(parts, reasoningPart)
 			case ToolCall:
-				if firstToolCallID == "" {
-					firstToolCallID = content.ID
-				}
 				toolCallPart := fantasy.ToolCallPart{
 					ToolCallID:       content.ID,
 					ToolName:         content.Name,
@@ -706,13 +678,6 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				if metadata, ok := googleReasoningByToolID[content.ID]; ok {
 					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
 						gemini.Name: metadata,
-					}
-				} else if assistantLooksGemini && content.ID == firstToolCallID {
-					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
-						gemini.Name: &gemini.ReasoningMetadata{
-							Signature: geminiMissingThoughtSignatureFallback,
-							ToolID:    content.ID,
-						},
 					}
 				}
 				parts = append(parts, toolCallPart)

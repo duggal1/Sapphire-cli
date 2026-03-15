@@ -50,6 +50,66 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, providers)
 	require.Greater(t, len(providers), 5, "Expected embedded providers")
+
+	var openRouter *catwalk.Provider
+	for i := range providers {
+		if providers[i].ID == "openrouter" {
+			openRouter = &providers[i]
+			break
+		}
+	}
+	require.NotNil(t, openRouter)
+
+	modelIDs := make([]string, 0, len(openRouter.Models))
+	for _, model := range openRouter.Models {
+		modelIDs = append(modelIDs, model.ID)
+	}
+
+	require.Contains(t, modelIDs, "nvidia/nemotron-3-super-120b-a12b:free")
+	require.Contains(t, modelIDs, "nousresearch/hermes-3-llama-3.1-405b:free")
+	require.Contains(t, modelIDs, "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")
+}
+
+func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t *testing.T) {
+	providers := []catwalk.Provider{
+		{
+			ID: "openrouter",
+			Models: []catwalk.Model{
+				{ID: "arcee-ai/trinity-large-preview:free", Name: "Arcee AI: Trinity Large Preview (free)"},
+				{ID: "qwen/qwen3-coder:free", Name: "Qwen: Qwen3 Coder 480B A35B (free)"},
+				{ID: "nousresearch/hermes-3-llama-3.1-405b:free", Name: "Nous: Hermes 3 405B Instruct (free)"},
+			},
+		},
+	}
+
+	augmentProviderCatalog(providers)
+
+	modelIDs := make([]string, 0, len(providers[0].Models))
+	for _, model := range providers[0].Models {
+		modelIDs = append(modelIDs, model.ID)
+	}
+
+	require.Len(t, providers[0].Models, 5)
+	require.Contains(t, modelIDs, "nvidia/nemotron-3-super-120b-a12b:free")
+	require.Contains(t, modelIDs, "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")
+
+	trinityLargeCount := 0
+	qwenCoderCount := 0
+	hermesCount := 0
+	for _, modelID := range modelIDs {
+		if modelID == "arcee-ai/trinity-large-preview:free" {
+			trinityLargeCount++
+		}
+		if modelID == "qwen/qwen3-coder:free" {
+			qwenCoderCount++
+		}
+		if modelID == "nousresearch/hermes-3-llama-3.1-405b:free" {
+			hermesCount++
+		}
+	}
+	require.Equal(t, 1, trinityLargeCount)
+	require.Equal(t, 1, qwenCoderCount)
+	require.Equal(t, 1, hermesCount)
 }
 
 func TestProviders_Integration_WithMockClients(t *testing.T) {

@@ -472,13 +472,13 @@ func (app *App) GetDefaultSmallModel(providerID string) config.SelectedModel {
 func (app *App) setupEvents() {
 	ctx, cancel := context.WithCancel(app.globalCtx)
 	app.eventsCtx = ctx
-	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events)
-	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events)
+	setupSubscriber(ctx, app.serviceEventsWG, "sessions", app.Sessions.Subscribe, app.events, subscriberCritical)
+	setupSubscriber(ctx, app.serviceEventsWG, "messages", app.Messages.Subscribe, app.events, subscriberCritical)
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions", app.Permissions.Subscribe, app.events, subscriberCritical)
+	setupSubscriber(ctx, app.serviceEventsWG, "permissions-notifications", app.Permissions.SubscribeNotifications, app.events, subscriberCritical)
+	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events, subscriberCritical)
+	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events, subscriberBestEffort)
+	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events, subscriberBestEffort)
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()
@@ -489,6 +489,13 @@ func (app *App) setupEvents() {
 
 const subscriberSendTimeout = 2 * time.Second
 
+type subscriberMode uint8
+
+const (
+	subscriberCritical subscriberMode = iota
+	subscriberBestEffort
+)
+
 // setupSubscriber sets up an individual service event subscriber in a background goroutine,
 // handling message propagation to the output channel with a timeout-based safety mechanism.
 func setupSubscriber[T any](
@@ -497,9 +504,31 @@ func setupSubscriber[T any](
 	name string,
 	subscriber func(context.Context) <-chan pubsub.Event[T],
 	outputCh chan<- tea.Msg,
+	mode subscriberMode,
 ) {
 	wg.Go(func() {
 		subCh := subscriber(ctx)
+		if mode == subscriberCritical {
+			for {
+				select {
+				case event, ok := <-subCh:
+					if !ok {
+						slog.Debug("Subscription channel closed", "name", name)
+						return
+					}
+					select {
+					case outputCh <- tea.Msg(event):
+					case <-ctx.Done():
+						slog.Debug("Subscription cancelled", "name", name)
+						return
+					}
+				case <-ctx.Done():
+					slog.Debug("Subscription cancelled", "name", name)
+					return
+				}
+			}
+		}
+
 		sendTimer := time.NewTimer(0)
 		<-sendTimer.C
 		defer sendTimer.Stop()

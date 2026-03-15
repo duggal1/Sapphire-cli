@@ -25,6 +25,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/sapphire/internal/agent"
 	agenttools "github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
 	"github.com/charmbracelet/sapphire/internal/app"
@@ -89,6 +90,16 @@ const (
 	uiChat
 )
 
+type sendLifecycleState uint8
+
+const (
+	sendLifecycleIdle sendLifecycleState = iota
+	sendLifecycleSubmitting
+	sendLifecycleQueued
+	sendLifecycleRunning
+	sendLifecycleFailed
+)
+
 type openEditorMsg struct {
 	Text string
 }
@@ -113,6 +124,10 @@ type (
 	sendMessageMsg struct {
 		Content     string
 		Attachments []message.Attachment
+	}
+	sendSubmissionResultMsg struct {
+		Result agent.SubmissionResult
+		Err    error
 	}
 
 	// closeDialogMsg is sent to close the current dialog.
@@ -139,6 +154,9 @@ type UI struct {
 	lastUserMessageTime int64
 	requestStartedAt    time.Time
 	requestCompletedAt  time.Time
+	sendState           sendLifecycleState
+	pendingSendContent  string
+	pendingAttachments  []message.Attachment
 
 	// The width and height of the terminal in cells.
 	width  int
@@ -400,6 +418,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateLayoutAndSize()
 		}
 	}
+	if m.sendState == sendLifecycleQueued && m.promptQueue == 0 && !m.isAgentBusy() {
+		m.sendState = sendLifecycleIdle
+	}
 	// Update terminal capabilities
 	m.caps.Update(msg)
 	switch msg := msg.(type) {
@@ -448,6 +469,38 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
+	case sendSubmissionResultMsg:
+		if msg.Err != nil {
+			m.sendState = sendLifecycleFailed
+			m.completeRequestTimer()
+			if m.pendingSendContent != "" || len(m.pendingAttachments) > 0 {
+				m.textarea.SetValue(m.pendingSendContent)
+				m.attachments.Reset()
+				for _, attachment := range cloneAttachments(m.pendingAttachments) {
+					m.attachments.Update(attachment)
+				}
+			}
+			m.pendingSendContent = ""
+			m.pendingAttachments = nil
+			cmds = append(cmds, util.ReportError(msg.Err))
+			break
+		}
+
+		m.pendingSendContent = ""
+		m.pendingAttachments = nil
+		m.textarea.Reset()
+		m.attachments.Reset()
+		cmds = append(cmds, m.loadPromptHistory())
+		switch msg.Result.Status {
+		case agent.SubmissionStatusQueued:
+			m.sendState = sendLifecycleQueued
+			if m.hasSession() {
+				m.promptQueue = m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID)
+			}
+		default:
+			m.sendState = sendLifecycleRunning
+			m.startRequestTimer()
+		}
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -533,6 +586,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// stop the spinner if the agent is not busy anymore
 		if m.todoIsSpinning && !m.isAgentBusy() {
 			m.todoIsSpinning = false
+		}
+		if !m.isAgentBusy() && m.promptQueue == 0 {
+			m.sendState = sendLifecycleIdle
 		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
@@ -792,10 +848,23 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiFocusMain:
 	case uiFocusEditor:
 		// Textarea placeholder logic
-		if m.isAgentBusy() {
+		switch m.sendState {
+		case sendLifecycleSubmitting:
+			m.textarea.Placeholder = "Submitting..."
+		case sendLifecycleQueued:
+			m.textarea.Placeholder = "Queued..."
+		case sendLifecycleRunning:
 			m.textarea.Placeholder = m.workingPlaceholder
-		} else {
-			m.textarea.Placeholder = m.readyPlaceholder
+		case sendLifecycleFailed:
+			m.textarea.Placeholder = "Retry your message"
+		case sendLifecycleIdle:
+			fallthrough
+		default:
+			if m.isAgentBusy() {
+				m.textarea.Placeholder = m.workingPlaceholder
+			} else {
+				m.textarea.Placeholder = m.readyPlaceholder
+			}
 		}
 		if m.com.App.Permissions.SkipRequests() {
 			m.textarea.Placeholder = "Yolo mode!"
@@ -1757,6 +1826,13 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 
+	if m.sendState == sendLifecycleSubmitting && m.focus == uiFocusEditor {
+		if handleGlobalKeys(msg) {
+			return tea.Batch(cmds...)
+		}
+		return nil
+	}
+
 	switch m.state {
 	case uiOnboarding:
 		return tea.Batch(cmds...)
@@ -1771,19 +1847,18 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.textarea.SetValue(before)
 					break
 				}
-				m.textarea.Reset()
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
-				attachments := m.attachments.List()
-				m.attachments.Reset()
+				attachments := cloneAttachments(m.attachments.List())
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
 				m.randomizePlaceholders()
 				m.historyReset()
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				m.stagePendingSend(value, attachments)
+				return m.sendMessage(value, attachments...)
 			}
 		}
 		// Also handle initialization view keys
@@ -1835,23 +1910,21 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 
 				// Otherwise, send the message
-				m.textarea.Reset()
-
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
 
-				attachments := m.attachments.List()
-				m.attachments.Reset()
+				attachments := cloneAttachments(m.attachments.List())
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
 
 				m.randomizePlaceholders()
 				m.historyReset()
+				m.stagePendingSend(value, attachments)
 
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				return m.sendMessage(value, attachments...)
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -3037,6 +3110,21 @@ func (m *UI) cacheSidebarLogo(width int) {
 	m.sidebarLogo = renderLogo(m.com.Styles, true, width)
 }
 
+func cloneAttachments(items []message.Attachment) []message.Attachment {
+	if len(items) == 0 {
+		return nil
+	}
+	cloned := make([]message.Attachment, len(items))
+	copy(cloned, items)
+	return cloned
+}
+
+func (m *UI) stagePendingSend(content string, attachments []message.Attachment) {
+	m.pendingSendContent = content
+	m.pendingAttachments = cloneAttachments(attachments)
+	m.sendState = sendLifecycleSubmitting
+}
+
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
 	if m.com.App.AgentCoordinator == nil {
@@ -3060,7 +3148,6 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	}
 
 	ctx := context.Background()
-	m.startRequestTimer()
 	cmds = append(cmds, func() tea.Msg {
 		for _, path := range m.sessionFileReads {
 			m.com.App.FileTracker.RecordRead(ctx, m.session.ID, path)
@@ -3072,20 +3159,16 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
 	cmds = append(cmds, func() tea.Msg {
-		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
+		result, err := m.com.App.AgentCoordinator.Submit(context.Background(), sessionID, content, attachments...)
 		if err != nil {
-			m.completeRequestTimer()
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
 			if isCancelErr || isPermissionErr {
 				return nil
 			}
-			return util.InfoMsg{
-				Type: util.InfoTypeError,
-				Msg:  err.Error(),
-			}
+			return sendSubmissionResultMsg{Err: err}
 		}
-		return nil
+		return sendSubmissionResultMsg{Result: result}
 	})
 	return tea.Batch(cmds...)
 }
@@ -3404,6 +3487,9 @@ func (m *UI) newSession() tea.Cmd {
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
+	m.sendState = sendLifecycleIdle
+	m.pendingSendContent = ""
+	m.pendingAttachments = nil
 	m.historyReset()
 	agenttools.ResetCache()
 	return tea.Batch(

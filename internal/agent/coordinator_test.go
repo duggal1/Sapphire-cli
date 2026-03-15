@@ -19,6 +19,8 @@ import (
 type mockSessionAgent struct {
 	model     Model
 	runFunc   func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error)
+	enqueued  []SessionAgentCall
+	busy      bool
 	cancelled []string
 }
 
@@ -35,11 +37,15 @@ func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
 }
 func (m *mockSessionAgent) CancelAll()                                  {}
-func (m *mockSessionAgent) IsSessionBusy(sessionID string) bool         { return false }
-func (m *mockSessionAgent) IsBusy() bool                                { return false }
-func (m *mockSessionAgent) QueuedPrompts(sessionID string) int          { return 0 }
+func (m *mockSessionAgent) IsSessionBusy(sessionID string) bool         { return m.busy }
+func (m *mockSessionAgent) IsBusy() bool                                { return m.busy }
+func (m *mockSessionAgent) QueuedPrompts(sessionID string) int          { return len(m.enqueued) }
 func (m *mockSessionAgent) QueuedPromptsList(sessionID string) []string { return nil }
 func (m *mockSessionAgent) ClearQueue(sessionID string)                 {}
+func (m *mockSessionAgent) Enqueue(call SessionAgentCall) error {
+	m.enqueued = append(m.enqueued, call)
+	return nil
+}
 func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOptions) error {
 	return nil
 }
@@ -52,6 +58,7 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 	return &coordinator{
 		cfg:                       cfg,
 		sessions:                  env.sessions,
+		messages:                  env.messages,
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 	}
 }

@@ -539,6 +539,9 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 		ID:     "gemini-test",
 		Type:   "gemini",
 		APIKey: "test-key",
+		Models: []catwalk.Model{
+			{ID: "gemini-3-flash-preview"},
+		},
 	})
 	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{
 		Provider: "gemini-test",
@@ -621,6 +624,9 @@ func TestBuildSubAgentKeepsExplicitCollabLifecycleOnly(t *testing.T) {
 		ID:     "gemini-test",
 		Type:   "gemini",
 		APIKey: "test-key",
+		Models: []catwalk.Model{
+			{ID: "gemini-3-flash-preview"},
+		},
 	})
 	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{
 		Provider: "gemini-test",

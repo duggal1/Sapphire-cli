@@ -13,6 +13,6 @@ Launch a new sub-agent for operational execution in an isolated worktree that ca
 3. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 4. Each agent invocation is stateless. Your prompt must include explicit scope, constraints, deliverables, and success criteria.
 5. Ask sub-agents to return only the information you need: absolute file paths, concise findings, risks, and the minimum evidence needed to support their conclusion.
-6. Background execution is supported via `background: true`. Use it for long-running work and then `wait` to collect results.
+6. Background execution is supported via `background: true`. Use the explicit lifecycle: `spawn_agent`/`send_input` -> `wait` -> `collect_result` -> `close_agent`.
 7. If unsure whether parallelization is justified, do not use a sub-agent.
 </usage_notes>

@@ -31,7 +31,7 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	}
 
 	joined := strings.Join(reminders, "\n")
-	require.Contains(t, joined, `Use "single_edit" for one file when you only need one replacement. Use "agentic_edit" for batched edits across one or more files.`)
+	require.Contains(t, joined, `Use "single_edit" for a simple isolated single replacement. Use "agentic_edit" for any batched or coordinated edit flow, including one file when the payload naturally contains multiple linked edit operations or a batched file-edit object.`)
 	require.NotContains(t, joined, "true multi-file edit batches only")
 }
 
@@ -45,8 +45,8 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	templateBody, err := os.ReadFile(templatePath)
 	require.NoError(t, err)
 	templateText := string(templateBody)
-	require.Contains(t, templateText, "Edit 1 file with one replacement")
-	require.Contains(t, templateText, "Batched edits across one or more files")
+	require.Contains(t, templateText, "`edit` → preferred for a very small localized single-file change.")
+	require.Contains(t, templateText, "`agentic_edit` → proactive batched edit for coordinated changes across one or more connected files; up to 30 files in parallel.")
 	require.NotContains(t, templateText, "Edit 2+ files → `agentic_edit`")
 
 	toolDocPath := filepath.Join(filepath.Dir(currentFile), "tools", "agentic_edit.md")

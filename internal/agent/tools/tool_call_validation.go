@@ -163,6 +163,19 @@ func validateAgenticEditInputMap(input map[string]any) error {
 	}
 
 	// Fallback: single-file edit shape
+	if edits, ok := input["edits"]; ok {
+		if editItems, err := coerceObjectSlice(edits); err == nil && len(editItems) > 0 {
+			for _, editMap := range editItems {
+				if _, hasFilePath := editMap["file_path"]; hasFilePath {
+					return validateAgenticEditInputMap(map[string]any{"file_edits": edits})
+				}
+				if _, hasPath := editMap["path"]; hasPath {
+					return validateAgenticEditInputMap(map[string]any{"file_edits": edits})
+				}
+			}
+		}
+	}
+
 	filePath, _ := input["file_path"].(string)
 	if strings.TrimSpace(filePath) == "" {
 		path, _ := input["path"].(string)

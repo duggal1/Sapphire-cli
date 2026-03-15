@@ -355,6 +355,7 @@ func repairEditCall(
 	normalizeKey(input, "old_string", "old", "target", "find", "search")
 	normalizeKey(input, "new_string", "new", "replacement", "replace", "replace_with", "content")
 	normalizeKey(input, "replace_all", "all", "global")
+	promoteAgenticEditFileEditsShape(input)
 
 	var multi MultiEditParams
 	if err := decodeInto(input, &multi); err != nil {
@@ -374,6 +375,35 @@ func repairEditCall(
 	}
 
 	return call, tool, input, nil
+}
+
+func promoteAgenticEditFileEditsShape(input map[string]any) {
+	if input == nil {
+		return
+	}
+	if _, ok := input["file_edits"]; ok {
+		return
+	}
+	rawEdits, ok := input["edits"]
+	if !ok {
+		return
+	}
+	items, err := coerceObjectSlice(rawEdits)
+	if err != nil || len(items) == 0 {
+		return
+	}
+	for _, item := range items {
+		if _, hasFilePath := item["file_path"]; hasFilePath {
+			input["file_edits"] = rawEdits
+			delete(input, "edits")
+			return
+		}
+		if _, hasPath := item["path"]; hasPath {
+			input["file_edits"] = rawEdits
+			delete(input, "edits")
+			return
+		}
+	}
 }
 
 func editPayloadRequiresAgenticEdit(input map[string]any, multi MultiEditParams) bool {

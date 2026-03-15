@@ -1533,8 +1533,8 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 - Initialize todos immediately.
 - Keep the todo tracker synchronized after every state change.
 - If a todo start/complete call fails because an id is stale, resync with todos list and continue using task_content for the intended item.
-- Use "single_view" or "agentic_view" based on what best fits the scope; do not force a weaker tool just to satisfy a rigid file-count rule.
-- Use "single_edit" for a simple isolated single replacement. Use "agentic_edit" for any batched or coordinated edit flow, including one file when the payload naturally contains multiple linked edit operations or a batched file-edit object.
+- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
+- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
 - Use agentic_fetch for current external docs instead of guessing.</system_reminder>`,
 			))
 		} else {
@@ -1548,9 +1548,8 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		history = append(history, fantasy.NewUserMessage(
 			`<system_reminder>Sub-agent Directive:
 Execute your assigned chunk of the tasks autonomously and efficiently.
-- Single-file reads: Prefer "single_view", but "agentic_view" is allowed when it better fits the batch shape.
-- Multi-file reads: Use "agentic_view" (max 50 files, parallel).
-- Single-file edits: Prefer "single_edit" for one simple replacement; use "agentic_edit" whenever the edit payload is batched or structurally multi-edit.
+- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
+- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
 - External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
 - Code Execution: Use "python" tool for complex computations, data processing, or verification.
 - Shell: Use "bash" for terminal commands and background jobs.

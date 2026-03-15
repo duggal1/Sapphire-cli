@@ -31,8 +31,8 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	}
 
 	joined := strings.Join(reminders, "\n")
-	require.Contains(t, joined, `Use "single_edit" for a simple isolated single replacement. Use "agentic_edit" for any batched or coordinated edit flow, including one file when the payload naturally contains multiple linked edit operations or a batched file-edit object.`)
-	require.NotContains(t, joined, "true multi-file edit batches only")
+	require.Contains(t, joined, `Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.`)
+	require.Contains(t, joined, `Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.`)
 }
 
 func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
@@ -45,9 +45,11 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	templateBody, err := os.ReadFile(templatePath)
 	require.NoError(t, err)
 	templateText := string(templateBody)
-	require.Contains(t, templateText, "`edit` → preferred for a very small localized single-file change.")
-	require.Contains(t, templateText, "`agentic_edit` → proactive batched edit for coordinated changes across one or more connected files; up to 30 files in parallel.")
-	require.NotContains(t, templateText, "Edit 2+ files → `agentic_edit`")
+	require.Contains(t, templateText, "Read exactly 1 repository file → use `single_view`.")
+	require.Contains(t, templateText, "Read 2 or more repository files → use `agentic_view`.")
+	require.Contains(t, templateText, "Edit exactly 1 repository file → use `single_edit`.")
+	require.Contains(t, templateText, "Edit 2 or more repository files → use `agentic_edit`.")
+	require.Contains(t, templateText, "`agentic_edit` batching rule: edit 2–25 files per call.")
 
 	toolDocPath := filepath.Join(filepath.Dir(currentFile), "tools", "agentic_edit.md")
 	toolDocBody, err := os.ReadFile(toolDocPath)
@@ -55,6 +57,4 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	toolDocText := string(toolDocBody)
 	require.Contains(t, toolDocText, "Makes batched edits across one or more files")
 	require.Contains(t, toolDocText, "Compatible single-file shorthand")
-	require.NotContains(t, toolDocText, "two or more files")
-	require.NotContains(t, toolDocText, "Use the full capacity of `agentic_edit`")
 }

@@ -24,14 +24,14 @@ Classify the repository into one of three tiers:
 
 **Step 2 — Adaptive orchestration**:
 
-Small repo: Analyze directly. Use agentic_view to read all relevant files in parallel, but cap each batch to 10–15 files (default 10). Only exceed 15 when files are tiny and the batch is still small in total tokens. No subagent overhead.
+Small repo: Analyze directly. Read exactly 1 file with `single_view`. Read 2 or more files with `agentic_view`. Keep each `agentic_view` batch to 2–30 files. If more than 30 files are needed, split them into multiple `agentic_view` calls. No subagent overhead.
 
-Medium repo: Identify the 2–4 highest-value domains. Spawn one subagent per domain. Each subagent uses agentic_view internally to read its assigned files in parallel and returns only synthesized findings.
+Medium repo: Identify the 2–4 highest-value domains. Spawn one subagent per domain. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, keeping each `agentic_view` batch to 2–30 files and chunking larger sets.
 
-Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain — do not cap artificially. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent uses agentic_view internally and returns only synthesized, actionable findings — no raw file dumps.
+Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, keeping each `agentic_view` batch to 2–30 files and chunking larger sets. Return only synthesized, actionable findings — no raw file dumps.
 
 Every subagent must:
-1. Use agentic_view to read assigned files in parallel, capped at 10–15 files per batch (default 10). Only exceed 15 when files are tiny and the batch is still small in total tokens.
+1. Read exactly 1 assigned file with `single_view`. Read 2 or more assigned files with `agentic_view`, capped at 2–30 files per batch. If more than 30 files are needed, split them into multiple `agentic_view` calls.
 2. Return only synthesized findings — no raw file content
 3. Report only what is explicitly observed — never infer or fabricate
 

@@ -93,11 +93,13 @@ func (t *SkillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		return joinToolParts(body, earlyState)
 	}
 
-	if opts.HasResult() && opts.Result.Content != "" {
-		// If expanded, show the first few lines of instructions
-		resultBody := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth-toolBodyLeftPaddingTotal, opts.ExpandedContent)
-		return joinToolParts(body, resultBody)
-	}
+	// Don't display the raw skill file content in the terminal UI.
+	// The model reads it internally, but users should not see the raw markdown.
+	// if opts.HasResult() && opts.Result.Content != "" {
+	// 	// If expanded, show the first few lines of instructions
+	// 	resultBody := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth-toolBodyLeftPaddingTotal, opts.ExpandedContent)
+	// 	return joinToolParts(body, resultBody)
+	// }
 
 	return body
 }

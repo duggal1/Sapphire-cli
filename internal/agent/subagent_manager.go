@@ -269,6 +269,22 @@ type subAgentSnapshot struct {
 	UpdatedAt        time.Time      `json:"updated_at,omitempty"`
 }
 
+type subAgentStatusEntry struct {
+	ID     string         `json:"id"`
+	Status subAgentStatus `json:"status"`
+}
+
+type subAgentCollectedResult struct {
+	ID           string         `json:"id"`
+	SubmissionID string         `json:"submission_id,omitempty"`
+	Status       subAgentStatus `json:"status"`
+	Result       string         `json:"result,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Progress     string         `json:"progress,omitempty"`
+	WorkDir      string         `json:"work_dir,omitempty"`
+	Branch       string         `json:"branch,omitempty"`
+}
+
 type spawnAgentOptions struct {
 	Prompt           string
 	PromptItems      []string
@@ -727,6 +743,63 @@ func (c *coordinator) snapshotSubAgentsByID(ids []string) ([]subAgentSnapshot, b
 		}
 	}
 	return snapshots, allFinal
+}
+
+func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result := subAgentCollectedResult{
+		ID:           r.id,
+		SubmissionID: r.lastSubmission,
+		Status:       r.status,
+		Result:       r.lastResult,
+		Error:        r.lastError,
+		Progress:     r.lastProgress,
+		WorkDir:      r.workDir,
+		Branch:       r.assignment.Branch,
+	}
+	if submission := r.submissions[r.lastSubmission]; submission != nil {
+		if submission.Status != "" {
+			result.Status = submission.Status
+		}
+		if submission.Result != "" {
+			result.Result = submission.Result
+		}
+		if submission.Err != "" {
+			result.Error = submission.Err
+		}
+	}
+	return result
+}
+
+func (c *coordinator) waitSubAgentStatuses(ctx context.Context, ids []string, timeout time.Duration) ([]subAgentStatusEntry, bool) {
+	snapshots, timedOut := c.waitSubAgents(ctx, ids, timeout)
+	statuses := make([]subAgentStatusEntry, 0, len(snapshots))
+	for _, snap := range snapshots {
+		statuses = append(statuses, subAgentStatusEntry{
+			ID:     snap.ID,
+			Status: snap.Status,
+		})
+	}
+	return statuses, timedOut
+}
+
+func (c *coordinator) collectSubAgentResults(ids []string) []subAgentCollectedResult {
+	results := make([]subAgentCollectedResult, 0, len(ids))
+	for _, id := range ids {
+		runner, err := c.getSubAgent(id)
+		if err != nil {
+			results = append(results, subAgentCollectedResult{
+				ID:     id,
+				Status: subAgentStatusClosed,
+				Error:  err.Error(),
+			})
+			continue
+		}
+		results = append(results, runner.latestCollectedResult())
+	}
+	return results
 }
 
 func (c *coordinator) closeSubAgent(agentID string) error {

@@ -1441,7 +1441,8 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 2. The todos tool replaces the entire list on each update.
 3. Keep exactly one item in_progress.
 4. Mark an item completed immediately after validation.
-5. If a todo list is created, do not abandon it. Finish with every remaining item completed or removed from the list.
+5. Before ending the turn, send a final todos update with every retained item completed.
+6. If a todo list is created, do not abandon it. Finish with every remaining item completed or removed from the list.
 
 Skip this only for a single non-destructive read requiring exactly one tool call.`,
 				),
@@ -1458,7 +1459,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`If the incoming request implies multiple sequential steps, initialize a minimal todo list with the "todos" tool before execution. Update the full list as it changes. If you create a todo list, do not abandon it.`,
+					`If the incoming request implies multiple sequential steps, initialize a minimal todo list with the "todos" tool before execution. Update the full list as it changes. Before ending the turn, send a final todos update with every retained item completed. If you create a todo list, do not abandon it.`,
 				),
 			))
 		}

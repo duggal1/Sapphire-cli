@@ -840,6 +840,7 @@ func allToolNames() []string {
 		"resume_agent",
 		"send_input",
 		"wait",
+		"collect_result",
 		"close_agent",
 		"spawn_agents_on_csv",
 		"report_agent_job_result",
@@ -914,16 +915,17 @@ func (c *Config) SetupAgents() {
 
 	taskAllowedTools := make([]string, 0, len(allowedTools))
 	disallowedTaskTools := map[string]struct{}{
-		"agent":        {},
-		"spawn_agent":  {},
-		"resume_agent": {},
-		"send_input":   {},
-		"wait":         {},
-		"close_agent":  {},
-		"edit":         {},
-		"single_edit":  {},
-		"agentic_edit": {},
-		"write":        {},
+		"agent":          {},
+		"spawn_agent":    {},
+		"resume_agent":   {},
+		"send_input":     {},
+		"wait":           {},
+		"collect_result": {},
+		"close_agent":    {},
+		"edit":           {},
+		"single_edit":    {},
+		"agentic_edit":   {},
+		"write":          {},
 	}
 	for _, tool := range allowedTools {
 		if _, blocked := disallowedTaskTools[tool]; blocked {

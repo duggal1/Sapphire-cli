@@ -32,7 +32,7 @@ Skip this tool when:
 </task_states>
 
 <task_management>
-- Update the entire todo list each time it changes
+- Update task status in real-time as you work
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Exactly ONE task must be in_progress at any time (not less, not more)
 - Complete current tasks before starting new ones
@@ -60,6 +60,31 @@ If blocked:
 - Always provide both content and active_form
 </task_breakdown>
 
+<examples>
+✅ Good task:
+```json
+{
+  "content": "Implement user authentication with JWT tokens",
+  "status": "in_progress",
+  "active_form": "Implementing user authentication with JWT tokens"
+}
+```
+
+❌ Bad task (missing active_form):
+```json
+{
+  "content": "Fix bug",
+  "status": "pending"
+}
+```
+</examples>
+
 <output_behavior>
 **NEVER** print or list todos in your response text. The user sees the todo list in real-time in the UI.
 </output_behavior>
+
+<tips>
+- When in doubt, use this tool - being proactive demonstrates attentiveness
+- One task in_progress at a time keeps work focused
+- Update immediately after state changes for accurate tracking
+</tips>

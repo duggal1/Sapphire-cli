@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"strings"
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/session"
@@ -38,8 +37,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TodosToolName,
 		string(todosDescription),
-		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			_ = call
+		func(ctx context.Context, params TodosParams, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for managing todos")
@@ -50,72 +48,60 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to get session: %w", err)
 			}
 
-			if params == nil {
-				params = map[string]any{}
-			}
-			normalizeTodosInput(params)
-
-			var typed TodosParams
-			if err := decodeInto(params, &typed); err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid parameters: %s", err)), nil
-			}
-
 			isNew := len(currentSession.Todos) == 0
-			oldStatusByContent := make(map[string]session.TodoStatus, len(currentSession.Todos))
+			oldStatusByContent := make(map[string]session.TodoStatus)
 			for _, todo := range currentSession.Todos {
-				content := strings.TrimSpace(todo.Content)
-				if content == "" {
-					continue
-				}
-				oldStatusByContent[content] = todo.Status
+				oldStatusByContent[todo.Content] = todo.Status
 			}
 
-			todos := make([]session.Todo, 0, len(typed.Todos))
-			var (
-				justCompleted []string
-				justStarted   string
-				completed     int
-			)
+			for _, item := range params.Todos {
+				switch item.Status {
+				case "pending", "in_progress", "completed":
+				default:
+					return fantasy.ToolResponse{}, fmt.Errorf("invalid status %q for todo %q", item.Status, item.Content)
+				}
+			}
 
-			for _, item := range typed.Todos {
-				content := strings.TrimSpace(item.Content)
-				activeForm := strings.TrimSpace(item.ActiveForm)
-				if content == "" && activeForm == "" {
-					continue
+			todos := make([]session.Todo, len(params.Todos))
+			var justCompleted []string
+			var justStarted string
+			completedCount := 0
+
+			for i, item := range params.Todos {
+				todos[i] = session.Todo{
+					Content:    item.Content,
+					Status:     session.TodoStatus(item.Status),
+					ActiveForm: item.ActiveForm,
 				}
 
-				status := normalizeTodoStatus(item.Status)
-				if status == "" {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("invalid status %q for todo %q", item.Status, content)), nil
-				}
+				newStatus := session.TodoStatus(item.Status)
+				oldStatus, existed := oldStatusByContent[item.Content]
 
-				todo := session.Todo{
-					Content:    content,
-					Status:     status,
-					ActiveForm: activeForm,
-				}
-				todos = append(todos, todo)
-
-				oldStatus, existed := oldStatusByContent[content]
-				if status == session.TodoStatusCompleted {
-					completed++
+				if newStatus == session.TodoStatusCompleted {
+					completedCount++
 					if existed && oldStatus != session.TodoStatusCompleted {
-						justCompleted = append(justCompleted, content)
+						justCompleted = append(justCompleted, item.Content)
 					}
 				}
-				if status == session.TodoStatusInProgress && (!existed || oldStatus != session.TodoStatusInProgress) {
-					if activeForm != "" {
-						justStarted = activeForm
-					} else {
-						justStarted = content
+
+				if newStatus == session.TodoStatusInProgress {
+					if !existed || oldStatus != session.TodoStatusInProgress {
+						if item.ActiveForm != "" {
+							justStarted = item.ActiveForm
+						} else {
+							justStarted = item.Content
+						}
 					}
 				}
 			}
 
 			currentSession.Todos = todos
-			if _, err := sessions.Save(ctx, currentSession); err != nil {
+			_, err = sessions.Save(ctx, currentSession)
+			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to save todos: %w", err)
 			}
+
+			response := "Todo list updated successfully.\n\n"
 
 			pendingCount := 0
 			inProgressCount := 0
@@ -128,8 +114,8 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				}
 			}
 
-			response := "Todo list updated successfully.\n\n"
-			response += fmt.Sprintf("Status: %d pending, %d in progress, %d completed\n", pendingCount, inProgressCount, completed)
+			response += fmt.Sprintf("Status: %d pending, %d in progress, %d completed\n",
+				pendingCount, inProgressCount, completedCount)
 			response += "Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable."
 
 			metadata := TodosResponseMetadata{
@@ -137,24 +123,11 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 				Todos:         todos,
 				JustCompleted: justCompleted,
 				JustStarted:   justStarted,
-				Completed:     completed,
+				Completed:     completedCount,
 				Total:         len(todos),
 			}
 
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)
-}
-
-func normalizeTodoStatus(raw string) session.TodoStatus {
-	switch strings.TrimSpace(raw) {
-	case string(session.TodoStatusPending):
-		return session.TodoStatusPending
-	case string(session.TodoStatusInProgress):
-		return session.TodoStatusInProgress
-	case string(session.TodoStatusCompleted):
-		return session.TodoStatusCompleted
-	default:
-		return ""
-	}
 }

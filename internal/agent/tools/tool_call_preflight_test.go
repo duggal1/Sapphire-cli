@@ -459,3 +459,33 @@ func TestPrepareToolCallParsesStringifiedMCPArguments(t *testing.T) {
 	require.Equal(t, "query", input["tool_name"])
 	require.IsType(t, map[string]any{}, input["arguments"])
 }
+
+func TestPrepareToolCallNormalizesCollectResultAliases(t *testing.T) {
+	t.Parallel()
+
+	collectTool := fantasy.NewAgentTool(
+		"collect_result",
+		"",
+		func(ctx context.Context, params struct {
+			IDs []string `json:"ids"`
+		}, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		"collect_result": collectTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "collect-1",
+		Name:  "collect_result",
+		Input: `{"agent_ids":["agent-1","agent-2"]}`,
+	}, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	gotIDs, ok := input["ids"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotIDs, 2)
+}

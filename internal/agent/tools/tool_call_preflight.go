@@ -114,11 +114,6 @@ func repairToolCall(
 		normalizeKey(input, "file_path", "path", "file", "filename", "filepath")
 		normalizeKey(input, "content", "text", "body", "data", "file_content")
 
-	// ── Todos ────────────────────────────────────────────────────────
-	case TodosToolName:
-		normalizeKey(input, "todos", "tasks", "items")
-		normalizeTodosInput(input)
-
 	// ── Bash ─────────────────────────────────────────────────────────
 	case BashToolName:
 		normalizeKey(input, "command", "cmd", "bash_command", "script", "shell_command", "run")
@@ -268,6 +263,8 @@ func repairToolCall(
 		normalizeKey(input, "id", "agent_id")
 		normalizeKey(input, "message", "prompt", "task")
 	case "wait":
+		normalizeKey(input, "ids", "agent_ids")
+	case "collect_result":
 		normalizeKey(input, "ids", "agent_ids")
 	case "close_agent":
 		normalizeKey(input, "id", "agent_id")
@@ -753,17 +750,6 @@ func coerceInputFromString(toolName, value string) (map[string]any, bool) {
 		return map[string]any{"pattern": value}, true
 	case GrepToolName:
 		return map[string]any{"pattern": value}, true
-	case TodosToolName:
-		return map[string]any{
-			"action": "create",
-			"tasks": []any{
-				map[string]any{
-					"content":     value,
-					"status":      "pending",
-					"active_form": "",
-				},
-			},
-		}, true
 	default:
 		return nil, false
 	}
@@ -804,154 +790,4 @@ func uniqueStrings(in []string) []string {
 		out = append(out, item)
 	}
 	return out
-}
-
-func normalizeTodosInput(input map[string]any) {
-	if input == nil {
-		return
-	}
-	items := extractTodosPayload(input)
-	normalized := make([]any, 0, len(items))
-	for _, item := range items {
-		if entry, ok := normalizeTodoEntry(item); ok {
-			normalized = append(normalized, entry)
-		}
-	}
-	if len(normalized) > 0 {
-		input["todos"] = normalized
-	} else if _, ok := input["todos"]; !ok {
-		input["todos"] = []any{}
-	}
-	delete(input, "tasks")
-	delete(input, "items")
-	delete(input, "text")
-	delete(input, "action")
-	delete(input, "task")
-	delete(input, "task_id")
-	delete(input, "task_key")
-	delete(input, "task_content")
-}
-
-func extractTodosPayload(input map[string]any) []any {
-	if input == nil {
-		return nil
-	}
-	for _, key := range []string{"tasks", "todos", "items"} {
-		if raw, ok := input[key]; ok {
-			if list, ok := raw.([]any); ok {
-				return list
-			}
-			if parsed := parseTodoStringPayload(raw); len(parsed) > 0 {
-				return parsed
-			}
-		}
-	}
-	if raw, ok := input["text"].(string); ok {
-		lines := strings.Split(raw, "\n")
-		items := make([]any, 0, len(lines))
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			items = append(items, line)
-		}
-		return items
-	}
-	return nil
-}
-
-func parseTodoStringPayload(raw any) []any {
-	text, ok := raw.(string)
-	if !ok {
-		return nil
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil
-	}
-	var decoded any
-	if json.Unmarshal([]byte(text), &decoded) == nil {
-		switch value := decoded.(type) {
-		case []any:
-			return value
-		case map[string]any:
-			return []any{value}
-		case string:
-			text = value
-		}
-	}
-	lines := strings.Split(text, "\n")
-	items := make([]any, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
-		if line == "" {
-			continue
-		}
-		items = append(items, line)
-	}
-	return items
-}
-
-func normalizeTodoEntry(item any) (map[string]any, bool) {
-	switch v := item.(type) {
-	case string:
-		content := strings.TrimSpace(v)
-		if content == "" {
-			return nil, false
-		}
-		return map[string]any{
-			"content":     content,
-			"status":      "pending",
-			"active_form": "",
-		}, true
-	case map[string]any:
-		content := ""
-		id := ""
-		for _, key := range []string{"id", "task_id", "taskId"} {
-			if val, ok := v[key].(string); ok && strings.TrimSpace(val) != "" {
-				id = strings.TrimSpace(val)
-				break
-			}
-		}
-		for _, key := range []string{"content", "title", "name", "task", "text"} {
-			if val, ok := v[key].(string); ok && strings.TrimSpace(val) != "" {
-				content = strings.TrimSpace(val)
-				break
-			}
-		}
-		if content == "" {
-			return nil, false
-		}
-		status := ""
-		if val, ok := v["status"].(string); ok {
-			status = strings.TrimSpace(val)
-		}
-		if status == "" {
-			if completed, ok := v["completed"].(bool); ok {
-				if completed {
-					status = "completed"
-				} else {
-					status = "pending"
-				}
-			}
-		}
-		if status == "" {
-			status = "pending"
-		}
-		activeForm := ""
-		if val, ok := v["active_form"].(string); ok {
-			activeForm = strings.TrimSpace(val)
-		} else if val, ok := v["activeForm"].(string); ok {
-			activeForm = strings.TrimSpace(val)
-		}
-		return map[string]any{
-			"id":          id,
-			"content":     content,
-			"status":      status,
-			"active_form": activeForm,
-		}, true
-	default:
-		return nil, false
-	}
 }

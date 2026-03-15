@@ -8,6 +8,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/lsp"
@@ -585,6 +586,7 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 	require.NotContains(t, taskNames, ResumeAgentToolName)
 	require.NotContains(t, taskNames, SendInputToolName)
 	require.NotContains(t, taskNames, WaitAgentsToolName)
+	require.NotContains(t, taskNames, CollectResultToolName)
 	require.NotContains(t, taskNames, CloseAgentToolName)
 	require.NotContains(t, taskNames, tools.EditToolName)
 	require.NotContains(t, taskNames, tools.SingleEditToolName)
@@ -598,6 +600,7 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 			name != ResumeAgentToolName &&
 			name != SendInputToolName &&
 			name != WaitAgentsToolName &&
+			name != CollectResultToolName &&
 			name != CloseAgentToolName &&
 			name != tools.EditToolName &&
 			name != tools.SingleEditToolName &&
@@ -607,6 +610,61 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 		}
 	}
 	assert.ElementsMatch(t, coderNamesWithoutAgent, taskNames)
+}
+
+func TestBuildSubAgentKeepsExplicitCollabLifecycleOnly(t *testing.T) {
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	cfg.Providers.Set("gemini-test", config.ProviderConfig{
+		ID:     "gemini-test",
+		Type:   "gemini",
+		APIKey: "test-key",
+	})
+	cfg.Models[config.SelectedModelTypeLarge] = config.SelectedModel{
+		Provider: "gemini-test",
+		Model:    "gemini-3-flash-preview",
+	}
+	cfg.Models[config.SelectedModelTypeSmall] = config.SelectedModel{
+		Provider: "gemini-test",
+		Model:    "gemini-3-flash-preview",
+	}
+
+	coord := &coordinator{
+		cfg:                       cfg,
+		sessions:                  env.sessions,
+		messages:                  env.messages,
+		permissions:               env.permissions,
+		history:                   env.history,
+		filetracker:               *env.filetracker,
+		editGuard:                 tools.NewEditGuard(),
+		lspManager:                lsp.NewManager(cfg),
+		memory:                    env.memory,
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
+		googleSearchClient:        &genai.Client{},
+	}
+
+	prompt, err := coderPrompt(promptpkg.WithWorkingDir(env.workingDir))
+	require.NoError(t, err)
+
+	built, err := coord.buildAgentWithWorkingDir(t.Context(), prompt, cfg.Agents[config.AgentCoder], true, env.workingDir)
+	require.NoError(t, err)
+
+	subAgent, ok := built.(*sessionAgent)
+	require.True(t, ok)
+
+	names := toolNames(subAgent.tools.Copy())
+	require.NotContains(t, names, AgentToolName)
+	require.Contains(t, names, SpawnAgentToolName)
+	require.Contains(t, names, ResumeAgentToolName)
+	require.Contains(t, names, SendInputToolName)
+	require.Contains(t, names, WaitAgentsToolName)
+	require.Contains(t, names, CollectResultToolName)
+	require.Contains(t, names, CloseAgentToolName)
+	require.NotContains(t, names, SpawnAgentsOnCSVToolName)
+	require.NotContains(t, names, ReportAgentJobResultToolName)
+	require.NotContains(t, names, OrchestrateWorktreesToolName)
 }
 
 func toolNames(agentTools []fantasy.AgentTool) []string {

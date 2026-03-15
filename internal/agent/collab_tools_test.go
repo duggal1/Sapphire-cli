@@ -106,3 +106,38 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 	require.Less(t, time.Since(start), 500*time.Millisecond)
 	<-done
 }
+
+func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {
+	t.Parallel()
+
+	coord := &coordinator{
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+	runner := &subAgentRunner{
+		id:             "agent-2",
+		sessionID:      "session-2",
+		status:         subAgentStatusCompleted,
+		lastSubmission: "submission-2",
+		lastResult:     "summary",
+		lastProgress:   "done",
+		submissions: map[string]*subAgentSubmission{
+			"submission-2": {
+				ID:     "submission-2",
+				Status: subAgentStatusCompleted,
+				Result: "final report",
+			},
+		},
+		assignment: subAgentAssignment{Branch: "feature/test"},
+	}
+	coord.subAgentRegistry.upsert("agent-2", runner)
+
+	results := coord.collectSubAgentResults([]string{"agent-2"})
+	require.Len(t, results, 1)
+	require.Equal(t, "agent-2", results[0].ID)
+	require.Equal(t, "submission-2", results[0].SubmissionID)
+	require.Equal(t, subAgentStatusCompleted, results[0].Status)
+	require.Equal(t, "final report", results[0].Result)
+	require.Equal(t, "done", results[0].Progress)
+	require.Equal(t, "feature/test", results[0].Branch)
+}

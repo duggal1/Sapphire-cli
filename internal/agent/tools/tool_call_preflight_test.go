@@ -270,6 +270,36 @@ func TestPrepareToolCallDoesNotTruncateAgenticViewPaths(t *testing.T) {
 	require.Len(t, gotPaths, 30)
 }
 
+func TestPrepareToolCallPromotesTopLevelEditsFileEditShapeForAgenticEdit(t *testing.T) {
+	t.Parallel()
+
+	agenticEditTool := fantasy.NewAgentTool(
+		AgenticEditToolName,
+		"",
+		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		AgenticEditToolName: agenticEditTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "edit-5",
+		Name:  AgenticEditToolName,
+		Input: `{"edits":[{"file_path":"README.md","old_string":"alpha","new_string":"beta"}]}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticEditToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	_, hasFileEdits := input["file_edits"]
+	require.True(t, hasFileEdits)
+	_, hasEdits := input["edits"]
+	require.False(t, hasEdits)
+}
+
 func TestPrepareToolCallNormalizesFetchAndDownloadAliases(t *testing.T) {
 	t.Parallel()
 

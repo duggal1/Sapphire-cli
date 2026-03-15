@@ -809,7 +809,7 @@ func DefaultStyles(yellowMode bool) Styles {
 			Color: stringPtr(primaryHex),
 		},
 		HorizontalRule: ansi.StylePrimitive{
-			Color:  stringPtr(markdownSecondaryHex),
+			Color:  stringPtr("#A855F7"), // Purple for horizontal rules
 			Format: "\n---\n",
 		},
 		Item: ansi.StylePrimitive{

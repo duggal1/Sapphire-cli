@@ -968,7 +968,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	var result *fantasy.AgentResult
 	for attempt := 0; attempt <= maxStreamRetries; attempt++ {
-	result, err = agent.Stream(genCtx, streamCall)
+		result, err = agent.Stream(genCtx, streamCall)
 		if err == nil || genCtx.Err() != nil {
 			break
 		}

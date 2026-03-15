@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/lsp"
+	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/genai"
@@ -86,6 +88,61 @@ func agentResultWithText(text string) *fantasy.AgentResult {
 				fantasy.TextContent{Text: text},
 			},
 		},
+	}
+}
+
+func TestCoordinatorSubmitQueuesAcceptedPrompt(t *testing.T) {
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "queued")
+	require.NoError(t, err)
+
+	const providerID = "test-provider"
+	coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
+	agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		return agentResultWithText(call.Prompt), nil
+	})
+	agent.busy = true
+	coord.currentAgent = agent
+
+	result, err := coord.Submit(t.Context(), session.ID, "queued prompt")
+	require.NoError(t, err)
+	assert.Equal(t, SubmissionStatusQueued, result.Status)
+	require.Len(t, agent.enqueued, 1)
+	assert.True(t, agent.enqueued[0].SkipUserMessage)
+	require.NotNil(t, agent.enqueued[0].PrecreatedUser)
+
+	msgs, err := env.messages.List(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, message.User, msgs[0].Role)
+	assert.Equal(t, result.UserMessageID, msgs[0].ID)
+}
+
+func TestCoordinatorSubmitStartsDetachedExecution(t *testing.T) {
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "running")
+	require.NoError(t, err)
+
+	const providerID = "test-provider"
+	coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
+	runCalls := make(chan SessionAgentCall, 1)
+	agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		runCalls <- call
+		return agentResultWithText("ok"), nil
+	})
+	coord.currentAgent = agent
+
+	result, err := coord.Submit(t.Context(), session.ID, "run prompt")
+	require.NoError(t, err)
+	assert.Equal(t, SubmissionStatusRunning, result.Status)
+
+	select {
+	case call := <-runCalls:
+		assert.True(t, call.SkipUserMessage)
+		require.NotNil(t, call.PrecreatedUser)
+		assert.Equal(t, "run prompt", call.Prompt)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for detached run")
 	}
 }
 

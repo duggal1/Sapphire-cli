@@ -1,5 +1,0 @@
-1. Map Core Agent Logic (internal/agent)
-2. Map Persistence (internal/db)
-3. Map UI (internal/ui)
-4. Map Codex (codex/)
-5. Map Testing (third_party/fantasy/)

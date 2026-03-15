@@ -1,3 +1,0 @@
-Line 1 of File A. (Batch Edit)
-It contains some text for tool validation.
-Line 3 of File A has been edited.

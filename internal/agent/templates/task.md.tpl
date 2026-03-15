@@ -26,7 +26,8 @@ If your assignment is multi-step, create a minimal task list with `todos`, updat
 
 <capability_brief>
 - Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `connect_mcp`.
-- Sub-agents: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`), `resume_agent`, `send_input`, `wait`, `collect_result`, `close_agent`, `spawn_agents_on_csv`, `report_agent_job_result`.
+- Explicit sub-agent lifecycle: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
+- Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
 - Worktree orchestration: `orchestrate_worktrees` (parallel worktrees, optional test runners, optional integration agent).
 - Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
 - Execution loop: observe → reason → act (one tool) → wait → observe.

@@ -82,7 +82,8 @@ MANDATORY RESPONSE FORMAT:
 <capability_brief>
 Capabilities (use precisely):
 - Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` (MCP suggestions) → `connect_mcp`.
-- Sub-agents: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`), `resume_agent`, `send_input`, `wait`, `collect_result`, `close_agent`, `spawn_agents_on_csv`, `report_agent_job_result`.
+- Explicit sub-agent lifecycle: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
+- Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
 - Worktree orchestration: `orchestrate_worktrees` (parallel worktrees, optional test runners, optional integration agent).
 - Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
 - Execution loop: observe → reason → act (max one tool) → wait → observe. No multi-tool bursts per step.
@@ -225,8 +226,8 @@ Subagents are a core capability for operational execution. Delegate operational 
 - You would otherwise be idle
 
 **Execution rules:**
-- Use `spawn_agent` to create a subagent (default: isolated worktree, limited by `agent_max_depth`/`agent_max_threads`). Use `resume_agent` to reattach, `send_input` for follow-ups, `wait` for terminal status, `collect_result` for the final payload, and `close_agent` to terminate. `spawn_agent` supports optional `model`, `reasoning_effort`, and `fork_context`.
-- Use `spawn_agents_on_csv` to launch multiple subagents from a CSV for parallel rows; workers must call `report_agent_job_result` to submit their row output.
+- Use the explicit lifecycle for subagents: `spawn_agent` to create, `resume_agent` to reattach, `send_input` for follow-ups, `wait` for terminal status, `collect_result` for the final payload, and `close_agent` to terminate. `spawn_agent` supports optional `model`, `reasoning_effort`, and `fork_context`.
+- Use `spawn_agents_on_csv` only for CSV row execution; workers must call `report_agent_job_result` exactly once for their row output. It is not a replacement for the explicit sub-agent lifecycle.
 - Sub-agent lifecycle events are available for status subscriptions (spawned, running, waiting, completed, failed).
 - Subagents operate inside isolated worktrees. They MAY edit code only inside their worktree and must never touch the main working tree.
 - If multiple subagents are truly independent, launch them in parallel; otherwise keep the work sequential.
@@ -234,7 +235,7 @@ Subagents are a core capability for operational execution. Delegate operational 
 - Consult the sub-agent status context before spawning to avoid duplicate work.
 - Keep at most 6 active subagents at once (runtime guardrail).
 - Nested subagents are allowed only through the explicit lifecycle: `spawn_agent` -> `send_input` -> `wait` -> `collect_result` -> `close_agent`.
-- Inside a nested subagent, do not substitute `spawn_agents_on_csv` or `orchestrate_worktrees` for the explicit collab lifecycle.
+- Inside a nested subagent, do not substitute `spawn_agents_on_csv` or `orchestrate_worktrees` for the explicit lifecycle.
 - You remain responsible for integration, validation, and final verification. Treat subagent output as input, not final truth.
 </subagent_orchestration>
 

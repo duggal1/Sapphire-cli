@@ -352,7 +352,9 @@ func findTodoIndex(todos []session.Todo, taskID, taskKey, taskContent string, ta
 				return i, nil
 			}
 		}
-		return -1, fmt.Errorf("task_key not found: %s", key)
+		if idx, ok := findApproxTodoKeyIndex(todos, normalizedKey); ok {
+			return idx, nil
+		}
 	}
 	if content != "" {
 		contentCandidates := todoLookupCandidates(content)
@@ -396,6 +398,9 @@ func findTodoIndex(todos []session.Todo, taskID, taskKey, taskContent string, ta
 	}
 	if idErr != nil {
 		return -1, idErr
+	}
+	if key != "" {
+		return -1, fmt.Errorf("task_key not found: %s", key)
 	}
 	return -1, fmt.Errorf("task_id, task_key, or task content is required")
 }
@@ -483,15 +488,15 @@ func shouldFallbackTodoResolution(err error, taskID, taskKey, taskContent string
 		}
 	}
 
-	if contentHint != "" || activeFormHint != "" || keyHint != "" {
+	if contentHint != "" || activeFormHint != "" {
 		return false
 	}
 
-	if idHint == "" {
+	if idHint == "" && keyHint == "" {
 		return true
 	}
 
-	return strings.HasPrefix(err.Error(), "task_id not found:")
+	return strings.HasPrefix(err.Error(), "task_id not found:") || strings.HasPrefix(err.Error(), "task_key not found:")
 }
 
 func todoIndexesByStatus(todos []session.Todo, status session.TodoStatus) []int {
@@ -648,6 +653,71 @@ func normalizeTodoKey(key, content string) string {
 		key = strings.ReplaceAll(key, "__", "_")
 	}
 	return strings.Trim(key, "_")
+}
+
+func findApproxTodoKeyIndex(todos []session.Todo, requestedKey string) (int, bool) {
+	requestedTokens := tokenizeTodoKey(requestedKey)
+	if len(requestedTokens) == 0 {
+		return 0, false
+	}
+
+	bestIdx := -1
+	bestScore := 0
+	secondBest := 0
+	for i, todo := range todos {
+		score := todoKeySimilarityScore(requestedTokens, tokenizeTodoKey(normalizeTodoKey(todo.Key, todo.Content)))
+		if score > bestScore {
+			secondBest = bestScore
+			bestScore = score
+			bestIdx = i
+			continue
+		}
+		if score > secondBest {
+			secondBest = score
+		}
+	}
+
+	if bestIdx >= 0 && bestScore >= 2 && bestScore > secondBest {
+		return bestIdx, true
+	}
+	return 0, false
+}
+
+func tokenizeTodoKey(value string) []string {
+	normalized := normalizeTodoKey(value, "")
+	if normalized == "" {
+		return nil
+	}
+	parts := strings.Split(normalized, "_")
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if len(part) > 3 && strings.HasSuffix(part, "s") {
+			part = strings.TrimSuffix(part, "s")
+		}
+		tokens = append(tokens, part)
+	}
+	return tokens
+}
+
+func todoKeySimilarityScore(a, b []string) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	tokenSet := make(map[string]struct{}, len(b))
+	for _, token := range b {
+		tokenSet[token] = struct{}{}
+	}
+	score := 0
+	for _, token := range a {
+		if _, ok := tokenSet[token]; ok {
+			score++
+		}
+	}
+	return score
 }
 
 func isSimpleTodoKey(value string) bool {

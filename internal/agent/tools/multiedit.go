@@ -257,7 +257,7 @@ func NewMultiEditTool(
 			var allErrors []string
 			var finalMeta MultiEditResponseMetadata
 
-			for i, fe := range params.FileEdits {
+			for _, fe := range params.FileEdits {
 				if err := editGuard.EnsureAllowed(sessionID, fe.FilePath, true); err != nil {
 					allErrors = append(allErrors, fmt.Sprintf("- %s: %v", fe.FilePath, err))
 					continue
@@ -301,13 +301,6 @@ func NewMultiEditTool(
 				results = append(results, fileResult{filePath: fe.FilePath, output: text, meta: meta})
 
 				editGuard.SetLockedIfErrors(sessionID, fe.FilePath, summary.FileErrors+summary.CompilerErrors+summary.FileWarnings+summary.CompilerWarnings > 0)
-				if summary.FileErrors+summary.CompilerErrors > 0 {
-					remaining := len(params.FileEdits) - i - 1
-					if remaining > 0 {
-						allErrors = append(allErrors, fmt.Sprintf("Skipped %d remaining file edit(s) due to errors in %s", remaining, fe.FilePath))
-					}
-					break
-				}
 			}
 
 			// Use Go 1.26 iterators to process results
@@ -392,8 +385,11 @@ func normalizeMultiEditParams(params MultiEditParams) (MultiEditParams, error) {
 		return MultiEditParams{}, fmt.Errorf("maximum of 25 file edits allowed per call")
 	}
 
-	normalizedFileEdits := make([]FileEdit, len(params.FileEdits))
-	for i, fileEdit := range params.FileEdits {
+	normalizedFileEdits := make([]FileEdit, 0, len(params.FileEdits))
+	for _, fileEdit := range params.FileEdits {
+		if strings.TrimSpace(fileEdit.FilePath) == "" && len(fileEdit.Edits) == 0 {
+			continue
+		}
 		if fileEdit.FilePath == "" {
 			return MultiEditParams{}, fmt.Errorf("file_path is required")
 		}
@@ -401,15 +397,18 @@ func normalizeMultiEditParams(params MultiEditParams) (MultiEditParams, error) {
 			if len(params.FileEdits) == 1 {
 				return MultiEditParams{}, errMultiEditMissingEdits
 			}
-			return MultiEditParams{}, fmt.Errorf("%s: %w", fileEdit.FilePath, errMultiEditMissingEdits)
+			continue
 		}
 		if err := validateEdits(fileEdit.Edits); err != nil {
 			return MultiEditParams{}, fmt.Errorf("%s: %w", fileEdit.FilePath, err)
 		}
-		normalizedFileEdits[i] = FileEdit{
+		normalizedFileEdits = append(normalizedFileEdits, FileEdit{
 			FilePath: fileEdit.FilePath,
 			Edits:    fileEdit.Edits,
-		}
+		})
+	}
+	if len(normalizedFileEdits) == 0 {
+		return MultiEditParams{}, errMultiEditMissingFileEdits
 	}
 
 	params.FileEdits = normalizedFileEdits

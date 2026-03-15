@@ -312,11 +312,6 @@ func repairToolCall(
 	return call, tool, input, nil
 }
 
-// maxAgenticViewFiles is the maximum number of files allowed in a single
-// agentic_view call. This aligns the runtime with prompt-level guidance
-// ("10–15 files per batch") and prevents excessive concurrent file reads.
-const maxAgenticViewFiles = 20
-
 func repairViewCall(
 	call fantasy.ToolCall,
 	tool fantasy.AgentTool,
@@ -331,29 +326,6 @@ func repairViewCall(
 	limit, _ := coerceInt(input["limit"])
 	if len(paths) == 0 {
 		return call, tool, input, errors.New("file_path is required")
-	}
-
-	// Enforce file count limit for agentic_view to prevent excessive
-	// concurrent reads (prompt says 10-15 per batch).
-	if len(paths) > maxAgenticViewFiles {
-		paths = paths[:maxAgenticViewFiles]
-	}
-
-	switch call.Name {
-	case AgenticViewToolName:
-		if len(paths) == 1 {
-			if next, ok := tools[ViewToolName]; ok {
-				call.Name = ViewToolName
-				tool = next
-			}
-		}
-	case ViewToolName, SingleViewToolName:
-		if len(paths) > 1 {
-			if next, ok := tools[AgenticViewToolName]; ok {
-				call.Name = AgenticViewToolName
-				tool = next
-			}
-		}
 	}
 
 	input = map[string]any{}
@@ -389,24 +361,11 @@ func repairEditCall(
 		return call, tool, input, fmt.Errorf("edit input must be valid JSON: %w", err)
 	}
 
+	_ = ctx
+
 	switch call.Name {
-	case AgenticEditToolName:
-		if editParams, ok := extractSingleEdit(multi); ok {
-			if next, ok := tools[EditToolName]; ok {
-				call.Name = EditToolName
-				tool = next
-				input = map[string]any{
-					"file_path":  editParams.FilePath,
-					"old_string": editParams.OldString,
-					"new_string": editParams.NewString,
-				}
-				if editParams.ReplaceAll {
-					input["replace_all"] = true
-				}
-			}
-		}
 	case EditToolName, SingleEditToolName:
-		if shouldUseAgenticEdit(multi) {
+		if editPayloadRequiresAgenticEdit(input, multi) {
 			if next, ok := tools[AgenticEditToolName]; ok {
 				call.Name = AgenticEditToolName
 				tool = next
@@ -414,43 +373,22 @@ func repairEditCall(
 		}
 	}
 
-	_ = ctx
-
 	return call, tool, input, nil
 }
 
-func extractSingleEdit(multi MultiEditParams) (EditParams, bool) {
-	if len(multi.FileEdits) == 1 && len(multi.FileEdits[0].Edits) == 1 {
-		edit := multi.FileEdits[0].Edits[0]
-		return EditParams{
-			FilePath:   multi.FileEdits[0].FilePath,
-			OldString:  edit.OldString,
-			NewString:  edit.NewString,
-			ReplaceAll: edit.ReplaceAll,
-		}, multi.FileEdits[0].FilePath != ""
+func editPayloadRequiresAgenticEdit(input map[string]any, multi MultiEditParams) bool {
+	if _, ok := input["file_edits"]; ok {
+		return true
 	}
-
-	if len(multi.FileEdits) == 0 && multi.FilePath != "" && len(multi.Edits) == 1 {
-		edit := multi.Edits[0]
-		return EditParams{
-			FilePath:   multi.FilePath,
-			OldString:  edit.OldString,
-			NewString:  edit.NewString,
-			ReplaceAll: edit.ReplaceAll,
-		}, true
+	if _, ok := input["edits"]; ok {
+		if len(multi.Edits) > 1 {
+			return true
+		}
+		if len(multi.FileEdits) == 1 && len(multi.FileEdits[0].Edits) > 1 {
+			return true
+		}
 	}
-
-	return EditParams{}, false
-}
-
-func shouldUseAgenticEdit(multi MultiEditParams) bool {
 	if len(multi.FileEdits) > 1 {
-		return true
-	}
-	if len(multi.FileEdits) == 1 && len(multi.FileEdits[0].Edits) > 1 {
-		return true
-	}
-	if len(multi.FileEdits) == 0 && len(multi.Edits) > 1 {
 		return true
 	}
 	return false

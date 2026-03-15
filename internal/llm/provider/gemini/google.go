@@ -489,9 +489,6 @@ func toGooglePrompt(prompt fantasy.Prompt) (*genai.Content, []*genai.Content, []
 						geminiPart.ThoughtSignature = []byte(reasoningMetadata.Signature)
 						// Do not clear currentReasoningMetadata; once thinking is started, it applies to subseq. parts
 					}
-					if geminiPart.ThoughtSignature == nil {
-						geminiPart.ThoughtSignature = []byte{}
-					}
 					parts = append(parts, geminiPart)
 				}
 			}

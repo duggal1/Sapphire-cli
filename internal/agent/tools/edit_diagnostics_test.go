@@ -59,7 +59,7 @@ func TestEditToolIncludesImmediateDiagnostics(t *testing.T) {
 	require.Contains(t, resp.Content, "Warn:")
 }
 
-func TestMultiEditStopsAfterDiagnosticsErrors(t *testing.T) {
+func TestMultiEditContinuesAcrossFilesAfterDiagnosticsErrors(t *testing.T) {
 	t.Parallel()
 
 	ctx, workingDir, tracker, sessions, permissions, manager := newEditTestHarness(t)
@@ -109,11 +109,22 @@ func TestMultiEditStopsAfterDiagnosticsErrors(t *testing.T) {
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "<diagnostic_summary>")
 	require.Contains(t, resp.Content, "Current file: 1 errors, 1 warnings")
-	require.Contains(t, resp.Content, "Skipped 1 remaining file edit(s) due to errors")
 
 	content, err := os.ReadFile(fileTwo)
 	require.NoError(t, err)
-	require.Equal(t, "beta\n", string(content))
+	require.Equal(t, "BETA\n", string(content))
+}
+
+func TestEditGuardDoesNotBlockOtherFilesAfterDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	guard := NewEditGuard()
+	guard.RecordView("session-1", "/tmp/first.go", true)
+	guard.RecordView("session-1", "/tmp/second.go", true)
+
+	guard.SetLockedIfErrors("session-1", "/tmp/first.go", true)
+
+	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/second.go", true))
 }
 
 func TestMultiEditAcceptsSingleEditShape(t *testing.T) {

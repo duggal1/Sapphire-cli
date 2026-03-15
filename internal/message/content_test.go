@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"charm.land/fantasy/providers/google"
+	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,15 +34,41 @@ func TestToAIMessageAssistantPreservesToolCallOrderAndThoughtSignature(t *testin
 	require.True(t, ok)
 	require.Equal(t, "call-1", toolCallPart.ToolCallID)
 
-	metadata, ok := toolCallPart.ProviderOptions[google.Name]
+	metadata, ok := toolCallPart.ProviderOptions[gemini.Name]
 	require.True(t, ok)
-	googleMetadata, ok := metadata.(*google.ReasoningMetadata)
+	googleMetadata, ok := metadata.(*gemini.ReasoningMetadata)
 	require.True(t, ok)
 	require.Equal(t, "sig-123", googleMetadata.Signature)
 
 	textPart, ok := fantasy.AsMessagePart[fantasy.TextPart](aiMessages[0].Content[2])
 	require.True(t, ok)
 	require.Equal(t, "after tool call", textPart.Text)
+}
+
+func TestAppendThoughtSignatureWithoutReasoningBlockPreservesToolID(t *testing.T) {
+	t.Parallel()
+
+	msg := &Message{
+		Role: Assistant,
+		Parts: []ContentPart{
+			ToolCall{ID: "call-1", Name: "list_available_mcps", Input: `{"query":"supabase"}`},
+		},
+	}
+
+	msg.AppendThoughtSignature("sig-456", "call-1")
+
+	aiMessages := msg.ToAIMessage()
+	require.Len(t, aiMessages, 1)
+	require.Len(t, aiMessages[0].Content, 2)
+
+	toolCallPart, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[0])
+	require.True(t, ok)
+	metadata, ok := toolCallPart.ProviderOptions[gemini.Name]
+	require.True(t, ok)
+	googleMetadata, ok := metadata.(*gemini.ReasoningMetadata)
+	require.True(t, ok)
+	require.Equal(t, "sig-456", googleMetadata.Signature)
+	require.Equal(t, "call-1", googleMetadata.ToolID)
 }
 
 func makeTestAttachments(n int, contentSize int) []Attachment {

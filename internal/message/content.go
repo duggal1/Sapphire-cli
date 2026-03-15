@@ -1,6 +1,7 @@
 package message
 
 import (
+	"cmp"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,8 +12,8 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
-	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
+	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 )
 
 type MessageRole string
@@ -296,7 +297,7 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 			m.Parts[i] = ReasoningContent{
 				Thinking:         c.Thinking,
 				ThoughtSignature: c.ThoughtSignature + signature,
-				ToolID:           toolCallID,
+				ToolID:           cmp.Or(toolCallID, c.ToolID),
 				Signature:        c.Signature,
 				StartedAt:        c.StartedAt,
 				FinishedAt:       c.FinishedAt,
@@ -304,7 +305,10 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 			return
 		}
 	}
-	m.Parts = append(m.Parts, ReasoningContent{ThoughtSignature: signature})
+	m.Parts = append(m.Parts, ReasoningContent{
+		ThoughtSignature: signature,
+		ToolID:           toolCallID,
+	})
 }
 
 func (m *Message) AppendReasoningSignature(signature string) {
@@ -646,13 +650,13 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 			Content: parts,
 		})
 	case Assistant:
-		googleReasoningByToolID := make(map[string]*google.ReasoningMetadata)
+		googleReasoningByToolID := make(map[string]*gemini.ReasoningMetadata)
 		for _, part := range m.Parts {
 			reasoning, ok := part.(ReasoningContent)
 			if !ok || reasoning.ThoughtSignature == "" || reasoning.ToolID == "" {
 				continue
 			}
-			googleReasoningByToolID[reasoning.ToolID] = &google.ReasoningMetadata{
+			googleReasoningByToolID[reasoning.ToolID] = &gemini.ReasoningMetadata{
 				Signature: reasoning.ThoughtSignature,
 				ToolID:    reasoning.ToolID,
 			}
@@ -680,7 +684,7 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 					reasoningPart.ProviderOptions[openai.Name] = content.ResponsesData
 				}
 				if content.ThoughtSignature != "" {
-					reasoningPart.ProviderOptions[google.Name] = &google.ReasoningMetadata{
+					reasoningPart.ProviderOptions[gemini.Name] = &gemini.ReasoningMetadata{
 						Signature: content.ThoughtSignature,
 						ToolID:    content.ToolID,
 					}
@@ -695,7 +699,7 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				}
 				if metadata, ok := googleReasoningByToolID[content.ID]; ok {
 					toolCallPart.ProviderOptions = fantasy.ProviderOptions{
-						google.Name: metadata,
+						gemini.Name: metadata,
 					}
 				}
 				parts = append(parts, toolCallPart)

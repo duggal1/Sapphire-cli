@@ -30,6 +30,100 @@ type File struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
+type LongHorizonMilestone struct {
+	SessionID   string `json:"session_id"`
+	MilestoneID string `json:"milestone_id"`
+	Position    int64  `json:"position"`
+	Name        string `json:"name"`
+	Condition   string `json:"condition"`
+	Status      string `json:"status"`
+	UpdatedAt   int64  `json:"updated_at"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+type LongHorizonRun struct {
+	SessionID    string `json:"session_id"`
+	Status       string `json:"status"`
+	RunbookMd    string `json:"runbook_md"`
+	FrozenSpecMd string `json:"frozen_spec_md"`
+	AuditLog     string `json:"audit_log"`
+	Activated    int64  `json:"activated"`
+	UpdatedAt    int64  `json:"updated_at"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+type MemoryMaterialization struct {
+	Path      string         `json:"path"`
+	Kind      string         `json:"kind"`
+	Content   string         `json:"content"`
+	SessionID sql.NullString `json:"session_id"`
+	UpdatedAt int64          `json:"updated_at"`
+	CreatedAt int64          `json:"created_at"`
+}
+
+type MemoryPhase2Job struct {
+	SingletonID         int64          `json:"singleton_id"`
+	Dirty               int64          `json:"dirty"`
+	Status              string         `json:"status"`
+	ClaimToken          sql.NullString `json:"claim_token"`
+	LeaseExpiresAt      sql.NullInt64  `json:"lease_expires_at"`
+	RetryAfter          int64          `json:"retry_after"`
+	InputWatermark      int64          `json:"input_watermark"`
+	LastOutputWatermark int64          `json:"last_output_watermark"`
+	LastError           string         `json:"last_error"`
+	UpdatedAt           int64          `json:"updated_at"`
+	CreatedAt           int64          `json:"created_at"`
+}
+
+type MemoryRegistryCitation struct {
+	RegistryEntryID string `json:"registry_entry_id"`
+	SessionID       string `json:"session_id"`
+	CitationType    string `json:"citation_type"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
+type MemoryRegistryEntry struct {
+	ID                 string         `json:"id"`
+	CanonicalKey       string         `json:"canonical_key"`
+	Kind               string         `json:"kind"`
+	Title              string         `json:"title"`
+	Body               string         `json:"body"`
+	SourceSessionID    sql.NullString `json:"source_session_id"`
+	RolloutSummaryFile string         `json:"rollout_summary_file"`
+	Stale              int64          `json:"stale"`
+	UpdatedAt          int64          `json:"updated_at"`
+	CreatedAt          int64          `json:"created_at"`
+}
+
+type MemoryStage1Job struct {
+	SessionID      string         `json:"session_id"`
+	RolloutPath    string         `json:"rollout_path"`
+	Cwd            string         `json:"cwd"`
+	Status         string         `json:"status"`
+	ClaimedBy      sql.NullString `json:"claimed_by"`
+	LeaseExpiresAt sql.NullInt64  `json:"lease_expires_at"`
+	RetryAfter     int64          `json:"retry_after"`
+	UpdatedAt      int64          `json:"updated_at"`
+	CreatedAt      int64          `json:"created_at"`
+}
+
+type MemoryStage1Output struct {
+	SessionID                        string        `json:"session_id"`
+	RawMemory                        string        `json:"raw_memory"`
+	RolloutSummary                   string        `json:"rollout_summary"`
+	RolloutSlug                      string        `json:"rollout_slug"`
+	RolloutSummaryFile               string        `json:"rollout_summary_file"`
+	UsedAt                           int64         `json:"used_at"`
+	UpdatedAt                        int64         `json:"updated_at"`
+	CreatedAt                        int64         `json:"created_at"`
+	SourceUpdatedAt                  int64         `json:"source_updated_at"`
+	GeneratedAt                      int64         `json:"generated_at"`
+	UsageCount                       int64         `json:"usage_count"`
+	LastUsage                        sql.NullInt64 `json:"last_usage"`
+	SelectedForPhase2                int64         `json:"selected_for_phase2"`
+	SelectedForPhase2SourceUpdatedAt sql.NullInt64 `json:"selected_for_phase2_source_updated_at"`
+}
+
 type Message struct {
 	ID               string         `json:"id"`
 	SessionID        string         `json:"session_id"`

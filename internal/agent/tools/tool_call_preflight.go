@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/schema"
+	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/filetracker"
 )
 
@@ -107,7 +109,7 @@ func repairToolCall(
 	switch call.Name {
 	// ── File operations ──────────────────────────────────────────────
 	case ViewToolName, SingleViewToolName, AgenticViewToolName:
-		return repairViewCall(call, tool, input, tools)
+		return repairViewCall(ctx, call, tool, input, tools)
 	case EditToolName, SingleEditToolName, AgenticEditToolName:
 		return repairEditCall(ctx, call, tool, input, tools)
 	case WriteToolName:
@@ -304,6 +306,7 @@ func repairToolCall(
 }
 
 func repairViewCall(
+	ctx context.Context,
 	call fantasy.ToolCall,
 	tool fantasy.AgentTool,
 	input map[string]any,
@@ -313,6 +316,13 @@ func repairViewCall(
 	normalizeKey(input, "file_path", "path", "file")
 
 	paths := extractViewPaths(input)
+	if len(paths) > 0 {
+		if resolved, err := resolveExistingPaths(ctx, paths); err == nil {
+			paths = resolved
+		} else {
+			return call, tool, input, err
+		}
+	}
 	offset, _ := coerceInt(input["offset"])
 	limit, _ := coerceInt(input["limit"])
 	if len(paths) == 0 {
@@ -341,6 +351,42 @@ func repairViewCall(
 		input["limit"] = limit
 	}
 	return call, tool, input, nil
+}
+
+func resolveExistingPaths(ctx context.Context, paths []string) ([]string, error) {
+	workingDir := GetWorkingDirFromContext(ctx)
+	resolved := make([]string, 0, len(paths))
+	for _, pth := range paths {
+		if strings.TrimSpace(pth) == "" {
+			continue
+		}
+		candidate := pth
+		if !filepath.IsAbs(candidate) && workingDir != "" {
+			candidate = filepath.Join(workingDir, candidate)
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			resolved = append(resolved, pth)
+			continue
+		}
+		if workingDir == "" {
+			return nil, fmt.Errorf("file not found: %s. Use ls/rg --files to discover the exact path", pth)
+		}
+		base := filepath.Base(pth)
+		matches, _, err := fsext.GlobGitignoreAware(ctx, "**/"+base, workingDir, 5)
+		if err != nil || len(matches) == 0 {
+			return nil, fmt.Errorf("file not found: %s. Use ls/rg --files to discover the exact path", pth)
+		}
+		if len(matches) > 1 {
+			return nil, fmt.Errorf("file not found: %s. Multiple matches: %s", pth, strings.Join(matches, ", "))
+		}
+		rel, err := filepath.Rel(workingDir, matches[0])
+		if err != nil {
+			resolved = append(resolved, matches[0])
+			continue
+		}
+		resolved = append(resolved, filepath.ToSlash(rel))
+	}
+	return resolved, nil
 }
 
 func repairEditCall(

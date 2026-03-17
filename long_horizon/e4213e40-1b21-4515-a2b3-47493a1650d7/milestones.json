@@ -1,0 +1,22 @@
+{
+  "milestones": [
+    {
+      "id": "m1",
+      "name": "Understand specification",
+      "condition": "Spec read and clarified; no open questions.",
+      "status": "pending"
+    },
+    {
+      "id": "m2",
+      "name": "Implement task",
+      "condition": "Changes implemented per spec; local checks/tests pass.",
+      "status": "pending"
+    },
+    {
+      "id": "m3",
+      "name": "Validate and document",
+      "condition": "Documentation updated; final verification complete.",
+      "status": "pending"
+    }
+  ]
+}

@@ -474,8 +474,17 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
-		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+		renderMsg := msg
+		var planItem MessageItem
+		if normalized, plan, ok := NormalizeProposedPlanMessage(msg); ok {
+			renderMsg = normalized
+			planItem = NewProposedPlanItem(sty, msg.ID, plan)
+		}
+		if ShouldRenderAssistantMessage(renderMsg) {
+			items = append(items, NewAssistantMessageItem(sty, renderMsg))
+		}
+		if planItem != nil {
+			items = append(items, planItem)
 		}
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult

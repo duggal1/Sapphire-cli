@@ -19,8 +19,8 @@ import (
 const maxFilename = 15
 const pasteTextIcon = "≡"
 
-// greenBadge is a pre-styled green background for the hamburger icon
-var greenBadge = lipgloss.NewStyle().Background(lipgloss.Color("#22c55e")).Foreground(lipgloss.Color("#ffffff")).Padding(0, 1)
+// pasteBadge is a pre-styled off-pink background for the hamburger icon
+var pasteBadge = lipgloss.NewStyle().Background(lipgloss.Color("#F4D6F2")).Foreground(lipgloss.Color("#2A2333")).Padding(0, 1)
 
 type Keymap struct {
 	DeleteMode,
@@ -183,8 +183,8 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting, editing bo
 				r.normalStyle.Render(filename),
 			)
 		} else if isPasteBlock(att) {
-			// Render paste block with green badge icon on left, filename on right
-			iconBadge := greenBadge.Render(pasteTextIcon)
+			// Render paste block with off-pink badge icon on left, filename on right
+			iconBadge := pasteBadge.Render(pasteTextIcon)
 			label := fmt.Sprintf(" %s", filename)
 			style := r.pasteStyle.Copy()
 			color := r.pastePalette[pasteIndex%len(r.pastePalette)]

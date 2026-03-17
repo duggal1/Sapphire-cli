@@ -9,6 +9,9 @@ import (
 )
 
 type Querier interface {
+	ClaimGlobalPhase2Job(ctx context.Context, arg ClaimGlobalPhase2JobParams) (MemoryPhase2Job, error)
+	ClaimStage1JobsForStartup(ctx context.Context, arg ClaimStage1JobsForStartupParams) ([]MemoryStage1Job, error)
+	ClearPhase2BaselineSelection(ctx context.Context) error
 	CreateFile(ctx context.Context, arg CreateFileParams) (File, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
@@ -18,16 +21,25 @@ type Querier interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionFiles(ctx context.Context, sessionID string) error
 	DeleteSessionMessages(ctx context.Context, sessionID string) error
+	DeleteStage1OutputBySessionID(ctx context.Context, sessionID string) (int64, error)
+	EnsureGlobalPhase2Job(ctx context.Context) error
+	EnsureStage1JobForSession(ctx context.Context, arg EnsureStage1JobForSessionParams) error
+	FailGlobalPhase2Job(ctx context.Context, arg FailGlobalPhase2JobParams) (int64, error)
 	GetAverageResponseTime(ctx context.Context) (int64, error)
 	GetCodebaseKnowledgeByFilePath(ctx context.Context, filePath string) ([]CodebaseKnowledge, error)
 	GetFile(ctx context.Context, id string) (File, error)
 	GetFileByPathAndSession(ctx context.Context, arg GetFileByPathAndSessionParams) (File, error)
 	GetFileRead(ctx context.Context, arg GetFileReadParams) (ReadFile, error)
 	GetHourDayHeatmap(ctx context.Context) ([]GetHourDayHeatmapRow, error)
+	GetLongHorizonRun(ctx context.Context, sessionID string) (LongHorizonRun, error)
+	GetMemoryRegistryMaterialization(ctx context.Context) (MemoryMaterialization, error)
+	GetMemorySummaryMaterialization(ctx context.Context) (MemoryMaterialization, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
+	GetPhase2InputSelection(ctx context.Context, updatedAt int64) ([]GetPhase2InputSelectionRow, error)
 	GetProjectConstitution(ctx context.Context, id string) (ProjectConstitution, error)
 	GetRecentActivity(ctx context.Context) ([]GetRecentActivityRow, error)
 	GetSessionByID(ctx context.Context, id string) (Session, error)
+	GetStage1OutputBySessionID(ctx context.Context, sessionID string) (GetStage1OutputBySessionIDRow, error)
 	GetStructuredSummaryBySessionID(ctx context.Context, sessionID string) (StructuredSummary, error)
 	GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error)
 	GetTotalStats(ctx context.Context) (GetTotalStatsRow, error)
@@ -35,21 +47,47 @@ type Querier interface {
 	GetUsageByDayOfWeek(ctx context.Context) ([]GetUsageByDayOfWeekRow, error)
 	GetUsageByHour(ctx context.Context) ([]GetUsageByHourRow, error)
 	GetUsageByModel(ctx context.Context) ([]GetUsageByModelRow, error)
+	HeartbeatGlobalPhase2Job(ctx context.Context, arg HeartbeatGlobalPhase2JobParams) (int64, error)
+	InsertMemoryRegistryCitation(ctx context.Context, arg InsertMemoryRegistryCitationParams) error
 	ListAllUserMessages(ctx context.Context) ([]Message, error)
+	ListEligibleStage1OutputsForPhase2(ctx context.Context, arg ListEligibleStage1OutputsForPhase2Params) ([]ListEligibleStage1OutputsForPhase2Row, error)
 	ListFilesByPath(ctx context.Context, path string) ([]File, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)
 	ListLatestSessionFiles(ctx context.Context, sessionID string) ([]File, error)
+	ListLongHorizonMilestones(ctx context.Context, sessionID string) ([]LongHorizonMilestone, error)
+	ListMemoryMaterializations(ctx context.Context) ([]MemoryMaterialization, error)
+	ListMemoryRegistryCitationsByEntry(ctx context.Context, registryEntryID string) ([]MemoryRegistryCitation, error)
+	ListMemoryRegistryEntries(ctx context.Context) ([]MemoryRegistryEntry, error)
 	ListMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
 	ListNewFiles(ctx context.Context) ([]File, error)
+	ListPhase2BaselineOutputs(ctx context.Context) ([]ListPhase2BaselineOutputsRow, error)
 	ListSessionReadFiles(ctx context.Context, sessionID string) ([]ReadFile, error)
 	ListSessions(ctx context.Context) ([]Session, error)
+	ListStage1OutputsForPhase2(ctx context.Context) ([]ListStage1OutputsForPhase2Row, error)
+	ListStructuredSummaries(ctx context.Context, limit int64) ([]StructuredSummary, error)
 	ListUserMessagesBySession(ctx context.Context, sessionID string) ([]Message, error)
+	MarkPhase2Dirty(ctx context.Context) error
+	MarkStage1JobFailed(ctx context.Context, arg MarkStage1JobFailedParams) error
+	MarkStage1JobNoOutput(ctx context.Context, sessionID string) error
+	MarkStage1JobSucceeded(ctx context.Context, sessionID string) error
+	MarkStage1OutputSelectedForPhase2(ctx context.Context, arg MarkStage1OutputSelectedForPhase2Params) (int64, error)
+	PruneStage1OutputsForRetention(ctx context.Context, arg PruneStage1OutputsForRetentionParams) (int64, error)
 	RecordFileRead(ctx context.Context, arg RecordFileReadParams) error
+	RecordStage1OutputUsage(ctx context.Context, sessionID string) error
+	ReplaceLongHorizonMilestones(ctx context.Context, sessionID string) error
+	ReplaceMemoryRegistryCitations(ctx context.Context, registryEntryID string) error
+	SearchCodebaseKnowledge(ctx context.Context, arg SearchCodebaseKnowledgeParams) ([]CodebaseKnowledge, error)
+	SucceedGlobalPhase2Job(ctx context.Context, arg SucceedGlobalPhase2JobParams) (int64, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
 	UpsertCodebaseKnowledge(ctx context.Context, arg UpsertCodebaseKnowledgeParams) (CodebaseKnowledge, error)
+	UpsertLongHorizonMilestone(ctx context.Context, arg UpsertLongHorizonMilestoneParams) error
+	UpsertLongHorizonRun(ctx context.Context, arg UpsertLongHorizonRunParams) (LongHorizonRun, error)
+	UpsertMemoryMaterialization(ctx context.Context, arg UpsertMemoryMaterializationParams) (MemoryMaterialization, error)
+	UpsertMemoryRegistryEntry(ctx context.Context, arg UpsertMemoryRegistryEntryParams) (MemoryRegistryEntry, error)
 	UpsertProjectConstitution(ctx context.Context, arg UpsertProjectConstitutionParams) (ProjectConstitution, error)
+	UpsertStage1Output(ctx context.Context, arg UpsertStage1OutputParams) error
 }
 
 var _ Querier = (*Queries)(nil)

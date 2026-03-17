@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+
+	"github.com/charmbracelet/sapphire/internal/config"
 )
 
 type (
@@ -9,6 +11,7 @@ type (
 	messageIDContextKey string
 	supportsImagesKey   string
 	modelNameKey        string
+	agentModeKey        string
 	workingDirKey       string
 	runtimeControlKey   string
 	writeScopeKey       string
@@ -23,6 +26,8 @@ const (
 	SupportsImagesContextKey supportsImagesKey = "supports_images"
 	// ModelNameContextKey is the key for the model name in the context.
 	ModelNameContextKey modelNameKey = "model_name"
+	// AgentModeContextKey is the key for the agent mode in the context.
+	AgentModeContextKey agentModeKey = "agent_mode"
 	// WorkingDirContextKey is the key for the working directory in the context.
 	WorkingDirContextKey workingDirKey = "working_dir"
 	// RuntimeControlContextKey is the key for the runtime control loop in the context.
@@ -74,6 +79,11 @@ func GetSupportsImagesFromContext(ctx context.Context) bool {
 // GetModelNameFromContext retrieves the model name from the context.
 func GetModelNameFromContext(ctx context.Context) string {
 	return getContextValue(ctx, ModelNameContextKey, "")
+}
+
+// GetAgentModeFromContext retrieves the agent mode from the context.
+func GetAgentModeFromContext(ctx context.Context) config.AgentMode {
+	return getContextValue(ctx, AgentModeContextKey, config.AgentModeDefault)
 }
 
 // GetWorkingDirFromContext retrieves the working directory from the context.

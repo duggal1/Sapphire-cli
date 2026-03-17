@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/config"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/oauth"
+	"github.com/charmbracelet/sapphire/internal/planmode"
 	"github.com/charmbracelet/sapphire/internal/permission"
 	"github.com/charmbracelet/sapphire/internal/session"
 	"github.com/charmbracelet/sapphire/internal/ui/common"
@@ -40,6 +41,26 @@ type ActionSelectModel struct {
 	Model          config.SelectedModel
 	ModelType      config.SelectedModelType
 	ReAuthenticate bool
+}
+
+// ActionSelectAgentMode is a message indicating an agent mode was selected.
+type ActionSelectAgentMode struct {
+	Mode config.AgentMode
+}
+
+// ActionImplementProposedPlan is a message to accept the proposed plan.
+type ActionImplementProposedPlan struct{}
+
+// ActionReviseProposedPlan is a message to revise the proposed plan.
+type ActionReviseProposedPlan struct{}
+
+// ActionExitPlanMode is a message to exit plan mode.
+type ActionExitPlanMode struct{}
+
+// ActionRespondUserInput is a message to respond to a request_user_input prompt.
+type ActionRespondUserInput struct {
+	RequestID string
+	Response  planmode.Response
 }
 
 // Messages for commands

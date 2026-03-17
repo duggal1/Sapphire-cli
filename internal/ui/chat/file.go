@@ -6,12 +6,17 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -122,34 +127,194 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		}
 	}
 
-	body := renderViewSummary(sty, filePaths, cappedWidth-toolBodyLeftPaddingTotal)
+	var meta tools.ViewResponseMetadata
+	if opts.HasResult() && opts.Result.Metadata != "" {
+		_ = json.Unmarshal([]byte(opts.Result.Metadata), &meta)
+	}
+	lineCounts := viewLineCounts(&meta)
+	fileInfos := buildViewFileInfos(filePaths, lineCounts)
+
+	body := renderViewSummary(sty, opts.ToolCall.Name, fileInfos, cappedWidth-toolBodyLeftPaddingTotal)
 	if body == "" {
 		return header
 	}
 	return joinToolParts(header, sty.Tool.Body.Render(body))
 }
 
-func renderViewSummary(sty *styles.Styles, filePaths []string, width int) string {
-	lines := make([]string, 0, len(filePaths))
-	for _, path := range filePaths {
+func renderViewSummary(sty *styles.Styles, toolName string, infos []viewFileInfo, width int) string {
+	if len(infos) == 0 {
+		return ""
+	}
+	if toolName != tools.AgenticViewToolName && len(infos) == 1 {
+		return renderSingleViewTree(sty, infos[0], width)
+	}
+	return renderViewTree(sty, infos, width)
+}
+
+type viewFileInfo struct {
+	path  string
+	lines int
+}
+
+func buildViewFileInfos(paths []string, lineCounts map[string]int) []viewFileInfo {
+	seen := map[string]struct{}{}
+	out := make([]viewFileInfo, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
-		summary := fmt.Sprintf("%s %s",
-			sty.HalfMuted.Render("Agent read file:"),
-			sty.Files.Path.Render(fsext.PrettyPath(path)),
-		)
-		line := sty.Tool.FileBlock.Width(width).Render(summary)
-		lines = append(lines, truncateAgenticViewLine(line, width))
+		rel := normalizeUIPath(path)
+		if rel == "" {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		out = append(out, viewFileInfo{path: rel, lines: lineCounts[path]})
 	}
+	return out
+}
+
+func viewLineCounts(meta *tools.ViewResponseMetadata) map[string]int {
+	out := map[string]int{}
+	if meta == nil {
+		return out
+	}
+	if meta.FilePath != "" && meta.Content != "" {
+		out[meta.FilePath] = strings.Count(meta.Content, "\n") + 1
+	}
+	for _, f := range meta.Files {
+		if f.FilePath == "" || f.Content == "" {
+			continue
+		}
+		out[f.FilePath] = strings.Count(f.Content, "\n") + 1
+	}
+	return out
+}
+
+func renderSingleViewTree(sty *styles.Styles, info viewFileInfo, width int) string {
+	fileStyle := sty.Files.Path.Copy().Foreground(lipgloss.Color("#F6DDF5"))
+	root := &fileTreeNode{children: map[string]*fileTreeNode{}}
+	addFileNode(root, info.path, info.lines)
+	var lines []string
+	renderTreeLinesWithStyle(&lines, root, "", width, sty, fileStyle)
 	return strings.Join(lines, "\n")
 }
 
-func truncateAgenticViewLine(line string, width int) string {
-	if width <= 0 {
-		return line
+type fileTreeNode struct {
+	name     string
+	lines    int
+	children map[string]*fileTreeNode
+	isFile   bool
+}
+
+func renderViewTree(sty *styles.Styles, infos []viewFileInfo, width int) string {
+	root := &fileTreeNode{children: map[string]*fileTreeNode{}}
+	for _, info := range infos {
+		addFileNode(root, info.path, info.lines)
 	}
-	return strings.TrimRight(line, "\n")
+	var lines []string
+	renderTreeLines(&lines, root, "", width, sty)
+	return strings.Join(lines, "\n")
+}
+
+func addFileNode(root *fileTreeNode, rel string, lineCount int) {
+	parts := strings.Split(rel, "/")
+	curr := root
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		child, ok := curr.children[part]
+		if !ok {
+			child = &fileTreeNode{name: part, children: map[string]*fileTreeNode{}}
+			curr.children[part] = child
+		}
+		curr = child
+		if i == len(parts)-1 {
+			curr.isFile = true
+			curr.lines = lineCount
+		}
+	}
+}
+
+func renderTreeLines(out *[]string, node *fileTreeNode, indent string, width int, sty *styles.Styles) {
+	fileStyle := sty.Files.Path.Copy().Foreground(lipgloss.Color("#F6DDF5"))
+	renderTreeLinesWithStyle(out, node, indent, width, sty, fileStyle)
+}
+
+func renderTreeLinesWithStyle(out *[]string, node *fileTreeNode, indent string, width int, sty *styles.Styles, fileStyle lipgloss.Style) {
+	if node == nil || len(node.children) == 0 {
+		return
+	}
+	var dirs []string
+	var files []string
+	for name, child := range node.children {
+		if child.isFile {
+			files = append(files, name)
+		} else {
+			dirs = append(dirs, name)
+		}
+	}
+	sort.Strings(dirs)
+	sort.Strings(files)
+	children := append(dirs, files...)
+	for i, name := range children {
+		child := node.children[name]
+		isLast := i == len(children)-1
+		branch := "├─ "
+		nextIndent := indent + "│  "
+		if isLast {
+			branch = "└─ "
+			nextIndent = indent + "   "
+		}
+		label := child.name
+		if !child.isFile {
+			label += "/"
+		}
+		lineWidth := width - ansi.StringWidth(indent+branch)
+		if lineWidth < 0 {
+			lineWidth = 0
+		}
+		var rendered string
+		if child.isFile {
+			nameText := label
+			countText := ""
+			if child.lines > 0 {
+				countText = fmt.Sprintf(" (%d lines)", child.lines)
+			}
+			if countText != "" && lineWidth > ansi.StringWidth(countText) {
+				nameText = ansi.Truncate(nameText, lineWidth-ansi.StringWidth(countText), "…")
+				rendered = fileStyle.Render(nameText) + sty.Tool.ListMeta.Render(countText)
+			} else {
+				rendered = fileStyle.Render(ansi.Truncate(nameText+countText, lineWidth, "…"))
+			}
+		} else {
+			rendered = sty.Tool.ListDirectory.Render(ansi.Truncate(label, lineWidth, "…"))
+		}
+		*out = append(*out, indent+branch+rendered)
+		renderTreeLinesWithStyle(out, child, nextIndent, width, sty, fileStyle)
+	}
+}
+
+func normalizeUIPath(path string) string {
+	clean := filepath.Clean(path)
+	wd, err := os.Getwd()
+	if err == nil {
+		if rel, err := filepath.Rel(wd, clean); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	clean = filepath.ToSlash(clean)
+	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "~") {
+		parts := strings.Split(strings.TrimPrefix(clean, "/"), "/")
+		if len(parts) >= 2 {
+			return strings.Join(parts[len(parts)-2:], "/")
+		}
+	}
+	return clean
 }
 
 // -----------------------------------------------------------------------------

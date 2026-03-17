@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/home"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/charmbracelet/sapphire/internal/planmode"
 	"github.com/charmbracelet/sapphire/internal/pubsub"
 	"github.com/charmbracelet/sapphire/internal/session"
 	"github.com/charmbracelet/sapphire/internal/ui/anim"
@@ -64,8 +65,9 @@ const (
 	compactModeHeightBreakpoint = 30
 )
 
-// If pasted text has more than 2 newlines, treat it as a file attachment.
+
 const pasteLinesThreshold = 10
+const pasteWordsThreshold = 180
 
 // Session details panel max height.
 const sessionDetailsMaxHeight = 20
@@ -235,6 +237,9 @@ type UI struct {
 	// Todo spinner
 	todoSpinner    spinner.Model
 	todoIsSpinning bool
+
+	// Plan mode dialog tracking
+	planDialogMessageID string
 
 	// mouse highlighting related state
 	lastClickTime time.Time
@@ -596,6 +601,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case mcp.EventResourcesListChanged:
 			return m, handleMCPResourcesEvent(msg.Payload.Name)
 		}
+	case pubsub.Event[planmode.Request]:
+		if m.session == nil || msg.Payload.SessionID != m.session.ID {
+			break
+		}
+		if cmd := m.openRequestUserInputDialog(msg.Payload); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case pubsub.Event[permission.PermissionRequest]:
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -797,6 +809,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.maybeCollapseInputToPasteBlock()
 	case util.InfoMsg:
 		m.status.SetInfoMsg(msg)
 		ttl := msg.TTL
@@ -861,7 +874,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	var cmds []tea.Cmd
-	if !m.isAgentBusy() {
+	if !m.isAgentBusy() && m.requestLifecycle.completedAt.IsZero() {
 		m.resetRequestTimer()
 	}
 	// Build tool result map to link tool calls with their results
@@ -1057,6 +1070,9 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		if cmd := m.maybeOpenPlanActionsDialog(&msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -1102,10 +1118,18 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 	existingItem := m.chat.MessageItem(msg.ID)
+	renderMsg := &msg
+	hasPlan := false
+	planText := ""
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
-			assistantItem.SetMessage(&msg)
+			if normalized, plan, ok := chat.NormalizeProposedPlanMessage(&msg); ok {
+				renderMsg = normalized
+				planText = plan
+				hasPlan = true
+			}
+			assistantItem.SetMessage(renderMsg)
 			m.chat.InvalidateMessage(msg.ID)
 		}
 	}
@@ -1121,7 +1145,11 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 
-	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
+	if msg.Role == message.Assistant && hasPlan {
+		m.upsertProposedPlanItem(msg.ID, planText)
+	}
+
+	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(renderMsg)
 	// if the message of the assistant does not have any  response just tool calls we need to remove it
 	if !shouldRenderAssistant && len(msg.ToolCalls()) > 0 && existingItem != nil {
 		m.chat.RemoveMessage(msg.ID)
@@ -1158,6 +1186,11 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		m.chat.SelectLast()
+	}
+	if msg.Role == message.Assistant {
+		if cmd := m.maybeOpenPlanActionsDialog(&msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return tea.Sequence(cmds...)
@@ -1824,6 +1857,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
+				if len(value) == 0 && message.ContainsTextAttachment(attachments) {
+					if text, remaining := extractTextAttachments(attachments); text != "" {
+						value = text
+						attachments = remaining
+					}
+				}
 				m.randomizePlaceholders()
 				m.historyReset()
 				m.stagePendingSend(value, attachments)
@@ -1887,6 +1926,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				attachments := cloneAttachments(m.attachments.List())
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
+				}
+				if len(value) == 0 && message.ContainsTextAttachment(attachments) {
+					if text, remaining := extractTextAttachments(attachments); text != "" {
+						value = text
+						attachments = remaining
+					}
 				}
 
 				m.randomizePlaceholders()
@@ -1987,6 +2032,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 				// Any text modification becomes the current draft.
 				m.updateHistoryDraft(curValue)
+				m.maybeCollapseInputToPasteBlock()
 
 				// After updating textarea, check if we need to filter completions.
 				// Skip filtering on the initial @ keystroke since items are loading async.
@@ -3081,6 +3127,52 @@ func cloneAttachments(items []message.Attachment) []message.Attachment {
 	cloned := make([]message.Attachment, len(items))
 	copy(cloned, items)
 	return cloned
+}
+
+func extractTextAttachments(attachments []message.Attachment) (string, []message.Attachment) {
+	if len(attachments) == 0 {
+		return "", attachments
+	}
+	var textParts []string
+	remaining := make([]message.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		if att.IsText() {
+			textParts = append(textParts, string(att.Content))
+			continue
+		}
+		remaining = append(remaining, att)
+	}
+	return strings.TrimSpace(strings.Join(textParts, "\n\n")), remaining
+}
+
+func (m *UI) maybeCollapseInputToPasteBlock() {
+	if !m.com.Config().Options.TUI.PasteBlocks {
+		return
+	}
+	value := strings.TrimSpace(m.textarea.Value())
+	if value == "" {
+		return
+	}
+	if len(strings.Fields(value)) < pasteWordsThreshold {
+		return
+	}
+	content := []byte(value)
+	if int64(len(content)) > common.MaxAttachmentSize {
+		m.status.SetInfoMsg(util.NewWarnMsg("Paste is too big (>5mb)"))
+		return
+	}
+	name := fmt.Sprintf("paste_%d.txt", m.pasteIdx())
+	mimeBufferSize := min(512, len(content))
+	mimeType := http.DetectContentType(content[:mimeBufferSize])
+	att := message.Attachment{
+		FileName: name,
+		FilePath: name,
+		MimeType: mimeType,
+		Content:  content,
+	}
+	m.attachments.Update(att)
+	m.textarea.SetValue("")
+	m.textarea.MoveToEnd()
 }
 
 func (m *UI) stagePendingSend(content string, attachments []message.Attachment) {

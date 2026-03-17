@@ -24,6 +24,15 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.claimGlobalPhase2JobStmt, err = db.PrepareContext(ctx, claimGlobalPhase2Job); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimGlobalPhase2Job: %w", err)
+	}
+	if q.claimStage1JobsForStartupStmt, err = db.PrepareContext(ctx, claimStage1JobsForStartup); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimStage1JobsForStartup: %w", err)
+	}
+	if q.clearPhase2BaselineSelectionStmt, err = db.PrepareContext(ctx, clearPhase2BaselineSelection); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearPhase2BaselineSelection: %w", err)
+	}
 	if q.createFileStmt, err = db.PrepareContext(ctx, createFile); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateFile: %w", err)
 	}
@@ -51,6 +60,18 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteSessionMessagesStmt, err = db.PrepareContext(ctx, deleteSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteSessionMessages: %w", err)
 	}
+	if q.deleteStage1OutputBySessionIDStmt, err = db.PrepareContext(ctx, deleteStage1OutputBySessionID); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteStage1OutputBySessionID: %w", err)
+	}
+	if q.ensureGlobalPhase2JobStmt, err = db.PrepareContext(ctx, ensureGlobalPhase2Job); err != nil {
+		return nil, fmt.Errorf("error preparing query EnsureGlobalPhase2Job: %w", err)
+	}
+	if q.ensureStage1JobForSessionStmt, err = db.PrepareContext(ctx, ensureStage1JobForSession); err != nil {
+		return nil, fmt.Errorf("error preparing query EnsureStage1JobForSession: %w", err)
+	}
+	if q.failGlobalPhase2JobStmt, err = db.PrepareContext(ctx, failGlobalPhase2Job); err != nil {
+		return nil, fmt.Errorf("error preparing query FailGlobalPhase2Job: %w", err)
+	}
 	if q.getAverageResponseTimeStmt, err = db.PrepareContext(ctx, getAverageResponseTime); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAverageResponseTime: %w", err)
 	}
@@ -69,8 +90,20 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getHourDayHeatmapStmt, err = db.PrepareContext(ctx, getHourDayHeatmap); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHourDayHeatmap: %w", err)
 	}
+	if q.getLongHorizonRunStmt, err = db.PrepareContext(ctx, getLongHorizonRun); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLongHorizonRun: %w", err)
+	}
+	if q.getMemoryRegistryMaterializationStmt, err = db.PrepareContext(ctx, getMemoryRegistryMaterialization); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMemoryRegistryMaterialization: %w", err)
+	}
+	if q.getMemorySummaryMaterializationStmt, err = db.PrepareContext(ctx, getMemorySummaryMaterialization); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMemorySummaryMaterialization: %w", err)
+	}
 	if q.getMessageStmt, err = db.PrepareContext(ctx, getMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMessage: %w", err)
+	}
+	if q.getPhase2InputSelectionStmt, err = db.PrepareContext(ctx, getPhase2InputSelection); err != nil {
+		return nil, fmt.Errorf("error preparing query GetPhase2InputSelection: %w", err)
 	}
 	if q.getProjectConstitutionStmt, err = db.PrepareContext(ctx, getProjectConstitution); err != nil {
 		return nil, fmt.Errorf("error preparing query GetProjectConstitution: %w", err)
@@ -80,6 +113,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getSessionByIDStmt, err = db.PrepareContext(ctx, getSessionByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetSessionByID: %w", err)
+	}
+	if q.getStage1OutputBySessionIDStmt, err = db.PrepareContext(ctx, getStage1OutputBySessionID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStage1OutputBySessionID: %w", err)
 	}
 	if q.getStructuredSummaryBySessionIDStmt, err = db.PrepareContext(ctx, getStructuredSummaryBySessionID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStructuredSummaryBySessionID: %w", err)
@@ -102,8 +138,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getUsageByModelStmt, err = db.PrepareContext(ctx, getUsageByModel); err != nil {
 		return nil, fmt.Errorf("error preparing query GetUsageByModel: %w", err)
 	}
+	if q.heartbeatGlobalPhase2JobStmt, err = db.PrepareContext(ctx, heartbeatGlobalPhase2Job); err != nil {
+		return nil, fmt.Errorf("error preparing query HeartbeatGlobalPhase2Job: %w", err)
+	}
+	if q.insertMemoryRegistryCitationStmt, err = db.PrepareContext(ctx, insertMemoryRegistryCitation); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertMemoryRegistryCitation: %w", err)
+	}
 	if q.listAllUserMessagesStmt, err = db.PrepareContext(ctx, listAllUserMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAllUserMessages: %w", err)
+	}
+	if q.listEligibleStage1OutputsForPhase2Stmt, err = db.PrepareContext(ctx, listEligibleStage1OutputsForPhase2); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEligibleStage1OutputsForPhase2: %w", err)
 	}
 	if q.listFilesByPathStmt, err = db.PrepareContext(ctx, listFilesByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query ListFilesByPath: %w", err)
@@ -114,11 +159,26 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listLatestSessionFilesStmt, err = db.PrepareContext(ctx, listLatestSessionFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListLatestSessionFiles: %w", err)
 	}
+	if q.listLongHorizonMilestonesStmt, err = db.PrepareContext(ctx, listLongHorizonMilestones); err != nil {
+		return nil, fmt.Errorf("error preparing query ListLongHorizonMilestones: %w", err)
+	}
+	if q.listMemoryMaterializationsStmt, err = db.PrepareContext(ctx, listMemoryMaterializations); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMemoryMaterializations: %w", err)
+	}
+	if q.listMemoryRegistryCitationsByEntryStmt, err = db.PrepareContext(ctx, listMemoryRegistryCitationsByEntry); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMemoryRegistryCitationsByEntry: %w", err)
+	}
+	if q.listMemoryRegistryEntriesStmt, err = db.PrepareContext(ctx, listMemoryRegistryEntries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMemoryRegistryEntries: %w", err)
+	}
 	if q.listMessagesBySessionStmt, err = db.PrepareContext(ctx, listMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListMessagesBySession: %w", err)
 	}
 	if q.listNewFilesStmt, err = db.PrepareContext(ctx, listNewFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListNewFiles: %w", err)
+	}
+	if q.listPhase2BaselineOutputsStmt, err = db.PrepareContext(ctx, listPhase2BaselineOutputs); err != nil {
+		return nil, fmt.Errorf("error preparing query ListPhase2BaselineOutputs: %w", err)
 	}
 	if q.listSessionReadFilesStmt, err = db.PrepareContext(ctx, listSessionReadFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessionReadFiles: %w", err)
@@ -126,11 +186,50 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionsStmt, err = db.PrepareContext(ctx, listSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessions: %w", err)
 	}
+	if q.listStage1OutputsForPhase2Stmt, err = db.PrepareContext(ctx, listStage1OutputsForPhase2); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStage1OutputsForPhase2: %w", err)
+	}
+	if q.listStructuredSummariesStmt, err = db.PrepareContext(ctx, listStructuredSummaries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStructuredSummaries: %w", err)
+	}
 	if q.listUserMessagesBySessionStmt, err = db.PrepareContext(ctx, listUserMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesBySession: %w", err)
 	}
+	if q.markPhase2DirtyStmt, err = db.PrepareContext(ctx, markPhase2Dirty); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkPhase2Dirty: %w", err)
+	}
+	if q.markStage1JobFailedStmt, err = db.PrepareContext(ctx, markStage1JobFailed); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkStage1JobFailed: %w", err)
+	}
+	if q.markStage1JobNoOutputStmt, err = db.PrepareContext(ctx, markStage1JobNoOutput); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkStage1JobNoOutput: %w", err)
+	}
+	if q.markStage1JobSucceededStmt, err = db.PrepareContext(ctx, markStage1JobSucceeded); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkStage1JobSucceeded: %w", err)
+	}
+	if q.markStage1OutputSelectedForPhase2Stmt, err = db.PrepareContext(ctx, markStage1OutputSelectedForPhase2); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkStage1OutputSelectedForPhase2: %w", err)
+	}
+	if q.pruneStage1OutputsForRetentionStmt, err = db.PrepareContext(ctx, pruneStage1OutputsForRetention); err != nil {
+		return nil, fmt.Errorf("error preparing query PruneStage1OutputsForRetention: %w", err)
+	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
+	}
+	if q.recordStage1OutputUsageStmt, err = db.PrepareContext(ctx, recordStage1OutputUsage); err != nil {
+		return nil, fmt.Errorf("error preparing query RecordStage1OutputUsage: %w", err)
+	}
+	if q.replaceLongHorizonMilestonesStmt, err = db.PrepareContext(ctx, replaceLongHorizonMilestones); err != nil {
+		return nil, fmt.Errorf("error preparing query ReplaceLongHorizonMilestones: %w", err)
+	}
+	if q.replaceMemoryRegistryCitationsStmt, err = db.PrepareContext(ctx, replaceMemoryRegistryCitations); err != nil {
+		return nil, fmt.Errorf("error preparing query ReplaceMemoryRegistryCitations: %w", err)
+	}
+	if q.searchCodebaseKnowledgeStmt, err = db.PrepareContext(ctx, searchCodebaseKnowledge); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchCodebaseKnowledge: %w", err)
+	}
+	if q.succeedGlobalPhase2JobStmt, err = db.PrepareContext(ctx, succeedGlobalPhase2Job); err != nil {
+		return nil, fmt.Errorf("error preparing query SucceedGlobalPhase2Job: %w", err)
 	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
@@ -144,14 +243,44 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.upsertCodebaseKnowledgeStmt, err = db.PrepareContext(ctx, upsertCodebaseKnowledge); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertCodebaseKnowledge: %w", err)
 	}
+	if q.upsertLongHorizonMilestoneStmt, err = db.PrepareContext(ctx, upsertLongHorizonMilestone); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertLongHorizonMilestone: %w", err)
+	}
+	if q.upsertLongHorizonRunStmt, err = db.PrepareContext(ctx, upsertLongHorizonRun); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertLongHorizonRun: %w", err)
+	}
+	if q.upsertMemoryMaterializationStmt, err = db.PrepareContext(ctx, upsertMemoryMaterialization); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertMemoryMaterialization: %w", err)
+	}
+	if q.upsertMemoryRegistryEntryStmt, err = db.PrepareContext(ctx, upsertMemoryRegistryEntry); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertMemoryRegistryEntry: %w", err)
+	}
 	if q.upsertProjectConstitutionStmt, err = db.PrepareContext(ctx, upsertProjectConstitution); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertProjectConstitution: %w", err)
+	}
+	if q.upsertStage1OutputStmt, err = db.PrepareContext(ctx, upsertStage1Output); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertStage1Output: %w", err)
 	}
 	return &q, nil
 }
 
 func (q *Queries) Close() error {
 	var err error
+	if q.claimGlobalPhase2JobStmt != nil {
+		if cerr := q.claimGlobalPhase2JobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimGlobalPhase2JobStmt: %w", cerr)
+		}
+	}
+	if q.claimStage1JobsForStartupStmt != nil {
+		if cerr := q.claimStage1JobsForStartupStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimStage1JobsForStartupStmt: %w", cerr)
+		}
+	}
+	if q.clearPhase2BaselineSelectionStmt != nil {
+		if cerr := q.clearPhase2BaselineSelectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearPhase2BaselineSelectionStmt: %w", cerr)
+		}
+	}
 	if q.createFileStmt != nil {
 		if cerr := q.createFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createFileStmt: %w", cerr)
@@ -197,6 +326,26 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.deleteStage1OutputBySessionIDStmt != nil {
+		if cerr := q.deleteStage1OutputBySessionIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteStage1OutputBySessionIDStmt: %w", cerr)
+		}
+	}
+	if q.ensureGlobalPhase2JobStmt != nil {
+		if cerr := q.ensureGlobalPhase2JobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing ensureGlobalPhase2JobStmt: %w", cerr)
+		}
+	}
+	if q.ensureStage1JobForSessionStmt != nil {
+		if cerr := q.ensureStage1JobForSessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing ensureStage1JobForSessionStmt: %w", cerr)
+		}
+	}
+	if q.failGlobalPhase2JobStmt != nil {
+		if cerr := q.failGlobalPhase2JobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing failGlobalPhase2JobStmt: %w", cerr)
+		}
+	}
 	if q.getAverageResponseTimeStmt != nil {
 		if cerr := q.getAverageResponseTimeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAverageResponseTimeStmt: %w", cerr)
@@ -227,9 +376,29 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getHourDayHeatmapStmt: %w", cerr)
 		}
 	}
+	if q.getLongHorizonRunStmt != nil {
+		if cerr := q.getLongHorizonRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLongHorizonRunStmt: %w", cerr)
+		}
+	}
+	if q.getMemoryRegistryMaterializationStmt != nil {
+		if cerr := q.getMemoryRegistryMaterializationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMemoryRegistryMaterializationStmt: %w", cerr)
+		}
+	}
+	if q.getMemorySummaryMaterializationStmt != nil {
+		if cerr := q.getMemorySummaryMaterializationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMemorySummaryMaterializationStmt: %w", cerr)
+		}
+	}
 	if q.getMessageStmt != nil {
 		if cerr := q.getMessageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMessageStmt: %w", cerr)
+		}
+	}
+	if q.getPhase2InputSelectionStmt != nil {
+		if cerr := q.getPhase2InputSelectionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getPhase2InputSelectionStmt: %w", cerr)
 		}
 	}
 	if q.getProjectConstitutionStmt != nil {
@@ -245,6 +414,11 @@ func (q *Queries) Close() error {
 	if q.getSessionByIDStmt != nil {
 		if cerr := q.getSessionByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getSessionByIDStmt: %w", cerr)
+		}
+	}
+	if q.getStage1OutputBySessionIDStmt != nil {
+		if cerr := q.getStage1OutputBySessionIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStage1OutputBySessionIDStmt: %w", cerr)
 		}
 	}
 	if q.getStructuredSummaryBySessionIDStmt != nil {
@@ -282,9 +456,24 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getUsageByModelStmt: %w", cerr)
 		}
 	}
+	if q.heartbeatGlobalPhase2JobStmt != nil {
+		if cerr := q.heartbeatGlobalPhase2JobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing heartbeatGlobalPhase2JobStmt: %w", cerr)
+		}
+	}
+	if q.insertMemoryRegistryCitationStmt != nil {
+		if cerr := q.insertMemoryRegistryCitationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertMemoryRegistryCitationStmt: %w", cerr)
+		}
+	}
 	if q.listAllUserMessagesStmt != nil {
 		if cerr := q.listAllUserMessagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listAllUserMessagesStmt: %w", cerr)
+		}
+	}
+	if q.listEligibleStage1OutputsForPhase2Stmt != nil {
+		if cerr := q.listEligibleStage1OutputsForPhase2Stmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEligibleStage1OutputsForPhase2Stmt: %w", cerr)
 		}
 	}
 	if q.listFilesByPathStmt != nil {
@@ -302,6 +491,26 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listLatestSessionFilesStmt: %w", cerr)
 		}
 	}
+	if q.listLongHorizonMilestonesStmt != nil {
+		if cerr := q.listLongHorizonMilestonesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listLongHorizonMilestonesStmt: %w", cerr)
+		}
+	}
+	if q.listMemoryMaterializationsStmt != nil {
+		if cerr := q.listMemoryMaterializationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMemoryMaterializationsStmt: %w", cerr)
+		}
+	}
+	if q.listMemoryRegistryCitationsByEntryStmt != nil {
+		if cerr := q.listMemoryRegistryCitationsByEntryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMemoryRegistryCitationsByEntryStmt: %w", cerr)
+		}
+	}
+	if q.listMemoryRegistryEntriesStmt != nil {
+		if cerr := q.listMemoryRegistryEntriesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMemoryRegistryEntriesStmt: %w", cerr)
+		}
+	}
 	if q.listMessagesBySessionStmt != nil {
 		if cerr := q.listMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listMessagesBySessionStmt: %w", cerr)
@@ -310,6 +519,11 @@ func (q *Queries) Close() error {
 	if q.listNewFilesStmt != nil {
 		if cerr := q.listNewFilesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listNewFilesStmt: %w", cerr)
+		}
+	}
+	if q.listPhase2BaselineOutputsStmt != nil {
+		if cerr := q.listPhase2BaselineOutputsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listPhase2BaselineOutputsStmt: %w", cerr)
 		}
 	}
 	if q.listSessionReadFilesStmt != nil {
@@ -322,14 +536,79 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionsStmt: %w", cerr)
 		}
 	}
+	if q.listStage1OutputsForPhase2Stmt != nil {
+		if cerr := q.listStage1OutputsForPhase2Stmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStage1OutputsForPhase2Stmt: %w", cerr)
+		}
+	}
+	if q.listStructuredSummariesStmt != nil {
+		if cerr := q.listStructuredSummariesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStructuredSummariesStmt: %w", cerr)
+		}
+	}
 	if q.listUserMessagesBySessionStmt != nil {
 		if cerr := q.listUserMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listUserMessagesBySessionStmt: %w", cerr)
 		}
 	}
+	if q.markPhase2DirtyStmt != nil {
+		if cerr := q.markPhase2DirtyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markPhase2DirtyStmt: %w", cerr)
+		}
+	}
+	if q.markStage1JobFailedStmt != nil {
+		if cerr := q.markStage1JobFailedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markStage1JobFailedStmt: %w", cerr)
+		}
+	}
+	if q.markStage1JobNoOutputStmt != nil {
+		if cerr := q.markStage1JobNoOutputStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markStage1JobNoOutputStmt: %w", cerr)
+		}
+	}
+	if q.markStage1JobSucceededStmt != nil {
+		if cerr := q.markStage1JobSucceededStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markStage1JobSucceededStmt: %w", cerr)
+		}
+	}
+	if q.markStage1OutputSelectedForPhase2Stmt != nil {
+		if cerr := q.markStage1OutputSelectedForPhase2Stmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markStage1OutputSelectedForPhase2Stmt: %w", cerr)
+		}
+	}
+	if q.pruneStage1OutputsForRetentionStmt != nil {
+		if cerr := q.pruneStage1OutputsForRetentionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing pruneStage1OutputsForRetentionStmt: %w", cerr)
+		}
+	}
 	if q.recordFileReadStmt != nil {
 		if cerr := q.recordFileReadStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing recordFileReadStmt: %w", cerr)
+		}
+	}
+	if q.recordStage1OutputUsageStmt != nil {
+		if cerr := q.recordStage1OutputUsageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing recordStage1OutputUsageStmt: %w", cerr)
+		}
+	}
+	if q.replaceLongHorizonMilestonesStmt != nil {
+		if cerr := q.replaceLongHorizonMilestonesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing replaceLongHorizonMilestonesStmt: %w", cerr)
+		}
+	}
+	if q.replaceMemoryRegistryCitationsStmt != nil {
+		if cerr := q.replaceMemoryRegistryCitationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing replaceMemoryRegistryCitationsStmt: %w", cerr)
+		}
+	}
+	if q.searchCodebaseKnowledgeStmt != nil {
+		if cerr := q.searchCodebaseKnowledgeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchCodebaseKnowledgeStmt: %w", cerr)
+		}
+	}
+	if q.succeedGlobalPhase2JobStmt != nil {
+		if cerr := q.succeedGlobalPhase2JobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing succeedGlobalPhase2JobStmt: %w", cerr)
 		}
 	}
 	if q.updateMessageStmt != nil {
@@ -352,9 +631,34 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing upsertCodebaseKnowledgeStmt: %w", cerr)
 		}
 	}
+	if q.upsertLongHorizonMilestoneStmt != nil {
+		if cerr := q.upsertLongHorizonMilestoneStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertLongHorizonMilestoneStmt: %w", cerr)
+		}
+	}
+	if q.upsertLongHorizonRunStmt != nil {
+		if cerr := q.upsertLongHorizonRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertLongHorizonRunStmt: %w", cerr)
+		}
+	}
+	if q.upsertMemoryMaterializationStmt != nil {
+		if cerr := q.upsertMemoryMaterializationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertMemoryMaterializationStmt: %w", cerr)
+		}
+	}
+	if q.upsertMemoryRegistryEntryStmt != nil {
+		if cerr := q.upsertMemoryRegistryEntryStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertMemoryRegistryEntryStmt: %w", cerr)
+		}
+	}
 	if q.upsertProjectConstitutionStmt != nil {
 		if cerr := q.upsertProjectConstitutionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertProjectConstitutionStmt: %w", cerr)
+		}
+	}
+	if q.upsertStage1OutputStmt != nil {
+		if cerr := q.upsertStage1OutputStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertStage1OutputStmt: %w", cerr)
 		}
 	}
 	return err
@@ -394,95 +698,171 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                                  DBTX
-	tx                                  *sql.Tx
-	createFileStmt                      *sql.Stmt
-	createMessageStmt                   *sql.Stmt
-	createSessionStmt                   *sql.Stmt
-	createStructuredSummaryStmt         *sql.Stmt
-	deleteFileStmt                      *sql.Stmt
-	deleteMessageStmt                   *sql.Stmt
-	deleteSessionStmt                   *sql.Stmt
-	deleteSessionFilesStmt              *sql.Stmt
-	deleteSessionMessagesStmt           *sql.Stmt
-	getAverageResponseTimeStmt          *sql.Stmt
-	getCodebaseKnowledgeByFilePathStmt  *sql.Stmt
-	getFileStmt                         *sql.Stmt
-	getFileByPathAndSessionStmt         *sql.Stmt
-	getFileReadStmt                     *sql.Stmt
-	getHourDayHeatmapStmt               *sql.Stmt
-	getMessageStmt                      *sql.Stmt
-	getProjectConstitutionStmt          *sql.Stmt
-	getRecentActivityStmt               *sql.Stmt
-	getSessionByIDStmt                  *sql.Stmt
-	getStructuredSummaryBySessionIDStmt *sql.Stmt
-	getToolUsageStmt                    *sql.Stmt
-	getTotalStatsStmt                   *sql.Stmt
-	getUsageByDayStmt                   *sql.Stmt
-	getUsageByDayOfWeekStmt             *sql.Stmt
-	getUsageByHourStmt                  *sql.Stmt
-	getUsageByModelStmt                 *sql.Stmt
-	listAllUserMessagesStmt             *sql.Stmt
-	listFilesByPathStmt                 *sql.Stmt
-	listFilesBySessionStmt              *sql.Stmt
-	listLatestSessionFilesStmt          *sql.Stmt
-	listMessagesBySessionStmt           *sql.Stmt
-	listNewFilesStmt                    *sql.Stmt
-	listSessionReadFilesStmt            *sql.Stmt
-	listSessionsStmt                    *sql.Stmt
-	listUserMessagesBySessionStmt       *sql.Stmt
-	recordFileReadStmt                  *sql.Stmt
-	updateMessageStmt                   *sql.Stmt
-	updateSessionStmt                   *sql.Stmt
-	updateSessionTitleAndUsageStmt      *sql.Stmt
-	upsertCodebaseKnowledgeStmt         *sql.Stmt
-	upsertProjectConstitutionStmt       *sql.Stmt
+	db                                     DBTX
+	tx                                     *sql.Tx
+	claimGlobalPhase2JobStmt               *sql.Stmt
+	claimStage1JobsForStartupStmt          *sql.Stmt
+	clearPhase2BaselineSelectionStmt       *sql.Stmt
+	createFileStmt                         *sql.Stmt
+	createMessageStmt                      *sql.Stmt
+	createSessionStmt                      *sql.Stmt
+	createStructuredSummaryStmt            *sql.Stmt
+	deleteFileStmt                         *sql.Stmt
+	deleteMessageStmt                      *sql.Stmt
+	deleteSessionStmt                      *sql.Stmt
+	deleteSessionFilesStmt                 *sql.Stmt
+	deleteSessionMessagesStmt              *sql.Stmt
+	deleteStage1OutputBySessionIDStmt      *sql.Stmt
+	ensureGlobalPhase2JobStmt              *sql.Stmt
+	ensureStage1JobForSessionStmt          *sql.Stmt
+	failGlobalPhase2JobStmt                *sql.Stmt
+	getAverageResponseTimeStmt             *sql.Stmt
+	getCodebaseKnowledgeByFilePathStmt     *sql.Stmt
+	getFileStmt                            *sql.Stmt
+	getFileByPathAndSessionStmt            *sql.Stmt
+	getFileReadStmt                        *sql.Stmt
+	getHourDayHeatmapStmt                  *sql.Stmt
+	getLongHorizonRunStmt                  *sql.Stmt
+	getMemoryRegistryMaterializationStmt   *sql.Stmt
+	getMemorySummaryMaterializationStmt    *sql.Stmt
+	getMessageStmt                         *sql.Stmt
+	getPhase2InputSelectionStmt            *sql.Stmt
+	getProjectConstitutionStmt             *sql.Stmt
+	getRecentActivityStmt                  *sql.Stmt
+	getSessionByIDStmt                     *sql.Stmt
+	getStage1OutputBySessionIDStmt         *sql.Stmt
+	getStructuredSummaryBySessionIDStmt    *sql.Stmt
+	getToolUsageStmt                       *sql.Stmt
+	getTotalStatsStmt                      *sql.Stmt
+	getUsageByDayStmt                      *sql.Stmt
+	getUsageByDayOfWeekStmt                *sql.Stmt
+	getUsageByHourStmt                     *sql.Stmt
+	getUsageByModelStmt                    *sql.Stmt
+	heartbeatGlobalPhase2JobStmt           *sql.Stmt
+	insertMemoryRegistryCitationStmt       *sql.Stmt
+	listAllUserMessagesStmt                *sql.Stmt
+	listEligibleStage1OutputsForPhase2Stmt *sql.Stmt
+	listFilesByPathStmt                    *sql.Stmt
+	listFilesBySessionStmt                 *sql.Stmt
+	listLatestSessionFilesStmt             *sql.Stmt
+	listLongHorizonMilestonesStmt          *sql.Stmt
+	listMemoryMaterializationsStmt         *sql.Stmt
+	listMemoryRegistryCitationsByEntryStmt *sql.Stmt
+	listMemoryRegistryEntriesStmt          *sql.Stmt
+	listMessagesBySessionStmt              *sql.Stmt
+	listNewFilesStmt                       *sql.Stmt
+	listPhase2BaselineOutputsStmt          *sql.Stmt
+	listSessionReadFilesStmt               *sql.Stmt
+	listSessionsStmt                       *sql.Stmt
+	listStage1OutputsForPhase2Stmt         *sql.Stmt
+	listStructuredSummariesStmt            *sql.Stmt
+	listUserMessagesBySessionStmt          *sql.Stmt
+	markPhase2DirtyStmt                    *sql.Stmt
+	markStage1JobFailedStmt                *sql.Stmt
+	markStage1JobNoOutputStmt              *sql.Stmt
+	markStage1JobSucceededStmt             *sql.Stmt
+	markStage1OutputSelectedForPhase2Stmt  *sql.Stmt
+	pruneStage1OutputsForRetentionStmt     *sql.Stmt
+	recordFileReadStmt                     *sql.Stmt
+	recordStage1OutputUsageStmt            *sql.Stmt
+	replaceLongHorizonMilestonesStmt       *sql.Stmt
+	replaceMemoryRegistryCitationsStmt     *sql.Stmt
+	searchCodebaseKnowledgeStmt            *sql.Stmt
+	succeedGlobalPhase2JobStmt             *sql.Stmt
+	updateMessageStmt                      *sql.Stmt
+	updateSessionStmt                      *sql.Stmt
+	updateSessionTitleAndUsageStmt         *sql.Stmt
+	upsertCodebaseKnowledgeStmt            *sql.Stmt
+	upsertLongHorizonMilestoneStmt         *sql.Stmt
+	upsertLongHorizonRunStmt               *sql.Stmt
+	upsertMemoryMaterializationStmt        *sql.Stmt
+	upsertMemoryRegistryEntryStmt          *sql.Stmt
+	upsertProjectConstitutionStmt          *sql.Stmt
+	upsertStage1OutputStmt                 *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                                  tx,
-		tx:                                  tx,
-		createFileStmt:                      q.createFileStmt,
-		createMessageStmt:                   q.createMessageStmt,
-		createSessionStmt:                   q.createSessionStmt,
-		createStructuredSummaryStmt:         q.createStructuredSummaryStmt,
-		deleteFileStmt:                      q.deleteFileStmt,
-		deleteMessageStmt:                   q.deleteMessageStmt,
-		deleteSessionStmt:                   q.deleteSessionStmt,
-		deleteSessionFilesStmt:              q.deleteSessionFilesStmt,
-		deleteSessionMessagesStmt:           q.deleteSessionMessagesStmt,
-		getAverageResponseTimeStmt:          q.getAverageResponseTimeStmt,
-		getCodebaseKnowledgeByFilePathStmt:  q.getCodebaseKnowledgeByFilePathStmt,
-		getFileStmt:                         q.getFileStmt,
-		getFileByPathAndSessionStmt:         q.getFileByPathAndSessionStmt,
-		getFileReadStmt:                     q.getFileReadStmt,
-		getHourDayHeatmapStmt:               q.getHourDayHeatmapStmt,
-		getMessageStmt:                      q.getMessageStmt,
-		getProjectConstitutionStmt:          q.getProjectConstitutionStmt,
-		getRecentActivityStmt:               q.getRecentActivityStmt,
-		getSessionByIDStmt:                  q.getSessionByIDStmt,
-		getStructuredSummaryBySessionIDStmt: q.getStructuredSummaryBySessionIDStmt,
-		getToolUsageStmt:                    q.getToolUsageStmt,
-		getTotalStatsStmt:                   q.getTotalStatsStmt,
-		getUsageByDayStmt:                   q.getUsageByDayStmt,
-		getUsageByDayOfWeekStmt:             q.getUsageByDayOfWeekStmt,
-		getUsageByHourStmt:                  q.getUsageByHourStmt,
-		getUsageByModelStmt:                 q.getUsageByModelStmt,
-		listAllUserMessagesStmt:             q.listAllUserMessagesStmt,
-		listFilesByPathStmt:                 q.listFilesByPathStmt,
-		listFilesBySessionStmt:              q.listFilesBySessionStmt,
-		listLatestSessionFilesStmt:          q.listLatestSessionFilesStmt,
-		listMessagesBySessionStmt:           q.listMessagesBySessionStmt,
-		listNewFilesStmt:                    q.listNewFilesStmt,
-		listSessionReadFilesStmt:            q.listSessionReadFilesStmt,
-		listSessionsStmt:                    q.listSessionsStmt,
-		listUserMessagesBySessionStmt:       q.listUserMessagesBySessionStmt,
-		recordFileReadStmt:                  q.recordFileReadStmt,
-		updateMessageStmt:                   q.updateMessageStmt,
-		updateSessionStmt:                   q.updateSessionStmt,
-		updateSessionTitleAndUsageStmt:      q.updateSessionTitleAndUsageStmt,
-		upsertCodebaseKnowledgeStmt:         q.upsertCodebaseKnowledgeStmt,
-		upsertProjectConstitutionStmt:       q.upsertProjectConstitutionStmt,
+		db:                                     tx,
+		tx:                                     tx,
+		claimGlobalPhase2JobStmt:               q.claimGlobalPhase2JobStmt,
+		claimStage1JobsForStartupStmt:          q.claimStage1JobsForStartupStmt,
+		clearPhase2BaselineSelectionStmt:       q.clearPhase2BaselineSelectionStmt,
+		createFileStmt:                         q.createFileStmt,
+		createMessageStmt:                      q.createMessageStmt,
+		createSessionStmt:                      q.createSessionStmt,
+		createStructuredSummaryStmt:            q.createStructuredSummaryStmt,
+		deleteFileStmt:                         q.deleteFileStmt,
+		deleteMessageStmt:                      q.deleteMessageStmt,
+		deleteSessionStmt:                      q.deleteSessionStmt,
+		deleteSessionFilesStmt:                 q.deleteSessionFilesStmt,
+		deleteSessionMessagesStmt:              q.deleteSessionMessagesStmt,
+		deleteStage1OutputBySessionIDStmt:      q.deleteStage1OutputBySessionIDStmt,
+		ensureGlobalPhase2JobStmt:              q.ensureGlobalPhase2JobStmt,
+		ensureStage1JobForSessionStmt:          q.ensureStage1JobForSessionStmt,
+		failGlobalPhase2JobStmt:                q.failGlobalPhase2JobStmt,
+		getAverageResponseTimeStmt:             q.getAverageResponseTimeStmt,
+		getCodebaseKnowledgeByFilePathStmt:     q.getCodebaseKnowledgeByFilePathStmt,
+		getFileStmt:                            q.getFileStmt,
+		getFileByPathAndSessionStmt:            q.getFileByPathAndSessionStmt,
+		getFileReadStmt:                        q.getFileReadStmt,
+		getHourDayHeatmapStmt:                  q.getHourDayHeatmapStmt,
+		getLongHorizonRunStmt:                  q.getLongHorizonRunStmt,
+		getMemoryRegistryMaterializationStmt:   q.getMemoryRegistryMaterializationStmt,
+		getMemorySummaryMaterializationStmt:    q.getMemorySummaryMaterializationStmt,
+		getMessageStmt:                         q.getMessageStmt,
+		getPhase2InputSelectionStmt:            q.getPhase2InputSelectionStmt,
+		getProjectConstitutionStmt:             q.getProjectConstitutionStmt,
+		getRecentActivityStmt:                  q.getRecentActivityStmt,
+		getSessionByIDStmt:                     q.getSessionByIDStmt,
+		getStage1OutputBySessionIDStmt:         q.getStage1OutputBySessionIDStmt,
+		getStructuredSummaryBySessionIDStmt:    q.getStructuredSummaryBySessionIDStmt,
+		getToolUsageStmt:                       q.getToolUsageStmt,
+		getTotalStatsStmt:                      q.getTotalStatsStmt,
+		getUsageByDayStmt:                      q.getUsageByDayStmt,
+		getUsageByDayOfWeekStmt:                q.getUsageByDayOfWeekStmt,
+		getUsageByHourStmt:                     q.getUsageByHourStmt,
+		getUsageByModelStmt:                    q.getUsageByModelStmt,
+		heartbeatGlobalPhase2JobStmt:           q.heartbeatGlobalPhase2JobStmt,
+		insertMemoryRegistryCitationStmt:       q.insertMemoryRegistryCitationStmt,
+		listAllUserMessagesStmt:                q.listAllUserMessagesStmt,
+		listEligibleStage1OutputsForPhase2Stmt: q.listEligibleStage1OutputsForPhase2Stmt,
+		listFilesByPathStmt:                    q.listFilesByPathStmt,
+		listFilesBySessionStmt:                 q.listFilesBySessionStmt,
+		listLatestSessionFilesStmt:             q.listLatestSessionFilesStmt,
+		listLongHorizonMilestonesStmt:          q.listLongHorizonMilestonesStmt,
+		listMemoryMaterializationsStmt:         q.listMemoryMaterializationsStmt,
+		listMemoryRegistryCitationsByEntryStmt: q.listMemoryRegistryCitationsByEntryStmt,
+		listMemoryRegistryEntriesStmt:          q.listMemoryRegistryEntriesStmt,
+		listMessagesBySessionStmt:              q.listMessagesBySessionStmt,
+		listNewFilesStmt:                       q.listNewFilesStmt,
+		listPhase2BaselineOutputsStmt:          q.listPhase2BaselineOutputsStmt,
+		listSessionReadFilesStmt:               q.listSessionReadFilesStmt,
+		listSessionsStmt:                       q.listSessionsStmt,
+		listStage1OutputsForPhase2Stmt:         q.listStage1OutputsForPhase2Stmt,
+		listStructuredSummariesStmt:            q.listStructuredSummariesStmt,
+		listUserMessagesBySessionStmt:          q.listUserMessagesBySessionStmt,
+		markPhase2DirtyStmt:                    q.markPhase2DirtyStmt,
+		markStage1JobFailedStmt:                q.markStage1JobFailedStmt,
+		markStage1JobNoOutputStmt:              q.markStage1JobNoOutputStmt,
+		markStage1JobSucceededStmt:             q.markStage1JobSucceededStmt,
+		markStage1OutputSelectedForPhase2Stmt:  q.markStage1OutputSelectedForPhase2Stmt,
+		pruneStage1OutputsForRetentionStmt:     q.pruneStage1OutputsForRetentionStmt,
+		recordFileReadStmt:                     q.recordFileReadStmt,
+		recordStage1OutputUsageStmt:            q.recordStage1OutputUsageStmt,
+		replaceLongHorizonMilestonesStmt:       q.replaceLongHorizonMilestonesStmt,
+		replaceMemoryRegistryCitationsStmt:     q.replaceMemoryRegistryCitationsStmt,
+		searchCodebaseKnowledgeStmt:            q.searchCodebaseKnowledgeStmt,
+		succeedGlobalPhase2JobStmt:             q.succeedGlobalPhase2JobStmt,
+		updateMessageStmt:                      q.updateMessageStmt,
+		updateSessionStmt:                      q.updateSessionStmt,
+		updateSessionTitleAndUsageStmt:         q.updateSessionTitleAndUsageStmt,
+		upsertCodebaseKnowledgeStmt:            q.upsertCodebaseKnowledgeStmt,
+		upsertLongHorizonMilestoneStmt:         q.upsertLongHorizonMilestoneStmt,
+		upsertLongHorizonRunStmt:               q.upsertLongHorizonRunStmt,
+		upsertMemoryMaterializationStmt:        q.upsertMemoryMaterializationStmt,
+		upsertMemoryRegistryEntryStmt:          q.upsertMemoryRegistryEntryStmt,
+		upsertProjectConstitutionStmt:          q.upsertProjectConstitutionStmt,
+		upsertStage1OutputStmt:                 q.upsertStage1OutputStmt,
 	}
 }

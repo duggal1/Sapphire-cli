@@ -254,6 +254,7 @@ type Options struct {
 	ContextPaths              []string     `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths               []string     `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
 	TUI                       *TUIOptions  `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	AgentMode                 AgentMode    `json:"agent_mode,omitempty" jsonschema:"description=Agent behavior mode,enum=default,enum=plan,enum=debug,enum=security,enum=architect,enum=review,default=default"`
 	Debug                     bool         `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
 	DebugLSP                  bool         `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize      bool         `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
@@ -511,6 +512,27 @@ func (c *Config) SetGoogleGrounding(enabled bool) error {
 	}
 	c.Options.GoogleGrounding = enabled
 	return c.SetConfigField("options.google_grounding", enabled)
+}
+
+func (c *Config) AgentMode() AgentMode {
+	if c == nil || c.Options == nil {
+		return AgentModeDefault
+	}
+	if c.Options.AgentMode == "" || !c.Options.AgentMode.IsValid() {
+		return AgentModeDefault
+	}
+	return c.Options.AgentMode
+}
+
+func (c *Config) SetAgentMode(mode AgentMode) error {
+	if !mode.IsValid() {
+		return fmt.Errorf("invalid agent mode %q", mode)
+	}
+	if c.Options == nil {
+		c.Options = &Options{}
+	}
+	c.Options.AgentMode = mode
+	return c.SetConfigField("options.agent_mode", mode)
 }
 
 func IsGemini3Model(modelID string) bool {

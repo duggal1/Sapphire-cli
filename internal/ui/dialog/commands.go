@@ -468,7 +468,6 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 
 	commands = append(commands,
-		NewCommandItem(c.com.Styles, "toggle_paste_blocks", toggleLabel(c.com.Config().Options.TUI.PasteBlocks, "Paste Blocks"), "", ActionTogglePasteBlocks{}),
 		NewCommandItem(c.com.Styles, "toggle_google_grounding", "Google Grounding: "+groundingStatus(c.com.Config().Options.GoogleGrounding), "", ActionToggleGoogleGrounding{}),
 		NewCommandItem(c.com.Styles, "toggle_yolo", "Toggle Yolo Mode", "", ActionToggleYoloMode{}),
 		NewCommandItem(c.com.Styles, "toggle_help", "Toggle Help", "ctrl+g", ActionToggleHelp{}),

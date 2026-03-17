@@ -21,6 +21,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	agentmodes "github.com/charmbracelet/sapphire/internal/agent-modes"
 	"github.com/charmbracelet/sapphire/internal/agent/hyper"
 	"github.com/charmbracelet/sapphire/internal/agent/longhorizon"
 	"github.com/charmbracelet/sapphire/internal/agent/memory"
@@ -278,6 +279,7 @@ func NewCoordinator(
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	ctx = context.WithValue(ctx, tools.AgentModeContextKey, c.cfg.AgentMode())
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false)
 	if err != nil {
 		return nil, err
@@ -341,6 +343,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 }
 
 func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, attachments ...message.Attachment) (SubmissionResult, error) {
+	ctx = context.WithValue(ctx, tools.AgentModeContextKey, c.cfg.AgentMode())
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true)
 	if err != nil {
 		return SubmissionResult{}, err
@@ -1097,6 +1100,9 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		if err != nil {
 			return err
 		}
+		if modePrompt := agentmodes.Prompt(c.cfg.AgentMode()); modePrompt != "" {
+			systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + modePrompt)
+		}
 		result.SetSystemPrompt(systemPrompt)
 		return nil
 	})
@@ -1153,6 +1159,9 @@ func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
 	systemPrompt, err := prompt.Build(ctx, model.Model.Provider(), model.Model.Model(), *c.cfg)
 	if err != nil {
 		return err
+	}
+	if modePrompt := agentmodes.Prompt(c.cfg.AgentMode()); modePrompt != "" {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + modePrompt)
 	}
 	c.currentAgent.SetSystemPrompt(systemPrompt)
 	return nil

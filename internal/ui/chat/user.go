@@ -72,13 +72,19 @@ func (m *UserMessageItem) RawRender(width int) string {
 func (m *UserMessageItem) Render(width int) string {
 	var prefix string
 	if m.focused {
-		prefix = m.sty.Chat.Message.UserFocused.Render()
+		prefix = m.sty.Chat.Message.UserFocused.Render(">")
 	} else {
-		prefix = m.sty.Chat.Message.UserBlurred.Render()
+		prefix = m.sty.Chat.Message.UserBlurred.Render(">")
 	}
+	prefix += " "
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	lines := strings.Split(m.RawRender(width), "\n")
 	for i, line := range lines {
-		lines[i] = prefix + line
+		if i == 0 {
+			lines[i] = prefix + line
+		} else {
+			lines[i] = indent + line
+		}
 	}
 	return strings.Join(lines, "\n")
 }
@@ -96,13 +102,46 @@ func (m *UserMessageItem) Message() *message.Message {
 // renderAttachments renders attachments.
 func (m *UserMessageItem) renderAttachments(width int) string {
 	var attachments []message.Attachment
+	var pasteBlocks []message.Attachment
+	
 	for _, at := range m.message.BinaryContent() {
-		attachments = append(attachments, message.Attachment{
+		att := message.Attachment{
 			FileName: at.Path,
 			MimeType: at.MIMEType,
-		})
+			Content:  at.Data,
+		}
+		// Check if this is a paste block
+		if isPasteBlock(at.Path) {
+			pasteBlocks = append(pasteBlocks, att)
+		} else {
+			attachments = append(attachments, att)
+		}
 	}
-	return m.attachments.Render(attachments, false, false, -1, width)
+	
+	var parts []string
+	
+	// Render regular attachments as badges
+	if len(attachments) > 0 {
+		parts = append(parts, m.attachments.Render(attachments, false, false, -1, width))
+	}
+	
+	// Render paste blocks with full content
+	for _, pb := range pasteBlocks {
+		content := string(pb.Content)
+		if content != "" {
+			parts = append(parts, m.sty.Tool.Body.Render(content))
+		}
+	}
+	
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
+}
+
+// isPasteBlock checks if a filename is a paste block.
+func isPasteBlock(filename string) bool {
+	return strings.HasPrefix(filename, "paste_") && strings.HasSuffix(filename, ".txt")
 }
 
 // HandleKeyEvent implements KeyEventHandler.

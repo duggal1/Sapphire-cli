@@ -36,6 +36,7 @@ func (m *mockSessionAgent) SetModels(large, small Model)        {}
 func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)  {}
 func (m *mockSessionAgent) SetWorkingDir(workingDir string)     {}
 func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string) {}
+func (m *mockSessionAgent) SessionID() string                   { return "" }
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
 }
@@ -578,7 +579,7 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 	require.Contains(t, taskNames, tools.BashToolName)
 	require.Contains(t, taskNames, tools.JobOutputToolName)
 	require.Contains(t, taskNames, tools.JobKillToolName)
-	require.Contains(t, taskNames, tools.TodosToolName)
+	require.Contains(t, taskNames, tools.UpdatePlanToolName)
 	require.Contains(t, taskNames, tools.ViewToolName)
 	require.Contains(t, taskNames, tools.SingleViewToolName)
 	require.Contains(t, taskNames, tools.AgenticViewToolName)

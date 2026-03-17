@@ -20,8 +20,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// MessageLeftPaddingTotal is the total width that is taken up by the border +
-// padding. We also cap the width so text is readable to the maxTextWidth(120).
+// MessageLeftPaddingTotal is the total width reserved for message prefixes.
+// We also cap the width so text is readable to the maxTextWidth(120).
 const MessageLeftPaddingTotal = 2
 
 // maxTextWidth is the maximum width text messages can be
@@ -270,7 +270,7 @@ func (a *AssistantInfoItem) RawRender(width int) string {
 
 // Render implements MessageItem.
 func (a *AssistantInfoItem) Render(width int) string {
-	prefix := a.sty.Chat.Message.SectionHeader.Render()
+	prefix := "  "
 	lines := strings.Split(a.RawRender(width), "\n")
 	for i, line := range lines {
 		lines[i] = prefix + line
@@ -281,41 +281,8 @@ func (a *AssistantInfoItem) Render(width int) string {
 func (a *AssistantInfoItem) renderContent(width int) string {
 	finish := a.message.FinishPart()
 
-	// 1. Model Header with Capitalization Fixes
-	modelName := a.message.Model
-	// Handle well-known naming conventions (Gemini, GPT, etc.)
-	if strings.Contains(strings.ToLower(modelName), "gemini") {
-		// Clean up hyphenated names: gemini-2.5-flash -> Gemini 2.5 Flash
-		parts := strings.Split(modelName, "-")
-		for i, part := range parts {
-			if strings.ToLower(part) == "gemini" {
-				parts[i] = "Gemini"
-			} else {
-				parts[i] = strings.Title(part)
-			}
-		}
-		modelName = strings.Join(parts, " ")
-	} else if strings.HasPrefix(strings.ToLower(modelName), "gpt") {
-		modelName = "GPT" + modelName[3:]
-	}
-
-	if strings.Contains(strings.ToLower(modelName), "customtool") || strings.Contains(strings.ToLower(modelName), "custom tool") {
-		effort := ""
-		if f := a.message.FinishPart(); f != nil && f.ThinkingEffort != "" {
-			effort = " Reasoning " + strings.Title(strings.ToLower(f.ThinkingEffort))
-		}
-		modelName = "Gemini 3.1 Pro Coding Optimized" + effort
-	}
-
-	providerDisplay := ""
-	if a.message.Provider != "" {
-		p := strings.ToLower(a.message.Provider)
-		if p == "google" || p == "gemini" {
-			providerDisplay = "Google Gemini"
-		} else {
-			providerDisplay = strings.Title(a.message.Provider)
-		}
-	}
+	// 1. Model Header
+	modelName := strings.TrimSpace(a.message.Model)
 
 	// Handle Thinking Mode {high/low} or {on/off}
 	effort := ""
@@ -337,18 +304,19 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	}
 
 	if effort != "" {
-		modelName = fmt.Sprintf("%s{%s}", modelName, effort)
+		lowerEffort := strings.ToLower(effort)
+		if !strings.Contains(strings.ToLower(modelName), lowerEffort) {
+			modelName = fmt.Sprintf("%s %s", modelName, lowerEffort)
+		}
 	}
 
-	headerText := modelName
-	if providerDisplay != "" {
-		headerText = fmt.Sprintf("%s via %s", modelName, providerDisplay)
-	}
+	modelName = strings.ReplaceAll(modelName, "{", "")
+	modelName = strings.ReplaceAll(modelName, "}", "")
+	modelName = strings.Join(strings.Fields(modelName), " ")
 
-	headerText = ansi.Truncate(headerText, max(0, width), "…")
-	modelHeader := a.sty.Base.Foreground(lipgloss.Color("244")).Render(headerText)
-
-	sep := a.sty.Base.Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", max(0, width)))
+	headerText := ansi.Truncate(modelName, max(0, width), "…")
+	modelHeader := a.sty.Chat.Message.AssistantInfoModel.Render(headerText)
+	modelLine := lipgloss.PlaceHorizontal(width, lipgloss.Right, modelHeader)
 
 	duration := a.renderDurationFormatted(finish)
 
@@ -378,23 +346,29 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 
 	dot := a.sty.Base.Foreground(lipgloss.Color("240")).Render(" · ")
 	dataText := ansi.Truncate(strings.Join(parts, dot), max(0, width), "…")
-	dataLine := a.sty.Base.Foreground(lipgloss.Color("244")).Render(dataText)
+	dataLine := a.sty.Chat.Message.AssistantInfoDuration.Render(dataText)
+	dataLine = lipgloss.PlaceHorizontal(width, lipgloss.Right, dataLine)
 
-	return fmt.Sprintf("%s\n%s\n%s", sep, modelHeader, dataLine)
+	return fmt.Sprintf("%s\n%s", modelLine, dataLine)
 }
 
 func (a *AssistantInfoItem) renderDurationFormatted(finish *message.Finish) string {
 	seconds := a.renderDurationSeconds(finish)
+	var timeStr string
 	if seconds < 60 {
-		return fmt.Sprintf("%.1fs", seconds)
-	}
-	mins := int(seconds) / 60
-	secs := int(seconds) % 60
+		timeStr = fmt.Sprintf("%.0fs", seconds)
+	} else {
+		mins := int(seconds) / 60
+		secs := int(seconds) % 60
 
-	if secs == 0 {
-		return fmt.Sprintf("%dm", mins)
+		if secs == 0 {
+			timeStr = fmt.Sprintf("%dm", mins)
+		} else {
+			timeStr = fmt.Sprintf("%dm %ds", mins, secs)
+		}
 	}
-	return fmt.Sprintf("%dm %ds", mins, secs)
+	// Format with clock icon and square brackets: [⏱ 29s]
+	return fmt.Sprintf("[⏱ %s]", timeStr)
 }
 
 func (a *AssistantInfoItem) renderDurationSeconds(finish *message.Finish) float64 {

@@ -32,11 +32,12 @@ const (
 type pillSection int
 
 const (
-	pillSectionTodos pillSection = iota
+	pillSectionTodos pillSection = iota  // RESTORED FOR UI/UX
 	pillSectionQueue
 )
 
 // hasIncompleteTodos returns true if there are any non-completed todos.
+// RESTORED FOR UI/UX
 func hasIncompleteTodos(todos []session.Todo) bool {
 	return session.HasIncompleteTodos(todos)
 }
@@ -67,6 +68,7 @@ func queuePill(queue int, focused, panelFocused bool, t *styles.Styles) string {
 }
 
 // todoPill renders the todo progress pill with optional spinner and task name.
+// RESTORED FOR UI/UX
 func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bool, t *styles.Styles) string {
 	if !hasIncompleteTodos(todos) {
 		return ""
@@ -117,6 +119,7 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 }
 
 // todoList renders the expanded todo list.
+// RESTORED FOR UI/UX
 func todoList(sessionTodos []session.Todo, spinnerView string, t *styles.Styles, width int) string {
 	return chat.FormatTodosList(t, sessionTodos, spinnerView, width)
 }
@@ -141,6 +144,7 @@ func queueList(queueItems []string, t *styles.Styles) string {
 }
 
 // togglePillsExpanded toggles the pills panel expansion state.
+// RESTORED FOR UI/UX
 func (m *UI) togglePillsExpanded() tea.Cmd {
 	if !m.hasSession() {
 		return nil
@@ -168,6 +172,7 @@ func (m *UI) togglePillsExpanded() tea.Cmd {
 }
 
 // switchPillSection changes focus between todo and queue sections.
+// RESTORED FOR UI/UX
 func (m *UI) switchPillSection(dir int) tea.Cmd {
 	if !m.pillsExpanded || !m.hasSession() {
 		return nil
@@ -189,6 +194,7 @@ func (m *UI) switchPillSection(dir int) tea.Cmd {
 }
 
 // pillsAreaHeight calculates the total height needed for the pills area.
+// RESTORED FOR UI/UX
 func (m *UI) pillsAreaHeight() int {
 	if !m.hasSession() {
 		return 0
@@ -216,6 +222,7 @@ func (m *UI) pillsAreaHeight() int {
 }
 
 // renderPills renders the pills panel and stores it in m.pillsView.
+// RESTORED FOR UI/UX
 func (m *UI) renderPills() {
 	m.pillsView = ""
 	if !m.hasSession() {

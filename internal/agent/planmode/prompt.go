@@ -1,0 +1,81 @@
+// Codex Plan Mode prompt builder
+// Based on Codex CLI plan mode system prompt architecture
+//
+// Reference: Codex CLI v0.88.0+ plan mode prompts
+
+package planmode
+
+import (
+	_ "embed"
+	"strings"
+)
+
+//go:embed plan.md
+var planModePromptMarkdown []byte
+
+// PlanModePrompt holds the plan mode system prompt components
+type PlanModePrompt struct {
+	// FullPrompt - The complete plan mode system prompt
+	FullPrompt string
+
+	// Restrictions - Tool restriction reminder
+	Restrictions string
+
+	// Role - The AI's role in plan mode
+	Role string
+}
+
+// BuildPlanModePrompt builds the plan mode system prompt (Codex-inspired)
+func BuildPlanModePrompt() *PlanModePrompt {
+	prompt := strings.TrimSpace(string(planModePromptMarkdown))
+
+	return &PlanModePrompt{
+		FullPrompt: prompt,
+		Restrictions: `**PLAN MODE ACTIVE** - You are FORBIDDEN from:
+- File editing tools (edit, single_edit, agentic_edit, multiedit, write)
+- Shell/terminal tools (bash, python, job_output, job_kill)
+- Background execution tools (orchestrate_worktrees, report_agent_job_result)
+
+This mode is for THINKING AND PLANNING ONLY.`,
+		Role: `You are in PLAN MODE. Your role:
+1. ORGANIZE - Structure requirements, surface dependencies, identify risks
+2. PROPOSE - Suggest architectural decisions and approaches
+3. DESIGN - Create detailed, step-by-step plans
+
+CRITICAL: Do NOT execute code or edit files.`,
+	}
+}
+
+// GetPlanModeInstructions returns a concise plan mode instruction string
+func GetPlanModeInstructions() string {
+	return `## Plan Mode
+
+You are in PLAN MODE - for thinking and planning only.
+
+FORBIDDEN:
+- File editing (edit, write, multiedit, etc.)
+- Shell commands (bash, python, etc.)
+- Background execution (orchestrate_worktrees, etc.)
+
+ALLOWED:
+- Planning (update_plan)
+- Research (view, glob, grep, fetch, etc.)
+- Analysis (lsp_diagnostics, search_tools, etc.)
+
+Create plans with 5-7 steps max, each 5-7 words.
+Do NOT repeat the plan - the harness displays it.
+Ask clarifying questions when requirements are unclear.`
+}
+
+// AppendPlanModeNotice appends a plan mode notice to an existing prompt
+func AppendPlanModeNotice(basePrompt string) string {
+	prompt := BuildPlanModePrompt()
+	return basePrompt + "\n\n" + prompt.Restrictions
+}
+
+// IsPlanModePrompt returns true if the prompt contains plan mode instructions
+func IsPlanModePrompt(prompt string) bool {
+	return strings.Contains(prompt, "PLAN MODE") ||
+		strings.Contains(prompt, "thinking and planning only") ||
+		strings.Contains(prompt, "FORBIDDEN")
+}

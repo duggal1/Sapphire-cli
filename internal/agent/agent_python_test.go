@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
+	"charm.land/fantasy/providers/google"
 	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ func TestIsGeminiCodeExecutionModel(t *testing.T) {
 	assert.True(t, isGeminiCodeExecutionModel(Model{
 		CatwalkCfg: catwalk.Model{ID: "gemini-3-flash"},
 		ModelCfg: config.SelectedModel{
-			Provider: gemini.Name,
+			Provider: google.Name,
 			Model:    "gemini-3-flash",
 		},
 	}))

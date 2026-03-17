@@ -296,48 +296,114 @@ func renderListOutput(sty *styles.Styles, content string, width int, expanded bo
 		return ""
 	}
 	lines := strings.Split(content, "\n")
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	var out []string
+	var listBlock []string
+	flushListBlock := func() {
+		if len(listBlock) == 0 {
+			return
+		}
+		treeNodes := buildListTree(listBlock)
+		for _, line := range renderListTreeNodes(sty, treeNodes, "", width) {
+			out = append(out, sty.Tool.Body.Render(line))
+		}
+		listBlock = nil
 	}
 
-	var out []string
-	for i, line := range lines {
-		if i >= maxLines {
-			break
-		}
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		switch {
-		case trimmed == "":
-			out = append(out, "")
-		case strings.HasPrefix(trimmed, "There are more than") || strings.HasPrefix(trimmed, "The directory tree is shown"):
-			out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(ansi.Truncate(trimmed, width, "…"))))
 		case strings.HasPrefix(trimmed, "- "):
-			out = append(out, renderListTreeLine(sty, line, width))
+			listBlock = append(listBlock, line)
 		default:
-			out = append(out, sty.Tool.Body.Render(sty.Tool.ListMeta.Render(ansi.Truncate(trimmed, width, "…"))))
+			flushListBlock()
+			if trimmed == "" {
+				out = append(out, "")
+				continue
+			}
+			if strings.HasPrefix(trimmed, "There are more than") || strings.HasPrefix(trimmed, "The directory tree is shown") {
+				out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(ansi.Truncate(trimmed, max(0, width), "…"))))
+				continue
+			}
+			out = append(out, sty.Tool.Body.Render(sty.Tool.ListMeta.Render(ansi.Truncate(trimmed, max(0, width), "…"))))
 		}
 	}
-	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))))
+	flushListBlock()
+
+	if !expanded && len(out) > responseContextHeight {
+		hidden := len(out) - responseContextHeight
+		out = out[:responseContextHeight]
+		out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(fmt.Sprintf(assistantMessageTruncateFormat, hidden))))
 	}
 	return strings.Join(out, "\n")
 }
 
-func renderListTreeLine(sty *styles.Styles, line string, width int) string {
-	indentWidth := len(line) - len(strings.TrimLeft(line, " "))
-	indent := strings.Repeat(" ", indentWidth)
-	trimmed := strings.TrimSpace(line)
-	name := strings.TrimPrefix(trimmed, "- ")
-	style := sty.Tool.ListFile
-	if strings.HasSuffix(name, "/") {
-		style = sty.Tool.ListDirectory
+type listNode struct {
+	name     string
+	children []*listNode
+}
+
+func buildListTree(lines []string) []*listNode {
+	root := &listNode{}
+	stack := []*listNode{root}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		indentWidth := len(line) - len(strings.TrimLeft(line, " "))
+		level := indentWidth / 2
+		if level < 0 {
+			level = 0
+		}
+		name := strings.TrimPrefix(trimmed, "- ")
+
+		for len(stack) > level+1 {
+			stack = stack[:len(stack)-1]
+		}
+		if len(stack) < level+1 {
+			level = len(stack) - 1
+		}
+
+		node := &listNode{name: name}
+		parent := stack[len(stack)-1]
+		parent.children = append(parent.children, node)
+		stack = append(stack, node)
 	}
-	if indentWidth == 0 {
-		style = sty.Tool.ListRoot
+
+	return root.children
+}
+
+func renderListTreeNodes(sty *styles.Styles, nodes []*listNode, prefix string, width int) []string {
+	var lines []string
+	for i, node := range nodes {
+		isLast := i == len(nodes)-1
+		branch := "├── "
+		if isLast {
+			branch = "└── "
+		}
+
+		style := sty.Tool.ListFile
+		if strings.HasSuffix(node.name, "/") {
+			style = sty.Tool.ListDirectory
+		}
+		if prefix == "" {
+			style = sty.Tool.ListRoot
+		}
+
+		line := prefix + branch + style.Render(node.name)
+		line = ansi.Truncate(line, max(0, width), "…")
+		lines = append(lines, line)
+
+		if len(node.children) > 0 {
+			childPrefix := prefix + "│   "
+			if isLast {
+				childPrefix = prefix + "    "
+			}
+			lines = append(lines, renderListTreeNodes(sty, node.children, childPrefix, width)...)
+		}
 	}
-	rendered := indent + style.Render(ansi.Truncate(name, max(0, width-indentWidth), "…"))
-	return sty.Tool.Body.Render(rendered)
+	return lines
 }
 
 var grepLineRE = regexp.MustCompile(`^\s*Line (\d+)(?:, Char (\d+))?: (.*)$`)

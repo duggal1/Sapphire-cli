@@ -4,6 +4,7 @@ Edits files by replacing text, creating new files, or deleting content. For movi
 1. Use View tool to understand file contents and context
 2. For new files: Use LS tool to verify parent directory exists
 3. **CRITICAL**: Note exact whitespace, indentation, and formatting from View output
+4. **CRITICAL ROUTING RULE**: Edit exactly 1 repository file → use `single_edit`. Edit 2 or more repository files → use `agentic_edit`. NEVER use repeated `single_edit` calls for multi-file edits.
 </prerequisites>
 
 <parameters>

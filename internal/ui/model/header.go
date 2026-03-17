@@ -141,6 +141,10 @@ func renderHeaderDetails(
 	metadata := strings.Join(parts, dot)
 	metadata = dot + metadata
 
+	// NOTE: Mode indicator REMOVED to align with Codex PR #9792
+	// Codex removed mode from header for cleaner UI
+	// Mode is still tracked in session and enforced via tool restrictions
+
 	const dirTrimLimit = 4
 	cfg := com.Config()
 	cwd := fsext.DirTrim(fsext.PrettyPath(cfg.WorkingDir()), dirTrimLimit)

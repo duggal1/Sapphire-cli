@@ -1,130 +1,18 @@
+// COMMENTED OUT - TODO LIST UI CODE DISABLED
+// Codex update_plan tool is used for logic, but Sapphire UI/UX is restored
+
 package chat
 
 import (
-	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/session"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// -----------------------------------------------------------------------------
-// Todos Tool
-// -----------------------------------------------------------------------------
-
-// TodosToolMessageItem is a message item that represents a todos tool call.
-type TodosToolMessageItem struct {
-	*baseToolMessageItem
-}
-
-var _ ToolMessageItem = (*TodosToolMessageItem)(nil)
-
-// NewTodosToolMessageItem creates a new [TodosToolMessageItem].
-func NewTodosToolMessageItem(
-	sty *styles.Styles,
-	toolCall message.ToolCall,
-	result *message.ToolResult,
-	canceled bool,
-) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &TodosToolRenderContext{}, canceled)
-}
-
-// TodosToolRenderContext renders todos tool messages.
-type TodosToolRenderContext struct{}
-
-// RenderTool implements the [ToolRenderer] interface.
-func (t *TodosToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
-	if opts.IsPending() {
-		return pendingTool(sty, "To-Do", opts.Anim)
-	}
-
-	var params tools.TodosParams
-	var meta tools.TodosResponseMetadata
-	var headerText string
-	var body string
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err == nil {
-		completedCount := 0
-		inProgressTask := ""
-		for _, todo := range params.Todos {
-			if todo.Status == string(session.TodoStatusCompleted) {
-				completedCount++
-			}
-			if todo.Status == string(session.TodoStatusInProgress) {
-				if todo.ActiveForm != "" {
-					inProgressTask = todo.ActiveForm
-				} else {
-					inProgressTask = todo.Content
-				}
-			}
-		}
-
-		ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", completedCount, len(params.Todos)))
-		headerText = ratio
-		if inProgressTask != "" {
-			headerText = fmt.Sprintf("%s · %s", ratio, inProgressTask)
-		}
-	}
-
-	if opts.HasResult() && opts.Result.Metadata != "" && json.Unmarshal([]byte(opts.Result.Metadata), &meta) == nil {
-		if meta.IsNew {
-			if meta.JustStarted != "" {
-				headerText = fmt.Sprintf("created %d todos, starting first", meta.Total)
-			} else {
-				headerText = fmt.Sprintf("created %d todos", meta.Total)
-			}
-			body = FormatTodosList(sty, meta.Todos, styles.ArrowRightIcon, cappedWidth)
-		} else {
-			hasCompleted := len(meta.JustCompleted) > 0
-			hasStarted := meta.JustStarted != ""
-			allCompleted := meta.Completed == meta.Total
-
-			ratio := sty.Tool.TodoRatio.Render(fmt.Sprintf("%d/%d", meta.Completed, meta.Total))
-			if hasCompleted && hasStarted {
-				headerText = fmt.Sprintf("%s%s", ratio, sty.Subtle.Render(fmt.Sprintf(" · completed %d, starting next", len(meta.JustCompleted))))
-			} else if hasCompleted {
-				text := sty.Subtle.Render(fmt.Sprintf(" · completed %d", len(meta.JustCompleted)))
-				if allCompleted {
-					text = sty.Subtle.Render(" · completed all")
-				}
-				headerText = fmt.Sprintf("%s%s", ratio, text)
-			} else if hasStarted {
-				headerText = fmt.Sprintf("%s%s", ratio, sty.Subtle.Render(" · starting task"))
-			} else {
-				headerText = ratio
-			}
-
-			if allCompleted {
-				body = FormatTodosList(sty, meta.Todos, styles.ArrowRightIcon, cappedWidth)
-			} else if meta.JustStarted != "" {
-				body = sty.Tool.TodoInProgressIcon.Render(styles.ArrowRightIcon+" ") + sty.Base.Render(meta.JustStarted)
-			}
-		}
-	}
-
-	toolParams := []string{headerText}
-	header := toolHeader(sty, opts.Status, "To-Do", cappedWidth, opts.Compact, toolParams...)
-	if opts.Compact {
-		return header
-	}
-
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
-		return joinToolParts(header, earlyState)
-	}
-
-	if body == "" {
-		return header
-	}
-
-	return joinToolParts(header, sty.Tool.Body.Render(body))
-}
-
-// FormatTodosList formats a list of todos for display.
+// RESTORED FOR UI/UX - Used by pills.go
 func FormatTodosList(sty *styles.Styles, todos []session.Todo, inProgressIcon string, width int) string {
 	if len(todos) == 0 {
 		return ""

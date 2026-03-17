@@ -1,6 +1,7 @@
 Reads and displays file contents with line numbers for examining code, logs, or text data. Supports reading multiple files in parallel.
 
 <usage>
+- **CRITICAL ROUTING RULE**: Read exactly 1 repository file → use `single_view`. Read 2 or more repository files → use `agentic_view`. NEVER use repeated `single_view` calls for multi-file reads.
 - Provide "file_paths" (array of strings) to read multiple files concurrently
 - Provide "file_path" (string) to read a single file (legacy)
 - Optional offset: start reading from specific line (0-based, applies to single file only)

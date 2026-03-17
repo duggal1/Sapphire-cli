@@ -302,15 +302,18 @@ var shimmerWarmPalette = []shimmerRGB{
 }
 
 func ShimmerText(t *Styles, input string, shift int) string {
-	return ShimmerTextNeutral(t, input, shift)
+	_ = shift
+	return ShimmerTextCodex(t, input)
 }
 
 func ShimmerTextNeutral(t *Styles, input string, shift int) string {
-	return shimmerTextWithPalette(t, input, shift, shimmerNeutralPalette, 1.85)
+	_ = shift
+	return ShimmerTextCodex(t, input)
 }
 
 func ShimmerTextWarm(t *Styles, input string, shift int) string {
-	return shimmerTextWithPalette(t, input, shift, shimmerWarmPalette, 2.0)
+	_ = shift
+	return ShimmerTextCodex(t, input)
 }
 
 // blendColors returns a slice of colors blended between the given keys.

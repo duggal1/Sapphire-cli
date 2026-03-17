@@ -25,7 +25,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/agent"
+	"github.com/charmbracelet/sapphire/internal/agent/planmode"
 	agenttools "github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
 	"github.com/charmbracelet/sapphire/internal/app"
@@ -64,8 +64,13 @@ const (
 	compactModeHeightBreakpoint = 30
 )
 
-// If pasted text has more than 2 newlines, treat it as a file attachment.
-const pasteLinesThreshold = 10
+// If pasted content has more than 200 words, treat it as a file attachment.
+const pasteWordThreshold = 200
+
+// countWords counts the number of words in a string.
+func countWords(s string) int {
+	return len(strings.Fields(s))
+}
 
 // Session details panel max height.
 const sessionDetailsMaxHeight = 20
@@ -88,16 +93,6 @@ const (
 	uiInitialize
 	uiLanding
 	uiChat
-)
-
-type sendLifecycleState uint8
-
-const (
-	sendLifecycleIdle sendLifecycleState = iota
-	sendLifecycleSubmitting
-	sendLifecycleQueued
-	sendLifecycleRunning
-	sendLifecycleFailed
 )
 
 type openEditorMsg struct {
@@ -123,10 +118,6 @@ type (
 		Content     string
 		Attachments []message.Attachment
 	}
-	sendSubmissionResultMsg struct {
-		Result agent.SubmissionResult
-		Err    error
-	}
 
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
@@ -150,10 +141,6 @@ type UI struct {
 	sessionFileReads []string
 
 	lastUserMessageTime int64
-	requestLifecycle    requestLifecycle
-	sendState           sendLifecycleState
-	pendingSendContent  string
-	pendingAttachments  []message.Attachment
 
 	// The width and height of the terminal in cells.
 	width  int
@@ -170,6 +157,9 @@ type UI struct {
 
 	dialog *dialog.Overlay
 	status *Status
+
+	// isCanceling tracks whether the user has pressed escape once to cancel.
+	isCanceling bool
 
 	header *header
 
@@ -405,10 +395,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateLayoutAndSize()
 		}
 	}
-	if m.sendState == sendLifecycleQueued && m.promptQueue == 0 && !m.isAgentBusy() {
-		m.sendState = sendLifecycleIdle
-		m.clearCancelConfirmation()
-	}
 	// Update terminal capabilities
 	m.caps.Update(msg)
 	switch msg := msg.(type) {
@@ -453,39 +439,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sendMessageMsg:
 		cmds = append(cmds, m.sendMessage(msg.Content, msg.Attachments...))
-	case sendSubmissionResultMsg:
-		if msg.Err != nil {
-			m.sendState = sendLifecycleFailed
-			m.clearCancelConfirmation()
-			m.completeRequestTimer()
-			if m.pendingSendContent != "" || len(m.pendingAttachments) > 0 {
-				m.textarea.SetValue(m.pendingSendContent)
-				m.attachments.Reset()
-				for _, attachment := range cloneAttachments(m.pendingAttachments) {
-					m.attachments.Update(attachment)
-				}
-			}
-			m.pendingSendContent = ""
-			m.pendingAttachments = nil
-			cmds = append(cmds, util.ReportError(msg.Err))
-			break
-		}
-
-		m.pendingSendContent = ""
-		m.pendingAttachments = nil
-		m.textarea.Reset()
-		m.attachments.Reset()
-		cmds = append(cmds, m.loadPromptHistory())
-		switch msg.Result.Status {
-		case agent.SubmissionStatusQueued:
-			m.sendState = sendLifecycleQueued
-			if m.hasSession() {
-				m.promptQueue = m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID)
-			}
-		default:
-			m.sendState = sendLifecycleRunning
-			// We no longer start the timer here - wait for output
-		}
 
 	case userCommandsLoadedMsg:
 		m.customCommands = msg.Commands
@@ -572,12 +525,19 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.todoIsSpinning && !m.isAgentBusy() {
 			m.todoIsSpinning = false
 		}
-		if !m.isAgentBusy() && m.promptQueue == 0 {
-			m.sendState = sendLifecycleIdle
-			m.clearCancelConfirmation()
-		}
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
+
+		// Check if we should open plan approval dialog (Codex visual architecture)
+		// Open dialog when: in plan mode, has todos, and dialog not already open
+		if m.session != nil && m.session.Mode == planmode.PlanMode && len(m.session.Todos) > 0 {
+			if !m.dialog.ContainsDialog(dialog.PlanApprovalID) {
+				planApprovalDialog, err := dialog.NewPlanApprovalDialog(m.com, m.session.Todos, "")
+				if err == nil {
+					m.dialog.OpenDialog(planApprovalDialog)
+				}
+			}
+		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
 	case pubsub.Event[app.LSPEvent]:
@@ -602,8 +562,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
-	case requestCancelExpiredMsg:
-		m.handleCancelExpiry(msg)
+	case cancelTimerExpiredMsg:
+		m.isCanceling = false
 	case tea.TerminalVersionMsg:
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -829,23 +789,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiFocusMain:
 	case uiFocusEditor:
 		// Textarea placeholder logic
-		switch m.sendState {
-		case sendLifecycleSubmitting:
-			m.textarea.Placeholder = "Submitting..."
-		case sendLifecycleQueued:
-			m.textarea.Placeholder = "Queued..."
-		case sendLifecycleRunning:
+		if m.isAgentBusy() {
 			m.textarea.Placeholder = m.workingPlaceholder
-		case sendLifecycleFailed:
-			m.textarea.Placeholder = "Retry your message"
-		case sendLifecycleIdle:
-			fallthrough
-		default:
-			if m.isAgentBusy() {
-				m.textarea.Placeholder = m.workingPlaceholder
-			} else {
-				m.textarea.Placeholder = m.readyPlaceholder
-			}
+		} else {
+			m.textarea.Placeholder = m.readyPlaceholder
 		}
 		if m.com.App.Permissions.SkipRequests() {
 			m.textarea.Placeholder = "Yolo mode!"
@@ -861,9 +808,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // setSessionMessages sets the messages for the current session in the chat
 func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	var cmds []tea.Cmd
-	if !m.isAgentBusy() {
-		m.resetRequestTimer()
-	}
 	// Build tool result map to link tool calls with their results
 	msgPtrs := make([]*message.Message, len(msgs))
 	for i := range msgs {
@@ -895,6 +839,8 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	// Load nested tool calls for agent/agentic_fetch tools.
 	m.loadNestedToolCalls(items)
 
+	items = dedupeMessageItems(items)
+
 	// If the user switches between sessions while the agent is working we want
 	// to make sure the animations are shown.
 	for _, item := range items {
@@ -914,6 +860,24 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	return tea.Sequence(cmds...)
 }
 
+func dedupeMessageItems(items []chat.MessageItem) []chat.MessageItem {
+	seen := make(map[string]struct{}, len(items))
+	out := make([]chat.MessageItem, 0, len(items))
+	for _, item := range items {
+		id := item.ID()
+		if id == "" {
+			out = append(out, item)
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
 func (m *UI) setAssistantFooter(msg *message.Message) tea.Cmd {
 	if msg == nil || msg.Role != message.Assistant {
 		return nil
@@ -923,14 +887,10 @@ func (m *UI) setAssistantFooter(msg *message.Message) tea.Cmd {
 	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
 		m.assistantFooter.SetMessage(msg)
 		m.assistantFooter.SetLastUserMessageTime(start)
-		requestStart, requestEnd := m.requestTiming()
-		m.assistantFooter.SetRequestTiming(requestStart, requestEnd)
 		return nil
 	}
 
 	m.assistantFooter = chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), start).(*chat.AssistantInfoItem)
-	requestStart, requestEnd := m.requestTiming()
-	m.assistantFooter.SetRequestTiming(requestStart, requestEnd)
 	return m.assistantFooter.StartAnimation()
 }
 
@@ -1039,18 +999,8 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
-		requestStart, requestEnd := m.requestTiming()
-		if msg.IsFinished() && !requestStart.IsZero() && requestEnd.IsZero() {
-			m.completeRequestTimer()
-		} else if requestStart.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
-			m.startRequestTimer()
-		}
-		hadFooter := m.assistantFooter != nil
 		if cmd := m.setAssistantFooter(&msg); cmd != nil {
 			cmds = append(cmds, cmd)
-		}
-		if !hadFooter && m.assistantFooter != nil {
-			m.updateLayoutAndSize()
 		}
 		if m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
@@ -1107,14 +1057,6 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
 			assistantItem.SetMessage(&msg)
 			m.chat.InvalidateMessage(msg.ID)
-		}
-	}
-	if msg.Role == message.Assistant {
-		requestStart, requestEnd := m.requestTiming()
-		if msg.IsFinished() && !requestStart.IsZero() && requestEnd.IsZero() {
-			m.completeRequestTimer()
-		} else if requestStart.IsZero() && (msg.IsThinking() || msg.Content().Text != "") {
-			m.startRequestTimer()
 		}
 	}
 	if cmd := m.setAssistantFooter(&msg); cmd != nil {
@@ -1611,6 +1553,43 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Reasoning set to " + msg.Effort)
 		})
 		m.dialog.CloseDialog(dialog.ReasoningID)
+	case dialog.ActionSelectMode:
+		if m.session == nil {
+			cmds = append(cmds, util.ReportError(errors.New("no active session")))
+			break
+		}
+
+		// Update session mode via session service
+		ctx := context.Background()
+		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, msg.Mode); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+
+		m.dialog.CloseDialog(dialog.ModesID)
+
+		cmds = append(cmds, func() tea.Msg {
+			return util.NewInfoMsg("Mode switched to " + string(msg.Mode))
+		})
+	case dialog.ActionImplementPlan:
+		// User chose to implement the plan - switch to pair_programming mode
+		if m.session == nil {
+			cmds = append(cmds, util.ReportError(errors.New("no active session")))
+			break
+		}
+
+		// Update session mode to pair_programming
+		ctx := context.Background()
+		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, planmode.PairProgrammingMode); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+
+		cmds = append(cmds, func() tea.Msg {
+			return util.NewInfoMsg("Implementing plan...")
+		})
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
 		switch msg.Action {
@@ -1795,13 +1774,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 
-	if m.sendState == sendLifecycleSubmitting && m.focus == uiFocusEditor {
-		if handleGlobalKeys(msg) {
-			return tea.Batch(cmds...)
-		}
-		return nil
-	}
-
 	switch m.state {
 	case uiOnboarding:
 		return tea.Batch(cmds...)
@@ -1816,18 +1788,19 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.textarea.SetValue(before)
 					break
 				}
+				m.textarea.Reset()
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
-				attachments := cloneAttachments(m.attachments.List())
+				attachments := m.attachments.List()
+				m.attachments.Reset()
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
 				m.randomizePlaceholders()
 				m.historyReset()
-				m.stagePendingSend(value, attachments)
-				return m.sendMessage(value, attachments...)
+				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
 			}
 		}
 		// Also handle initialization view keys
@@ -1879,21 +1852,22 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 
 				// Otherwise, send the message
+				m.textarea.Reset()
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
 				}
 
-				attachments := cloneAttachments(m.attachments.List())
+				attachments := m.attachments.List()
+				m.attachments.Reset()
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
 
 				m.randomizePlaceholders()
 				m.historyReset()
-				m.stagePendingSend(value, attachments)
 
-				return m.sendMessage(value, attachments...)
+				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -2302,7 +2276,7 @@ func (m *UI) ShortHelp() []key.Binding {
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
-			if m.requestLifecycle.cancelArmed {
+			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
@@ -2389,7 +2363,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 		// Show cancel binding if agent is busy.
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
-			if m.requestLifecycle.cancelArmed {
+			if m.isCanceling {
 				cancelBinding.SetHelp("esc", "press again to cancel")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
@@ -3083,12 +3057,6 @@ func cloneAttachments(items []message.Attachment) []message.Attachment {
 	return cloned
 }
 
-func (m *UI) stagePendingSend(content string, attachments []message.Attachment) {
-	m.pendingSendContent = content
-	m.pendingAttachments = cloneAttachments(attachments)
-	m.sendState = sendLifecycleSubmitting
-}
-
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
 	if m.com.App.AgentCoordinator == nil {
@@ -3123,16 +3091,19 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
 	cmds = append(cmds, func() tea.Msg {
-		result, err := m.com.App.AgentCoordinator.Submit(context.Background(), sessionID, content, attachments...)
+		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
 			if isCancelErr || isPermissionErr {
 				return nil
 			}
-			return sendSubmissionResultMsg{Err: err}
+			return util.InfoMsg{
+				Type: util.InfoTypeError,
+				Msg:  err.Error(),
+			}
 		}
-		return sendSubmissionResultMsg{Result: result}
+		return nil
 	})
 	return tea.Batch(cmds...)
 }
@@ -3151,6 +3122,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		}
 	case dialog.CommandsID:
 		if cmd := m.openCommandsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.ModesID:
+		if cmd := m.openModesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case dialog.ReasoningID:
@@ -3247,6 +3222,27 @@ func (m *UI) openReasoningDialog() tea.Cmd {
 	}
 
 	m.dialog.OpenDialog(reasoningDialog)
+	return nil
+}
+
+// openModesDialog opens the mode selection dialog.
+func (m *UI) openModesDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ModesID) {
+		m.dialog.BringToFront(dialog.ModesID)
+		return nil
+	}
+
+	currentMode := planmode.DefaultMode()
+	if m.session != nil && m.session.Mode != "" {
+		currentMode = m.session.Mode
+	}
+
+	modesDialog, err := dialog.NewModes(m.com, currentMode)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	m.dialog.OpenDialog(modesDialog)
 	return nil
 }
 
@@ -3407,9 +3403,6 @@ func (m *UI) newSession() tea.Cmd {
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""
-	m.sendState = sendLifecycleIdle
-	m.pendingSendContent = ""
-	m.pendingAttachments = nil
 	m.historyReset()
 	agenttools.ResetCache()
 	return tea.Batch(
@@ -3468,7 +3461,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 		}
 	}
 
-	if strings.Count(msg.Content, "\n") > pasteLinesThreshold && m.com.Config().Options.TUI.PasteBlocks {
+	if countWords(msg.Content) > pasteWordThreshold {
 		return func() tea.Msg {
 			content := []byte(msg.Content)
 			if int64(len(content)) > common.MaxAttachmentSize {

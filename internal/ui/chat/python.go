@@ -64,7 +64,7 @@ func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts
 	code := strings.TrimSpace(metadata.ExecutedCode)
 	if code != "" {
 		codeHeader := " " + sty.Tool.ResourceName.Render("Executed Python")
-		codeBody := sty.Tool.Body.Render(toolOutputCodeContent(sty, "script.py", code, 0, bodyWidth, opts.ExpandedContent))
+		codeBody := toolOutputCodeContent(sty, "script.py", code, 0, bodyWidth, opts.ExpandedContent)
 		sections = append(sections, strings.Join([]string{codeHeader, codeBody}, "\n"))
 	}
 

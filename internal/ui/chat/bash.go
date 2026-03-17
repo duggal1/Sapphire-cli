@@ -277,7 +277,7 @@ func renderBashOutputBlock(sty *styles.Styles, output string, width int, expande
 func renderBashOutputSummary(sty *styles.Styles, output string, width int) string {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" || trimmed == tools.BashNoOutput {
-		return sty.Tool.ContentLine.Width(width).Render(sty.HalfMuted.Render("│ No output"))
+		return sty.Tool.ContentLine.Width(width).Render("No output")
 	}
 
 	lines := strings.Split(trimmed, "\n")
@@ -286,5 +286,5 @@ func renderBashOutputSummary(sty *styles.Styles, output string, width int) strin
 		summary += "s"
 	}
 	summary += fmt.Sprintf(" · %d chars · expand to inspect", len(trimmed))
-	return sty.Tool.ContentLine.Width(width).Render(sty.HalfMuted.Render("│ ") + ansi.Truncate(summary, max(0, width-2), "…"))
+	return sty.Tool.ContentLine.Width(width).Render(ansi.Truncate(summary, max(0, width), "…"))
 }

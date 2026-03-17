@@ -12,25 +12,25 @@ import (
 	"github.com/charmbracelet/ultraviolet/layout"
 )
 
-// formatReasoningEffortBrackets formats a reasoning effort level for display in brackets.
+// formatReasoningEffortBrackets formats a reasoning effort level for display.
 func formatReasoningEffortBrackets(effort string) string {
 	switch effort {
 	case "xhigh":
-		return "[X-High]"
+		return "X-High"
 	case "high":
-		return "[High]"
+		return "High"
 	case "medium":
-		return "[Medium]"
+		return "Medium"
 	case "low":
-		return "[Low]"
+		return "Low"
 	case "minimal":
-		return "[Minimal]"
+		return "minimal"
 	case "thinking_on":
-		return "[Thinking On]"
+		return "Thinking On"
 	case "thinking_off":
-		return "[Thinking Off]"
+		return "Thinking Off"
 	default:
-		return fmt.Sprintf("[%s]", effort)
+		return effort
 	}
 }
 

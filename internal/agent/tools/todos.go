@@ -1,5 +1,11 @@
+// COMMENTED OUT - TODO LIST CODE DISABLED
+// This file is commented out for emergency pre-flight dispatch.
+// All todo list functionality has been disabled as per user request.
+// Codex-style update_plan tool has been implemented instead.
+
 package tools
 
+/*
 import (
 	"context"
 	_ "embed"
@@ -33,6 +39,7 @@ type TodosResponseMetadata struct {
 	Total         int            `json:"total"`
 }
 
+// COMMENTED OUT - DO NOT USE
 func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TodosToolName,
@@ -116,7 +123,7 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 
 			response += fmt.Sprintf("Status: %d pending, %d in progress, %d completed\n",
 				pendingCount, inProgressCount, completedCount)
-			response += "Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable."
+			response += "Todos has been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable."
 
 			metadata := TodosResponseMetadata{
 				IsNew:         isNew,
@@ -131,3 +138,4 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 		},
 	)
 }
+*/

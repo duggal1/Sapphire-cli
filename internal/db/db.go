@@ -126,11 +126,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listSessionsStmt, err = db.PrepareContext(ctx, listSessions); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSessions: %w", err)
 	}
+	if q.listStructuredSummariesStmt, err = db.PrepareContext(ctx, listStructuredSummaries); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStructuredSummaries: %w", err)
+	}
 	if q.listUserMessagesBySessionStmt, err = db.PrepareContext(ctx, listUserMessagesBySession); err != nil {
 		return nil, fmt.Errorf("error preparing query ListUserMessagesBySession: %w", err)
 	}
 	if q.recordFileReadStmt, err = db.PrepareContext(ctx, recordFileRead); err != nil {
 		return nil, fmt.Errorf("error preparing query RecordFileRead: %w", err)
+	}
+	if q.searchCodebaseKnowledgeStmt, err = db.PrepareContext(ctx, searchCodebaseKnowledge); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchCodebaseKnowledge: %w", err)
 	}
 	if q.updateMessageStmt, err = db.PrepareContext(ctx, updateMessage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMessage: %w", err)
@@ -322,6 +328,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listSessionsStmt: %w", cerr)
 		}
 	}
+	if q.listStructuredSummariesStmt != nil {
+		if cerr := q.listStructuredSummariesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStructuredSummariesStmt: %w", cerr)
+		}
+	}
 	if q.listUserMessagesBySessionStmt != nil {
 		if cerr := q.listUserMessagesBySessionStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listUserMessagesBySessionStmt: %w", cerr)
@@ -330,6 +341,11 @@ func (q *Queries) Close() error {
 	if q.recordFileReadStmt != nil {
 		if cerr := q.recordFileReadStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing recordFileReadStmt: %w", cerr)
+		}
+	}
+	if q.searchCodebaseKnowledgeStmt != nil {
+		if cerr := q.searchCodebaseKnowledgeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchCodebaseKnowledgeStmt: %w", cerr)
 		}
 	}
 	if q.updateMessageStmt != nil {
@@ -430,8 +446,10 @@ type Queries struct {
 	listNewFilesStmt                    *sql.Stmt
 	listSessionReadFilesStmt            *sql.Stmt
 	listSessionsStmt                    *sql.Stmt
+	listStructuredSummariesStmt         *sql.Stmt
 	listUserMessagesBySessionStmt       *sql.Stmt
 	recordFileReadStmt                  *sql.Stmt
+	searchCodebaseKnowledgeStmt         *sql.Stmt
 	updateMessageStmt                   *sql.Stmt
 	updateSessionStmt                   *sql.Stmt
 	updateSessionTitleAndUsageStmt      *sql.Stmt
@@ -477,8 +495,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listNewFilesStmt:                    q.listNewFilesStmt,
 		listSessionReadFilesStmt:            q.listSessionReadFilesStmt,
 		listSessionsStmt:                    q.listSessionsStmt,
+		listStructuredSummariesStmt:         q.listStructuredSummariesStmt,
 		listUserMessagesBySessionStmt:       q.listUserMessagesBySessionStmt,
 		recordFileReadStmt:                  q.recordFileReadStmt,
+		searchCodebaseKnowledgeStmt:         q.searchCodebaseKnowledgeStmt,
 		updateMessageStmt:                   q.updateMessageStmt,
 		updateSessionStmt:                   q.updateSessionStmt,
 		updateSessionTitleAndUsageStmt:      q.updateSessionTitleAndUsageStmt,

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
+	"charm.land/fantasy/providers/google"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,9 +31,9 @@ func TestToAIMessageAssistantUsesSingleReasoningBlockForGemini(t *testing.T) {
 
 	reasoningPart, ok := fantasy.AsMessagePart[fantasy.ReasoningPart](aiMessages[0].Content[1])
 	require.True(t, ok)
-	metadata, ok := reasoningPart.ProviderOptions[gemini.Name]
+	metadata, ok := reasoningPart.ProviderOptions[google.Name]
 	require.True(t, ok)
-	googleMetadata, ok := metadata.(*gemini.ReasoningMetadata)
+	googleMetadata, ok := metadata.(*google.ReasoningMetadata)
 	require.True(t, ok)
 	require.Equal(t, "sig-123", googleMetadata.Signature)
 	require.Equal(t, "call-1", googleMetadata.ToolID)
@@ -41,7 +41,7 @@ func TestToAIMessageAssistantUsesSingleReasoningBlockForGemini(t *testing.T) {
 	toolCallPart, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[2])
 	require.True(t, ok)
 	require.Equal(t, "call-1", toolCallPart.ToolCallID)
-	_, ok = toolCallPart.ProviderOptions[gemini.Name]
+	_, ok = toolCallPart.ProviderOptions[google.Name]
 	require.False(t, ok)
 }
 
@@ -143,6 +143,6 @@ func TestToAIMessageAssistantDoesNotAttachGeminiMetadataToToolCall(t *testing.T)
 
 	toolCall, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](aiMessages[0].Content[1])
 	require.True(t, ok)
-	_, ok = toolCall.ProviderOptions[gemini.Name]
+	_, ok = toolCall.ProviderOptions[google.Name]
 	require.False(t, ok)
 }

@@ -394,6 +394,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "new_session", "New Session", "ctrl+n", ActionNewSession{}),
 		NewCommandItem(c.com.Styles, "switch_session", "Sessions", "ctrl+s", ActionOpenDialog{SessionsID}),
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
+		NewCommandItem(c.com.Styles, "switch_mode", "Switch Mode", "", ActionOpenDialog{ModesID}),
 		NewCommandItem(c.com.Styles, "mcp_browser", "MCP Browser (Beautiful)", "", ActionOpenDialog{MCPBrowserID}),
 		NewCommandItem(c.com.Styles, "mcp_manager", "MCP Manager", "", ActionOpenDialog{MCPManagerID}),
 	}
@@ -468,7 +469,6 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 
 	commands = append(commands,
-		NewCommandItem(c.com.Styles, "toggle_paste_blocks", toggleLabel(c.com.Config().Options.TUI.PasteBlocks, "Paste Blocks"), "", ActionTogglePasteBlocks{}),
 		NewCommandItem(c.com.Styles, "toggle_google_grounding", "Google Grounding: "+groundingStatus(c.com.Config().Options.GoogleGrounding), "", ActionToggleGoogleGrounding{}),
 		NewCommandItem(c.com.Styles, "toggle_yolo", "Toggle Yolo Mode", "", ActionToggleYoloMode{}),
 		NewCommandItem(c.com.Styles, "toggle_help", "Toggle Help", "ctrl+g", ActionToggleHelp{}),

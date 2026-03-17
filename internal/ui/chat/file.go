@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -42,10 +43,9 @@ type ViewToolRenderContext struct{}
 func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 
+	// Use "View" for single_view, "Agentic View" for agentic_view
 	toolTitle := "View"
-	if opts.ToolCall.Name == tools.SingleViewToolName {
-		toolTitle = "Single View"
-	} else if opts.ToolCall.Name == tools.AgenticViewToolName {
+	if opts.ToolCall.Name == tools.AgenticViewToolName {
 		toolTitle = "Agentic View"
 	}
 
@@ -66,12 +66,12 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	var toolParams []string
 	if opts.ToolCall.Name == tools.AgenticViewToolName {
 		if len(filePaths) > 1 {
-			toolParams = append(toolParams, fmt.Sprintf("reading %d code files in parallel", len(filePaths)))
+			toolParams = append(toolParams, fmt.Sprintf("reading %d files", len(filePaths)))
 		} else if len(filePaths) == 1 {
-			toolParams = append(toolParams, fsext.PrettyPath(filePaths[0]))
+			toolParams = append(toolParams, formatFilePath(filePaths[0]))
 		}
 	} else if len(filePaths) > 0 {
-		toolParams = append(toolParams, fsext.PrettyPath(filePaths[0]))
+		toolParams = append(toolParams, formatFilePath(filePaths[0]))
 	}
 
 	if params.Limit != 0 {
@@ -122,27 +122,161 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		}
 	}
 
-	body := renderViewSummary(sty, filePaths, cappedWidth-toolBodyLeftPaddingTotal)
+	body := renderViewSummary(sty, filePaths, opts.Result, cappedWidth-toolBodyLeftPaddingTotal)
 	if body == "" {
 		return header
 	}
 	return joinToolParts(header, sty.Tool.Body.Render(body))
 }
 
-func renderViewSummary(sty *styles.Styles, filePaths []string, width int) string {
+// formatFilePath returns a concise file path display:
+// - Uses basename when unambiguous
+// - Uses shortest suffix that disambiguates when needed
+// - Avoids full paths unless required
+func formatFilePath(path string) string {
+	return fsext.PrettyPath(path)
+}
+
+// countLines counts the number of lines in content
+func countLines(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
+}
+
+// renderViewSummary renders a summary of viewed files with line counts using tree glyphs
+func renderViewSummary(sty *styles.Styles, filePaths []string, result *message.ToolResult, width int) string {
 	lines := make([]string, 0, len(filePaths))
-	for _, path := range filePaths {
+
+	// Try to get line counts from metadata
+	var meta tools.ViewResponseMetadata
+	lineCounts := make(map[string]int)
+	if result != nil && result.Metadata != "" {
+		if err := json.Unmarshal([]byte(result.Metadata), &meta); err == nil {
+			for _, file := range meta.Files {
+				lineCounts[file.FilePath] = countLines(file.Content)
+			}
+			// Also check legacy single-file content
+			if meta.FilePath != "" && meta.Content != "" {
+				lineCounts[meta.FilePath] = countLines(meta.Content)
+			}
+		}
+	}
+
+	// Build tree structure from file paths
+	tree := buildFileTree(filePaths, lineCounts)
+	lines = append(lines, renderTreeNode(sty, tree, "", true, width)...)
+
+	return strings.Join(lines, "\n")
+}
+
+// treeNode represents a node in the file tree
+type treeNode struct {
+	name      string
+	path      string
+	lineCount int
+	children  []*treeNode
+	isFile    bool
+}
+
+// buildFileTree constructs a tree from a list of file paths
+func buildFileTree(paths []string, lineCounts map[string]int) []*treeNode {
+	root := &treeNode{name: "", children: []*treeNode{}}
+
+	for _, path := range paths {
 		if path == "" {
 			continue
 		}
-		summary := fmt.Sprintf("%s %s",
-			sty.HalfMuted.Render("Agent read file:"),
-			sty.Files.Path.Render(fsext.PrettyPath(path)),
-		)
-		line := sty.Tool.FileBlock.Width(width).Render(summary)
-		lines = append(lines, truncateAgenticViewLine(line, width))
+		parts := strings.Split(path, "/")
+		current := root
+		currentPath := ""
+
+		for i, part := range parts {
+			if currentPath != "" {
+				currentPath += "/"
+			}
+			currentPath += part
+
+			// Check if this is a file (last part or has extension)
+			isFile := i == len(parts)-1
+
+			// Find or create child
+			var child *treeNode
+			for _, c := range current.children {
+				if c.name == part {
+					child = c
+					break
+				}
+			}
+			if child == nil {
+				lineCount := 0
+				if isFile {
+					lineCount = lineCounts[currentPath]
+				}
+				child = &treeNode{
+					name:      part,
+					path:      currentPath,
+					lineCount: lineCount,
+					isFile:    isFile,
+					children:  []*treeNode{},
+				}
+				current.children = append(current.children, child)
+			}
+			current = child
+		}
 	}
-	return strings.Join(lines, "\n")
+
+	return root.children
+}
+
+// renderTreeNode renders a tree node with proper branch glyphs
+func renderTreeNode(sty *styles.Styles, nodes []*treeNode, prefix string, isLast bool, width int) []string {
+	var lines []string
+
+	for i, node := range nodes {
+		isLastChild := i == len(nodes)-1
+
+		// Build the branch prefix
+		var branch string
+		if isLastChild {
+			branch = "└── "
+		} else {
+			branch = "├── "
+		}
+
+		// Format the file/folder name with color
+		var name string
+		if node.isFile {
+			name = sty.Base.Foreground(sty.LogoTitleColorB).Render(node.name)
+		} else {
+			name = sty.Base.Foreground(sty.FgBase).Render(node.name)
+		}
+
+		// Add line count for files
+		var lineInfo string
+		if node.isFile && node.lineCount > 0 {
+			lineInfo = sty.HalfMuted.Render(fmt.Sprintf(" · %d lines", node.lineCount))
+		}
+
+		line := prefix + branch + name + lineInfo
+		line = ansi.Truncate(line, max(0, width), "…")
+		lines = append(lines, line)
+
+		// Recurse into children
+		if len(node.children) > 0 {
+			var childPrefix string
+			if isLastChild {
+				childPrefix = prefix + "    "
+			} else {
+				childPrefix = prefix + "│   "
+			}
+			childLines := renderTreeNode(sty, node.children, childPrefix, isLastChild, width)
+			lines = append(lines, childLines...)
+		}
+	}
+
+	return lines
 }
 
 func truncateAgenticViewLine(line string, width int) string {
@@ -234,10 +368,11 @@ type EditToolRenderContext struct{}
 // RenderTool implements the [ToolRenderer] interface.
 func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	// Edit tool uses full width for diffs.
+	// Use "Edit" for single_edit, "Agentic Edit" for agentic_edit
 	if opts.IsPending() {
 		title := "Edit"
-		if opts.ToolCall.Name == tools.SingleEditToolName {
-			title = "Single Edit"
+		if opts.ToolCall.Name == tools.AgenticEditToolName {
+			title = "Agentic Edit"
 		}
 		return pendingTool(sty, title, opts.Anim)
 	}
@@ -247,12 +382,17 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, width)
 	}
 
-	file := fsext.PrettyPath(params.FilePath)
+	file := formatFilePath(params.FilePath)
 	title := "Edit"
-	if opts.ToolCall.Name == tools.SingleEditToolName {
-		title = "Single Edit"
+	if opts.ToolCall.Name == tools.AgenticEditToolName {
+		title = "Agentic Edit"
 	}
-	header := toolHeader(sty, opts.Status, title, width, opts.Compact, file)
+	
+	// Add line count info if available
+	var toolParams []string
+	toolParams = append(toolParams, file)
+	
+	header := toolHeader(sty, opts.Status, title, width, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header
 	}
@@ -273,8 +413,18 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return joinToolParts(header, body)
 	}
 
-	// Render diff.
+	// Calculate lines edited
+	linesEdited := meta.Additions + meta.Removals
+	
+	// Render diff with line count info
 	body := toolOutputDiffContent(sty, file, meta.OldContent, meta.NewContent, width, opts.ExpandedContent)
+	
+	// Add line count summary
+	if linesEdited > 0 {
+		lineInfo := fmt.Sprintf(" · %d lines changed", linesEdited)
+		body = strings.Replace(body, "\n", lineInfo+"\n", 1)
+	}
+	
 	return joinToolParts(header, body)
 }
 
@@ -318,14 +468,14 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	var file string
 
 	if len(params.FileEdits) > 1 {
-		toolParams = append(toolParams, fmt.Sprintf("editing %d code files in parallel", len(params.FileEdits)))
+		toolParams = append(toolParams, fmt.Sprintf("editing %d files", len(params.FileEdits)))
 		file = fmt.Sprintf("%d files", len(params.FileEdits)) // for diff content if needed
 	} else {
 		file = params.FilePath
 		if len(params.FileEdits) == 1 {
 			file = params.FileEdits[0].FilePath
 		}
-		toolParams = append(toolParams, fsext.PrettyPath(file))
+		toolParams = append(toolParams, formatFilePath(file))
 
 		edits := len(params.Edits)
 		if len(params.FileEdits) == 1 {
@@ -359,14 +509,25 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 
 	var bodies []string
 	if len(meta.Files) > 0 {
+		totalLinesChanged := 0
 		for _, f := range meta.Files {
-			prettyPath := fsext.PrettyPath(f.FilePath)
+			prettyPath := formatFilePath(f.FilePath)
+			linesChanged := f.Additions + f.Removals
+			totalLinesChanged += linesChanged
 			diffBody := toolOutputMultiEditDiffContent(sty, prettyPath, f, width, opts.ExpandedContent)
 			bodies = append(bodies, diffBody)
 		}
+		// Add aggregate line count for multi-file edits
+		if len(meta.Files) > 1 && totalLinesChanged > 0 {
+			summary := fmt.Sprintf("\n%s · %d total lines changed",
+				sty.HalfMuted.Render("Agentic edit complete:"),
+				totalLinesChanged,
+			)
+			bodies = append(bodies, summary)
+		}
 	} else if meta.OldContent != "" || meta.NewContent != "" {
 		// Legacy single file handled here
-		prettyPath := fsext.PrettyPath(file)
+		prettyPath := formatFilePath(file)
 		// Construct an ad-hoc FileEditMetadata for the legacy helper call
 		fileMeta := tools.FileEditMetadata{
 			FilePath:     prettyPath,

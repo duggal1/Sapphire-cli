@@ -105,6 +105,90 @@ func (q *Queries) GetStructuredSummaryBySessionID(ctx context.Context, sessionID
 	return i, err
 }
 
+const listStructuredSummaries = `-- name: ListStructuredSummaries :many
+SELECT id, session_id, summary_data, updated_at, created_at FROM structured_summaries ORDER BY created_at DESC LIMIT ?
+`
+
+func (q *Queries) ListStructuredSummaries(ctx context.Context, limit int64) ([]StructuredSummary, error) {
+	rows, err := q.query(ctx, q.listStructuredSummariesStmt, listStructuredSummaries, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StructuredSummary{}
+	for rows.Next() {
+		var i StructuredSummary
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.SummaryData,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchCodebaseKnowledge = `-- name: SearchCodebaseKnowledge :many
+SELECT id, file_path, symbol_name, symbol_type, signature, documentation, location_range, updated_at, created_at FROM codebase_knowledge
+WHERE symbol_name LIKE ? OR documentation LIKE ? OR file_path LIKE ?
+ORDER BY updated_at DESC LIMIT ?
+`
+
+type SearchCodebaseKnowledgeParams struct {
+	SymbolName    string         `json:"symbol_name"`
+	Documentation sql.NullString `json:"documentation"`
+	FilePath      string         `json:"file_path"`
+	Limit         int64          `json:"limit"`
+}
+
+func (q *Queries) SearchCodebaseKnowledge(ctx context.Context, arg SearchCodebaseKnowledgeParams) ([]CodebaseKnowledge, error) {
+	rows, err := q.query(ctx, q.searchCodebaseKnowledgeStmt, searchCodebaseKnowledge,
+		arg.SymbolName,
+		arg.Documentation,
+		arg.FilePath,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CodebaseKnowledge{}
+	for rows.Next() {
+		var i CodebaseKnowledge
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.SymbolName,
+			&i.SymbolType,
+			&i.Signature,
+			&i.Documentation,
+			&i.LocationRange,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertCodebaseKnowledge = `-- name: UpsertCodebaseKnowledge :one
 INSERT INTO codebase_knowledge (
     id, file_path, symbol_name, symbol_type, signature, documentation, location_range, updated_at, created_at

@@ -15,7 +15,7 @@ Capabilities:
 **Discovery process**:
 
 1. Check directory contents with `ls`
-2. If multiple files are needed, use `agentic_view` and read in parallel, but cap each batch to 10–15 files (default to 10). Only exceed 15 when files are tiny and the batch is still small in total tokens.
+2. Read exactly 1 file with `single_view`. Read 2 or more files with `agentic_view`. Keep each `agentic_view` batch to 2–30 files. If more than 30 files are needed, split into multiple `agentic_view` calls.
 3. For very large files, split into line ranges and read multiple ranges in parallel using separate `agentic_view` calls.
 4. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
 5. Identify project type from config files and directory structure

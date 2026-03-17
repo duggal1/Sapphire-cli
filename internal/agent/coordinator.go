@@ -43,11 +43,11 @@ import (
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/azure"
 	"charm.land/fantasy/providers/bedrock"
+	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 	openaisdk "github.com/openai/openai-go/v3/option"
 	"github.com/qjebbs/go-jsons"
 	"google.golang.org/genai"
@@ -278,40 +278,15 @@ func NewCoordinator(
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false)
+	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false, false)
 	if err != nil {
 		return nil, err
 	}
 	run := func() (*fantasy.AgentResult, error) {
 		return c.executeSubmission(ctx, env)
 	}
-	wasUsingGrounding := func(opts fantasy.ProviderOptions) bool {
-		if gOpts, ok := opts[gemini.Name]; ok {
-			if po, ok := gOpts.(*gemini.ProviderOptions); ok {
-				return po.GoogleSearch != nil && *po.GoogleSearch
-			}
-		}
-		return false
-	}
 
 	result, originalErr := run()
-
-	// Google Search fallback logic: If Google Grounding is enabled and it fails, increment failure count and retry.
-	if originalErr != nil && wasUsingGrounding(env.mergedOptions) {
-		failures := 0
-		if v, ok := c.googleSearchFailures.Load(sessionID); ok {
-			failures = v.(int)
-		}
-		failures++
-		c.googleSearchFailures.Store(sessionID, failures)
-
-		if failures <= 2 {
-			slog.Info("Google Grounding failed, retrying", "sessionID", sessionID, "failures", failures, "error", originalErr)
-			// Re-merge options. mergeCallOptions will handle disabling grounding if failures >= 2.
-			env.mergedOptions, _, _, _, _, _ = c.mergeCallOptions(env.model, env.providerCfg, sessionID)
-			result, originalErr = run()
-		}
-	}
 
 	// Reset failures on success
 	if originalErr == nil {
@@ -341,7 +316,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 }
 
 func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, attachments ...message.Attachment) (SubmissionResult, error) {
-	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true)
+	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true, true)
 	if err != nil {
 		return SubmissionResult{}, err
 	}
@@ -384,6 +359,7 @@ func (c *coordinator) prepareSubmission(
 	userPrompt string,
 	attachments []message.Attachment,
 	deferPreflight bool,
+	createUser bool,
 ) (submissionEnvelope, error) {
 	if userPrompt == "" && !message.ContainsTextAttachment(attachments) {
 		return submissionEnvelope{}, ErrEmptyPrompt
@@ -405,20 +381,24 @@ func (c *coordinator) prepareSubmission(
 		attachments = filteredAttachments
 	}
 
-	parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
-	for _, attachment := range attachments {
-		parts = append(parts, message.BinaryContent{
-			Path:     attachment.FilePath,
-			MIMEType: attachment.MimeType,
-			Data:     attachment.Content,
+	var userMessage message.Message
+	if createUser {
+		parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
+		for _, attachment := range attachments {
+			parts = append(parts, message.BinaryContent{
+				Path:     attachment.FilePath,
+				MIMEType: attachment.MimeType,
+				Data:     attachment.Content,
+			})
+		}
+		created, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+			Role:  message.User,
+			Parts: parts,
 		})
-	}
-	userMessage, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role:  message.User,
-		Parts: parts,
-	})
-	if err != nil {
-		return submissionEnvelope{}, fmt.Errorf("failed to create user message: %w", err)
+		if err != nil {
+			return submissionEnvelope{}, fmt.Errorf("failed to create user message: %w", err)
+		}
+		userMessage = created
 	}
 
 	providerCfg, ok := c.cfg.Providers.Get(model.ModelCfg.Provider)
@@ -518,8 +498,6 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		ActiveSkills:     activeSkillNames,
 		ActiveTools:      activeTools,
 		Attachments:      env.attachments,
-		PrecreatedUser:   &env.userMessage,
-		SkipUserMessage:  true,
 		MaxOutputTokens:  env.maxTokens,
 		ProviderOptions:  env.mergedOptions,
 		Temperature:      env.temp,
@@ -527,6 +505,10 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		TopK:             env.topK,
 		FrequencyPenalty: env.freqPenalty,
 		PresencePenalty:  env.presPenalty,
+	}
+	if env.userMessage.ID != "" {
+		call.PrecreatedUser = &env.userMessage
+		call.SkipUserMessage = true
 	}
 	return c.currentAgent.Run(ctx, call)
 }
@@ -905,7 +887,7 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 		} else if strings.Contains(model.CatwalkCfg.ID, "gpt") {
 			providerType = openai.Name
 		} else if strings.Contains(model.CatwalkCfg.ID, "gemini") {
-			providerType = gemini.Name
+			providerType = google.Name
 		} else {
 			providerType = openaicompat.Name
 		}
@@ -972,7 +954,7 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 		if err == nil {
 			options[vercel.Name] = parsed
 		}
-	case gemini.Name:
+	case google.Name:
 		_, hasGoogleSearch := mergedOptions["google_search"]
 		switch {
 		case useGrounding && !hasGoogleSearch:
@@ -1001,9 +983,9 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 				}
 			}
 		}
-		parsed, err := gemini.ParseOptions(mergedOptions)
+		parsed, err := google.ParseOptions(mergedOptions)
 		if err == nil {
-			options[gemini.Name] = parsed
+			options[google.Name] = parsed
 		}
 	case openaicompat.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
@@ -1275,7 +1257,10 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewGrepTool(workingDir, c.cfg.Tools.Grep),
 		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
-		tools.NewTodosTool(c.sessions),
+		// tools.NewTodosTool(c.sessions),  // COMMENTED OUT - Replaced with Codex-style update_plan
+		tools.NewUpdatePlanTool(c.sessions),  // Codex-style plan management tool
+		tools.NewRequestUserInputTool(c.sessions),  // Codex-style structured questions tool (Plan Mode only)
+		tools.NewSetModeTool(c.sessions),  // Codex-style mode switching tool
 		tools.NewViewTool(tools.ViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
 		tools.NewViewTool(tools.SingleViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
 		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, maxConcurrent, c.cfg.Options.SkillsPaths...),
@@ -1296,8 +1281,6 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		return names
 	}
 	allTools = append(allTools, tools.NewListToolsTool(listTools))
-
-	// Add Google Grounding search tool if enabled and supported.
 	if c.cfg.Options.GoogleGrounding && c.googleSearchClient != nil {
 		// We use a small Gemini model for grounding search to keep it fast.
 		searchModel := c.resolveGeminiExtractionModel()
@@ -1410,16 +1393,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		}
 	}
 
-	if slices.Contains(agent.AllowedTools, tools.ListToolsToolName) {
-		listToolsTool := tools.NewListToolsTool(func() []string {
-			names := make([]string, 0, len(filteredTools))
-			for _, tool := range filteredTools {
-				names = append(names, tool.Info().Name)
-			}
-			return names
-		})
-		filteredTools = append(filteredTools, listToolsTool)
-	}
+	// list_tools is already in allTools - no need to recreate
 	if slices.Contains(agent.AllowedTools, tools.SearchToolsToolName) {
 		searchToolsTool := tools.NewSearchToolsTool(func() []fantasy.ToolInfo {
 			infos := make([]fantasy.ToolInfo, 0, len(filteredTools))
@@ -1457,7 +1431,7 @@ func (c *coordinator) buildPythonTool(ctx context.Context, agent config.Agent) (
 	}
 
 	switch providerCfg.Type {
-	case gemini.Name, "gemini", "google-vertex":
+	case google.Name, "gemini", "google-vertex":
 	default:
 		return nil, nil
 	}
@@ -1489,7 +1463,7 @@ func (c *coordinator) buildGeminiCodeExecutionClient(ctx context.Context, provid
 	}
 
 	switch providerCfg.Type {
-	case gemini.Name, "gemini":
+	case google.Name, "gemini":
 		apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 		baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
 		clientConfig.Backend = genai.BackendGeminiAPI
@@ -1780,30 +1754,36 @@ func (c *coordinator) buildBedrockProvider(headers map[string]string) (fantasy.P
 }
 
 func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	opts := []gemini.Option{
-		gemini.WithBaseURL(baseURL),
-		gemini.WithGeminiAPIKey(apiKey),
+	opts := []google.Option{
+		google.WithBaseURL(baseURL),
+		google.WithGeminiAPIKey(apiKey),
 	}
-	opts = append(opts, gemini.WithHTTPClient(c.httpClient()))
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, google.WithHTTPClient(httpClient))
+	}
 	if len(headers) > 0 {
-		opts = append(opts, gemini.WithHeaders(headers))
+		opts = append(opts, google.WithHeaders(headers))
 	}
-	return gemini.New(opts...)
+	return google.New(opts...)
 }
 
 func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
-	opts := []gemini.Option{}
-	opts = append(opts, gemini.WithHTTPClient(c.httpClient()))
+	opts := []google.Option{}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, google.WithHTTPClient(httpClient))
+	}
 	if len(headers) > 0 {
-		opts = append(opts, gemini.WithHeaders(headers))
+		opts = append(opts, google.WithHeaders(headers))
 	}
 
 	project := options["project"]
 	location := options["location"]
 
-	opts = append(opts, gemini.WithVertex(project, location))
+	opts = append(opts, google.WithVertex(project, location))
 
-	return gemini.New(opts...)
+	return google.New(opts...)
 }
 
 func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provider, error) {
@@ -1889,7 +1869,7 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
 	case bedrock.Name:
 		return c.buildBedrockProvider(headers)
-	case gemini.Name, "gemini":
+	case google.Name, "gemini":
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
@@ -1956,12 +1936,27 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return errors.New("coder agent not configured")
 	}
 
-	tools, err := c.buildTools(ctx, agentCfg)
+	toolsResult, err := c.buildTools(ctx, agentCfg)
 	if err != nil {
 		return err
 	}
-	c.currentAgent.SetTools(tools)
-	c.setToolCache(tools)
+	
+	// Apply plan mode tool filtering (Codex plan mode architecture)
+	// In plan mode, editing and execution tools are FORBIDDEN
+	if c.currentAgent != nil {
+		sessionID := c.currentAgent.SessionID()
+		if sessionID != "" {
+			filteredTools, err := tools.PlanModeToolFilter(ctx, c.sessions, sessionID, toolsResult)
+			if err != nil {
+				slog.Warn("Failed to apply plan mode filter", "error", err)
+			} else {
+				toolsResult = filteredTools
+			}
+		}
+	}
+	
+	c.currentAgent.SetTools(toolsResult)
+	c.setToolCache(toolsResult)
 	if err := c.refreshSystemPrompt(ctx); err != nil {
 		return err
 	}

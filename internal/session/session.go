@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/charmbracelet/sapphire/internal/agent/planmode"
 	"github.com/charmbracelet/sapphire/internal/db"
 	"github.com/charmbracelet/sapphire/internal/event"
 	"github.com/charmbracelet/sapphire/internal/pubsub"
@@ -79,6 +80,7 @@ type Session struct {
 	SummaryMessageID string
 	Cost             float64
 	Todos            []Todo
+	Mode             planmode.SessionMode  // Codex plan mode architecture
 	CreatedAt        int64
 	UpdatedAt        int64
 }
@@ -98,6 +100,10 @@ type Service interface {
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
 	IsAgentToolSession(sessionID string) bool
+
+	// Plan mode management (Codex-inspired)
+	SetMode(ctx context.Context, sessionID string, mode planmode.SessionMode) error
+	GetMode(ctx context.Context, sessionID string) (planmode.SessionMode, error)
 }
 
 type service struct {
@@ -110,6 +116,7 @@ func (s *service) Create(ctx context.Context, title string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
 		ID:    uuid.New().String(),
 		Title: title,
+		Mode:  sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -125,6 +132,7 @@ func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessi
 		ID:              toolCallID,
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           title,
+		Mode:            sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -139,6 +147,7 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 		ID:              "title-" + parentSessionID,
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           "Generate a title",
+		Mode:            sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -208,6 +217,10 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 			String: todosJSON,
 			Valid:  todosJSON != "",
 		},
+		Mode: sql.NullString{
+			String: string(session.Mode),
+			Valid:  session.Mode != "",
+		},
 	})
 	if err != nil {
 		return Session{}, err
@@ -246,6 +259,12 @@ func (s service) fromDBItem(item db.Session) Session {
 	if err != nil {
 		slog.Error("Failed to unmarshal todos", "session_id", item.ID, "error", err)
 	}
+	
+	mode := planmode.DefaultMode()
+	if item.Mode.Valid && item.Mode.String != "" {
+		mode = planmode.SessionMode(item.Mode.String)
+	}
+	
 	return Session{
 		ID:               item.ID,
 		ParentSessionID:  item.ParentSessionID.String,
@@ -256,6 +275,7 @@ func (s service) fromDBItem(item db.Session) Session {
 		SummaryMessageID: item.SummaryMessageID.String,
 		Cost:             item.Cost,
 		Todos:            todos,
+		Mode:             mode,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
@@ -310,4 +330,29 @@ func (s *service) ParseAgentToolSessionID(sessionID string) (messageID string, t
 func (s *service) IsAgentToolSession(sessionID string) bool {
 	_, _, ok := s.ParseAgentToolSessionID(sessionID)
 	return ok
+}
+
+// SetMode sets the session mode (Codex plan mode architecture)
+func (s *service) SetMode(ctx context.Context, sessionID string, mode planmode.SessionMode) error {
+	if !mode.IsValid() {
+		return fmt.Errorf("invalid session mode: %s", mode)
+	}
+
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	session.Mode = mode
+	_, err = s.Save(ctx, session)
+	return err
+}
+
+// GetMode gets the session mode (Codex plan mode architecture)
+func (s *service) GetMode(ctx context.Context, sessionID string) (planmode.SessionMode, error) {
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return planmode.DefaultMode(), err
+	}
+	return session.Mode, nil
 }

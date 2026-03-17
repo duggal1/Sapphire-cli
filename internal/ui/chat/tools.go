@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/tree"
 	"github.com/charmbracelet/sapphire/internal/agent"
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
 	"github.com/charmbracelet/sapphire/internal/diff"
@@ -27,7 +26,7 @@ import (
 const responseContextHeight = 10
 
 // toolBodyLeftPaddingTotal represents the padding that should be applied to each tool body
-const toolBodyLeftPaddingTotal = 2
+const toolBodyLeftPaddingTotal = 0
 
 // ToolStatus represents the current state of a tool call.
 type ToolStatus int
@@ -250,8 +249,8 @@ func NewToolMessageItem(
 		item = NewWebFetchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WebSearchToolName:
 		item = NewWebSearchToolMessageItem(sty, toolCall, result, canceled)
-	case tools.TodosToolName:
-		item = NewTodosToolMessageItem(sty, toolCall, result, canceled)
+	// case tools.TodosToolName:  // COMMENTED OUT - TODO LIST DISABLED
+	// 	item = NewTodosToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LoadSkillToolName:
 		item = NewSkillToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ReferencesToolName:
@@ -332,14 +331,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
-	var prefix string
-	if t.isCompact {
-		prefix = t.sty.Chat.Message.ToolCallCompact.Render()
-	} else if t.focused {
-		prefix = t.sty.Chat.Message.ToolCallFocused.Render()
-	} else {
-		prefix = t.sty.Chat.Message.ToolCallBlurred.Render()
-	}
+	prefix := "  "
 	lines := strings.Split(t.RawRender(width), "\n")
 	for i, ln := range lines {
 		lines[i] = prefix + ln
@@ -560,8 +552,7 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
-	prefix := sty.HalfMuted.Render("│ ")
-	contentWidth := max(0, width-lipgloss.Width(prefix))
+	contentWidth := max(0, width)
 
 	maxLines := responseContextHeight
 	if expanded {
@@ -576,7 +567,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		if lipgloss.Width(ln) > contentWidth {
 			ln = ansi.Truncate(ln, contentWidth, "…")
 		}
-		out = append(out, sty.Tool.ContentLine.Width(width).Render(prefix+ln))
+		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
 	wasTruncated := len(lines) > responseContextHeight
@@ -584,7 +575,7 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 	if !expanded && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(prefix+fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
 	}
 
 	return strings.Join(out, "\n")
@@ -636,7 +627,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	if len(lines) > maxLines && !expanded {
 		out = append(out, sty.Tool.ContentCodeTruncation.
 			Width(width).
-			Render(sty.HalfMuted.Render("│ ")+fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
 		)
 	}
 
@@ -653,7 +644,7 @@ func toolOutputSmartContent(sty *styles.Styles, path, content string, width int,
 		return toolOutputMarkdownContent(sty, trimmed, width, expanded)
 	}
 	if looksLikeCode(trimmed) {
-		return sty.Tool.Body.Render(toolOutputCodeContent(sty, path, trimmed, 0, width, expanded))
+		return toolOutputCodeContent(sty, path, trimmed, 0, width, expanded)
 	}
 	return sty.Tool.Body.Render(toolOutputPlainContent(sty, trimmed, width, expanded))
 }
@@ -880,24 +871,6 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 	return sty.Tool.Body.Render(formatted)
 }
 
-// roundedEnumerator creates a tree enumerator with rounded corners.
-func roundedEnumerator(lPadding, width int) tree.Enumerator {
-	if width == 0 {
-		width = 2
-	}
-	if lPadding == 0 {
-		lPadding = 1
-	}
-	return func(children tree.Children, index int) string {
-		line := strings.Repeat("─", width)
-		padding := strings.Repeat(" ", lPadding)
-		if children.Length()-1 == index {
-			return padding + "╰" + line
-		}
-		return padding + "├" + line
-	}
-}
-
 // toolOutputMarkdownContent renders markdown content with optional truncation.
 func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
@@ -946,7 +919,7 @@ func toolOutputCollapsedMarkdownContent(sty *styles.Styles, content string, widt
 	if lineCount > 0 {
 		summary = fmt.Sprintf("%s · %d lines", summary, lineCount)
 	}
-	return sty.Tool.ContentTruncation.Width(width).Render(sty.HalfMuted.Render("│") + summary)
+	return sty.Tool.ContentTruncation.Width(width).Render(summary)
 }
 
 // formatToolForCopy formats the tool call for clipboard copying.
@@ -1173,7 +1146,8 @@ func (t *baseToolMessageItem) formatResultForCopy() string {
 		return t.formatWebFetchResultForCopy()
 	case agent.AgentToolName:
 		return t.formatAgentResultForCopy()
-	case tools.DownloadToolName, tools.GrepToolName, tools.GlobToolName, tools.LSToolName, tools.SourcegraphToolName, tools.DiagnosticsToolName, tools.TodosToolName:
+	// case tools.DownloadToolName, tools.GrepToolName, tools.GlobToolName, tools.LSToolName, tools.SourcegraphToolName, tools.DiagnosticsToolName, tools.TodosToolName:  // COMMENTED OUT - TODO LIST DISABLED
+	case tools.DownloadToolName, tools.GrepToolName, tools.GlobToolName, tools.LSToolName, tools.SourcegraphToolName, tools.DiagnosticsToolName:
 		return fmt.Sprintf("```\n%s\n```", t.result.Content)
 	default:
 		return t.result.Content
@@ -1521,12 +1495,12 @@ func prettifyToolName(name string) string {
 		return "List"
 	case tools.SourcegraphToolName:
 		return "Sourcegraph"
-	case tools.TodosToolName:
-		return "To-Do"
+	// case tools.TodosToolName:  // COMMENTED OUT - TODO LIST DISABLED
+	// 	return "To-Do"
 	case tools.ViewToolName:
 		return "View"
 	case tools.SingleViewToolName:
-		return "Single View"
+		return "View"
 	case tools.WriteToolName:
 		return "Write"
 	default:

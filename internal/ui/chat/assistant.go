@@ -151,15 +151,21 @@ func (a *AssistantMessageItem) Render(width int) string {
 	// it's wrapping logic.
 	// We already know that the content is wrapped to the correct width in
 	// RawRender, so we can just apply the styles directly to each line.
-	focused := a.sty.Chat.Message.AssistantFocused.Render()
-	blurred := a.sty.Chat.Message.AssistantBlurred.Render()
+	focused := a.sty.Chat.Message.AssistantFocused.Render("⚪")
+	blurred := a.sty.Chat.Message.AssistantBlurred.Render("⚪")
 	rendered := a.RawRender(width)
+	prefix := blurred
+	if a.focused {
+		prefix = focused
+	}
+	prefix += " "
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		if a.focused {
-			lines[i] = focused + line
+		if i == 0 {
+			lines[i] = prefix + line
 		} else {
-			lines[i] = blurred + line
+			lines[i] = indent + line
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -214,27 +220,15 @@ func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
 	dotsCount := (a.skillFrame / 6) % 4
 	dots := strings.Repeat(".", dotsCount)
 	label := fmt.Sprintf("Running %d terminal(s) in background%s", count, dots)
-	label = styles.ShimmerText(a.sty, label, a.skillFrame)
+	// Use Codex-style shimmer with dot indicator
+	label = styles.ShimmerTextWithDot(a.sty, label)
 
 	return label
 }
 
 // renderThinking renders the thinking/reasoning content with footer.
 func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
-	// Dynamic padding based on width - ultra minimal for clean typography
-	hPadding := 2
-	vPadding := 1
-	if width < 60 {
-		hPadding = 1
-		vPadding = 0
-	}
-
-	renderer := common.MarkdownRenderer(a.sty, width-hPadding*2)
-	rendered, err := renderer.Render(thinking)
-	if err != nil {
-		rendered = thinking
-	}
-	rendered = strings.TrimSpace(rendered)
+	rendered := strings.TrimSpace(thinking)
 
 	lines := strings.Split(rendered, "\n")
 	totalLines := len(lines)
@@ -245,14 +239,10 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		hint := a.sty.Chat.Message.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
 		)
-		lines = append([]string{hint, ""}, lines...)
+		lines = append([]string{hint}, lines...)
 	}
 
-	thinkingStyle := a.sty.Chat.Message.ThinkingBox.
-		Width(width).
-		Padding(vPadding, hPadding)
-
-	result := thinkingStyle.Render(strings.Join(lines, "\n"))
+	result := a.sty.Chat.Message.Thinking.Render(strings.Join(lines, "\n"))
 	a.thinkingBoxHeight = lipgloss.Height(result)
 
 	var footer string
@@ -266,18 +256,19 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	}
 
 	if footer != "" {
-		result += "\n\n" + footer
+		result += "\n" + footer
 	}
 
 	return result
 }
 
-// renderThinkingShimmer renders a beautiful text shimmer for "Thinking...".
+// renderThinkingShimmer renders a beautiful text shimmer for "Thinking..." with Codex-style dot.
 func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
 	dotsCount := (a.skillFrame / 6) % 4
 	dots := strings.Repeat(".", dotsCount)
 	label := "Thinking" + dots
-	return styles.ShimmerTextNeutral(a.sty, label, a.skillFrame)
+	// Use Codex-style shimmer with dot indicator
+	return styles.ShimmerTextWithDot(a.sty, label)
 }
 
 // renderMarkdown renders content as markdown.
@@ -298,7 +289,8 @@ func (a *AssistantMessageItem) renderSpinning() string {
 
 func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
 	label := loadingPhraseForMessage(a.message.ID)
-	return styles.ShimmerTextNeutral(a.sty, label, a.skillFrame)
+	// Use Codex-style shimmer with dot indicator
+	return styles.ShimmerTextWithDot(a.sty, label)
 }
 
 func loadingPhraseForMessage(messageID string) string {

@@ -85,10 +85,10 @@ func toolNameAlias(name string) string {
 		"execute_command", "shell_command":
 		return BashToolName
 
-	// Todo aliases
-	case "todo", "to_do", "todo_list", "to_do_list",
-		"task", "tasks", "task_list", "checklist":
-		return TodosToolName
+	// Todo aliases - COMMENTED OUT, replaced with update_plan
+	// case "todo", "to_do", "todo_list", "to_do_list",
+	// 	"task", "tasks", "task_list", "checklist":
+	// 	return UpdatePlanToolName  // Replaced with Codex-style update_plan
 
 	// File listing aliases — fixes "tool not found: list_files"
 	case "list_files", "listfiles", "list_dir", "listdir",

@@ -1,7 +1,6 @@
 package message
 
 import (
-	"cmp"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,8 +11,8 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
+	"charm.land/fantasy/providers/google"
 	"charm.land/fantasy/providers/openai"
-	"github.com/charmbracelet/sapphire/internal/llm/provider/gemini"
 )
 
 type MessageRole string
@@ -268,24 +267,24 @@ func (m *Message) AppendContent(delta string) {
 }
 
 func (m *Message) AppendReasoningContent(delta string) {
+	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
 			m.Parts[i] = ReasoningContent{
-				Thinking:         c.Thinking + delta,
-				ThoughtSignature: c.ThoughtSignature,
-				ToolID:           c.ToolID,
-				Signature:        c.Signature,
-				ResponsesData:    c.ResponsesData,
-				StartedAt:        cmp.Or(c.StartedAt, time.Now().Unix()),
-				FinishedAt:       c.FinishedAt,
+				Thinking:   c.Thinking + delta,
+				Signature:  c.Signature,
+				StartedAt:  c.StartedAt,
+				FinishedAt: c.FinishedAt,
 			}
-			return
+			found = true
 		}
 	}
-	m.Parts = append(m.Parts, ReasoningContent{
-		Thinking:  delta,
-		StartedAt: time.Now().Unix(),
-	})
+	if !found {
+		m.Parts = append(m.Parts, ReasoningContent{
+			Thinking:  delta,
+			StartedAt: time.Now().Unix(),
+		})
+	}
 }
 
 func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
@@ -294,32 +293,25 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 			m.Parts[i] = ReasoningContent{
 				Thinking:         c.Thinking,
 				ThoughtSignature: c.ThoughtSignature + signature,
-				ToolID:           cmp.Or(toolCallID, c.ToolID),
+				ToolID:           toolCallID,
 				Signature:        c.Signature,
-				ResponsesData:    c.ResponsesData,
 				StartedAt:        c.StartedAt,
 				FinishedAt:       c.FinishedAt,
 			}
 			return
 		}
 	}
-	m.Parts = append(m.Parts, ReasoningContent{
-		ThoughtSignature: signature,
-		ToolID:           toolCallID,
-	})
+	m.Parts = append(m.Parts, ReasoningContent{ThoughtSignature: signature})
 }
 
 func (m *Message) AppendReasoningSignature(signature string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
 			m.Parts[i] = ReasoningContent{
-				Thinking:         c.Thinking,
-				ThoughtSignature: c.ThoughtSignature,
-				ToolID:           c.ToolID,
-				Signature:        c.Signature + signature,
-				ResponsesData:    c.ResponsesData,
-				StartedAt:        c.StartedAt,
-				FinishedAt:       c.FinishedAt,
+				Thinking:   c.Thinking,
+				Signature:  c.Signature + signature,
+				StartedAt:  c.StartedAt,
+				FinishedAt: c.FinishedAt,
 			}
 			return
 		}
@@ -331,13 +323,10 @@ func (m *Message) SetReasoningResponsesData(data *openai.ResponsesReasoningMetad
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
 			m.Parts[i] = ReasoningContent{
-				Thinking:         c.Thinking,
-				ThoughtSignature: c.ThoughtSignature,
-				ToolID:           c.ToolID,
-				Signature:        c.Signature,
-				ResponsesData:    data,
-				StartedAt:        c.StartedAt,
-				FinishedAt:       c.FinishedAt,
+				Thinking:      c.Thinking,
+				ResponsesData: data,
+				StartedAt:     c.StartedAt,
+				FinishedAt:    c.FinishedAt,
 			}
 			return
 		}
@@ -349,13 +338,10 @@ func (m *Message) FinishThinking() {
 		if c, ok := part.(ReasoningContent); ok {
 			if c.FinishedAt == 0 {
 				m.Parts[i] = ReasoningContent{
-					Thinking:         c.Thinking,
-					ThoughtSignature: c.ThoughtSignature,
-					ToolID:           c.ToolID,
-					Signature:        c.Signature,
-					ResponsesData:    c.ResponsesData,
-					StartedAt:        c.StartedAt,
-					FinishedAt:       time.Now().Unix(),
+					Thinking:   c.Thinking,
+					Signature:  c.Signature,
+					StartedAt:  c.StartedAt,
+					FinishedAt: time.Now().Unix(),
 				}
 			}
 			return
@@ -671,7 +657,7 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				reasoningPart.ProviderOptions[openai.Name] = reasoning.ResponsesData
 			}
 			if reasoning.ThoughtSignature != "" {
-				reasoningPart.ProviderOptions[gemini.Name] = &gemini.ReasoningMetadata{
+				reasoningPart.ProviderOptions[google.Name] = &google.ReasoningMetadata{
 					Signature: reasoning.ThoughtSignature,
 					ToolID:    reasoning.ToolID,
 				}
@@ -679,12 +665,22 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 			parts = append(parts, reasoningPart)
 		}
 		for _, call := range m.ToolCalls() {
-			parts = append(parts, fantasy.ToolCallPart{
+			toolCallPart := fantasy.ToolCallPart{
 				ToolCallID:       call.ID,
 				ToolName:         call.Name,
 				Input:            call.Input,
 				ProviderExecuted: call.ProviderExecuted,
-			})
+			}
+			// Attach Google thought signature to tool calls if available
+			if reasoning.ThoughtSignature != "" && (reasoning.ToolID == "" || reasoning.ToolID == call.ID) {
+				toolCallPart.ProviderOptions = fantasy.ProviderOptions{
+					google.Name: &google.ReasoningMetadata{
+						Signature: reasoning.ThoughtSignature,
+						ToolID:    call.ID,
+					},
+				}
+			}
+			parts = append(parts, toolCallPart)
 		}
 		messages = append(messages, fantasy.Message{
 			Role:    fantasy.MessageRoleAssistant,

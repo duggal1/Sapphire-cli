@@ -79,7 +79,7 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 	if err := json.Unmarshal([]byte(opts.Result.Content), &result); err == nil {
 		prettyResult, err := json.MarshalIndent(result, "", "  ")
 		if err == nil {
-			body = sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, bodyWidth, opts.ExpandedContent))
+			body = toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, bodyWidth, opts.ExpandedContent)
 		} else {
 			body = sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
 		}

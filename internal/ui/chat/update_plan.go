@@ -47,29 +47,19 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 	var args tools.UpdatePlanArgs
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &args)
 
-	lines := make([]string, 0, len(args.Plan)+2)
-	bullet := lipgloss.NewStyle().Faint(true).Render("• ")
-	title := lipgloss.NewStyle().Bold(true).Render("Updated Plan")
-	lines = append(lines, bullet+title)
-
-	indentPrefix := lipgloss.NewStyle().Faint(true).Render("  └ ")
-	indentSub := "    "
-	wrapWidth := max(1, cappedWidth-4)
+	var contentLines []string
+	wrapWidth := max(1, cappedWidth-6) // Account for box paddings
 
 	if expl := strings.TrimSpace(deref(args.Explanation)); expl != "" {
 		noteStyle := lipgloss.NewStyle().Faint(true).Italic(true)
-		for i, line := range wrapWithIndent(expl, wrapWidth, "", "  ") {
-			styled := noteStyle.Render(line)
-			if i == 0 {
-				lines = append(lines, indentPrefix+styled)
-			} else {
-				lines = append(lines, indentSub+styled)
-			}
+		for _, line := range wrapWithIndent(expl, wrapWidth, "", "") {
+			contentLines = append(contentLines, noteStyle.Render(line))
 		}
+		contentLines = append(contentLines, "") // spacer
 	}
 
 	if len(args.Plan) == 0 {
-		lines = append(lines, indentPrefix+lipgloss.NewStyle().Faint(true).Italic(true).Render("(no steps provided)"))
+		contentLines = append(contentLines, lipgloss.NewStyle().Faint(true).Italic(true).Render("(no steps provided)"))
 	} else {
 		for _, item := range args.Plan {
 			step := strings.TrimSpace(item.Step)
@@ -77,18 +67,30 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 				continue
 			}
 			box, style := planStepStyle(item.Status)
-			for i, line := range wrapWithIndent(step, wrapWidth, box, "  ") {
-				styled := style.Render(line)
+			for i, line := range wrapWithIndent(step, wrapWidth-2, box, "  ") {
 				if i == 0 {
-					lines = append(lines, indentPrefix+styled)
+					contentLines = append(contentLines, style.Render(line))
 				} else {
-					lines = append(lines, indentSub+styled)
+					contentLines = append(contentLines, style.Render(line))
 				}
 			}
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(sty.Tool.ContentLine.GetForeground()).
+		Padding(0, 1).
+		Width(cappedWidth - toolBodyLeftPaddingTotal)
+
+	contentStr := strings.Join(contentLines, "\n")
+	boxedContent := boxStyle.Render(contentStr)
+
+	bullet := lipgloss.NewStyle().Faint(true).Render("• ")
+	title := lipgloss.NewStyle().Bold(true).Render("Updated Plan")
+	headerLine := bullet + title
+
+	return headerLine + "\n" + boxedContent
 }
 
 func planStepStyle(status tools.StepStatus) (string, lipgloss.Style) {

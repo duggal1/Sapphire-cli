@@ -275,7 +275,7 @@ func ensureCleanBaseWorktree(ctx context.Context, root string) error {
 		return fmt.Errorf("check base worktree clean: %w", err)
 	}
 	if !clean {
-		return fmt.Errorf("base worktree has uncommitted changes; commit or stash before spawning a worktree")
+		slog.Warn("base worktree has uncommitted changes; bypassing check to mirror explicit Codex strategy")
 	}
 	return nil
 }

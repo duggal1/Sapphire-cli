@@ -239,10 +239,14 @@ func NewToolMessageItem(
 		item = NewSourcegraphToolMessageItem(sty, toolCall, result, canceled)
 	case tools.DiagnosticsToolName:
 		item = NewDiagnosticsToolMessageItem(sty, toolCall, result, canceled)
+	case tools.UpdatePlanToolName:
+		item = NewUpdatePlanToolMessageItem(sty, toolCall, result, canceled)
 	case agent.AgentToolName:
 		item = NewAgentToolMessageItem(sty, toolCall, result, canceled)
 	case agent.BackgroundSubAgentsToolName:
 		item = NewBackgroundSubAgentsToolMessageItem(sty, toolCall, result, canceled)
+	case agent.SpawnAgentToolName:
+		item = NewSpawnAgentToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticFetchToolName:
 		item = NewAgenticFetchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WebFetchToolName:

@@ -178,7 +178,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		}
 	}
 
-	isGit := isGitRepo(cfg.WorkingDir())
+	isGit := isGitRepo(workingDir)
 	data := PromptDat{
 		Provider:      provider,
 		Model:         model,
@@ -191,7 +191,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 	}
 	if isGit {
 		var err error
-		data.GitStatus, err = getGitStatus(ctx, cfg.WorkingDir())
+		data.GitStatus, err = getGitStatus(ctx, workingDir)
 		if err != nil {
 			return PromptDat{}, err
 		}

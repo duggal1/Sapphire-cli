@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/sapphire/internal/ui/shimmer"
 	"github.com/lucasb-eyer/go-colorful"
 	"github.com/rivo/uniseg"
 )
@@ -299,6 +304,73 @@ var shimmerWarmPalette = []shimmerRGB{
 	{245, 240, 235}, // base
 	{221, 210, 198}, // shoulder
 	{255, 249, 242}, // core
+}
+
+var shimmerProcessStart time.Time
+var shimmerProcessOnce sync.Once
+
+func shimmerElapsed() time.Duration {
+	shimmerProcessOnce.Do(func() {
+		shimmerProcessStart = time.Now()
+	})
+	return time.Since(shimmerProcessStart)
+}
+
+func shimmerHasTrueColor() bool {
+	return colorprofile.Detect(os.Stdout, os.Environ()) == colorprofile.TrueColor
+}
+
+func shimmerColorToRGB(c color.Color) (uint8, uint8, uint8, bool) {
+	if c == nil {
+		return 0, 0, 0, false
+	}
+	r, g, b, _ := c.RGBA()
+	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), true
+}
+
+func shimmerBaseColor(t *Styles) (uint8, uint8, uint8) {
+	if t != nil {
+		if r, g, b, ok := shimmerColorToRGB(t.FgBase); ok {
+			return r, g, b
+		}
+	}
+	return 128, 128, 128
+}
+
+func shimmerHighlightColor(t *Styles) (uint8, uint8, uint8) {
+	if t != nil {
+		if r, g, b, ok := shimmerColorToRGB(t.BgBase); ok {
+			return r, g, b
+		}
+	}
+	return 255, 255, 255
+}
+
+func shimmerBlend(a, b [3]uint8, t float32) (uint8, uint8, uint8) {
+	r := uint8(float32(a[0])*t + float32(b[0])*(1.0-t))
+	g := uint8(float32(a[1])*t + float32(b[1])*(1.0-t))
+	bl := uint8(float32(a[2])*t + float32(b[2])*(1.0-t))
+	return r, g, bl
+}
+
+func shimmerFallback(intensity float32) lipgloss.Style {
+	if intensity < 0.2 {
+		return lipgloss.NewStyle().Faint(true)
+	}
+	if intensity < 0.6 {
+		return lipgloss.NewStyle()
+	}
+	return lipgloss.NewStyle().Bold(true)
+}
+
+func ShimmerTextCodex(t *Styles, input string) string {
+	_ = t
+	return shimmer.ShimmerText(input)
+}
+
+func ShimmerTextWithDot(t *Styles, input string) string {
+	_ = t
+	return shimmer.ShimmerWithDotPrefix(input)
 }
 
 func ShimmerText(t *Styles, input string, shift int) string {

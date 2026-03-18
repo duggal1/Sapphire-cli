@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/tree"
 	"github.com/charmbracelet/sapphire/internal/agent"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/anim"
@@ -148,21 +147,14 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		),
 	)
 
-	// Build tree with nested tool calls.
-	childTools := tree.Root(header)
-
+	childNodes := make([]*TreeNode, 0, len(r.agent.nestedTools))
 	for _, nestedTool := range r.agent.nestedTools {
 		childView := nestedTool.Render(remainingWidth)
-		childTools.Child(childView)
+		childNodes = append(childNodes, &TreeNode{Label: childView})
 	}
-
-	// Build parts.
-	var parts []string
-	parts = append(parts, childTools.String())
-
-	// Result parts without animation.
-
-	result := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	root := &TreeNode{Label: header, Children: childNodes}
+	lines := renderTreeWithRoot(root, cappedWidth)
+	result := strings.Join(lines, "\n")
 
 	// Add body content when completed.
 	if opts.HasResult() && opts.Result.Content != "" {
@@ -349,21 +341,15 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		),
 	)
 
-	// Build tree with nested tool calls.
-	childTools := tree.Root(header)
-
+	childNodes := make([]*TreeNode, 0, len(r.fetch.nestedTools))
 	for _, nestedTool := range r.fetch.nestedTools {
 		childView := nestedTool.Render(remainingWidth)
-		childTools.Child(childView)
+		childNodes = append(childNodes, &TreeNode{Label: childView})
 	}
 
-	// Build parts.
-	var parts []string
-	parts = append(parts, childTools.String())
-
-	// Result parts without animation.
-
-	result := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	root := &TreeNode{Label: header, Children: childNodes}
+	lines := renderTreeWithRoot(root, cappedWidth)
+	result := strings.Join(lines, "\n")
 
 	// Add body content when completed.
 	if opts.HasResult() && opts.Result.Content != "" {

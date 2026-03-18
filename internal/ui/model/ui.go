@@ -989,6 +989,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.chat.SelectLast()
 	case message.Assistant:
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
@@ -1007,6 +1008,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		m.chat.SelectLast()
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -1099,8 +1101,8 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.chat.SelectLast()
 	}
+	m.chat.SelectLast()
 
 	return tea.Sequence(cmds...)
 }

@@ -108,6 +108,8 @@ type coordinator struct {
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
 	subAgentRegistry          *subAgentRegistry
+	mainWorktreeDir           string
+	mainWorktreeBranch        string
 	worktreeOpsMu             sync.Mutex
 	worktreeOps               map[string]*sync.Mutex
 	agentJobs                 *agentJobManager
@@ -212,15 +214,23 @@ func NewCoordinator(
 		mcpSelectionCache:         make(map[string]mcpSelectionSnapshot),
 		mcpSelectionInFlight:      make(map[string]bool),
 	}
+	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
+	if err == nil && worktreeDir != "" {
+		c.mainWorktreeDir = worktreeDir
+		c.mainWorktreeBranch = worktreeBranch
+	} else if err != nil {
+		slog.Warn("Failed to prepare main worktree; falling back to repo root", "error", err)
+	}
 	if !isNonInteractiveMode() {
-		c.indexer = NewIndexer(cfg.WorkingDir(), lspManager, c.memory, func() bool {
+		mainDir := c.mainWorkingDir()
+		c.indexer = NewIndexer(mainDir, lspManager, c.memory, func() bool {
 			if c.currentAgent == nil {
 				return false
 			}
 			return c.currentAgent.IsBusy()
 		})
 		go c.indexer.Start(ctx)
-		c.longHorizon = longhorizon.NewManager(cfg.WorkingDir())
+		c.longHorizon = longhorizon.NewManager(mainDir)
 
 		// Initialize persistent memory system (optional, requires Gemini API key).
 		apiKey := c.resolveGeminiAPIKey()
@@ -231,7 +241,7 @@ func NewCoordinator(
 				EmbeddingModel:  pmem.DefaultEmbeddingModel,
 				EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
 				DataDir:         cfg.Options.DataDirectory,
-				ProjectRoot:     cfg.WorkingDir(),
+				ProjectRoot:     mainDir,
 			})
 			if pmemErr == nil && pmemSys != nil {
 				c.pmem = pmemSys
@@ -262,7 +272,7 @@ func NewCoordinator(
 	}
 
 	// TODO: make this dynamic when we support multiple agents
-	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
+	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.mainWorkingDir()))
 	if err != nil {
 		return nil, err
 	}
@@ -1021,7 +1031,14 @@ func (c *coordinator) mergeCallOptions(model Model, cfg config.ProviderConfig, s
 }
 
 func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool) (SessionAgent, error) {
-	return c.buildAgentWithWorkingDir(ctx, prompt, agent, isSubAgent, c.cfg.WorkingDir())
+	return c.buildAgentWithWorkingDir(ctx, prompt, agent, isSubAgent, c.mainWorkingDir())
+}
+
+func (c *coordinator) mainWorkingDir() string {
+	if strings.TrimSpace(c.mainWorktreeDir) != "" {
+		return c.mainWorktreeDir
+	}
+	return c.cfg.WorkingDir()
 }
 
 func (c *coordinator) buildAgentWithWorkingDir(ctx context.Context, prompt *promptpkg.Prompt, agent config.Agent, isSubAgent bool, workingDir string) (SessionAgent, error) {
@@ -1128,7 +1145,7 @@ func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
 		return nil
 	}
 	model := c.currentAgent.Model()
-	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.cfg.WorkingDir()))
+	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.mainWorkingDir()))
 	if err != nil {
 		return err
 	}
@@ -1141,7 +1158,7 @@ func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
 }
 
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fantasy.AgentTool, error) {
-	return c.buildToolsForWorkingDir(ctx, agent, c.cfg.WorkingDir())
+	return c.buildToolsForWorkingDir(ctx, agent, c.mainWorkingDir())
 }
 
 func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.Agent, workingDir string) ([]fantasy.AgentTool, error) {
@@ -1258,9 +1275,9 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		// tools.NewTodosTool(c.sessions),  // COMMENTED OUT - Replaced with Codex-style update_plan
-		tools.NewUpdatePlanTool(c.sessions),  // Codex-style plan management tool
-		tools.NewRequestUserInputTool(c.sessions),  // Codex-style structured questions tool (Plan Mode only)
-		tools.NewSetModeTool(c.sessions),  // Codex-style mode switching tool
+		tools.NewUpdatePlanTool(c.sessions),       // Codex-style plan management tool
+		tools.NewRequestUserInputTool(c.sessions), // Codex-style structured questions tool (Plan Mode only)
+		tools.NewSetModeTool(c.sessions),          // Codex-style mode switching tool
 		tools.NewViewTool(tools.ViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
 		tools.NewViewTool(tools.SingleViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, 1, c.cfg.Options.SkillsPaths...),
 		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, maxConcurrent, c.cfg.Options.SkillsPaths...),
@@ -1940,7 +1957,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Apply plan mode tool filtering (Codex plan mode architecture)
 	// In plan mode, editing and execution tools are FORBIDDEN
 	if c.currentAgent != nil {
@@ -1954,7 +1971,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 			}
 		}
 	}
-	
+
 	c.currentAgent.SetTools(toolsResult)
 	c.setToolCache(toolsResult)
 	if err := c.refreshSystemPrompt(ctx); err != nil {

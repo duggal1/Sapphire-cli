@@ -1,225 +1,203 @@
-// Package shimmer provides Codex-style shimmer animation for loading states.
-// Based on codex-rs/tui/src/shimmer.rs architecture.
 package shimmer
 
 import (
-	"image/color"
+	"fmt"
 	"math"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 )
 
-// Codex shimmer RGB structure
-type codexShimmerRGB struct {
-	r uint8
-	g uint8
-	b uint8
-}
+// ── process start ────────────────────────────────────────────────────────────
+// 1:1 of: static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
-// Global state for time-based animation (synchronized to process start like Codex)
 var (
-	shimmerStartOnce sync.Once
-	shimmerStart     time.Time
-	shimmerTrueColorOnce sync.Once
-	shimmerHasTrueColor bool
+	processStart     time.Time
+	processStartOnce sync.Once
 )
 
-// elapsedSinceStart returns time since process start (Codex-compatible)
+// 1:1 of: fn elapsed_since_start() -> Duration
 func elapsedSinceStart() time.Duration {
-	shimmerStartOnce.Do(func() {
-		shimmerStart = time.Now()
+	processStartOnce.Do(func() {
+		processStart = time.Now()
 	})
-	return time.Since(shimmerStart)
+	return time.Since(processStart)
 }
 
-// supportsTrueColor detects if terminal supports 16M color (Codex-compatible)
-func supportsTrueColor() bool {
-	shimmerTrueColorOnce.Do(func() {
-		shimmerHasTrueColor = colorprofile.Detect(os.Stdout, os.Environ()) == colorprofile.TrueColor
-	})
-	return shimmerHasTrueColor
+// ── true color detection ─────────────────────────────────────────────────────
+// 1:1 of: supports_color::on_cached(supports_color::Stream::Stdout)
+//
+//	.map(|level| level.has_16m)
+//	.unwrap_or(false)
+func hasTrueColor() bool {
+	return colorprofile.Detect(os.Stdout, os.Environ()) == colorprofile.TrueColor
 }
 
-// defaultForeground returns terminal foreground color
-func defaultForeground() (codexShimmerRGB, bool) {
-	// Codex uses (128, 128, 128) as default gray
-	return codexShimmerRGB{r: 128, g: 128, b: 128}, false
+// ── terminal palette ─────────────────────────────────────────────────────────
+// 1:1 of: crate::terminal_palette::default_fg / default_bg
+// Wire these to your own terminal_palette package.
+
+func defaultFg() (uint8, uint8, uint8) {
+	return 128, 128, 128 // unwrap_or((128, 128, 128))
 }
 
-// defaultBackground returns terminal background color
-func defaultBackground() (codexShimmerRGB, bool) {
-	// Codex uses (255, 255, 255) as default highlight
-	return codexShimmerRGB{r: 255, g: 255, b: 255}, false
+func defaultBg() (uint8, uint8, uint8) {
+	return 255, 255, 255 // unwrap_or((255, 255, 255))
 }
 
-// blend blends two colors with alpha (Codex-compatible)
-func blend(fg, bg codexShimmerRGB, alpha float64) codexShimmerRGB {
-	if alpha < 0 {
-		alpha = 0
-	}
-	if alpha > 1 {
-		alpha = 1
-	}
-	return codexShimmerRGB{
-		r: uint8(float64(fg.r)*alpha + float64(bg.r)*(1.0-alpha)),
-		g: uint8(float64(fg.g)*alpha + float64(bg.g)*(1.0-alpha)),
-		b: uint8(float64(fg.b)*alpha + float64(bg.b)*(1.0-alpha)),
-	}
+// ── blend ────────────────────────────────────────────────────────────────────
+// 1:1 of: crate::color::blend
+// t = 1.0 → all a, t = 0.0 → all b.
+
+func blend(a, b [3]uint8, t float32) (uint8, uint8, uint8) {
+	r := uint8(float32(a[0])*t + float32(b[0])*(1.0-t))
+	g := uint8(float32(a[1])*t + float32(b[1])*(1.0-t))
+	bl := uint8(float32(a[2])*t + float32(b[2])*(1.0-t))
+	return r, g, bl
 }
 
-// codexShimmerColor converts to color.Color for lipgloss
-func codexShimmerColor(c codexShimmerRGB) color.Color {
-	return color.RGBA{R: c.r, G: c.g, B: c.b, A: 0xff}
-}
+// ── colorForLevel ────────────────────────────────────────────────────────────
+// 1:1 of: fn color_for_level(intensity: f32) -> Style
 
-// shimmerFallbackStyle returns style for non-true-color terminals (Codex-compatible)
-func shimmerFallbackStyle(intensity float64) lipgloss.Style {
+func colorForLevel(intensity float32) lipgloss.Style {
 	if intensity < 0.2 {
-		return lipgloss.NewStyle().Faint(true)
+		return lipgloss.NewStyle().Faint(true) // Modifier::DIM
+	} else if intensity < 0.6 {
+		return lipgloss.NewStyle() // Style::default()
+	} else {
+		return lipgloss.NewStyle().Bold(true) // Modifier::BOLD
 	}
-	if intensity < 0.6 {
-		return lipgloss.NewStyle()
-	}
-	return lipgloss.NewStyle().Bold(true)
 }
 
-// ShimmerTextCodex renders Codex-style shimmer effect for loading text.
-// This is a direct translation of codex-rs/tui/src/shimmer.rs shimmer_spans()
-func ShimmerTextCodex(_ *lipgloss.Style, text string) string {
+// ── ShimmerSpans ─────────────────────────────────────────────────────────────
+// 1:1 of: pub(crate) fn shimmer_spans(text: &str) -> Vec<Span<'static>>
+// Prefixes a shimmering "•" dot before the text — see spinner().
+
+func ShimmerSpans(text string) []string {
 	chars := []rune(text)
 	if len(chars) == 0 {
-		return ""
+		return []string{} // return Vec::new()
 	}
 
-	// Codex constants - exact replication
+	// 1:1 of sweep math block
 	padding := 10
 	period := len(chars) + padding*2
-	sweepSeconds := 2.0
-	elapsed := elapsedSinceStart().Seconds()
-	
-	// Time-based sweep position (Codex logic)
-	posF := math.Mod(elapsed, sweepSeconds) / sweepSeconds * float64(period)
+	sweepSeconds := float32(2.0)
+	posF := (float32(elapsedSinceStart().Seconds()) / sweepSeconds) *
+		float32(period)
+	posF = float32(math.Mod(float64(elapsedSinceStart().Seconds()), float64(sweepSeconds)) /
+		float64(sweepSeconds) * float64(period))
 	pos := int(posF)
-	
-	hasTrueColor := supportsTrueColor()
-	bandHalfWidth := 5.0
 
-	// Base and highlight colors (Codex defaults)
-	baseColor := codexShimmerRGB{r: 128, g: 128, b: 128}
-	if fg, ok := defaultForeground(); ok {
-		baseColor = fg
-	}
-	highlightColor := codexShimmerRGB{r: 255, g: 255, b: 255}
-	if bg, ok := defaultBackground(); ok {
-		highlightColor = bg
-	}
+	hasTrueColorVal := hasTrueColor()
+	bandHalfWidth := float32(5.0)
 
-	var out strings.Builder
+	// 1:1 of: let base_color = default_fg().unwrap_or((128, 128, 128));
+	// 1:1 of: let highlight_color = default_bg().unwrap_or((255, 255, 255));
+	r0, g0, b0 := defaultFg()
+	baseColor := [3]uint8{r0, g0, b0}
+	r1, g1, b1 := defaultBg()
+	highlightColor := [3]uint8{r1, g1, b1}
+
+	spans := make([]string, 0, len(chars)) // Vec::with_capacity(chars.len())
+
 	for i, ch := range chars {
+		// 1:1 of: let i_pos = i as isize + padding as isize;
 		iPos := i + padding
-		dist := math.Abs(float64(iPos - pos))
+		// 1:1 of: let dist = (i_pos - pos).abs() as f32;
+		dist := float32(math.Abs(float64(iPos - pos)))
 
-		// Cosine wave highlight band (Codex logic)
-		var t float64
+		// 1:1 of cosine falloff block
+		var t float32
 		if dist <= bandHalfWidth {
-			x := math.Pi * (dist / bandHalfWidth)
-			t = 0.5 * (1.0 + math.Cos(x))
+			x := float32(math.Pi) * (dist / bandHalfWidth)
+			t = 0.5 * (1.0 + float32(math.Cos(float64(x))))
+		} else {
+			t = 0.0
 		}
 
-		style := shimmerFallbackStyle(t)
-		if hasTrueColor {
-			// True color RGB blend (Codex logic)
+		// 1:1 of style branch
+		var style lipgloss.Style
+		if hasTrueColorVal {
+			// 1:1 of: let highlight = t.clamp(0.0, 1.0);
 			highlight := t
-			if highlight < 0 {
-				highlight = 0
+			if highlight < 0.0 {
+				highlight = 0.0
 			}
-			if highlight > 1 {
-				highlight = 1
+			if highlight > 1.0 {
+				highlight = 1.0
 			}
-			c := blend(highlightColor, baseColor, highlight*0.9)
+			// 1:1 of: let (r, g, b) = blend(highlight_color, base_color, highlight * 0.9);
+			r, g, b := blend(highlightColor, baseColor, highlight*0.9)
+			// 1:1 of: Style::default().fg(Color::Rgb(r, g, b)).add_modifier(Modifier::BOLD)
 			style = lipgloss.NewStyle().
-				Foreground(codexShimmerColor(c)).
+				Foreground(lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))).
 				Bold(true)
+		} else {
+			style = colorForLevel(t)
 		}
 
-		out.WriteString(style.Render(string(ch)))
+		// 1:1 of: spans.push(Span::styled(ch.to_string(), style));
+		spans = append(spans, style.Render(string(ch)))
 	}
 
-	return out.String()
+	return spans
 }
 
-// ShimmerDot renders the Codex-style dot indicator (•) with shimmer effect
-func ShimmerDot() string {
-	return ShimmerTextCodex(nil, "•")
-}
+// ── Spinner ───────────────────────────────────────────────────────────────────
+// 1:1 of: pub(crate) fn spinner(start_time: Option<Instant>, animations_enabled: bool) -> Span<'static>
+// startTime is a pointer — nil maps to Option::None, non-nil maps to Option::Some(Instant).
 
-// ShimmerWithDot renders text with leading dot indicator (Codex style)
-// Example: "• Generating..." with shimmer effect on both dot and text
-func ShimmerWithDot(text string) string {
-	dot := ShimmerDot()
-	shimmered := ShimmerTextCodex(nil, text)
-	return dot + " " + shimmered
-}
-
-// ShimmerModel is a Bubble Tea model for animated shimmer
-type ShimmerModel struct {
-	text      string
-	withDot   bool
-	lastFrame time.Time
-}
-
-// ShimmerTickMsg triggers shimmer animation update
-type ShimmerTickMsg struct{}
-
-// NewShimmerModel creates a new shimmer model
-func NewShimmerModel(text string, withDot bool) ShimmerModel {
-	return ShimmerModel{
-		text:      text,
-		withDot:   withDot,
-		lastFrame: time.Now(),
+func Spinner(startTime *time.Time, animationsEnabled bool) string {
+	// 1:1 of: if !animations_enabled { return "•".dim(); }
+	if !animationsEnabled {
+		return lipgloss.NewStyle().Faint(true).Render("•")
 	}
-}
 
-// Init starts the shimmer animation
-func (m ShimmerModel) Init() tea.Cmd {
-	return shimmerTick()
-}
-
-// Update handles animation ticks
-func (m ShimmerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case ShimmerTickMsg:
-		m.lastFrame = time.Now()
-		return m, shimmerTick()
+	// 1:1 of: let elapsed = start_time.map(|st| st.elapsed()).unwrap_or_default();
+	var elapsed time.Duration
+	if startTime != nil {
+		elapsed = time.Since(*startTime)
 	}
-	return m, nil
-}
 
-// View renders the current shimmer frame
-func (m ShimmerModel) View() tea.View {
-	if m.withDot {
-		return tea.NewView(ShimmerWithDot(m.text))
+	// 1:1 of: supports_color check
+	if hasTrueColor() {
+		// 1:1 of: shimmer_spans("•")[0].clone()
+		spans := ShimmerSpans("•")
+		if len(spans) > 0 {
+			return spans[0]
+		}
+		return "•"
 	}
-	return tea.NewView(ShimmerTextCodex(nil, m.text))
-}
 
-// shimmerTick returns a command that triggers animation update at ~60fps
-func shimmerTick() tea.Cmd {
-	return tea.Tick(time.Second/60, func(t time.Time) tea.Msg {
-		return ShimmerTickMsg{}
-	})
-}
+	// 1:1 of: let blink_on = (elapsed.as_millis() / 600).is_multiple_of(2);
+	blinkOn := (elapsed.Milliseconds()/600)%2 == 0
 
-// ShimmerView renders a single frame of shimmer (for non-Tea usage)
-func ShimmerView(text string, withDot bool) string {
-	if withDot {
-		return ShimmerWithDot(text)
+	// 1:1 of: if blink_on { "•".into() } else { "◦".dim() }
+	if blinkOn {
+		return "•"
 	}
-	return ShimmerTextCodex(nil, text)
+	return lipgloss.NewStyle().Faint(true).Render("◦")
+}
+
+// ── ShimmerText ───────────────────────────────────────────────────────────────
+// Convenience wrapper with "•" dot prefix — matches the spinner prefix pattern.
+//
+//	func (m Model) View() tea.View {
+//	    return tea.NewView(shimmer.ShimmerText("Sapphire is thinking..."))
+//	}
+
+func ShimmerText(text string) string {
+	return strings.Join(ShimmerSpans(text), "")
+}
+
+// ── ShimmerWithDotPrefix ──────────────────────────────────────────────────────
+// Renders a shimmering "• text" — dot prefix shimmers alongside the text.
+
+func ShimmerWithDotPrefix(text string) string {
+	return strings.Join(ShimmerSpans("• "+text), "")
 }

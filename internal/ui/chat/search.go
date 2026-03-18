@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -178,7 +177,7 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	if path == "" {
 		path = "."
 	}
-	path = fsext.PrettyPath(path)
+	path = formatRelativePath(path)
 
 	header := toolHeader(sty, opts.Status, "List", cappedWidth, opts.Compact, path)
 	if opts.Compact {
@@ -277,6 +276,12 @@ func renderGlobOutput(sty *styles.Styles, content string, width int, expanded bo
 			break
 		}
 		clean := strings.TrimSpace(line)
+		isDir := strings.HasSuffix(clean, "/")
+		clean = strings.TrimSuffix(clean, "/")
+		clean = formatRelativePath(clean)
+		if isDir {
+			clean += "/"
+		}
 		clean = ansi.Truncate(clean, width, "…")
 		styled := sty.Tool.ListFile.Render(clean)
 		if strings.HasSuffix(clean, "/") {
@@ -303,7 +308,11 @@ func renderListOutput(sty *styles.Styles, content string, width int, expanded bo
 			return
 		}
 		treeNodes := buildListTree(listBlock)
-		for _, line := range renderListTreeNodes(sty, treeNodes, "", width) {
+		renderNodes := make([]*TreeNode, 0, len(treeNodes))
+		for _, node := range treeNodes {
+			renderNodes = append(renderNodes, listTreeToRenderNode(sty, node, true))
+		}
+		for _, line := range renderTreeLines(renderNodes, "", width) {
 			out = append(out, sty.Tool.Body.Render(line))
 		}
 		listBlock = nil
@@ -374,36 +383,25 @@ func buildListTree(lines []string) []*listNode {
 	return root.children
 }
 
-func renderListTreeNodes(sty *styles.Styles, nodes []*listNode, prefix string, width int) []string {
-	var lines []string
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-		branch := "├── "
-		if isLast {
-			branch = "└── "
-		}
-
-		style := sty.Tool.ListFile
-		if strings.HasSuffix(node.name, "/") {
-			style = sty.Tool.ListDirectory
-		}
-		if prefix == "" {
-			style = sty.Tool.ListRoot
-		}
-
-		line := prefix + branch + style.Render(node.name)
-		line = ansi.Truncate(line, max(0, width), "…")
-		lines = append(lines, line)
-
-		if len(node.children) > 0 {
-			childPrefix := prefix + "│   "
-			if isLast {
-				childPrefix = prefix + "    "
-			}
-			lines = append(lines, renderListTreeNodes(sty, node.children, childPrefix, width)...)
-		}
+func listTreeToRenderNode(sty *styles.Styles, node *listNode, isRoot bool) *TreeNode {
+	name := formatRelativePath(node.name)
+	style := sty.Tool.ListFile
+	if strings.HasSuffix(name, "/") {
+		style = sty.Tool.ListDirectory
 	}
-	return lines
+	if isRoot {
+		style = sty.Tool.ListRoot
+	}
+
+	label := style.Render(name)
+	children := make([]*TreeNode, 0, len(node.children))
+	for _, child := range node.children {
+		children = append(children, listTreeToRenderNode(sty, child, false))
+	}
+	return &TreeNode{
+		Label:    label,
+		Children: children,
+	}
 }
 
 var grepLineRE = regexp.MustCompile(`^\s*Line (\d+)(?:, Char (\d+))?: (.*)$`)
@@ -435,7 +433,7 @@ func renderGrepOutput(sty *styles.Styles, pattern string, literal bool, content 
 			out = append(out, sty.Tool.Body.Render(sty.Tool.ListHint.Render(ansi.Truncate(trimmed, width, "…"))))
 		case strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "Line "):
 			name := strings.TrimSuffix(trimmed, ":")
-			name = fsext.PrettyPath(filepath.ToSlash(name))
+			name = formatRelativePath(filepath.ToSlash(name))
 			out = append(out, "")
 			out = append(out, sty.Tool.Body.Render(sty.Tool.GrepFile.Render(ansi.Truncate(name, width, "…"))))
 		default:

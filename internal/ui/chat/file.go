@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/sapphire/internal/fsext"
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -122,7 +121,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		}
 	}
 
-	body := renderViewSummary(sty, filePaths, opts.Result, cappedWidth-toolBodyLeftPaddingTotal)
+	body := renderViewSummary(sty, filePaths, params, opts.Result, cappedWidth-toolBodyLeftPaddingTotal)
 	if body == "" {
 		return header
 	}
@@ -134,7 +133,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 // - Uses shortest suffix that disambiguates when needed
 // - Avoids full paths unless required
 func formatFilePath(path string) string {
-	return fsext.PrettyPath(path)
+	return formatRelativePath(path)
 }
 
 // countLines counts the number of lines in content
@@ -145,29 +144,60 @@ func countLines(content string) int {
 	return strings.Count(content, "\n") + 1
 }
 
-// renderViewSummary renders a summary of viewed files with line counts using tree glyphs
-func renderViewSummary(sty *styles.Styles, filePaths []string, result *message.ToolResult, width int) string {
-	lines := make([]string, 0, len(filePaths))
+// renderViewSummary renders a summary of viewed files with line ranges using tree glyphs.
+func renderViewSummary(sty *styles.Styles, filePaths []string, params tools.ViewParams, result *message.ToolResult, width int) string {
+	normalizedPaths := make([]string, 0, len(filePaths))
+	for _, p := range filePaths {
+		if p == "" {
+			continue
+		}
+		normalizedPaths = append(normalizedPaths, formatRelativePath(p))
+	}
+	if len(normalizedPaths) == 0 {
+		return ""
+	}
 
-	// Try to get line counts from metadata
+	lineRanges := make(map[string]lineRange)
 	var meta tools.ViewResponseMetadata
-	lineCounts := make(map[string]int)
 	if result != nil && result.Metadata != "" {
 		if err := json.Unmarshal([]byte(result.Metadata), &meta); err == nil {
 			for _, file := range meta.Files {
-				lineCounts[file.FilePath] = countLines(file.Content)
+				path := formatRelativePath(file.FilePath)
+				if path == "" {
+					continue
+				}
+				lines := countLines(file.Content)
+				if lines > 0 {
+					start := resolveLineStart(path, normalizedPaths, params)
+					lineRanges[path] = lineRange{start: start, end: start + lines - 1}
+				}
 			}
-			// Also check legacy single-file content
 			if meta.FilePath != "" && meta.Content != "" {
-				lineCounts[meta.FilePath] = countLines(meta.Content)
+				path := formatRelativePath(meta.FilePath)
+				if path != "" {
+					lines := countLines(meta.Content)
+					if lines > 0 {
+						start := resolveLineStart(path, normalizedPaths, params)
+						lineRanges[path] = lineRange{start: start, end: start + lines - 1}
+					}
+				}
 			}
 		}
 	}
 
-	// Build tree structure from file paths
-	tree := buildFileTree(filePaths, lineCounts)
-	lines = append(lines, renderTreeNode(sty, tree, "", true, width)...)
+	// Fallback for single-file reads when metadata is missing.
+	if len(lineRanges) == 0 && len(normalizedPaths) == 1 && params.Limit > 0 {
+		start := params.Offset + 1
+		lineRanges[normalizedPaths[0]] = lineRange{start: start, end: start + params.Limit - 1}
+	}
 
+	tree := buildFileTree(normalizedPaths, lineRanges)
+	renderNodes := make([]*TreeNode, 0, len(tree))
+	for _, node := range tree {
+		renderNodes = append(renderNodes, fileTreeToRenderNode(sty, node, lineRanges))
+	}
+
+	lines := renderTreeLines(renderNodes, "", width)
 	return strings.Join(lines, "\n")
 }
 
@@ -175,13 +205,19 @@ func renderViewSummary(sty *styles.Styles, filePaths []string, result *message.T
 type treeNode struct {
 	name      string
 	path      string
-	lineCount int
+	lineStart int
+	lineEnd   int
 	children  []*treeNode
 	isFile    bool
 }
 
+type lineRange struct {
+	start int
+	end   int
+}
+
 // buildFileTree constructs a tree from a list of file paths
-func buildFileTree(paths []string, lineCounts map[string]int) []*treeNode {
+func buildFileTree(paths []string, lineRanges map[string]lineRange) []*treeNode {
 	root := &treeNode{name: "", children: []*treeNode{}}
 
 	for _, path := range paths {
@@ -210,14 +246,19 @@ func buildFileTree(paths []string, lineCounts map[string]int) []*treeNode {
 				}
 			}
 			if child == nil {
-				lineCount := 0
+				lineStart := 0
+				lineEnd := 0
 				if isFile {
-					lineCount = lineCounts[currentPath]
+					if r, ok := lineRanges[currentPath]; ok {
+						lineStart = r.start
+						lineEnd = r.end
+					}
 				}
 				child = &treeNode{
 					name:      part,
 					path:      currentPath,
-					lineCount: lineCount,
+					lineStart: lineStart,
+					lineEnd:   lineEnd,
 					isFile:    isFile,
 					children:  []*treeNode{},
 				}
@@ -230,53 +271,35 @@ func buildFileTree(paths []string, lineCounts map[string]int) []*treeNode {
 	return root.children
 }
 
-// renderTreeNode renders a tree node with proper branch glyphs
-func renderTreeNode(sty *styles.Styles, nodes []*treeNode, prefix string, isLast bool, width int) []string {
-	var lines []string
+func resolveLineStart(path string, normalizedPaths []string, params tools.ViewParams) int {
+	if len(normalizedPaths) == 1 && params.Offset > 0 && normalizedPaths[0] == path {
+		return params.Offset + 1
+	}
+	return 1
+}
 
-	for i, node := range nodes {
-		isLastChild := i == len(nodes)-1
-
-		// Build the branch prefix
-		var branch string
-		if isLastChild {
-			branch = "└── "
-		} else {
-			branch = "├── "
+func fileTreeToRenderNode(sty *styles.Styles, node *treeNode, ranges map[string]lineRange) *TreeNode {
+	label := node.name
+	if node.isFile {
+		name := sty.Base.Foreground(sty.FgBase).Bold(true).Render(node.name)
+		label = name
+		if r, ok := ranges[node.path]; ok && r.start > 0 && r.end >= r.start {
+			lineInfo := sty.Base.Foreground(sty.Tertiary).Render(fmt.Sprintf(" L%d-L%d", r.start, r.end))
+			label += lineInfo
 		}
-
-		// Format the file/folder name with color
-		var name string
-		if node.isFile {
-			name = sty.Base.Foreground(sty.LogoTitleColorB).Render(node.name)
-		} else {
-			name = sty.Base.Foreground(sty.FgBase).Render(node.name)
-		}
-
-		// Add line count for files
-		var lineInfo string
-		if node.isFile && node.lineCount > 0 {
-			lineInfo = sty.HalfMuted.Render(fmt.Sprintf(" · %d lines", node.lineCount))
-		}
-
-		line := prefix + branch + name + lineInfo
-		line = ansi.Truncate(line, max(0, width), "…")
-		lines = append(lines, line)
-
-		// Recurse into children
-		if len(node.children) > 0 {
-			var childPrefix string
-			if isLastChild {
-				childPrefix = prefix + "    "
-			} else {
-				childPrefix = prefix + "│   "
-			}
-			childLines := renderTreeNode(sty, node.children, childPrefix, isLastChild, width)
-			lines = append(lines, childLines...)
-		}
+	} else {
+		label = sty.Base.Foreground(sty.FgBase).Render(node.name)
 	}
 
-	return lines
+	children := make([]*TreeNode, 0, len(node.children))
+	for _, child := range node.children {
+		children = append(children, fileTreeToRenderNode(sty, child, ranges))
+	}
+
+	return &TreeNode{
+		Label:    label,
+		Children: children,
+	}
 }
 
 func truncateAgenticViewLine(line string, width int) string {
@@ -387,11 +410,11 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	if opts.ToolCall.Name == tools.AgenticEditToolName {
 		title = "Agentic Edit"
 	}
-	
+
 	// Add line count info if available
 	var toolParams []string
 	toolParams = append(toolParams, file)
-	
+
 	header := toolHeader(sty, opts.Status, title, width, opts.Compact, toolParams...)
 	if opts.Compact {
 		return header
@@ -415,16 +438,16 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	// Calculate lines edited
 	linesEdited := meta.Additions + meta.Removals
-	
+
 	// Render diff with line count info
 	body := toolOutputDiffContent(sty, file, meta.OldContent, meta.NewContent, width, opts.ExpandedContent)
-	
+
 	// Add line count summary
 	if linesEdited > 0 {
 		lineInfo := fmt.Sprintf(" · %d lines changed", linesEdited)
 		body = strings.Replace(body, "\n", lineInfo+"\n", 1)
 	}
-	
+
 	return joinToolParts(header, body)
 }
 

@@ -43,8 +43,8 @@ const (
 	ImageIcon string = "■"
 	TextIcon  string = "≡"
 
-	ScrollbarThumb string = "┃"
-	ScrollbarTrack string = "│"
+	ScrollbarThumb string = " "
+	ScrollbarTrack string = " "
 
 	LSPErrorIcon   string = "E"
 	LSPWarningIcon string = "W"
@@ -577,7 +577,6 @@ func DefaultStyles(yellowMode bool) Styles {
 		bgSubtle         = lipgloss.Color(bgSubtleHex)
 		bgOverlay        = lipgloss.Color(bgOverlayHex)
 
-		thinkingBg     = bgOverlay
 		thinkingBorder = lipgloss.Color("#44336A")
 
 		// Foregrounds
@@ -642,8 +641,6 @@ func DefaultStyles(yellowMode bool) Styles {
 		secondaryHex = yellowSecondaryHex
 		tertiaryHex = yellowTertiaryHex
 	}
-
-	normalBorder := lipgloss.NormalBorder()
 
 	base := lipgloss.NewStyle().Foreground(fgBase)
 
@@ -734,14 +731,14 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 	}
 
-	syntaxGray := "#EEE7FA"
-	syntaxGrayMuted := "#9E96B9"
-	syntaxSubtlePink := "#F3B3E6" // Settled pink for strings and supporting tokens
-	syntaxPurple := primaryHex
-	syntaxBlue := tertiaryHex
-	syntaxPink := secondaryHex
-	syntaxGreen := "#4ADE80" // Bright green for constants
-	syntaxLime := "#A3E635"  // Vibrant lime for numbers
+	syntaxOffWhite := "#E6E6E6"  // Plain text / foreground
+	syntaxPurple := "#A34DFF"    // Keywords / Operators
+	syntaxPink := "#EA8EED"      // Functions / Methods
+	syntaxOrange := "#FF944D"    // Strings
+	syntaxLavender := "#D4B3FF"  // Types / Classes
+	syntaxLightBlue := "#7FD4FF" // Variables / Properties
+	syntaxLightRose := "#FFB4C2" // Errors
+	syntaxNeonCyan := "#00FFD9"  // Comments
 
 	s.Markdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -754,7 +751,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				Color: stringPtr(tertiaryHex),
 			},
 			Indent:      uintPtr(1),
-			IndentToken: stringPtr("│ "),
+			IndentToken: stringPtr("  "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -856,28 +853,28 @@ func DefaultStyles(yellowMode bool) Styles {
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
-				Color:           stringPtr(syntaxGray),
-				BackgroundColor: stringPtr(bgOverlayHex),
+				Color:           stringPtr(syntaxOffWhite),
+				BackgroundColor: stringPtr("#1A1624"),
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
-					Color:           stringPtr(fgBase.Hex()),
-					BackgroundColor: stringPtr(bgOverlayHex),
+					Color:           stringPtr(syntaxOffWhite),
+					BackgroundColor: stringPtr("#1A1624"),
 				},
 				Margin: uintPtr(1),
 			},
 			Chroma: &ansi.Chroma{
 				Text: ansi.StylePrimitive{
-					Color: stringPtr(fgBase.Hex()),
+					Color: stringPtr(syntaxOffWhite),
 				},
 				Error: ansi.StylePrimitive{
-					Color:           stringPtr(syntaxGray),
-					BackgroundColor: stringPtr(bgOverlayHex),
+					Color:           stringPtr(syntaxLightRose),
+					BackgroundColor: stringPtr("#1A1624"),
 				},
 				Comment: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGrayMuted),
+					Color: stringPtr(syntaxNeonCyan),
 				},
 				CommentPreproc: ansi.StylePrimitive{
 					Color: stringPtr(syntaxPurple),
@@ -889,72 +886,70 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(syntaxPurple),
 				},
 				KeywordNamespace: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLavender),
 				},
 				KeywordType: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLavender),
 					Bold:  boolPtr(true),
 				},
 				Operator: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGrayMuted),
+					Color: stringPtr(syntaxPurple),
 				},
 				Punctuation: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGrayMuted),
+					Color: stringPtr(syntaxOffWhite),
 				},
 				Name: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				NameBuiltin: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				NameTag: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				NameAttribute: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				NameClass: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLavender),
 					Bold:  boolPtr(true),
 				},
 				NameConstant: ansi.StylePrimitive{
-					Color: stringPtr(syntaxGreen),
-					Bold:  boolPtr(true),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				NameDecorator: ansi.StylePrimitive{
-					Color: stringPtr(syntaxPurple),
+					Color: stringPtr(syntaxPink),
 				},
 				NameFunction: ansi.StylePrimitive{
 					Color: stringPtr(syntaxPink),
 					Bold:  boolPtr(true),
 				},
 				NameException: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLavender),
 				},
 				NameOther: ansi.StylePrimitive{
-					Color: stringPtr(syntaxBlue),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				LiteralNumber: ansi.StylePrimitive{
-					Color: stringPtr(primaryHex),
-					Bold:  boolPtr(true),
+					Color: stringPtr(syntaxOrange),
 				},
 				LiteralDate: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLime),
+					Color: stringPtr(syntaxOrange),
 				},
 				LiteralStringEscape: ansi.StylePrimitive{
-					Color: stringPtr(syntaxSubtlePink),
+					Color: stringPtr(syntaxOrange),
 				},
 				LiteralString: ansi.StylePrimitive{
-					Color: stringPtr(syntaxSubtlePink),
+					Color: stringPtr(syntaxOrange),
 				},
 				GenericDeleted: ansi.StylePrimitive{
-					Color: stringPtr("#F38BA8"),
+					Color: stringPtr(syntaxLightRose),
 				},
 				GenericEmph: ansi.StylePrimitive{
 					Italic: boolPtr(true),
 				},
 				GenericInserted: ansi.StylePrimitive{
-					Color: stringPtr("#A7D46F"),
+					Color: stringPtr(syntaxLightBlue),
 				},
 				GenericStrong: ansi.StylePrimitive{
 					Bold: boolPtr(true),
@@ -963,7 +958,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(markdownSecondaryHex),
 				},
 				Background: ansi.StylePrimitive{
-					BackgroundColor: stringPtr(bgOverlayHex),
+					BackgroundColor: stringPtr("#1A1624"),
 				},
 			},
 		},
@@ -993,7 +988,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				BackgroundColor: plainBg,
 			},
 			Indent:      uintPtr(1),
-			IndentToken: stringPtr("│ "),
+			IndentToken: stringPtr("  "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -1219,7 +1214,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	// borders
-	s.FocusedMessageBorder = lipgloss.Border{Left: BorderThick}
+	s.FocusedMessageBorder = lipgloss.Border{}
 
 	// text presets
 	s.Base = lipgloss.NewStyle().Foreground(fgBase)
@@ -1280,13 +1275,14 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.ParamKey = s.Subtle
 
 	// Content rendering - prepared styles that accept width parameter
+	codeBg := lipgloss.Color("#1A1624") // Darker purple-black for cleaner code blocks
 	s.Tool.ContentLine = s.Base.Foreground(fgBase).Background(bgOverlay).Padding(0, 1)
 	s.Tool.ContentTruncation = s.Muted.Background(bgOverlay).Padding(0, 1)
-	s.Tool.ContentCodeLine = s.Base.Background(bgOverlay).Padding(0, 1)
-	s.Tool.ContentCodeTruncation = s.Muted.Background(bgOverlay).Padding(0, 1)
-	s.Tool.ContentCodeBg = bgOverlay
+	s.Tool.ContentCodeLine = s.Base.Background(codeBg).Padding(0, 1)
+	s.Tool.ContentCodeTruncation = s.Muted.Background(codeBg).Padding(0, 1)
+	s.Tool.ContentCodeBg = codeBg
 	s.Tool.Body = base.PaddingLeft(2)
-	s.Tool.FileBlock = base.Background(bgOverlay).Padding(0, 1)
+	s.Tool.FileBlock = base.Background(codeBg).Padding(0, 1)
 
 	// Deprecated - kept for backward compatibility
 	s.Tool.ContentBg = s.Muted.Background(bgOverlay)
@@ -1361,10 +1357,10 @@ func DefaultStyles(yellowMode bool) Styles {
 	// Borders
 	s.BorderFocus = lipgloss.NewStyle().BorderForeground(borderFocus).Border(lipgloss.RoundedBorder()).Background(bgOverlay).Padding(1, 2)
 
-	// Editor - use warm amber tones instead of green
+	// Editor - use purple for YOLO mode, amber for off-state
 	s.EditorPromptNormalFocused = lipgloss.NewStyle().Foreground(greenDark).SetString("::: ")
 	s.EditorPromptNormalBlurred = s.EditorPromptNormalFocused.Foreground(fgMuted)
-	yoloIconBg := greenDark
+	yoloIconBg := primary // Purple for YOLO mode enabled
 	statusWarn := warning
 	statusOk := greenLight
 	s.EditorPromptStatusIconFocused = lipgloss.NewStyle().Foreground(white).Background(yoloIconBg).Bold(true)
@@ -1375,10 +1371,10 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.EditorPromptStatusDotsWarnMuted = lipgloss.NewStyle().Foreground(fgHalfMuted)
 	s.EditorPromptStatusDotsOk = lipgloss.NewStyle().Foreground(statusOk)
 	s.EditorPromptStatusDotsOkMuted = lipgloss.NewStyle().Foreground(fgHalfMuted)
-	s.EditorPromptYoloIconFocused = lipgloss.NewStyle().MarginRight(1).Foreground(white).Background(greenDark).Bold(true).SetString(" ! ")
-	s.EditorPromptYoloIconBlurred = s.EditorPromptYoloIconFocused.Foreground(charmtone.Pepper).Background(lipgloss.Color("#1f3b27"))
-	s.EditorPromptYoloDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(greenLight).SetString(":::")
-	s.EditorPromptYoloDotsBlurred = s.EditorPromptYoloDotsFocused.Foreground(lipgloss.Color("#4b7a58"))
+	s.EditorPromptYoloIconFocused = lipgloss.NewStyle().MarginRight(1).Foreground(white).Background(yoloIconBg).Bold(true).SetString(" ! ")
+	s.EditorPromptYoloIconBlurred = s.EditorPromptYoloIconFocused.Foreground(charmtone.Pepper).Background(lipgloss.Color("#3d2a5c"))
+	s.EditorPromptYoloDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(primary).SetString(":::")
+	s.EditorPromptYoloDotsBlurred = s.EditorPromptYoloDotsFocused.Foreground(lipgloss.Color("#7a5c9e"))
 
 	s.RadioOn = s.HalfMuted.SetString(RadioOn)
 	s.RadioOff = s.HalfMuted.SetString(RadioOff)
@@ -1424,19 +1420,16 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Files.Deletions = s.Base.Foreground(red).Bold(true)
 
 	// Chat
-	messageFocussedBorder := lipgloss.Border{
-		Left: "▌",
-	}
+	offWhite := lipgloss.Color("#E6E6E6")
+	thinkingText := lipgloss.Color("#EDE6F7")
+	thinkingAccent := lipgloss.Color("#D9B2F0")
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
-	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(tertiary).BorderStyle(normalBorder)
-	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(messageFocussedBorder)
-	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
-	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(tertiary).BorderStyle(messageFocussedBorder)
-	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
+	s.Chat.Message.UserBlurred = lipgloss.NewStyle().Foreground(primary).SetString("> ")
+	s.Chat.Message.UserFocused = lipgloss.NewStyle().Foreground(primary).SetString("> ")
+	s.Chat.Message.AssistantBlurred = lipgloss.NewStyle().Foreground(offWhite).Faint(true)
+	s.Chat.Message.AssistantFocused = lipgloss.NewStyle().Foreground(offWhite).Faint(true)
+	s.Chat.Message.Thinking = lipgloss.NewStyle().Foreground(thinkingText).MaxHeight(10)
 	s.Chat.Message.ErrorTag = lipgloss.NewStyle().
 		Foreground(error).
 		Bold(true)
@@ -1447,28 +1440,22 @@ func DefaultStyles(yellowMode bool) Styles {
 		PaddingLeft(2)
 
 	// Message item styles
-	s.Chat.Message.ToolCallFocused = s.Muted.PaddingLeft(1).
-		BorderStyle(messageFocussedBorder).
-		BorderLeft(true).
-		BorderForeground(tertiary)
-	s.Chat.Message.ToolCallBlurred = s.Muted.PaddingLeft(2)
+	s.Chat.Message.ToolCallFocused = s.Muted
+	s.Chat.Message.ToolCallBlurred = s.Muted
 	// No padding or border for compact tool calls within messages
 	s.Chat.Message.ToolCallCompact = s.Muted
-	s.Chat.Message.SectionHeader = s.Base.PaddingLeft(2)
+	s.Chat.Message.SectionHeader = s.Base
 	s.Chat.Message.AssistantInfoIcon = s.Subtle
 	s.Chat.Message.AssistantInfoModel = s.Muted
 	s.Chat.Message.AssistantInfoProvider = s.Subtle
 	s.Chat.Message.AssistantInfoDuration = s.Subtle
 
-	s.Chat.Message.ThinkingBox = s.Base.Background(thinkingBg).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(thinkingBorder).
-		MarginBottom(1)
+	s.Chat.Message.ThinkingBox = s.Base
 
 	// Thinking section styles
-	s.Chat.Message.ThinkingTruncationHint = s.HalfMuted
-	s.Chat.Message.ThinkingFooterTitle = s.HalfMuted
-	s.Chat.Message.ThinkingFooterDuration = s.Muted
+	s.Chat.Message.ThinkingTruncationHint = lipgloss.NewStyle().Foreground(thinkingAccent)
+	s.Chat.Message.ThinkingFooterTitle = lipgloss.NewStyle().Foreground(thinkingAccent)
+	s.Chat.Message.ThinkingFooterDuration = lipgloss.NewStyle().Foreground(thinkingAccent)
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(tertiary)

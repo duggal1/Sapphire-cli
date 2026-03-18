@@ -283,6 +283,9 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 
 	// 1. Model Header
 	modelName := strings.TrimSpace(a.message.Model)
+	if idx := strings.Index(strings.ToLower(modelName), " via "); idx >= 0 {
+		modelName = strings.TrimSpace(modelName[:idx])
+	}
 
 	// Handle Thinking Mode {high/low} or {on/off}
 	effort := ""
@@ -310,8 +313,8 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 		}
 	}
 
-	modelName = strings.ReplaceAll(modelName, "{", "")
-	modelName = strings.ReplaceAll(modelName, "}", "")
+	modelName = strings.ReplaceAll(modelName, "{", " ")
+	modelName = strings.ReplaceAll(modelName, "}", " ")
 	modelName = strings.Join(strings.Fields(modelName), " ")
 
 	headerText := ansi.Truncate(modelName, max(0, width), "…")

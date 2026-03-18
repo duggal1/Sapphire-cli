@@ -34,24 +34,6 @@ Use `request_user_input` in **Plan Mode** when:
 - **Recommended:** 2-4 mutually exclusive options
 - **Format:** Clear, distinct choices (no filler)
 
-### Response Format
-```json
-{
-  "questions": [
-    {
-      "question": "What authentication method do you prefer?",
-      "options": ["JWT tokens", "OAuth 2.0", "Session-based", "API keys"],
-      "is_other": true
-    },
-    {
-      "question": "Which database should we use?",
-      "options": ["PostgreSQL", "MySQL", "SQLite"],
-      "is_other": false
-    }
-  ]
-}
-```
-
 ---
 
 ## Plan Mode Rules
@@ -67,30 +49,17 @@ In other modes, returns error:
 
 ## Examples
 
-### Good Example (Clear Tradeoffs)
+### Good Example
 ```json
 {
   "questions": [
     {
-      "question": "What authentication method?",
-      "options": ["JWT tokens", "OAuth 2.0", "Session-based"]
+      "question": "What authentication method do you prefer?",
+      "options": ["JWT tokens", "OAuth 2.0", "Session-based", "API keys"]
     }
   ]
 }
 ```
-
-### Bad Example (Answerable from Repo)
-```json
-{
-  "questions": [
-    {
-      "question": "Where is the user model defined?",
-      "options": ["users.go", "models.go", "auth.go"]
-    }
-  ]
-}
-```
-**Why bad:** This can be answered via `glob` or `grep`, not a preference question.
 
 ### Bad Example (Empty Options)
 ```json
@@ -107,28 +76,9 @@ In other modes, returns error:
 
 ---
 
-## Response Handling
-
-User responses are captured and returned to the model as:
-```json
-{
-  "answers": ["JWT tokens", "PostgreSQL"]
-}
-```
-
-Or for free-form "other" responses:
-```json
-{
-  "answers": ["Custom SSO integration"]
-}
-```
-
----
-
 ## Codex Alignment
 
 This tool implements the exact behavior from:
 - `codex-rs/core/src/tools/handlers/request_user_input.rs`
 - Validation: 1-3 questions, non-empty options required
 - Mode restriction: Plan Mode only
-- Response: JSON-serialized answers

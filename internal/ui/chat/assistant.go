@@ -88,7 +88,7 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 
 // StartAnimation starts the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
-	if !a.isSpinning() && !a.hasAnimatedContext() {
+	if !a.isSpinning() {
 		return nil
 	}
 	return a.anim.Start()
@@ -96,12 +96,8 @@ func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
 
 // Animate progresses the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if !a.isSpinning() && !a.hasAnimatedContext() {
+	if !a.isSpinning() {
 		return nil
-	}
-	if a.isSpinning() || a.hasAnimatedContext() || a.message.IsThinking() {
-		a.skillFrame++
-		a.clearCache()
 	}
 	return a.anim.Animate(msg)
 }
@@ -151,8 +147,8 @@ func (a *AssistantMessageItem) Render(width int) string {
 	// it's wrapping logic.
 	// We already know that the content is wrapped to the correct width in
 	// RawRender, so we can just apply the styles directly to each line.
-	focused := a.sty.Chat.Message.AssistantFocused.Render("⚪")
-	blurred := a.sty.Chat.Message.AssistantBlurred.Render("⚪")
+	focused := a.sty.Chat.Message.AssistantFocused.Render("·")
+	blurred := a.sty.Chat.Message.AssistantBlurred.Render("·")
 	rendered := a.RawRender(width)
 	prefix := blurred
 	if a.focused {

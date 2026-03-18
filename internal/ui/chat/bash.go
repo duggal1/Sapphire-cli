@@ -94,10 +94,35 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	commandBlock := renderBashCommandBlock(sty, cmd, bodyWidth)
-	outputBlock := renderBashOutputBlock(sty, output, bodyWidth, opts.ExpandedContent)
-	body := sty.Tool.Body.Render(strings.Join([]string{commandBlock, outputBlock}, "\n"))
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Bash Process")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Command", cmd)})
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, output, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	outputNode := &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")}
+	root.Children = append(root.Children, outputNode)
+	
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	// Append multiline output below the tree
+	outBlock := toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -202,6 +227,86 @@ func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 	return renderJobTool(sty, opts, cappedWidth, "Kill", params.ShellID, description, content)
 }
 
+// -----------------------------------------------------------------------------
+// Job List Tool
+// -----------------------------------------------------------------------------
+
+// JobListToolMessageItem is a message item for job_list tool calls.
+type JobListToolMessageItem struct {
+	*baseToolMessageItem
+}
+
+var _ ToolMessageItem = (*JobListToolMessageItem)(nil)
+
+// NewJobListToolMessageItem creates a new [JobListToolMessageItem].
+func NewJobListToolMessageItem(
+	sty *styles.Styles,
+	toolCall message.ToolCall,
+	result *message.ToolResult,
+	canceled bool,
+) ToolMessageItem {
+	return newBaseToolMessageItem(sty, toolCall, result, &JobListToolRenderContext{}, canceled)
+}
+
+// JobListToolRenderContext renders job_list tool messages.
+type JobListToolRenderContext struct{}
+
+// RenderTool implements the [ToolRenderer] interface.
+func (j *JobListToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	cappedWidth := cappedMessageWidth(width)
+	if opts.IsPending() {
+		return pendingTool(sty, "Job List", opts.Anim)
+	}
+
+	header := toolHeader(sty, opts.Status, "Job List", cappedWidth, opts.Compact)
+	if opts.Compact {
+		return header
+	}
+
+	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+		return joinToolParts(header, earlyState)
+	}
+
+	if !opts.HasResult() {
+		return header
+	}
+
+	var meta tools.JobListResponseMetadata
+	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil || len(meta.Jobs) == 0 {
+		if strings.TrimSpace(opts.Result.Content) == "" || strings.EqualFold(strings.TrimSpace(opts.Result.Content), "No background jobs.") {
+			return joinToolParts(header, sty.Tool.Body.Render(sty.Subtle.Render("No background jobs.")))
+		}
+		return joinToolParts(header, sty.Tool.Body.Render(oneLine(opts.Result.Content)))
+	}
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Jobs")}
+	for _, job := range meta.Jobs {
+		label := job.ShellID
+		if label == "" {
+			label = "job"
+		}
+		children := make([]*TreeNode, 0, 4)
+		if job.Status != "" {
+			children = append(children, &TreeNode{Label: subAgentKVLabel("Status", job.Status)})
+		}
+		if job.Description != "" {
+			children = append(children, &TreeNode{Label: subAgentKVLabel("Task", oneLine(job.Description))})
+		}
+		if job.Command != "" {
+			children = append(children, &TreeNode{Label: subAgentKVLabel("Command", oneLine(job.Command))})
+		}
+		if job.WorkingDirectory != "" {
+			if dirRoot := buildFileContextRoot(sty, "Worktree", fileContextEntriesFromPaths([]string{job.WorkingDirectory})); dirRoot != nil {
+				children = append(children, dirRoot)
+			}
+		}
+		root.Children = append(root.Children, &TreeNode{Label: label, Children: children})
+	}
+
+	body := strings.Join(renderTreeWithRoot(root, cappedWidth-toolBodyLeftPaddingTotal), "\n")
+	return joinToolParts(header, sty.Tool.Body.Render(body))
+}
+
 // renderJobTool renders a job-related tool with the common pattern:
 // header → nested check → early state → body.
 func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, shellID, description, content string) string {
@@ -219,8 +324,37 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 	}
 
 	bodyWidth := width - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(renderBashOutputBlock(sty, content, bodyWidth, opts.ExpandedContent))
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render(fmt.Sprintf("%s Job", action))}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("PID", shellID)})
+	if description != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Task", description)})
+	}
+
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	outputNode := &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")}
+	root.Children = append(root.Children, outputNode)
+	
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := toolOutputPlainContent(sty, content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // jobHeader builds a header for job-related tools.

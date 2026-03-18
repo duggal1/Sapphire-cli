@@ -6,6 +6,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/sapphire/internal/agent/tools"
@@ -38,19 +39,16 @@ func NewViewToolMessageItem(
 // ViewToolRenderContext renders view tool messages.
 type ViewToolRenderContext struct{}
 
+type lineRange struct {
+	start int
+	end   int
+}
+
 // RenderTool implements the [ToolRenderer] interface.
 func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 
-	// Use "View" for single_view, "Agentic View" for agentic_view
-	toolTitle := "View"
-	if opts.ToolCall.Name == tools.AgenticViewToolName {
-		toolTitle = "Agentic View"
-	}
-
-	if opts.IsPending() {
-		return pendingTool(sty, toolTitle, opts.Anim)
-	}
+	toolTitle := viewToolTitle(opts.ToolCall.Name)
 
 	var params tools.ViewParams
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &params); err != nil {
@@ -85,12 +83,21 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return header
 	}
 
-	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
-		return joinToolParts(header, earlyState)
+	if opts.IsPending() {
+		pendingHeader := pendingTool(sty, toolTitle, opts.Anim)
+		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, ToolStatusRunning, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
+		if body == "" {
+			return pendingHeader
+		}
+		return joinToolParts(pendingHeader, sty.Tool.Body.Render(body))
 	}
 
 	if !opts.HasResult() {
-		return header
+		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
+		if body == "" {
+			return header
+		}
+		return joinToolParts(header, sty.Tool.Body.Render(body))
 	}
 
 	// Handle image content.
@@ -121,8 +128,11 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		}
 	}
 
-	body := renderViewSummary(sty, filePaths, params, opts.Result, cappedWidth-toolBodyLeftPaddingTotal)
+	body := renderViewSummary(sty, toolTitle, filePaths, params, opts.Result, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
 	if body == "" {
+		if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+			return joinToolParts(header, earlyState)
+		}
 		return header
 	}
 	return joinToolParts(header, sty.Tool.Body.Render(body))
@@ -144,8 +154,28 @@ func countLines(content string) int {
 	return strings.Count(content, "\n") + 1
 }
 
-// renderViewSummary renders a summary of viewed files with line ranges using tree glyphs.
-func renderViewSummary(sty *styles.Styles, filePaths []string, params tools.ViewParams, result *message.ToolResult, width int) string {
+func viewToolTitle(toolName string) string {
+	switch toolName {
+	case tools.SingleViewToolName:
+		return "View"
+	case tools.AgenticViewToolName:
+		return "Agentic View"
+	default:
+		return "View"
+	}
+}
+
+// renderViewSummary renders structured file context and metadata for view tools.
+func renderViewSummary(
+	sty *styles.Styles,
+	toolTitle string,
+	filePaths []string,
+	params tools.ViewParams,
+	result *message.ToolResult,
+	status ToolStatus,
+	width int,
+	isSingleView bool,
+) string {
 	normalizedPaths := make([]string, 0, len(filePaths))
 	for _, p := range filePaths {
 		if p == "" {
@@ -191,84 +221,181 @@ func renderViewSummary(sty *styles.Styles, filePaths []string, params tools.View
 		lineRanges[normalizedPaths[0]] = lineRange{start: start, end: start + params.Limit - 1}
 	}
 
-	tree := buildFileTree(normalizedPaths, lineRanges)
-	renderNodes := make([]*TreeNode, 0, len(tree))
-	for _, node := range tree {
-		renderNodes = append(renderNodes, fileTreeToRenderNode(sty, node, lineRanges))
+	entries := make([]fileContextEntry, 0, len(normalizedPaths))
+	for _, path := range normalizedPaths {
+		entry := fileContextEntry{Path: path}
+		if r, ok := lineRanges[path]; ok {
+			entry.LineStart = r.start
+			entry.LineEnd = r.end
+		}
+		entries = append(entries, entry)
 	}
 
-	lines := renderTreeLines(renderNodes, "", width)
-	return strings.Join(lines, "\n")
+	root := buildViewDetailsRoot(sty, toolTitle, entries, status, result, isSingleView)
+	if root == nil {
+		return ""
+	}
+	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
-// treeNode represents a node in the file tree
-type treeNode struct {
-	name      string
-	path      string
-	lineStart int
-	lineEnd   int
-	children  []*treeNode
-	isFile    bool
+func buildViewDetailsRoot(
+	sty *styles.Styles,
+	toolTitle string,
+	entries []fileContextEntry,
+	status ToolStatus,
+	result *message.ToolResult,
+	isSingleView bool,
+) *TreeNode {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	if isSingleView && len(entries) > 1 {
+		entries = entries[:1]
+	}
+
+	children := make([]*TreeNode, 0, 6)
+	if scope := viewScope(entries); scope != "" {
+		children = append(children, &TreeNode{Label: subAgentKVLabel("Scope", scope)})
+	}
+
+	if isSingleView {
+		children = append(children, &TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(entries[0]))})
+	} else {
+		children = append(children, &TreeNode{Label: subAgentKVLabel("Files", fmt.Sprintf("%d", len(entries)))})
+		if filesTree := buildFileContextRoot(sty, "Files Read", entries); filesTree != nil {
+			children = append(children, filesTree)
+		}
+	}
+
+	children = append(children, &TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))})
+
+	purpose := "inspect file context"
+	if !isSingleView && len(entries) > 1 {
+		purpose = "inspect multi-file context"
+	}
+	children = append(children, &TreeNode{Label: subAgentKVLabel("Purpose", purpose)})
+
+	if errLine := viewErrorLine(status, result); errLine != "" {
+		children = append(children, &TreeNode{Label: subAgentKVLabel("Error", errLine)})
+	}
+
+	return &TreeNode{
+		Label:    sty.Tool.ListRoot.Render(toolTitle),
+		Children: children,
+	}
 }
 
-type lineRange struct {
-	start int
-	end   int
+func renderViewFileLabel(entry fileContextEntry) string {
+	label := filepath.Base(entry.Path)
+	if entry.LineStart > 0 && entry.LineEnd >= entry.LineStart {
+		label += fmt.Sprintf(" L%d-L%d", entry.LineStart, entry.LineEnd)
+	}
+	return label
 }
 
-// buildFileTree constructs a tree from a list of file paths
-func buildFileTree(paths []string, lineRanges map[string]lineRange) []*treeNode {
-	root := &treeNode{name: "", children: []*treeNode{}}
+func viewScope(entries []fileContextEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
 
-	for _, path := range paths {
-		if path == "" {
+	if len(entries) == 1 {
+		dir := filepath.ToSlash(filepath.Dir(entries[0].Path))
+		if dir == "." || dir == "" {
+			return filepath.Base(entries[0].Path)
+		}
+		return dir
+	}
+
+	dirs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		dir := filepath.ToSlash(filepath.Dir(entry.Path))
+		if dir == "." || dir == "" {
+			dir = filepath.Base(entry.Path)
+		}
+		dirs = append(dirs, dir)
+	}
+
+	common := commonSlashPathPrefix(dirs)
+	if common != "" && common != "." {
+		return common
+	}
+
+	seen := make(map[string]struct{})
+	unique := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if _, ok := seen[dir]; ok {
 			continue
 		}
-		parts := strings.Split(path, "/")
-		current := root
-		currentPath := ""
+		seen[dir] = struct{}{}
+		unique = append(unique, dir)
+	}
+	if len(unique) == 1 {
+		return unique[0]
+	}
+	if len(unique) == 2 {
+		return unique[0] + " + " + unique[1]
+	}
+	return unique[0] + fmt.Sprintf(" + %d more", len(unique)-1)
+}
 
-		for i, part := range parts {
-			if currentPath != "" {
-				currentPath += "/"
-			}
-			currentPath += part
+func commonSlashPathPrefix(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
 
-			// Check if this is a file (last part or has extension)
-			isFile := i == len(parts)-1
+	parts := strings.Split(strings.Trim(paths[0], "/"), "/")
+	prefixLen := len(parts)
 
-			// Find or create child
-			var child *treeNode
-			for _, c := range current.children {
-				if c.name == part {
-					child = c
-					break
-				}
-			}
-			if child == nil {
-				lineStart := 0
-				lineEnd := 0
-				if isFile {
-					if r, ok := lineRanges[currentPath]; ok {
-						lineStart = r.start
-						lineEnd = r.end
-					}
-				}
-				child = &treeNode{
-					name:      part,
-					path:      currentPath,
-					lineStart: lineStart,
-					lineEnd:   lineEnd,
-					isFile:    isFile,
-					children:  []*treeNode{},
-				}
-				current.children = append(current.children, child)
-			}
-			current = child
+	for _, path := range paths[1:] {
+		current := strings.Split(strings.Trim(path, "/"), "/")
+		i := 0
+		for i < prefixLen && i < len(current) && parts[i] == current[i] {
+			i++
+		}
+		prefixLen = i
+		if prefixLen == 0 {
+			return ""
 		}
 	}
 
-	return root.children
+	return strings.Join(parts[:prefixLen], "/")
+}
+
+func viewStatusLabel(status ToolStatus, result *message.ToolResult) string {
+	switch status {
+	case ToolStatusError:
+		return "error"
+	case ToolStatusCanceled:
+		return "canceled"
+	case ToolStatusAwaitingPermission:
+		return "awaiting permission"
+	case ToolStatusRunning:
+		return "reading"
+	}
+	if result == nil {
+		return "reading"
+	}
+	return "read"
+}
+
+func viewPurpose(toolTitle string, fileCount int) string {
+	switch {
+	case toolTitle == "Single View":
+		return "inspect file context"
+	case fileCount > 1:
+		return "inspect multi-file context"
+	default:
+		return "inspect file context"
+	}
+}
+
+func viewErrorLine(status ToolStatus, result *message.ToolResult) string {
+	if status != ToolStatusError || result == nil {
+		return ""
+	}
+	text := oneLine(result.Content)
+	return strings.TrimSpace(text)
 }
 
 func resolveLineStart(path string, normalizedPaths []string, params tools.ViewParams) int {
@@ -276,37 +403,6 @@ func resolveLineStart(path string, normalizedPaths []string, params tools.ViewPa
 		return params.Offset + 1
 	}
 	return 1
-}
-
-func fileTreeToRenderNode(sty *styles.Styles, node *treeNode, ranges map[string]lineRange) *TreeNode {
-	label := node.name
-	if node.isFile {
-		name := sty.Base.Foreground(sty.FgBase).Bold(true).Render(node.name)
-		label = name
-		if r, ok := ranges[node.path]; ok && r.start > 0 && r.end >= r.start {
-			lineInfo := sty.Base.Foreground(sty.Tertiary).Render(fmt.Sprintf(" L%d-L%d", r.start, r.end))
-			label += lineInfo
-		}
-	} else {
-		label = sty.Base.Foreground(sty.FgBase).Render(node.name)
-	}
-
-	children := make([]*TreeNode, 0, len(node.children))
-	for _, child := range node.children {
-		children = append(children, fileTreeToRenderNode(sty, child, ranges))
-	}
-
-	return &TreeNode{
-		Label:    label,
-		Children: children,
-	}
-}
-
-func truncateAgenticViewLine(line string, width int) string {
-	if width <= 0 {
-		return line
-	}
-	return strings.TrimRight(line, "\n")
 }
 
 // -----------------------------------------------------------------------------

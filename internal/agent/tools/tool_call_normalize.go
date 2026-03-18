@@ -85,6 +85,14 @@ func toolNameAlias(name string) string {
 		"execute_command", "shell_command":
 		return BashToolName
 
+	// Background job aliases
+	case "job_list", "jobs", "list_jobs", "background_jobs", "job_status":
+		return JobListToolName
+	case "job_output", "job_logs", "job_log", "logs", "tail_job":
+		return JobOutputToolName
+	case "job_kill", "kill_job", "stop_job", "cancel_job", "terminate_job":
+		return JobKillToolName
+
 	// Todo aliases - COMMENTED OUT, replaced with update_plan
 	// case "todo", "to_do", "todo_list", "to_do_list",
 	// 	"task", "tasks", "task_list", "checklist":

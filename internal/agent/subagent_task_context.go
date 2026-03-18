@@ -58,6 +58,13 @@ func writeSubAgentTaskContext(workDir string, assignment subAgentAssignment) err
 	builder.WriteString("5. Security Verification: Security scan must pass if available.\n")
 	builder.WriteString("\n**IMPORTANT**: If you fail validation, this worktree will be quarantined for audit. Do not submit until the project is stable.\n")
 
+	if assignment.LongHorizonContext != "" {
+		builder.WriteString("\n## Long-Horizon Context\n")
+		builder.WriteString("This task is part of a long-horizon project. Adhere to the following state:\n")
+		builder.WriteString(assignment.LongHorizonContext)
+		builder.WriteString("\n")
+	}
+
 	builder.WriteString("\n## Memory Protocol\n")
 	builder.WriteString("- Significant decisions should be captured in the SUMMARY.\n")
 	builder.WriteString("- Large file changes will trigger automated memory extraction.\n")

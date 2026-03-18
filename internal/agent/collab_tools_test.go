@@ -107,6 +107,58 @@ func TestWaitSubAgentsReturnsAfterLifecycleEvent(t *testing.T) {
 	<-done
 }
 
+func TestWaitSubAgentsReturnsWhenAnyAgentFinishes(t *testing.T) {
+	t.Parallel()
+
+	coord := &coordinator{
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+	completedRunner := &subAgentRunner{
+		id:           "agent-done",
+		sessionID:    "session-done",
+		status:       subAgentStatusRunning,
+		submissions:  make(map[string]*subAgentSubmission),
+		assignment:   subAgentAssignment{Task: "Done soon"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
+	}
+	runningRunner := &subAgentRunner{
+		id:           "agent-running",
+		sessionID:    "session-running",
+		status:       subAgentStatusRunning,
+		submissions:  make(map[string]*subAgentSubmission),
+		assignment:   subAgentAssignment{Task: "Still running"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
+	}
+	coord.subAgentRegistry.upsert("agent-done", completedRunner)
+	coord.subAgentRegistry.upsert("agent-running", runningRunner)
+
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		completedRunner.mu.Lock()
+		completedRunner.status = subAgentStatusCompleted
+		completedRunner.lastResult = "done"
+		broker := completedRunner.statusBroker
+		payload := completedRunner.lifecycleEventLocked("submission-done", SubAgentStageCompleted, "")
+		completedRunner.mu.Unlock()
+		publishSubAgentStatus(broker, subAgentStatusCompleted)
+		publishSubAgentLifecycleEvent(SubAgentCompletedEvent, payload)
+	}()
+
+	start := time.Now()
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-done", "agent-running"}, 2*time.Second)
+	require.False(t, timedOut)
+	require.Len(t, snapshots, 2)
+	require.Less(t, time.Since(start), 500*time.Millisecond)
+
+	statuses := map[string]subAgentStatus{}
+	for _, snap := range snapshots {
+		statuses[snap.ID] = snap.Status
+	}
+	require.Equal(t, subAgentStatusCompleted, statuses["agent-done"])
+	require.Equal(t, subAgentStatusRunning, statuses["agent-running"])
+}
+
 func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {
 	t.Parallel()
 

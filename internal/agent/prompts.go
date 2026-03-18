@@ -29,13 +29,16 @@ var orchestratorPrompt []byte
 //go:embed templates/subagent_orchestrator.md.tpl
 var subAgentOrchestratorPrompt []byte
 
-//go:embed templates/memory_read.md.tpl
+//go:embed templates/memories/read_path.md
 var memoryReadPrompt []byte
 
-//go:embed templates/memory_extraction.md.tpl
+//go:embed templates/memories/stage_one_system.md
 var memoryExtractionPrompt []byte
 
-//go:embed templates/memory_consolidation.md.tpl
+//go:embed templates/memories/stage_one_input.md
+var memoryExtractionInputPrompt []byte
+
+//go:embed templates/memories/consolidation.md
 var memoryConsolidationPrompt []byte
 
 // coderPrompt creates a new prompt specifically tailored for the coding agent.

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,12 +11,6 @@ import (
 
 func (c *coordinator) validateSubAgentLaunch(ctx context.Context, sessionID, prompt string) (subAgentLaunchDecision, error) {
 	decision := evaluateSubAgentLaunch(prompt)
-	if !decision.Allowed {
-		if decision.Reason == "" {
-			decision.Reason = "guardrail rejection"
-		}
-		return decision, fmt.Errorf("sub-agent launch rejected: %s", decision.Reason)
-	}
 
 	if sessionID != "" {
 		if err := c.ensureSubAgentDepth(ctx, sessionID, 1); err != nil {
@@ -27,9 +20,6 @@ func (c *coordinator) validateSubAgentLaunch(ctx context.Context, sessionID, pro
 		limit := c.subAgentThreadLimit()
 		if limit > 0 && active >= limit {
 			return decision, fmt.Errorf("sub-agent launch rejected: %d active sub-agents already running", active)
-		}
-		if decision.TaskKey != "" && c.hasDuplicateSubAgent(sessionID, decision.TaskKey) {
-			return decision, errors.New("sub-agent launch rejected: duplicate task already running")
 		}
 	}
 
@@ -71,7 +61,7 @@ func (c *coordinator) ensureSubAgentDepth(ctx context.Context, sessionID string,
 	if limit <= 0 {
 		return nil
 	}
-	depthCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	depthCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	depth, err := c.sessionDepth(depthCtx, sessionID)
 	if err != nil {

@@ -42,16 +42,16 @@ type PlanItem struct {
 
 // UpdatePlanArgs represents the arguments for the update_plan tool (Codex UpdatePlanArgs equivalent)
 type UpdatePlanArgs struct {
-	Explanation *string     `json:"explanation,omitempty" description:"Optional brief explanation for the plan update"`
-	Plan        []PlanItem  `json:"plan" description:"List of plan items with steps and statuses"`
+	Explanation *string    `json:"explanation,omitempty" description:"Optional brief explanation for the plan update"`
+	Plan        []PlanItem `json:"plan" description:"List of plan items with steps and statuses"`
 }
 
 // PlanResponseMetadata contains metadata about the plan update
 type PlanResponseMetadata struct {
-	TotalSteps      int `json:"total_steps"`
-	CompletedSteps  int `json:"completed_steps"`
-	PendingSteps    int `json:"pending_steps"`
-	InProgressSteps int `json:"in_progress_steps"`
+	TotalSteps      int  `json:"total_steps"`
+	CompletedSteps  int  `json:"completed_steps"`
+	PendingSteps    int  `json:"pending_steps"`
+	InProgressSteps int  `json:"in_progress_steps"`
 	IsNew           bool `json:"is_new"`
 }
 
@@ -71,8 +71,12 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 			// Plan Mode uses conversation-based planning with <plan> blocks
 			// Reference: codex-rs/core/src/tools/handlers/plan.rs
 			currentSession, err := sessions.Get(ctx, sessionID)
+			wasEmpty := false
 			if err == nil && currentSession.Mode == planmode.PlanMode {
 				return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode - Plan Mode uses conversation-based planning with <plan> blocks, not the update_plan tool. Switch to pair_programming or execute mode to use update_plan")
+			}
+			if err == nil {
+				wasEmpty = len(currentSession.Todos) == 0
 			}
 
 			// Validate plan is not empty (Codex constraint)
@@ -119,7 +123,7 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 					}
 				}
 				currentSession.Todos = todos
-				_, _ = sessions.Save(ctx, currentSession)  // Ignore errors - this is optional
+				_, _ = sessions.Save(ctx, currentSession) // Ignore errors - this is optional
 			}
 
 			// Count steps by status
@@ -134,44 +138,15 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 				}
 			}
 
-			// Build response (this becomes the message event)
-			response := "Plan updated successfully.\n\n"
-			
-			if args.Explanation != nil && *args.Explanation != "" {
-				response += fmt.Sprintf("%s\n\n", *args.Explanation)
-			}
-
-			// Display plan as checklist (UI renders this)
-			response += "Current Plan:\n"
-			for i, item := range args.Plan {
-				var icon string
-				switch item.Status {
-				case StepStatusCompleted:
-					icon = "✓"
-				case StepStatusInProgress:
-					icon = "→"
-				default:
-					icon = "○"
-				}
-				response += fmt.Sprintf("%d. [%s] %s\n", i+1, icon, item.Step)
-			}
-
-			response += fmt.Sprintf("\nProgress: %d/%d completed", completedCount, len(args.Plan))
-
-			// If all steps completed, emphasize completion
-			if completedCount == len(args.Plan) {
-				response += " ✓ All tasks completed!"
-			}
-
+			response := "Plan updated"
 			metadata := PlanResponseMetadata{
 				TotalSteps:      len(args.Plan),
 				CompletedSteps:  completedCount,
 				PendingSteps:    pendingCount,
 				InProgressSteps: inProgressCount,
-				IsNew:           err == nil && len(currentSession.Todos) == 0,
+				IsNew:           err == nil && wasEmpty,
 			}
 
-			// CODEX EVENT: Return response → becomes message → pubsub → UI renders
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)

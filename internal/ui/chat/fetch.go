@@ -69,10 +69,40 @@ func (f *FetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		return header
 	}
 
-	// Determine file extension for syntax highlighting based on format.
+	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Fetch")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("URL", params.URL)})
+	if params.Format != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Format", params.Format)})
+	}
+	if params.Timeout != 0 {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Timeout", formatTimeout(params.Timeout))})
+	}
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
 	file := getFileExtensionForFormat(params.Format)
-	body := toolOutputCodeContent(sty, file, opts.Result.Content, 0, cappedWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+	outBlock := toolOutputCodeContent(sty, file, opts.Result.Content, 0, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // getFileExtensionForFormat returns a filename with appropriate extension for syntax highlighting.
@@ -137,8 +167,33 @@ func (w *WebFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 		return header
 	}
 
-	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Web Fetch")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("URL", params.URL)})
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := toolOutputMarkdownContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -195,8 +250,33 @@ func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		return header
 	}
 
-	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Search")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Query", query)})
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := toolOutputMarkdownContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -249,6 +329,31 @@ func (g *GoogleSearchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		return header
 	}
 
-	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Google Grounding")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Query", params.Query)})
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := toolOutputMarkdownContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }

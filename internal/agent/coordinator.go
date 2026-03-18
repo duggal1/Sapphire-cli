@@ -70,6 +70,37 @@ type Coordinator interface {
 	Summarize(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
+	MemoryPipe() interface{}
+	ConsolidateMemory(ctx context.Context, sessionID string) error
+	GetLongHorizonState(sessionID string) string
+	GetLongHorizonAuditTail(sessionID string, maxBytes int) string
+}
+
+func (c *coordinator) MemoryPipe() interface{} {
+	return c.memoryPipe
+}
+
+func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) error {
+	if c.memoryPipe == nil {
+		return nil
+	}
+	return c.memoryPipe.ConsolidateMemory(ctx, sessionID)
+}
+
+func (c *coordinator) GetLongHorizonState(sessionID string) string {
+	if c.longHorizon == nil {
+		return ""
+	}
+	return c.longHorizon.BuildInjection(sessionID)
+}
+
+func (c *coordinator) GetLongHorizonAuditTail(sessionID string, maxBytes int) string {
+	if c.longHorizon == nil {
+		return ""
+	}
+	// We'll call the BuildInjection but we might want to extend longhorizon.Manager for tail only.
+	// For now, this is sufficient for metadata injection.
+	return c.longHorizon.BuildInjection(sessionID)
 }
 
 // coordinator implements the Coordinator interface and manages multiple AI agents.
@@ -1076,6 +1107,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		Memory:               c.memory,
 		Pmem:                 c.pmem,
 		LongHorizon:          c.longHorizon,
+		MemoryConsolidator:   c.ConsolidateMemory,
 		WaitBackground:       c.waitForBackgroundWork,
 		WriteScope:           writeScope,
 	})
@@ -1279,6 +1311,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 
 	allTools = append(allTools,
 		tools.NewBashTool(c.permissions, workingDir, c.cfg.Options.Attribution, modelName),
+		tools.NewJobListTool(),
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, workingDir, nil),

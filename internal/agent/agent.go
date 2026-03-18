@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -215,6 +216,7 @@ type sessionAgent struct {
 	longHorizon             *longhorizon.Manager
 	longHorizonSessions     *csync.Map[string, bool]
 	longHorizonInit         *csync.Map[string, bool]
+	memoryConsolidator      func(ctx context.Context, sessionID string) error
 	waitBackground          func(ctx context.Context, sessionID string) error
 
 	// Python tool failure tracking - quit after 3 consecutive failures
@@ -240,6 +242,7 @@ type SessionAgentOptions struct {
 	Memory               memory.MemoryService
 	Pmem                 *pmem.System
 	LongHorizon          *longhorizon.Manager
+	MemoryConsolidator   func(ctx context.Context, sessionID string) error
 	WaitBackground       func(ctx context.Context, sessionID string) error
 }
 
@@ -269,6 +272,7 @@ func NewSessionAgent(
 		longHorizon:             opts.LongHorizon,
 		longHorizonSessions:     csync.NewMap[string, bool](),
 		longHorizonInit:         csync.NewMap[string, bool](),
+		memoryConsolidator:      opts.MemoryConsolidator,
 	}
 }
 
@@ -1160,8 +1164,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 		}
 		a.activeRequests.Del(call.SessionID)
+		if a.longHorizon != nil && a.isLongHorizon(call.SessionID) {
+			a.longHorizon.AppendAudit(ctx, call.SessionID, "Triggering context compaction/summarization.")
+		}
 		if summarizeErr := a.Summarize(genCtx, call.SessionID, call.ProviderOptions); summarizeErr != nil {
 			return nil, summarizeErr
+		}
+		if a.longHorizon != nil && a.isLongHorizon(call.SessionID) {
+			a.longHorizon.AppendAudit(ctx, call.SessionID, "Summarization complete; triggering memory consolidation.")
+			// Trigger async consolidation
+			if a.memoryConsolidator != nil {
+				go func() {
+					_ = a.memoryConsolidator(context.Background(), call.SessionID)
+				}()
+			}
 		}
 		a.postCompactionInjection.Set(call.SessionID, true)
 		// Queue the message again so it doesn't get dropped.
@@ -1503,11 +1519,11 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
 					`Plan tool protocol for multi-step tasks (Codex update_plan):
-1. Call update_plan BEFORE technical work with 5-7 steps max, each 5-7 words
-2. Always send the FULL plan on every update; do not omit existing items
-3. Keep exactly one step in_progress at a time
-4. Status transitions must be pending -> in_progress -> completed
-5. Mark steps completed only after verification (tests pass, errors fixed)
+1. Use update_plan only for non-trivial multi-step work
+2. Call update_plan BEFORE technical work when a plan is warranted
+3. Always send the FULL plan on every update; do not omit existing items
+4. Keep exactly one step in_progress at a time
+5. Before the next command, mark the previous completed step as completed
 6. Do not batch-complete items after the fact
 7. Do not abandon the plan - complete every step
 8. Do NOT repeat the full plan after calling update_plan - the harness already displays it
@@ -1527,7 +1543,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`For multi-step tasks, use update_plan before execution: 5-7 steps max (5-7 words each), always send the full plan, keep one step in_progress, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
+					`For multi-step tasks, use update_plan before execution: 5-7 steps max (5-7 words each), always send the full plan, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
 				),
 			))
 		}
@@ -1669,6 +1685,24 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 			retHistory = append([]fantasy.Message{
 				fantasy.NewSystemMessage(notice),
 			}, retHistory...)
+		}
+	}
+
+	// Tier 4: Durable Reference Memory (Codex-style handbook)
+	if a.workingDir != nil {
+		workDir := a.workingDir.Get()
+		memorySummaryPath := filepath.Join(workDir, ".sapphire-memory", "memory_summary.md")
+		if summaryData, err := os.ReadFile(memorySummaryPath); err == nil {
+			summary := string(summaryData)
+			if summary != "" {
+				readInstructions := string(memoryReadPrompt)
+				readInstructions = strings.ReplaceAll(readInstructions, "{{ base_path }}", filepath.Join(workDir, ".sapphire-memory"))
+				readInstructions = strings.ReplaceAll(readInstructions, "{{ memory_summary }}", summary)
+
+				retHistory = append([]fantasy.Message{
+					fantasy.NewSystemMessage(readInstructions),
+				}, retHistory...)
+			}
 		}
 	}
 

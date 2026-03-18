@@ -414,7 +414,7 @@ func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, er
 			if len(params.IDs) == 0 {
 				return fantasy.NewTextErrorResponse("ids are required"), nil
 			}
-			timeout := 30 * time.Second
+			timeout := 60 * time.Second
 			if params.TimeoutMS > 0 {
 				timeout = time.Duration(params.TimeoutMS) * time.Millisecond
 			}

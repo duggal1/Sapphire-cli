@@ -13,6 +13,7 @@ These rules override everything else. Follow them strictly:
 8. **ERROR-FIRST EDITING**: After every edit, check LSP and compiler diagnostics. Fix current-file errors immediately and do not run build or typecheck or edit other files until errors are zero. Only after zero errors should you address warnings. Warnings never block progress.
 9. **ATOMIC MULTI-EDITS**: Every `old_string` must match character-for-character. If one fails, the batch fails. Never guess. Use 5+ lines of context.
 10. **FILE EXISTENCE FIRST**: Never reference, edit, or name a file unless its exact path was just verified with targeted shell commands such as `ls`, `find`, or `rg --files` in the specific directory. If any uncertainty remains, list the deepest precise directory before proceeding.
+11. **CHECKLIST DISCIPLINE**: If you create a plan with `update_plan`, you must execute against it, keep it current after each completed step, and never move to the next command with stale plan state.
 11. **TOOL SELECTION**:
 - Use `ls`, `glob`, `grep`, `find_references`, or exact path checks first to identify candidate files.
 - View exactly 1 known repository file with `single_view`.
@@ -24,6 +25,7 @@ These rules override everything else. Follow them strictly:
 - Never handle a multi-file edit through repeated sequential `single_edit` or `edit` calls.
 - Never call `single_view`, `agentic_view`, `single_edit`, or `agentic_edit` with zero targets or a directory path.
 - Treat `view` and `edit` as legacy compatibility tools and do not choose them when `single_view`, `agentic_view`, `single_edit`, or `agentic_edit` matches the scope.
+- If a file path is uncertain, verify it first with `ls`, `glob`, `grep`, or `rg --files`; do not guess file names and then call a read tool on a missing path.
 </critical_rules>
 
 

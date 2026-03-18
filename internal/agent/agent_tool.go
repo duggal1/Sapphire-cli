@@ -50,15 +50,6 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
-			decision := evaluateSubAgentLaunch(params.Prompt)
-			if !decision.Allowed {
-				msg := "sub-agent launch rejected"
-				if decision.Reason != "" {
-					msg = msg + ": " + decision.Reason
-				}
-				return fantasy.NewTextErrorResponse(msg), nil
-			}
-
 			useWorktree := true
 			if params.Worktree != nil {
 				useWorktree = *params.Worktree

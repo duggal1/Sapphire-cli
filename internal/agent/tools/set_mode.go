@@ -101,7 +101,7 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 			// Add mode-specific guidance
 			switch newMode {
 			case planmode.PlanMode:
-				message.WriteString("\n\n**Plan Mode Active**\n- File editing and shell commands are FORBIDDEN\n- Use update_plan to create plans\n- Focus on thinking and planning only")
+				message.WriteString("\n\n**Plan Mode Active**\n- File editing and shell commands are FORBIDDEN\n- Use conversation-based planning with <plan> blocks\n- Do NOT use update_plan in Plan Mode")
 			case planmode.PairProgrammingMode:
 				message.WriteString("\n\n**Pair Programming Mode Active**\n- All tools available\n- Work in small steps with user collaboration")
 			case planmode.ExecuteMode:

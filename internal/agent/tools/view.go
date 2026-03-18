@@ -33,8 +33,8 @@ type ViewParams struct {
 	Files     []string `json:"files,omitempty" description:"Alias for file_paths"`
 	Path      string   `json:"path,omitempty" description:"Alias for file_path"`
 	// Codex-compatible: 1-indexed offset (user-friendly)
-	Offset    int      `json:"offset,omitempty" description:"The line number to start reading from (1-based, defaults to 1)"`
-	Limit     int      `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
+	Offset int `json:"offset,omitempty" description:"The line number to start reading from (1-based, defaults to 1)"`
+	Limit  int `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
 	// Codex-compatible: Reading modes
 	Mode        string           `json:"mode,omitempty" description:"Reading mode: 'slice' (default) or 'indentation' (Codex-compatible)"`
 	Indentation *IndentationMode `json:"indentation,omitempty" description:"Indentation-aware reading options (Codex-compatible)"`
@@ -89,12 +89,12 @@ const (
 	SingleViewToolName  = "single_view"
 	AgenticViewToolName = "agentic_view"
 	MaxReadSize         = 25 * 1024 * 1024 // 25MB
-	DefaultReadLimit    = 2000
+	DefaultReadLimit    = 5000
 	MaxLineLength       = 2000
-	viewTimeout         = 8 * time.Second
-	
+	viewTimeout         = 20 * time.Second
+
 	// Codex-compatible constants
-	TAB_WIDTH      = 4  // Tab expansion width (Codex default)
+	TAB_WIDTH      = 4   // Tab expansion width (Codex default)
 	MAX_LINE_WIDTH = 500 // Codex max line display width
 )
 
@@ -239,26 +239,7 @@ func NewViewTool(
 					fileInfo, err := os.Stat(fullPath)
 					if err != nil {
 						if os.IsNotExist(err) {
-							dir := filepath.Dir(fullPath)
-							base := filepath.Base(fullPath)
-							dirEntries, dirErr := os.ReadDir(dir)
-							var suggestions []string
-							if dirErr == nil {
-								for _, entry := range dirEntries {
-									if strings.Contains(strings.ToLower(entry.Name()), strings.ToLower(base)) ||
-										strings.Contains(strings.ToLower(base), strings.ToLower(entry.Name())) {
-										suggestions = append(suggestions, filepath.Join(dir, entry.Name()))
-										if len(suggestions) >= 3 {
-											break
-										}
-									}
-								}
-							}
-							if len(suggestions) > 0 {
-								results[idx] = fileResult{filePath: filePath, err: fmt.Errorf("File not found: %s\n\nDid you mean one of these?\n%s", filePath, strings.Join(suggestions, "\n"))}
-							} else {
-								results[idx] = fileResult{filePath: filePath, err: fmt.Errorf("File not found: %s", filePath)}
-							}
+							results[idx] = fileResult{filePath: filePath, err: viewNotFoundError(workingDir, fullPath, filePath)}
 							return
 						}
 						results[idx] = fileResult{filePath: filePath, err: fmt.Errorf("error accessing file %s: %w", filePath, err)}
@@ -341,7 +322,7 @@ func NewViewTool(
 					filetracker.RecordRead(ctx, sessionID, fullPath)
 					if editGuard != nil {
 						// Record view only if we got the full file (params.Offset == 0 and limit > len(lines))
-						// We don't have exactly len(lines) here without passing it out, 
+						// We don't have exactly len(lines) here without passing it out,
 						// but if !hasMore and offset == 0, we've seen the whole file.
 						editGuard.RecordView(sessionID, fullPath, params.Offset == 0 && !hasMore)
 					}
@@ -503,6 +484,22 @@ func resolveViewAliasPath(workingDir, filePath string) (string, string, bool) {
 	return "", "", false
 }
 
+func prettyViewPath(workingDir, path string) string {
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return path
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	relPath, err := filepath.Rel(absWorkingDir, absPath)
+	if err == nil && relPath != "." && !strings.HasPrefix(relPath, "..") {
+		return filepath.ToSlash(relPath)
+	}
+	return filepath.ToSlash(path)
+}
+
 func collectViewPaths(params ViewParams) []string {
 	filePaths := make([]string, 0, len(params.FilePaths)+len(params.Paths)+len(params.Files)+2)
 	filePaths = append(filePaths, params.FilePaths...)
@@ -607,10 +604,10 @@ func isInSkillsPath(filePath string, skillsPaths []string) bool {
 
 // LineRecord represents a single line with metadata (Codex-compatible).
 type LineRecord struct {
-	Number  int    `json:"number"`   // 1-indexed line number
-	Raw     string `json:"raw"`      // Raw line content
-	Display string `json:"display"`  // Tab-expanded display content
-	Indent  int    `json:"indent"`   // Indentation level in spaces
+	Number  int    `json:"number"`  // 1-indexed line number
+	Raw     string `json:"raw"`     // Raw line content
+	Display string `json:"display"` // Tab-expanded display content
+	Indent  int    `json:"indent"`  // Indentation level in spaces
 }
 
 // IsBlank returns true if the line is empty or whitespace-only.
@@ -683,7 +680,7 @@ func readTextFileWithMode(ctx context.Context, filePath string, offset, limit in
 	if offset <= 0 {
 		offset = 1 // Default to first line (Codex-compatible)
 	}
-	
+
 	if mode == "indentation" && indentation != nil {
 		// Indentation-aware reading (Codex feature)
 		content, err := readIndentationBlock(ctx, filePath, offset, limit, indentation)
@@ -692,19 +689,19 @@ func readTextFileWithMode(ctx context.Context, filePath string, offset, limit in
 		}
 		return content, false, nil
 	}
-	
+
 	// Default slice mode
 	content, hasMore, err := readTextFile(ctx, filePath, offset, limit)
 	if err != nil {
 		return "", false, err
 	}
-	
+
 	// Apply tab expansion to output
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		lines[i] = expandTabs(line, TAB_WIDTH)
 	}
-	
+
 	return strings.Join(lines, "\n"), hasMore, nil
 }
 
@@ -776,16 +773,16 @@ func readIndentationBlock(ctx context.Context, filePath string, offset, limit in
 	if indentation.IncludeSiblings != nil {
 		includeSiblings = *indentation.IncludeSiblings
 	}
-	
+
 	var out []LineRecord
 	out = append(out, lines[anchorIndex])
-	
+
 	i := anchorIndex - 1 // up cursor
 	j := anchorIndex + 1 // down cursor
-	
+
 	for len(out) < finalLimit && (i >= 0 || j < len(lines)) {
 		progressed := false
-		
+
 		// Move up
 		if i >= 0 && effectiveIndents[i] >= minIndent {
 			if includeSiblings || effectiveIndents[i] > minIndent {
@@ -794,7 +791,7 @@ func readIndentationBlock(ctx context.Context, filePath string, offset, limit in
 			}
 			i--
 		}
-		
+
 		// Move down
 		if j < len(lines) && effectiveIndents[j] >= minIndent {
 			if includeSiblings || effectiveIndents[j] > minIndent {
@@ -803,7 +800,7 @@ func readIndentationBlock(ctx context.Context, filePath string, offset, limit in
 			}
 			j++
 		}
-		
+
 		if !progressed {
 			break
 		}
@@ -842,17 +839,17 @@ func trimEmptyLines(lines []LineRecord) []LineRecord {
 	if len(lines) == 0 {
 		return lines
 	}
-	
+
 	start := 0
 	for start < len(lines) && lines[start].IsBlank() {
 		start++
 	}
-	
+
 	end := len(lines) - 1
 	for end >= start && lines[end].IsBlank() {
 		end--
 	}
-	
+
 	if start > end {
 		return []LineRecord{}
 	}

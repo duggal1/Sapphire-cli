@@ -19,6 +19,7 @@ type subAgentAssignment struct {
 	WriteManifest   []string
 	DefinitionOfDone string
 	TestCommand     string
+	LongHorizonContext string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -44,7 +45,7 @@ func activeSubAgentOrchestratorPrompt() string {
 	return ""
 }
 
-func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir string, decision subAgentLaunchDecision, manifest []string, branch string, definitionOfDone string, testCommand string) (subAgentAssignment, string) {
+func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir string, decision subAgentLaunchDecision, manifest []string, branch string, definitionOfDone string, testCommand string, longHorizonContext string) (subAgentAssignment, string) {
 	now := time.Now()
 	if strings.TrimSpace(assignmentID) == "" {
 		assignmentID = fmt.Sprintf("subagent-%d", now.UnixNano())
@@ -62,6 +63,7 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 		WriteManifest:   append([]string{}, manifest...),
 		DefinitionOfDone: strings.TrimSpace(definitionOfDone),
 		TestCommand:     strings.TrimSpace(testCommand),
+		LongHorizonContext: longHorizonContext,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}

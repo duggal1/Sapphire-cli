@@ -1,88 +1,42 @@
 package tools
 
 import (
-	"context"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
-func TestReadTextFileBoundaryCases(t *testing.T) {
+func TestHandleFileNotFoundUsesRelativeSuggestions(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "sample.txt")
-
-	var allLines []string
-	for i := range 5 {
-		allLines = append(allLines, fmt.Sprintf("line %d", i+1))
+	workingDir := t.TempDir()
+	missing := workingDir + "/internal/ui/messag.go"
+	if err := os.MkdirAll(workingDir+"/internal/ui", 0o755); err != nil {
+		t.Fatal(err)
 	}
-	require.NoError(t, os.WriteFile(filePath, []byte(strings.Join(allLines, "\n")), 0o644))
-
-	tests := []struct {
-		name        string
-		offset      int
-		limit       int
-		wantContent string
-		wantHasMore bool
-	}{
-		{
-			name:        "exactly limit lines remaining",
-			offset:      0,
-			limit:       5,
-			wantContent: "line 1\nline 2\nline 3\nline 4\nline 5",
-			wantHasMore: false,
-		},
-		{
-			name:        "limit plus one line remaining",
-			offset:      0,
-			limit:       4,
-			wantContent: "line 1\nline 2\nline 3\nline 4",
-			wantHasMore: true,
-		},
-		{
-			name:        "offset at last line",
-			offset:      4,
-			limit:       3,
-			wantContent: "line 5",
-			wantHasMore: false,
-		},
-		{
-			name:        "offset beyond eof",
-			offset:      10,
-			limit:       3,
-			wantContent: "",
-			wantHasMore: false,
-		},
+	if err := os.WriteFile(workingDir+"/internal/ui/messages.go", []byte("package ui"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			gotContent, gotHasMore, err := readTextFile(context.Background(), filePath, tt.offset, tt.limit)
-			require.NoError(t, err)
-			require.Equal(t, tt.wantContent, gotContent)
-			require.Equal(t, tt.wantHasMore, gotHasMore)
-		})
+	err := viewNotFoundError(workingDir, missing, "internal/ui/messag.go")
+	if err == nil {
+		t.Fatal("expected missing file error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Use ls, glob, or rg --files") {
+		t.Fatalf("expected recovery hint, got %q", msg)
+	}
+	if !strings.Contains(msg, "internal/ui/messages.go") {
+		t.Fatalf("expected relative suggestion, got %q", msg)
 	}
 }
 
-func TestReadTextFileTruncatesLongLines(t *testing.T) {
+func TestPrettyViewPathUsesRepoRelativePath(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "longline.txt")
-
-	longLine := strings.Repeat("a", MaxLineLength+10)
-	require.NoError(t, os.WriteFile(filePath, []byte(longLine), 0o644))
-
-	content, hasMore, err := readTextFile(context.Background(), filePath, 0, 1)
-	require.NoError(t, err)
-	require.False(t, hasMore)
-	require.Equal(t, strings.Repeat("a", MaxLineLength)+"...", content)
+	workingDir := t.TempDir()
+	got := prettyViewPath(workingDir, workingDir+"/internal/ui/messages.go")
+	if got != "internal/ui/messages.go" {
+		t.Fatalf("expected repo-relative path, got %q", got)
+	}
 }

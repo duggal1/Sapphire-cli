@@ -28,7 +28,11 @@ const (
 	subAgentStatusError     subAgentStatus = "error"
 	subAgentStatusClosed    subAgentStatus = "closed"
 
-	maxForkedContextMessages = 40
+	maxForkedContextMessages     = 40
+	subAgentSessionCreateTimeout = 10 * time.Second
+	subAgentSessionLoadTimeout   = 10 * time.Second
+	subAgentMessageListTimeout   = 5 * time.Second
+	subAgentForkContextTimeout   = 10 * time.Second
 )
 
 type subAgentSubmission struct {
@@ -48,28 +52,28 @@ type subAgentInput struct {
 }
 
 type subAgentRunner struct {
-	id             string
-	sessionID      string
-	parentSession  string
-	workDir        string
-	cleanup        func()
-	agent          SessionAgent
-	status         subAgentStatus
-	lastResult     string
-	lastError      string
-	lastProgress   string
-	lastSubmission string
-	validationPassed bool
-	validationErrors string
+	id                   string
+	sessionID            string
+	parentSession        string
+	workDir              string
+	cleanup              func()
+	agent                SessionAgent
+	status               subAgentStatus
+	lastResult           string
+	lastError            string
+	lastProgress         string
+	lastSubmission       string
+	validationPassed     bool
+	validationErrors     string
 	validationHasChanges bool
-	submissions    map[string]*subAgentSubmission
-	inputCh        chan subAgentInput
-	closed         bool
-	pending        int
-	cancel         context.CancelFunc
-	assignment     subAgentAssignment
-	statusBroker   *pubsub.Broker[subAgentStatus]
-	mu             sync.Mutex
+	submissions          map[string]*subAgentSubmission
+	inputCh              chan subAgentInput
+	closed               bool
+	pending              int
+	cancel               context.CancelFunc
+	assignment           subAgentAssignment
+	statusBroker         *pubsub.Broker[subAgentStatus]
+	mu                   sync.Mutex
 }
 
 type subAgentRegistry struct {
@@ -143,24 +147,24 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return subAgentSnapshot{
-		ID:               r.id,
-		Status:           r.status,
-		LastResult:       r.lastResult,
-		LastError:        r.lastError,
-		LastProgress:     r.lastProgress,
-		LastSubmission:   r.lastSubmission,
-		Pending:          r.pending,
-		WorkDir:          r.workDir,
-		Branch:           r.assignment.Branch,
-		WriteManifest:    append([]string{}, r.assignment.WriteManifest...),
-		DefinitionOfDone: r.assignment.DefinitionOfDone,
-		Task:             r.assignment.Task,
-		TaskKey:          r.assignment.TaskKey,
-		Domains:          r.assignment.Domains,
-		StartedAt:        r.assignment.CreatedAt,
-		UpdatedAt:        r.assignment.UpdatedAt,
-		ValidationPassed: r.validationPassed,
-		ValidationErrors: r.validationErrors,
+		ID:                   r.id,
+		Status:               r.status,
+		LastResult:           r.lastResult,
+		LastError:            r.lastError,
+		LastProgress:         r.lastProgress,
+		LastSubmission:       r.lastSubmission,
+		Pending:              r.pending,
+		WorkDir:              r.workDir,
+		Branch:               r.assignment.Branch,
+		WriteManifest:        append([]string{}, r.assignment.WriteManifest...),
+		DefinitionOfDone:     r.assignment.DefinitionOfDone,
+		Task:                 r.assignment.Task,
+		TaskKey:              r.assignment.TaskKey,
+		Domains:              r.assignment.Domains,
+		StartedAt:            r.assignment.CreatedAt,
+		UpdatedAt:            r.assignment.UpdatedAt,
+		ValidationPassed:     r.validationPassed,
+		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
 	}
 }
@@ -257,25 +261,25 @@ func (r *subAgentRunner) close() {
 }
 
 type subAgentSnapshot struct {
-	ID               string         `json:"id"`
-	Status           subAgentStatus `json:"status"`
-	LastResult       string         `json:"last_result,omitempty"`
-	LastError        string         `json:"last_error,omitempty"`
-	LastProgress     string         `json:"last_progress,omitempty"`
-	LastSubmission   string         `json:"last_submission,omitempty"`
-	Pending          int            `json:"pending"`
-	WorkDir          string         `json:"work_dir,omitempty"`
-	Branch           string         `json:"branch,omitempty"`
-	WriteManifest    []string       `json:"write_manifest,omitempty"`
-	DefinitionOfDone string         `json:"definition_of_done,omitempty"`
-	Task             string         `json:"task,omitempty"`
-	TaskKey          string         `json:"task_key,omitempty"`
-	Domains          []string       `json:"domains,omitempty"`
-	StartedAt        time.Time      `json:"started_at,omitempty"`
-	UpdatedAt        time.Time      `json:"updated_at,omitempty"`
-	ValidationPassed bool           `json:"validation_passed,omitempty"`
-	ValidationErrors string         `json:"validation_errors,omitempty"`
-	ValidationHasChanges bool       `json:"validation_has_changes,omitempty"`
+	ID                   string         `json:"id"`
+	Status               subAgentStatus `json:"status"`
+	LastResult           string         `json:"last_result,omitempty"`
+	LastError            string         `json:"last_error,omitempty"`
+	LastProgress         string         `json:"last_progress,omitempty"`
+	LastSubmission       string         `json:"last_submission,omitempty"`
+	Pending              int            `json:"pending"`
+	WorkDir              string         `json:"work_dir,omitempty"`
+	Branch               string         `json:"branch,omitempty"`
+	WriteManifest        []string       `json:"write_manifest,omitempty"`
+	DefinitionOfDone     string         `json:"definition_of_done,omitempty"`
+	Task                 string         `json:"task,omitempty"`
+	TaskKey              string         `json:"task_key,omitempty"`
+	Domains              []string       `json:"domains,omitempty"`
+	StartedAt            time.Time      `json:"started_at,omitempty"`
+	UpdatedAt            time.Time      `json:"updated_at,omitempty"`
+	ValidationPassed     bool           `json:"validation_passed,omitempty"`
+	ValidationErrors     string         `json:"validation_errors,omitempty"`
+	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
 }
 
 type subAgentStatusEntry struct {
@@ -284,17 +288,17 @@ type subAgentStatusEntry struct {
 }
 
 type subAgentCollectedResult struct {
-	ID           string         `json:"id"`
-	SubmissionID string         `json:"submission_id,omitempty"`
-	Status       subAgentStatus `json:"status"`
-	Result       string         `json:"result,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	Progress     string         `json:"progress,omitempty"`
-	WorkDir      string         `json:"work_dir,omitempty"`
-	Branch       string         `json:"branch,omitempty"`
-	ValidationPassed bool        `json:"validation_passed,omitempty"`
-	ValidationErrors string      `json:"validation_errors,omitempty"`
-	ValidationHasChanges bool    `json:"validation_has_changes,omitempty"`
+	ID                   string         `json:"id"`
+	SubmissionID         string         `json:"submission_id,omitempty"`
+	Status               subAgentStatus `json:"status"`
+	Result               string         `json:"result,omitempty"`
+	Error                string         `json:"error,omitempty"`
+	Progress             string         `json:"progress,omitempty"`
+	WorkDir              string         `json:"work_dir,omitempty"`
+	Branch               string         `json:"branch,omitempty"`
+	ValidationPassed     bool           `json:"validation_passed,omitempty"`
+	ValidationErrors     string         `json:"validation_errors,omitempty"`
+	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
 }
 
 type spawnAgentOptions struct {
@@ -359,7 +363,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		writeManifest = []string{}
 	}
 	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, writeManifest)
-	assignment, assignmentPrompt := buildSubAgentAssignment(assignmentID, parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone, opts.TestCommand)
+	assignment, assignmentPrompt := buildSubAgentAssignment(assignmentID, parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone, opts.TestCommand, c.GetLongHorizonState(parentSessionID))
 
 	if opts.Worktree {
 		// Write TASK.md into the worktree
@@ -379,7 +383,6 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	}
 
 	writeScope := tools.NewWriteScope(workDir, normalizedManifest)
-
 
 	promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
 	if err != nil {
@@ -403,7 +406,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		title = "Sub-Agent Session"
 	}
 
-	createCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	createCtx, cancel := context.WithTimeout(ctx, subAgentSessionCreateTimeout)
 	session, err := c.sessions.CreateTaskSession(createCtx, agentID, parentSessionID, title)
 	cancel()
 	if err != nil {
@@ -643,7 +646,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		return submissionID, runner.snapshot().Status, nil
 	}
 
-	loadCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	loadCtx, cancel := context.WithTimeout(ctx, subAgentSessionLoadTimeout)
 	sess, err := c.sessions.Get(loadCtx, agentID)
 	cancel()
 	if err != nil {
@@ -708,7 +711,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		task = c.resumeSubAgentTask(ctx, sess)
 	}
 	decision := evaluateSubAgentLaunch(task)
-	assignment, _ := buildSubAgentAssignment(assignmentID, effectiveParent, sess.Title, task, workDir, decision, normalizedManifest, branch, meta.DefinitionOfDone, meta.TestCommand)
+	assignment, _ := buildSubAgentAssignment(assignmentID, effectiveParent, sess.Title, task, workDir, decision, normalizedManifest, branch, meta.DefinitionOfDone, meta.TestCommand, c.GetLongHorizonState(effectiveParent))
 
 	runner = &subAgentRunner{
 		id:            agentID,
@@ -774,7 +777,14 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 	}
 	defer cancel()
 
-	merged := make(chan struct{}, len(ids))
+	snapshots, _ := c.snapshotSubAgentsByID(ids)
+	for _, snap := range snapshots {
+		if isSubAgentFinalStatus(snap.Status) {
+			return snapshots, false
+		}
+	}
+
+	completed := make(chan struct{}, len(ids))
 	for _, id := range ids {
 		runner, err := c.getSubAgent(id)
 		if err != nil {
@@ -782,41 +792,49 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 		}
 		initialStatus, updates := runner.subscribeStatus(waitCtx)
 		if isSubAgentFinalStatus(initialStatus) {
-			continue
+			return c.snapshotSubAgentsByID(ids)
 		}
-		go func(ch <-chan pubsub.Event[subAgentStatus]) {
+		go func(ch <-chan pubsub.Event[subAgentStatus], runner *subAgentRunner) {
 			for {
 				select {
 				case <-waitCtx.Done():
 					return
 				case _, ok := <-ch:
 					if !ok {
-						select {
-						case merged <- struct{}{}:
-						default:
+						runner.mu.Lock()
+						status := runner.status
+						runner.mu.Unlock()
+						if isSubAgentFinalStatus(status) {
+							select {
+							case completed <- struct{}{}:
+							default:
+							}
 						}
 						return
 					}
+					runner.mu.Lock()
+					status := runner.status
+					runner.mu.Unlock()
+					if !isSubAgentFinalStatus(status) {
+						continue
+					}
 					select {
-					case merged <- struct{}{}:
+					case completed <- struct{}{}:
 					default:
 					}
+					return
 				}
 			}
-		}(updates)
+		}(updates, runner)
 	}
 
-	for {
-		snapshots, allFinal := c.snapshotSubAgentsByID(ids)
-		if allFinal {
-			return snapshots, false
-		}
-
-		select {
-		case <-waitCtx.Done():
-			return snapshots, true
-		case <-merged:
-		}
+	select {
+	case <-waitCtx.Done():
+		snapshots, _ := c.snapshotSubAgentsByID(ids)
+		return snapshots, true
+	case <-completed:
+		snapshots, _ := c.snapshotSubAgentsByID(ids)
+		return snapshots, false
 	}
 }
 
@@ -843,16 +861,16 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 	defer r.mu.Unlock()
 
 	result := subAgentCollectedResult{
-		ID:           r.id,
-		SubmissionID: r.lastSubmission,
-		Status:       r.status,
-		Result:       r.lastResult,
-		Error:        r.lastError,
-		Progress:     r.lastProgress,
-		WorkDir:      r.workDir,
-		Branch:       r.assignment.Branch,
-		ValidationPassed: r.validationPassed,
-		ValidationErrors: r.validationErrors,
+		ID:                   r.id,
+		SubmissionID:         r.lastSubmission,
+		Status:               r.status,
+		Result:               r.lastResult,
+		Error:                r.lastError,
+		Progress:             r.lastProgress,
+		WorkDir:              r.workDir,
+		Branch:               r.assignment.Branch,
+		ValidationPassed:     r.validationPassed,
+		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
 	}
 	if submission := r.submissions[r.lastSubmission]; submission != nil {
@@ -915,7 +933,7 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 		// If the agent is in a non-success state, consider quarantine
 		if status == subAgentStatusError || status == subAgentStatusClosed || status == subAgentStatusQueued {
 			if root := c.cfg.WorkingDir(); root != "" {
-				// quarantineWorktree helper checks for changes internally; 
+				// quarantineWorktree helper checks for changes internally;
 				// if changes exist, it moves to quarantine and we clear cleanup.
 				if qErr := c.quarantineWorktree(root, workDir, taskSlug); qErr == nil {
 					runner.mu.Lock()
@@ -941,7 +959,7 @@ func (c *coordinator) getSubAgent(agentID string) (*subAgentRunner, error) {
 }
 
 func (c *coordinator) resumeSubAgentTask(ctx context.Context, sess session.Session) string {
-	listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	listCtx, cancel := context.WithTimeout(ctx, subAgentMessageListTimeout)
 	defer cancel()
 	messages, err := c.messages.ListUserMessages(listCtx, sess.ID)
 	if err == nil && len(messages) > 0 {
@@ -960,7 +978,7 @@ func (c *coordinator) forkSubAgentContext(ctx context.Context, parentSessionID, 
 	if parentSessionID == "" || childSessionID == "" {
 		return nil
 	}
-	forkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	forkCtx, cancel := context.WithTimeout(ctx, subAgentForkContextTimeout)
 	defer cancel()
 
 	parentSession, err := c.sessions.Get(forkCtx, parentSessionID)

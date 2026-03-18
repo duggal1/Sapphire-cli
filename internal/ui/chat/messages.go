@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/message"
 	"github.com/charmbracelet/sapphire/internal/ui/anim"
 	"github.com/charmbracelet/sapphire/internal/ui/attachments"
+	"github.com/charmbracelet/sapphire/internal/ui/common"
 	"github.com/charmbracelet/sapphire/internal/ui/list"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -36,6 +37,12 @@ type Identifiable interface {
 type Animatable interface {
 	StartAnimation() tea.Cmd
 	Animate(msg anim.StepMsg) tea.Cmd
+}
+
+// ShimmerTickable is implemented by items that need cache invalidation on
+// shimmer timer frames.
+type ShimmerTickable interface {
+	OnShimmerTick() bool
 }
 
 // Expandable is an interface for items that can be expanded or collapsed.
@@ -270,18 +277,12 @@ func (a *AssistantInfoItem) RawRender(width int) string {
 
 // Render implements MessageItem.
 func (a *AssistantInfoItem) Render(width int) string {
-	prefix := "  "
-	lines := strings.Split(a.RawRender(width), "\n")
-	for i, line := range lines {
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
+	return a.RawRender(width)
 }
 
 func (a *AssistantInfoItem) renderContent(width int) string {
 	finish := a.message.FinishPart()
 
-	// 1. Model Header
 	modelName := strings.TrimSpace(a.message.Model)
 	if idx := strings.Index(strings.ToLower(modelName), " via "); idx >= 0 {
 		modelName = strings.TrimSpace(modelName[:idx])
@@ -309,7 +310,7 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	if effort != "" {
 		lowerEffort := strings.ToLower(effort)
 		if !strings.Contains(strings.ToLower(modelName), lowerEffort) {
-			modelName = fmt.Sprintf("%s %s", modelName, lowerEffort)
+			modelName = fmt.Sprintf("%s %s", modelName, common.FormatReasoningEffort(lowerEffort))
 		}
 	}
 
@@ -317,9 +318,7 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	modelName = strings.ReplaceAll(modelName, "}", " ")
 	modelName = strings.Join(strings.Fields(modelName), " ")
 
-	headerText := ansi.Truncate(modelName, max(0, width), "…")
-	modelHeader := a.sty.Chat.Message.AssistantInfoModel.Render(headerText)
-	modelLine := lipgloss.PlaceHorizontal(width, lipgloss.Right, modelHeader)
+	modelLine := a.sty.Chat.Message.AssistantInfoModel.Render(modelName)
 
 	duration := a.renderDurationFormatted(finish)
 
@@ -348,11 +347,60 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	}
 
 	dot := a.sty.Base.Foreground(lipgloss.Color("240")).Render(" · ")
-	dataText := ansi.Truncate(strings.Join(parts, dot), max(0, width), "…")
-	dataLine := a.sty.Chat.Message.AssistantInfoDuration.Render(dataText)
-	dataLine = lipgloss.PlaceHorizontal(width, lipgloss.Right, dataLine)
+	dataText := a.sty.Chat.Message.AssistantInfoDuration.Render(strings.Join(parts, dot))
+	return a.renderFooter(width, dataText, modelLine)
+}
 
-	return fmt.Sprintf("%s\n%s", modelLine, dataLine)
+func (a *AssistantInfoItem) renderFooter(width int, stats, model string) string {
+	if width <= 0 {
+		return ""
+	}
+
+	border := strings.Repeat("─", width)
+	borderLine := a.sty.Base.Foreground(a.sty.Border).Render(border)
+
+	row := a.renderFooterRow(width, stats, model)
+	if row == "" {
+		return borderLine
+	}
+
+	return borderLine + "\n" + row
+}
+
+func (a *AssistantInfoItem) renderFooterRow(width int, left, right string) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	if leftWidth+1+rightWidth <= width {
+		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
+	}
+
+	maxLeft := max(0, width-rightWidth-1)
+	if maxLeft <= 0 {
+		return right
+	}
+	if maxLeft > 0 && leftWidth > maxLeft {
+		left = ansi.Truncate(left, maxLeft, "…")
+		leftWidth = lipgloss.Width(left)
+	}
+
+	if leftWidth+1+rightWidth <= width {
+		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
+	}
+
+	if rightWidth >= width {
+		return right
+	}
+
+	return left + " " + right
 }
 
 func (a *AssistantInfoItem) renderDurationFormatted(finish *message.Finish) string {
@@ -451,8 +499,11 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
-		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+		assistantItem := NewAssistantMessageItem(sty, msg)
+		renderAssistant := ShouldRenderAssistantMessage(msg)
+		assistantAfterTools := shouldRenderAssistantAfterTools(msg)
+		if renderAssistant && !assistantAfterTools {
+			items = append(items, assistantItem)
 		}
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult
@@ -466,6 +517,9 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
 			))
+		}
+		if renderAssistant && assistantAfterTools {
+			items = append(items, assistantItem)
 		}
 		return items
 	}
@@ -482,7 +536,22 @@ func ShouldRenderAssistantMessage(msg *message.Message) bool {
 	isError := msg.FinishReason() == message.FinishReasonError
 	isCancelled := msg.FinishReason() == message.FinishReasonCanceled
 	hasToolCalls := len(msg.ToolCalls()) > 0
-	return !hasToolCalls || content != "" || thinking != "" || msg.IsThinking() || isError || isCancelled
+	return !hasToolCalls || content != "" || thinking != "" || msg.IsThinking() || !msg.IsFinished() || isError || isCancelled
+}
+
+func shouldRenderAssistantAfterTools(msg *message.Message) bool {
+	if msg == nil {
+		return false
+	}
+	if len(msg.ToolCalls()) == 0 {
+		return false
+	}
+	if msg.IsFinished() {
+		return false
+	}
+	content := strings.TrimSpace(msg.Content().Text)
+	thinking := strings.TrimSpace(msg.ReasoningContent().Thinking)
+	return content == "" && thinking == ""
 }
 
 // BuildToolResultMap creates a map of tool call IDs to their results from a list of messages.

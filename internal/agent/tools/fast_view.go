@@ -167,7 +167,7 @@ func fastReadFile(
 	// Fast stat check
 	fileInfo, err := os.Stat(fullPath)
 	if err != nil {
-		return handleFileNotFound(fullPath, filePath)
+		return fileResult{filePath: filePath, err: viewNotFoundError(workingDir, fullPath, filePath)}
 	}
 
 	if fileInfo.IsDir() {
@@ -322,22 +322,27 @@ func deduplicatePaths(paths []string) []string {
 }
 
 // handleFileNotFound provides helpful suggestions for typos.
-func handleFileNotFound(fullPath, filePath string) fileResult {
+func viewNotFoundError(workingDir, fullPath, filePath string) error {
 	_, err := os.Stat(fullPath)
 	if err == nil {
-		return fileResult{filePath: filePath, err: fmt.Errorf("file exists: %s", fullPath)}
+		return fmt.Errorf("file exists: %s", fullPath)
 	}
 
 	if os.IsNotExist(err) {
 		dir := filepath.Dir(fullPath)
 		base := filepath.Base(fullPath)
+		baseStem := strings.TrimSuffix(strings.ToLower(base), strings.ToLower(filepath.Ext(base)))
 		dirEntries, dirErr := os.ReadDir(dir)
 		var suggestions []string
 		if dirErr == nil {
 			for _, entry := range dirEntries {
-				if strings.Contains(strings.ToLower(entry.Name()), strings.ToLower(base)) ||
-					strings.Contains(strings.ToLower(base), strings.ToLower(entry.Name())) {
-					suggestions = append(suggestions, filepath.Join(dir, entry.Name()))
+				entryName := strings.ToLower(entry.Name())
+				entryStem := strings.TrimSuffix(entryName, strings.ToLower(filepath.Ext(entryName)))
+				if strings.Contains(entryName, strings.ToLower(base)) ||
+					strings.Contains(strings.ToLower(base), entryName) ||
+					(baseStem != "" && strings.Contains(entryStem, baseStem)) ||
+					(entryStem != "" && strings.Contains(baseStem, entryStem)) {
+					suggestions = append(suggestions, prettyViewPath(workingDir, filepath.Join(dir, entry.Name())))
 					if len(suggestions) >= 3 {
 						break
 					}
@@ -345,11 +350,11 @@ func handleFileNotFound(fullPath, filePath string) fileResult {
 			}
 		}
 		if len(suggestions) > 0 {
-			return fileResult{filePath: filePath, err: fmt.Errorf("File not found: %s\n\nDid you mean one of these?\n%s", filePath, strings.Join(suggestions, "\n"))}
+			return fmt.Errorf("File not found: %s\nUse ls, glob, or rg --files to verify the exact path.\n\nDid you mean one of these?\n%s", filePath, strings.Join(suggestions, "\n"))
 		}
-		return fileResult{filePath: filePath, err: fmt.Errorf("File not found: %s", filePath)}
+		return fmt.Errorf("File not found: %s\nUse ls, glob, or rg --files to verify the exact path.", filePath)
 	}
-	return fileResult{filePath: filePath, err: fmt.Errorf("error accessing file %s: %w", filePath, err)}
+	return fmt.Errorf("error accessing file %s: %w", filePath, err)
 }
 
 // assembleViewResults assembles individual file results into a final response.

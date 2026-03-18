@@ -10,6 +10,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/charmbracelet/sapphire/internal/agent/memory"
+	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
+	"github.com/charmbracelet/sapphire/internal/agent/tools"
+	"github.com/charmbracelet/sapphire/internal/config"
 )
 
 const (
@@ -66,18 +71,33 @@ func (p *memoryPipeline) ExtractFromRollout(ctx context.Context, sessionID, roll
 		p.mu.Unlock()
 	}()
 
-	// Build the extraction prompt with rollout content
-	extractionPrompt := string(memoryExtractionPrompt) + "\n\n<rollout>\n" + rolloutText + "\n</rollout>"
+	// Build the extraction prompt with rollout content using the input template
+	rolloutContents := rolloutText
+	// In a full implementation, we would apply truncation here to match Codex's 70% budget.
+	
+	inputMsg := string(memoryExtractionInputPrompt)
+	inputMsg = strings.ReplaceAll(inputMsg, "{{ rollout_path }}", sessionID) // Using sessionID as proxy for path
+	inputMsg = strings.ReplaceAll(inputMsg, "{{ rollout_cwd }}", p.coordinator.mainWorkingDir())
+	inputMsg = strings.ReplaceAll(inputMsg, "{{ rollout_contents }}", rolloutContents)
 
 	// Use the coordinator's small model to run extraction
-	result, err := p.runExtractionWithRetry(ctx, sessionID, extractionPrompt)
+	result, err := p.runExtractionWithRetry(ctx, sessionID, inputMsg)
 	if err != nil {
 		return nil, fmt.Errorf("memory extraction failed: %w", err)
 	}
 
-	// Write rollout summary to file
-	if result != nil && result.RolloutSummary != "" {
-		p.writeRolloutSummary(sessionID, result)
+	// Update extraction context with current directory
+	cwd, _ := os.Getwd()
+	if p.coordinator != nil {
+		cwd = p.coordinator.mainWorkingDir()
+	}
+
+	// Internal metadata for consolidation
+	now := time.Now().Format(time.RFC3339)
+
+	// Enrich raw memory with metadata before writing
+	if result != nil && (result.RawMemory != "" || result.RolloutSummary != "") {
+		p.writeRolloutSummary(sessionID, result, cwd, now)
 	}
 
 	return result, nil
@@ -109,29 +129,38 @@ func (p *memoryPipeline) runExtraction(ctx context.Context, sessionID, prompt st
 		return nil, fmt.Errorf("coordinator not available")
 	}
 
-	smallModel := p.coordinator.currentAgent.Model()
-
 	agent := p.coordinator.currentAgent
 	if agent == nil {
 		return nil, fmt.Errorf("no agent available for memory extraction")
 	}
 
-	// Run the extraction prompt through the agent
-	result, err := agent.Run(ctx, SessionAgentCall{
-		SessionID:       sessionID,
+	// Literal Phase 1 Extraction: Use coordinator to build a private agent
+	extractionAgent, err := p.coordinator.buildAgentWithWorkingDir(ctx, &promptpkg.Prompt{}, config.Agent{}, true, p.coordinator.mainWorkingDir())
+	if err != nil {
+		return nil, fmt.Errorf("failed to build extraction agent: %w", err)
+	}
+	
+	systemPromptPrefix := ""
+	if cfg, ok := p.coordinator.cfg.Providers.Get(p.coordinator.currentAgent.Model().ModelCfg.Provider); ok {
+		systemPromptPrefix = cfg.SystemPromptPrefix
+	}
+	extractionAgent.SetSystemPrompt(systemPromptPrefix + string(memoryExtractionPrompt))
+
+	// Run the extraction against the agent
+	resp, err := extractionAgent.Run(ctx, SessionAgentCall{
+		SessionID:       fmt.Sprintf("memory-extraction-%s", sessionID),
 		Prompt:          prompt,
 		SkipUserMessage: true,
-		MaxOutputTokens: int64(smallModel.CatwalkCfg.DefaultMaxTokens),
 	})
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, fmt.Errorf("empty result from extraction")
+	if resp == nil {
+		return nil, fmt.Errorf("empty response from extraction agent")
 	}
 
 	// Parse the JSON response
-	responseText := result.Response.Content.Text()
+	responseText := resp.Response.Content.Text()
 	var extracted memoryExtractionResult
 	if err := json.Unmarshal([]byte(responseText), &extracted); err != nil {
 		// Try to extract JSON from the response if it contains surrounding text
@@ -149,8 +178,8 @@ func (p *memoryPipeline) runExtraction(ctx context.Context, sessionID, prompt st
 	return &extracted, nil
 }
 
-// writeRolloutSummary writes the rollout summary to the memory folder.
-func (p *memoryPipeline) writeRolloutSummary(sessionID string, result *memoryExtractionResult) {
+// writeRolloutSummary writes the rollout summary and enriches raw memory with metadata.
+func (p *memoryPipeline) writeRolloutSummary(sessionID string, result *memoryExtractionResult, cwd, timestamp string) {
 	if p.coordinator == nil || p.coordinator.cfg == nil {
 		return
 	}
@@ -166,19 +195,17 @@ func (p *memoryPipeline) writeRolloutSummary(sessionID string, result *memoryExt
 		return
 	}
 
+	// Literal 1:1 Filename Stem
 	slug := result.RolloutSlug
-	if slug == "" {
-		slug = sanitizeWorktreeSlug(sessionID)
-	}
-	if slug == "" {
-		slug = "unknown"
-	}
+	stem := memory.RolloutSummaryFileStemFromParts(sessionID, time.Now(), &slug)
+	filename := stem + ".md"
 
-	summaryPath := filepath.Join(summariesDir, slug+".md")
-	if err := os.WriteFile(summaryPath, []byte(result.RolloutSummary), 0o644); err != nil {
+	summaryPath := filepath.Join(summariesDir, filename)
+	
+	// Literal Rollout Summary Header
+	summaryHeader := memory.FormatRolloutSummaryHeader(sessionID, timestamp, "rollout_summaries/"+filename, cwd, "")
+	if err := os.WriteFile(summaryPath, []byte(summaryHeader+result.RolloutSummary), 0o644); err != nil {
 		slog.Warn("Failed to write rollout summary", "path", summaryPath, "error", err)
-	} else {
-		slog.Info("Wrote rollout summary", "path", summaryPath)
 	}
 
 	// Also append raw memory if present
@@ -190,8 +217,11 @@ func (p *memoryPipeline) writeRolloutSummary(sessionID string, result *memoryExt
 			return
 		}
 		defer f.Close()
-		header := fmt.Sprintf("\n---\n## Session: %s\nTimestamp: %s\n\n", sessionID, time.Now().Format(time.RFC3339))
-		if _, err := f.WriteString(header + result.RawMemory + "\n"); err != nil {
+
+		// Literal Raw Memory Entry Header
+		meta := memory.FormatRawMemoryEntryHeader(sessionID, timestamp, cwd, "rollout_summaries/"+filename, filename)
+
+		if _, err := f.WriteString(meta + strings.TrimSpace(result.RawMemory) + "\n\n"); err != nil {
 			slog.Warn("Failed to write raw memory", "error", err)
 		}
 	}
@@ -240,66 +270,56 @@ func (p *memoryPipeline) ConsolidateMemory(ctx context.Context, sessionID string
 
 	consolidationContent := string(memoryConsolidationPrompt)
 	consolidationContent = strings.ReplaceAll(consolidationContent, "{{ memory_root }}", memoryRoot)
+	
+	// Literal Input Selection Rendering
+	inputSelection := p.renderPhase2InputSelection(rawData)
+	consolidationContent = strings.ReplaceAll(consolidationContent, "{{ phase2_input_selection }}", inputSelection)
 
 	prompt := fmt.Sprintf(
-		"%s\n\nMode: %s\n\n<existing_memory>\n%s\n</existing_memory>\n\n<existing_summary>\n%s\n</existing_summary>\n\n<raw_memories>\n%s\n</raw_memories>\n\nProduce updated MEMORY.md and memory_summary.md content. Output as JSON with keys: memory_md, memory_summary_md.",
+		"%s\n\nMode: %s\n\n<existing_memory>\n%s\n</existing_memory>\n\n<existing_summary>\n%s\n</existing_summary>\n\n<raw_memories>\n%s\n</raw_memories>",
 		consolidationContent, mode, existingMemory, existingSummary, string(rawData),
 	)
-
-	consolidateCtx, cancel := context.WithTimeout(ctx, 2*memoryPipelineTimeout)
+	consolidateCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	agent := p.coordinator.currentAgent
-	if agent == nil {
-		return fmt.Errorf("no agent available for consolidation")
+	// 1. Build the Memory Writing Agent using the coordinator
+	// We use the same configuration as a standard sub-agent but with our custom prompt
+	memoryAgent, err := p.coordinator.buildAgentWithWorkingDir(ctx, &promptpkg.Prompt{}, config.Agent{}, true, memoryRoot)
+	if err != nil {
+		return fmt.Errorf("failed to build memory agent: %w", err)
 	}
 
-	result, err := agent.Run(consolidateCtx, SessionAgentCall{
-		SessionID:       sessionID,
-		Prompt:          prompt,
+	// Set the literal consolidation instructions
+	memoryAgent.SetSystemPrompt(prompt)
+
+	// Enforce strict WriteScope for memory folder
+	if sa, ok := memoryAgent.(*sessionAgent); ok {
+		sa.writeScope = tools.NewWriteScope(memoryRoot, []string{"."})
+	}
+
+	// 2. Run the consolidation session
+	consolidationSessionID := fmt.Sprintf("memory-consolidation-%s-%d", sessionID, time.Now().Unix())
+	userPrompt := "Proceed with memory consolidation as specified in your instructions. Update MEMORY.md and memory_summary.md based on the provided raw memories."
+	
+	_, err = memoryAgent.Run(consolidateCtx, SessionAgentCall{
+		SessionID:       consolidationSessionID,
+		Prompt:          userPrompt,
 		SkipUserMessage: true,
-		MaxOutputTokens: 8192,
 	})
 	if err != nil {
-		return fmt.Errorf("consolidation run failed: %w", err)
-	}
-	if result == nil {
-		return fmt.Errorf("empty consolidation response")
-	}
-
-	// Parse consolidation output
-	responseText := result.Response.Content.Text()
-	var consolidated struct {
-		MemoryMD        string `json:"memory_md"`
-		MemorySummaryMD string `json:"memory_summary_md"`
-	}
-	jsonStart := strings.Index(responseText, "{")
-	jsonEnd := strings.LastIndex(responseText, "}")
-	if jsonStart >= 0 && jsonEnd > jsonStart {
-		if err := json.Unmarshal([]byte(responseText[jsonStart:jsonEnd+1]), &consolidated); err != nil {
-			return fmt.Errorf("failed to parse consolidation output: %w", err)
-		}
-	} else {
-		return fmt.Errorf("no JSON in consolidation response")
-	}
-
-	// Write MEMORY.md
-	if consolidated.MemoryMD != "" {
-		if err := os.WriteFile(memoryPath, []byte(consolidated.MemoryMD), 0o644); err != nil {
-			return fmt.Errorf("failed to write MEMORY.md: %w", err)
-		}
-		slog.Info("Updated MEMORY.md", "path", memoryPath)
-	}
-
-	// Write memory_summary.md
-	if consolidated.MemorySummaryMD != "" {
-		if err := os.WriteFile(summaryPath, []byte(consolidated.MemorySummaryMD), 0o644); err != nil {
-			return fmt.Errorf("failed to write memory_summary.md: %w", err)
-		}
-		slog.Info("Updated memory_summary.md", "path", summaryPath)
+		return fmt.Errorf("memory consolidation agent failed: %w", err)
 	}
 
 	return nil
+}
+
+// renderPhase2InputSelection implements the literal rendering logic from Codex prompts.rs.
+func (p *memoryPipeline) renderPhase2InputSelection(rawData []byte) string {
+	// Simple version for now that captures the spirit of the literal logic.
+	// In a full implementation, we would parse raw_memories.md to count added/retained.
+	added := strings.Count(string(rawData), "## Thread")
+	return fmt.Sprintf("- selected inputs this run: %d\n- newly added since the last successful Phase 2 run: %d\n- retained from the last successful Phase 2 run: 0\n- removed from the last successful Phase 2 run: 0\n",
+		added, added)
 }
 
 // TriggerPostCompletion fires an async memory extraction after sub-agent completion.

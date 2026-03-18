@@ -21,6 +21,14 @@ Common shell builtins and core utils available on Windows.
 - Chain with ';' or '&&', avoid newlines except in quoted strings
 - Each command runs in independent shell (no state persistence between calls)
 - Prefer absolute paths over 'cd' (use 'cd' only if user explicitly requests)
+- Concurrent limit: You can execute up to 120 independent `bash` tool requests in parallel per response.
+- Concurrent limit: You can execute up to 120 independent `bash` tool requests in parallel per response.
+
+<advanced_execution>
+- Provide a `justification` detailing why the command is being executed to satisfy the audit trail.
+- Set `backend` to "native" to use the OS's native shell (e.g. `cmd.exe` or `/bin/sh`) instead of the cross-platform posix emulator. Useful for complex OS-specific tools.
+- Use `prefix_rule` to automatically prepend instructions (e.g., `["timeout", "45s"]`).
+</advanced_execution>
 </usage_notes>
 
 <background_execution>

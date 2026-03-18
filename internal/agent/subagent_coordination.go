@@ -57,6 +57,14 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 	}
 
 	builder := &strings.Builder{}
+
+	// Inject orchestrator prompt as system context for the sub-agent
+	if len(orchestratorPrompt) > 0 {
+		builder.WriteString("<orchestrator_protocol>\n")
+		builder.WriteString(string(orchestratorPrompt))
+		builder.WriteString("\n</orchestrator_protocol>\n\n")
+	}
+
 	builder.WriteString("You are a dedicated sub-agent. Execute the assignment below autonomously.\n\n")
 	builder.WriteString(fmt.Sprintf("Assignment ID: %s\n", assignment.ID))
 	builder.WriteString(fmt.Sprintf("Parent session: %s\n", assignment.ParentSessionID))
@@ -91,6 +99,10 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 	}
 	builder.WriteString("- Report absolute file paths for any findings or edits.\n")
 	builder.WriteString("- If blocked, say so explicitly and state the missing information.\n\n")
+	builder.WriteString("Validation gate:\n")
+	builder.WriteString("- After completion, a validation gate runs automatically: diff, build, test.\n")
+	builder.WriteString("- Failed validation quarantines the worktree instead of deleting it.\n")
+	builder.WriteString("- Ensure your changes build and pass tests before reporting STATUS: done.\n\n")
 	builder.WriteString("Output format (strict):\n")
 	builder.WriteString("STATUS: done | blocked | needs_followup\n")
 	builder.WriteString("SUMMARY: <one paragraph>\n")
@@ -106,6 +118,14 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 
 func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string, items []string) string {
 	builder := &strings.Builder{}
+
+	// Inject orchestrator context on followup as well
+	if len(orchestratorPrompt) > 0 {
+		builder.WriteString("<orchestrator_protocol>\n")
+		builder.WriteString(string(orchestratorPrompt))
+		builder.WriteString("\n</orchestrator_protocol>\n\n")
+	}
+
 	builder.WriteString("You are continuing a sub-agent assignment.\n\n")
 	builder.WriteString(fmt.Sprintf("Assignment ID: %s\n", assignment.ID))
 	if assignment.Title != "" {

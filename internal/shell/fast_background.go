@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -145,6 +146,7 @@ func (m *FastBackgroundShellManager) Start(
 	blockFuncs []BlockFunc,
 	command string,
 	description string,
+	backend string,
 ) (*FastBackgroundShell, error) {
 	// Check job limit (atomic read)
 	if m.activeCount.Load() >= FastBackgroundShellMaxJobs {
@@ -188,6 +190,7 @@ func (m *FastBackgroundShellManager) Start(
 	shell := NewFastShell(&FastShellOptions{
 		WorkingDir: workingDir,
 		BlockFuncs: blockFuncs,
+		Backend:    backend,
 	})
 
 	// Create cancellable context
@@ -551,6 +554,7 @@ type FastShell struct {
 	logger     Logger
 	blockFuncs []BlockFunc
 	execCnt    atomic.Uint64
+	backend    string
 }
 
 // FastShellOptions configures a FastShell.
@@ -559,6 +563,7 @@ type FastShellOptions struct {
 	Env        []string
 	Logger     Logger
 	BlockFuncs []BlockFunc
+	Backend    string
 }
 
 // NewFastShell creates an optimized shell instance.
@@ -582,17 +587,27 @@ func NewFastShell(opts *FastShellOptions) *FastShell {
 		logger = noopLogger{}
 	}
 
+	backend := opts.Backend
+	if backend == "" {
+		backend = "posix"
+	}
+
 	return &FastShell{
 		cwd:        cwd,
 		env:        env,
 		logger:     logger,
 		blockFuncs: opts.BlockFuncs,
+		backend:    backend,
 	}
 }
 
 // ExecStream executes with streaming output (no mutex locking).
 func (fs *FastShell) ExecStream(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	fs.execCnt.Add(1)
+
+	if fs.backend == "native" {
+		return fs.execNative(ctx, command, stdout, stderr)
+	}
 
 	line, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
@@ -614,6 +629,29 @@ func (fs *FastShell) ExecStream(ctx context.Context, command string, stdout, std
 
 	fs.logger.InfoPersist("command finished", "command", command, "err", err)
 	return err
+}
+
+func (fs *FastShell) execNative(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	
+	cmd.Dir = fs.cwd
+	cmd.Env = fs.env
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	err := cmd.Run()
+	if err != nil {
+		fs.logger.InfoPersist("command finished", "command", command, "err", err)
+		return fmt.Errorf("could not run native command: %w", err)
+	}
+	
+	fs.logger.InfoPersist("command finished", "command", command, "err", nil)
+	return nil
 }
 
 func (fs *FastShell) updateEnvLockFree(vars map[string]expand.Variable) {

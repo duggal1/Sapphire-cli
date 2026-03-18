@@ -46,7 +46,8 @@ func (c *coordinator) prepareMainWorktree(ctx context.Context) (string, string, 
 
 	wtCtx, cancel := context.WithTimeout(ctx, subAgentWorktreeTimeout)
 	defer cancel()
-	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch); err != nil {
+	baseRef := resolveWorktreeBaseRef(ctx, root)
+	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch, baseRef); err != nil {
 		return root, "", err
 	}
 

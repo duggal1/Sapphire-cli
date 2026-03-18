@@ -29,7 +29,7 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 
 	worktreeDir := spec.WorktreePath
 	if strings.TrimSpace(worktreeDir) == "" {
-		worktreeDir = filepath.Join(c.subAgentWorktreeRoot(root), sanitizeWorktreeName(spec.TaskKey, agentID, spec.Branch))
+		worktreeDir = c.defaultSubAgentWorktreePath(root, spec.TaskKey, spec.Branch, agentID)
 	}
 	if !filepath.IsAbs(worktreeDir) {
 		worktreeDir = filepath.Join(root, worktreeDir)
@@ -70,7 +70,8 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 		return "", "", func() {}, err
 	}
 
-	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch); err != nil {
+	baseRef := resolveWorktreeBaseRef(ctx, root)
+	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch, baseRef); err != nil {
 		return "", "", func() {}, err
 	}
 
@@ -82,6 +83,18 @@ func (c *coordinator) subAgentWorktreeRoot(root string) string {
 	return filepath.Join(root, "worktrees")
 }
 
+func (c *coordinator) defaultSubAgentWorktreePath(root, taskKey, branch, agentID string) string {
+	slug := worktreeTaskSlug(taskKey, branch)
+	if slug == "" {
+		slug = "task"
+	}
+	shortID := shortAgentID(agentID)
+	if shortID == "" {
+		shortID = "agent"
+	}
+	return filepath.Join(c.subAgentWorktreeRoot(root), "agent", shortID, slug)
+}
+
 func (c *coordinator) subAgentWorktreeCleanup(root, worktreeDir string) func() {
 	return func() {
 		release := c.lockWorktreePath(worktreeDir)
@@ -90,6 +103,63 @@ func (c *coordinator) subAgentWorktreeCleanup(root, worktreeDir string) func() {
 			slog.Warn("Failed to remove sub-agent worktree", "error", err)
 		}
 	}
+}
+
+// quarantineWorktree moves a failed worktree with changes to a quarantine
+// directory instead of deleting it. This preserves evidence for review.
+func (c *coordinator) quarantineWorktree(root, worktreeDir, taskSlug string) error {
+	release := c.lockWorktreePath(worktreeDir)
+	defer release()
+
+	if !isSubAgentWorktree(worktreeDir) {
+		return nil
+	}
+
+	// Check if worktree has changes
+	ctx, cancel := context.WithTimeout(context.Background(), subAgentWorktreeTimeout)
+	defer cancel()
+	diffOut, err := runGitOutput(ctx, worktreeDir, "diff", "--stat")
+	if err != nil || strings.TrimSpace(diffOut) == "" {
+		// No changes or error reading — safe to delete
+		return removeWorktree(root, worktreeDir)
+	}
+
+	// Move to quarantine
+	slug := sanitizeWorktreeSlug(taskSlug)
+	if slug == "" {
+		slug = "unknown"
+	}
+	quarantineDir := filepath.Join(c.subAgentWorktreeRoot(root), "quarantine", slug)
+	if err := os.MkdirAll(filepath.Dir(quarantineDir), 0o755); err != nil {
+		return fmt.Errorf("create quarantine parent: %w", err)
+	}
+	if err := os.Rename(worktreeDir, quarantineDir); err != nil {
+		slog.Warn("Quarantine rename failed, preserving in place", "error", err)
+		return nil
+	}
+	slog.Info("Quarantined failed worktree", "from", worktreeDir, "to", quarantineDir)
+	return nil
+}
+
+// resumeWorktree allows another agent to pick up an existing orphaned or
+// quarantined worktree and continue work in it.
+func (c *coordinator) resumeWorktree(ctx context.Context, worktreeDir string) (string, error) {
+	release := c.lockWorktreePath(worktreeDir)
+	defer release()
+
+	if !isSubAgentWorktree(worktreeDir) {
+		return "", fmt.Errorf("worktree %s does not exist or is not a git worktree", worktreeDir)
+	}
+
+	if owner := c.activeSubAgentUsingWorktree(worktreeDir, ""); owner != "" {
+		return "", fmt.Errorf("worktree %s is still owned by active sub-agent %s", worktreeDir, owner)
+	}
+
+	branch, err := currentWorktreeBranch(ctx, worktreeDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read current branch in worktree %s: %w", worktreeDir, err)
+	}
+	return branch, nil
 }
 
 func (c *coordinator) lockWorktreePath(worktreeDir string) func() {
@@ -156,22 +226,22 @@ func isSubAgentWorktree(worktreeDir string) bool {
 	return true
 }
 
-func sanitizeWorktreeName(taskKey, agentID, branch string) string {
+func worktreeTaskSlug(taskKey, branch string) string {
 	name := strings.TrimSpace(taskKey)
 	if name == "" {
 		name = strings.TrimSpace(branch)
 	}
+	return sanitizeWorktreeSlug(name)
+}
+
+func sanitizeWorktreeSlug(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
-		name = agentID
+		return ""
 	}
-	name = strings.ToLower(name)
 	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", ".", "-", "_", "-")
 	name = replacer.Replace(name)
-	name = strings.Trim(name, "-")
-	if name == "" {
-		name = "subagent"
-	}
-	return name
+	return strings.Trim(name, "-")
 }
 
 func sanitizeBranchName(branch string) string {
@@ -187,15 +257,23 @@ func sanitizeBranchName(branch string) string {
 }
 
 func defaultSubAgentBranch(taskKey, agentID string) string {
-	slug := sanitizeWorktreeName(taskKey, agentID, "")
+	slug := worktreeTaskSlug(taskKey, "")
+	if slug == "" {
+		slug = "task"
+	}
+	shortID := shortAgentID(agentID)
+	if shortID == "" {
+		shortID = "session"
+	}
+	return fmt.Sprintf("agent/%s/%s", shortID, slug)
+}
+
+func shortAgentID(agentID string) string {
 	shortID := strings.TrimPrefix(agentID, "agent-")
 	if len(shortID) > 8 {
 		shortID = shortID[:8]
 	}
-	if shortID == "" {
-		shortID = "session"
-	}
-	return fmt.Sprintf("subagent/%s-%s", slug, shortID)
+	return shortID
 }
 
 func branchExists(root, branch string) bool {
@@ -249,17 +327,17 @@ func removeWorktree(root, worktreeDir string) error {
 	return nil
 }
 
-func addWorktreeWithRecovery(ctx context.Context, root, worktreeDir, branch string) error {
-	if err := runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, false)...); err == nil {
+func addWorktreeWithRecovery(ctx context.Context, root, worktreeDir, branch, baseRef string) error {
+	if err := runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, baseRef, false)...); err == nil {
 		return nil
 	}
 	if err := resetWorktreeState(ctx, root, worktreeDir); err != nil {
 		return err
 	}
-	return runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, true)...)
+	return runGit(ctx, root, worktreeAddArgs(root, branch, worktreeDir, baseRef, true)...)
 }
 
-func worktreeAddArgs(root, branch, worktreeDir string, force bool) []string {
+func worktreeAddArgs(root, branch, worktreeDir, baseRef string, force bool) []string {
 	args := []string{"worktree", "add"}
 	if force {
 		args = append(args, "-f", "-f")
@@ -267,7 +345,11 @@ func worktreeAddArgs(root, branch, worktreeDir string, force bool) []string {
 	if branchExists(root, branch) {
 		return append(args, worktreeDir, branch)
 	}
-	return append(args, "-b", branch, worktreeDir, "HEAD")
+	ref := strings.TrimSpace(baseRef)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	return append(args, "-b", branch, worktreeDir, ref)
 }
 
 func resetWorktreeState(ctx context.Context, root, worktreeDir string) error {
@@ -320,4 +402,20 @@ func isIgnorableWorktreeStateError(err error) bool {
 		strings.Contains(msg, "cannot find worktree") ||
 		strings.Contains(msg, "is not registered") ||
 		strings.Contains(msg, "worktree prune")
+}
+
+func resolveWorktreeBaseRef(ctx context.Context, root string) string {
+	if root == "" {
+		return "HEAD"
+	}
+	if ref, err := runGitOutput(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && ref != "" {
+		return ref
+	}
+	if branchExists(root, "main") {
+		return "main"
+	}
+	if branchExists(root, "master") {
+		return "master"
+	}
+	return "HEAD"
 }

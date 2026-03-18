@@ -61,7 +61,7 @@ func GetBackgroundShellManager() *BackgroundShellManager {
 }
 
 // Start creates and starts a new background shell with the given command.
-func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string) (*BackgroundShell, error) {
+func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, blockFuncs []BlockFunc, command string, description string, backend string) (*BackgroundShell, error) {
 	// Check job limit
 	if m.shells.Len() >= MaxBackgroundJobs {
 		return nil, fmt.Errorf("maximum number of background jobs (%d) reached. Please terminate or wait for some jobs to complete", MaxBackgroundJobs)
@@ -72,6 +72,7 @@ func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, b
 	shell := NewShell(&Options{
 		WorkingDir: workingDir,
 		BlockFuncs: blockFuncs,
+		Backend:    backend,
 	})
 
 	shellCtx, cancel := context.WithCancel(ctx)

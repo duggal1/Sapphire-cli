@@ -320,6 +320,10 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	workDir := c.cfg.WorkingDir()
 	cleanup := func() {}
 	branch := strings.TrimSpace(opts.Branch)
+
+	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, opts.WriteManifest)
+	assignment, assignmentPrompt := buildSubAgentAssignment(parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone)
+
 	if opts.Worktree {
 		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, parentSessionID, agentID, subAgentWorktreeSpec{
 			WorktreePath: opts.WorktreePath,
@@ -333,6 +337,11 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		workDir = wtDir
 		branch = wtBranch
 		cleanup = wtCleanup
+
+		// Write TASK.md into the worktree
+		if err := writeSubAgentTaskContext(workDir, assignment); err != nil {
+			slog.Warn("Failed to write sub-agent task context", "workdir", workDir, "error", err)
+		}
 	}
 
 	agentKey := config.AgentCoder
@@ -345,9 +354,8 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		return "", "", fmt.Errorf("agent %q not configured", agentKey)
 	}
 
-	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, opts.WriteManifest)
 	writeScope := tools.NewWriteScope(workDir, normalizedManifest)
-	assignment, assignmentPrompt := buildSubAgentAssignment(parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone)
+
 
 	promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
 	if err != nil {
@@ -462,6 +470,32 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, input.prompt)
 		cancel()
 
+		// Run validation gate on the worktree if it exists
+		runner.mu.Lock()
+		workDir := runner.workDir
+		branch := runner.assignment.Branch
+		taskSlug := runner.assignment.TaskKey
+		runner.mu.Unlock()
+		var validationReport string
+		if workDir != "" && isSubAgentWorktree(workDir) {
+			vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationGateTimeout)
+			vResult := validateWorktreeResult(vCtx, workDir, branch, "")
+			vCancel()
+			validationReport = formatValidationReport(vResult)
+
+			// If validation failed and there was no run error, note it
+			if !vResult.Passed && err == nil {
+				result += validationReport
+			}
+
+			// Quarantine on failure with changes
+			if err != nil && vResult.HasChanges {
+				if root := c.cfg.WorkingDir(); root != "" {
+					_ = c.quarantineWorktree(root, workDir, taskSlug)
+				}
+			}
+		}
+
 		eventType := SubAgentCompletedEvent
 		stage := SubAgentStageCompleted
 		errMsg := ""
@@ -480,18 +514,28 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			errMsg = err.Error()
 		} else {
 			submission.Status = subAgentStatusCompleted
-			submission.Result = result
+			// Append validation report to result
+			finalResult := result
+			if validationReport != "" && !strings.Contains(result, "VALIDATION GATE") {
+				finalResult += validationReport
+			}
+			submission.Result = finalResult
 			runner.status = subAgentStatusCompleted
-			report := parseSubAgentReport(result)
+			report := parseSubAgentReport(finalResult)
 			if report.Summary != "" {
 				runner.lastResult = report.Summary
 			} else {
-				runner.lastResult = result
+				runner.lastResult = finalResult
 			}
 			if report.Progress != "" {
 				runner.lastProgress = report.Progress
 			}
 			runner.lastError = ""
+
+			// Trigger async memory extraction on successful completion
+			if c.memoryPipe != nil {
+				c.memoryPipe.TriggerPostCompletion(runner.sessionID, finalResult)
+			}
 		}
 		runner.assignment.UpdatedAt = time.Now()
 		broker = runner.statusBroker
@@ -807,6 +851,29 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 	if err != nil {
 		return err
 	}
+
+	// Quarantine logic: if failed/closed with changes, preserve.
+	runner.mu.Lock()
+	workDir := runner.workDir
+	taskSlug := runner.assignment.TaskKey
+	status := runner.status
+	runner.mu.Unlock()
+
+	if workDir != "" && isSubAgentWorktree(workDir) {
+		// If the agent is in a non-success state, consider quarantine
+		if status == subAgentStatusError || status == subAgentStatusClosed || status == subAgentStatusQueued {
+			if root := c.cfg.WorkingDir(); root != "" {
+				// quarantineWorktree helper checks for changes internally; 
+				// if changes exist, it moves to quarantine and we clear cleanup.
+				if qErr := c.quarantineWorktree(root, workDir, taskSlug); qErr == nil {
+					runner.mu.Lock()
+					runner.cleanup = nil // Prevent runner.close() from deleting it
+					runner.mu.Unlock()
+				}
+			}
+		}
+	}
+
 	runner.close()
 	c.publishSubAgentEvent(SubAgentClosedEvent, runner, "", SubAgentStageClosed, "")
 	c.ensureSubAgentRegistry().delete(agentID)

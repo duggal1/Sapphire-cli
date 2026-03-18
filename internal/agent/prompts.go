@@ -20,6 +20,18 @@ var initializePromptTmpl []byte
 //go:embed templates/structured_summary.md
 var structuredSummaryPromptTmpl []byte
 
+//go:embed templates/orchestrator.md.tpl
+var orchestratorPrompt []byte
+
+//go:embed templates/memory_read.md.tpl
+var memoryReadPrompt []byte
+
+//go:embed templates/memory_extraction.md.tpl
+var memoryExtractionPrompt []byte
+
+//go:embed templates/memory_consolidation.md.tpl
+var memoryConsolidationPrompt []byte
+
 // coderPrompt creates a new prompt specifically tailored for the coding agent.
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	systemPrompt, err := prompt.NewPrompt("coder", string(coderPromptTmpl), opts...)

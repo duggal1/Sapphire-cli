@@ -24,8 +24,11 @@ import (
 type BashParams struct {
 	Description     string `json:"description" description:"A brief description of what the command does, try to keep it under 30 characters or so"`
 	Command         string `json:"command" description:"The command to execute"`
-	WorkingDir      string `json:"working_dir,omitempty" description:"The working directory to execute the command in (defaults to current directory)"`
-	RunInBackground bool   `json:"run_in_background,omitempty" description:"Set to true (boolean) to run this command in the background. Use job_output to read the output later."`
+	WorkingDir      string   `json:"working_dir,omitempty" description:"The working directory to execute the command in (defaults to current directory)"`
+	RunInBackground bool     `json:"run_in_background,omitempty" description:"Set to true (boolean) to run this command in the background. Use job_output to read the output later."`
+	Backend         string   `json:"backend,omitempty" description:"Execution backend: 'posix' (default, mvdan/sh emulation) or 'native' (os/exec native shell)."`
+	Justification   string   `json:"justification,omitempty" description:"Why this command is needed (for audit trail)"`
+	PrefixRule      []string `json:"prefix_rule,omitempty" description:"Commands to prepend (e.g., ['timeout', '30'] for timeout)"`
 }
 
 func (p *BashParams) UnmarshalJSON(data []byte) error {
@@ -35,10 +38,13 @@ func (p *BashParams) UnmarshalJSON(data []byte) error {
 		Cmd              string `json:"cmd"`
 		BashCommand      string `json:"bash_command"`
 		Script           string `json:"script"`
-		WorkingDir       string `json:"working_dir"`
-		WorkingDirectory string `json:"working_directory"`
-		RunInBackground  bool   `json:"run_in_background"`
-		Background       bool   `json:"background"`
+		WorkingDir       string   `json:"working_dir"`
+		WorkingDirectory string   `json:"working_directory"`
+		RunInBackground  bool     `json:"run_in_background"`
+		Background       bool     `json:"background"`
+		Backend          string   `json:"backend"`
+		Justification    string   `json:"justification"`
+		PrefixRule       []string `json:"prefix_rule"`
 	}
 
 	var raw rawBashParams
@@ -50,14 +56,20 @@ func (p *BashParams) UnmarshalJSON(data []byte) error {
 	p.Command = strings.TrimSpace(cmp.Or(raw.Command, raw.Cmd, raw.BashCommand, raw.Script))
 	p.WorkingDir = strings.TrimSpace(cmp.Or(raw.WorkingDir, raw.WorkingDirectory))
 	p.RunInBackground = raw.RunInBackground || raw.Background
+	p.Backend = strings.TrimSpace(raw.Backend)
+	p.Justification = strings.TrimSpace(raw.Justification)
+	p.PrefixRule = raw.PrefixRule
 	return nil
 }
 
 type BashPermissionsParams struct {
 	Description     string `json:"description"`
 	Command         string `json:"command"`
-	WorkingDir      string `json:"working_dir"`
-	RunInBackground bool   `json:"run_in_background"`
+	WorkingDir      string   `json:"working_dir"`
+	RunInBackground bool     `json:"run_in_background"`
+	Backend         string   `json:"backend,omitempty"`
+	Justification   string   `json:"justification,omitempty"`
+	PrefixRule      []string `json:"prefix_rule,omitempty"`
 }
 
 type BashResponseMetadata struct {
@@ -68,6 +80,7 @@ type BashResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 	Background       bool   `json:"background,omitempty"`
 	ShellID          string `json:"shell_id,omitempty"`
+	Justification    string `json:"justification,omitempty"`
 }
 
 const (
@@ -235,6 +248,11 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				return fantasy.NewTextErrorResponse("command is required"), nil
 			}
 
+			if len(params.PrefixRule) > 0 {
+				prefixStr := strings.Join(params.PrefixRule, " ")
+				params.Command = prefixStr + " " + params.Command
+			}
+
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
 
@@ -263,7 +281,15 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 						ToolName:    BashToolName,
 						Action:      "execute",
 						Description: fmt.Sprintf("Execute command: %s", params.Command),
-						Params:      BashPermissionsParams(params),
+						Params:      BashPermissionsParams{
+							Description:     params.Description,
+							Command:         params.Command,
+							WorkingDir:      params.WorkingDir,
+							RunInBackground: params.RunInBackground,
+							Backend:         params.Backend,
+							Justification:   params.Justification,
+							PrefixRule:      params.PrefixRule,
+						},
 					},
 				)
 				if err != nil {
@@ -280,7 +306,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				bgManager := shell.GetFastBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, params.Backend)
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -315,6 +341,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 						Description:      params.Description,
 						Background:       params.RunInBackground,
 						WorkingDirectory: bgShell.WorkingDir,
+						Justification:    params.Justification,
 					}
 					if stdout == "" {
 						return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
@@ -331,6 +358,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 					WorkingDirectory: bgShell.WorkingDir,
 					Background:       true,
 					ShellID:          bgShell.ID,
+					Justification:    params.Justification,
 				}
 				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
@@ -348,7 +376,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				return fantasy.ToolResponse{}, ctx.Err()
 			}
 
-			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description, params.Backend)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}
@@ -405,6 +433,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 					Description:      params.Description,
 					Background:       params.RunInBackground,
 					WorkingDirectory: bgShell.WorkingDir,
+					Justification:    params.Justification,
 				}
 				if stdout == "" {
 					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
@@ -421,6 +450,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				WorkingDirectory: bgShell.WorkingDir,
 				Background:       true,
 				ShellID:          bgShell.ID,
+				Justification:    params.Justification,
 			}
 			setLastBackgroundShellID(sessionID, bgShell.ID)
 			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)

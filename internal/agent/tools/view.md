@@ -4,8 +4,10 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 - **CRITICAL ROUTING RULE**: Read exactly 1 repository file → use `single_view`. Read 2 or more repository files → use `agentic_view`. NEVER use repeated `single_view` calls for multi-file reads.
 - Provide "file_paths" (array of strings) to read multiple files concurrently
 - Provide "file_path" (string) to read a single file (legacy)
-- Optional offset: start reading from specific line (0-based, applies to single file only)
-- Optional limit: control lines read (default 2000, applies to single file only)
+- Optional offset: start reading from specific line (1-based index, defaults to 1)
+- Optional limit: control lines read (default 2000)
+- Optional mode: "slice" (default) or "indentation" (Codex-compatible indentation-aware reading)
+- Optional indentation (when mode is "indentation"): Object with `anchor_line`, `max_levels`, `include_siblings`, `include_header`, `max_lines`
 - Don't use for directories (use LS tool instead)
 - Supports image files (PNG, JPEG, GIF, BMP, SVG, WebP)
 </usage>
@@ -13,7 +15,9 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 <features>
 - Parallel reading: Read up to 250 files simultaneously
 - Displays contents with line numbers
-- Can read from any file position using offset
+- Can read from any file position using 1-indexed offset
+- Indentation-aware context gathering using two-pointer expansion
+- Automatically detects comments and expands tabs to 4 spaces
 - Handles large files by limiting lines read
 - Auto-truncates very long lines for display
 - Suggests similar filenames when file not found

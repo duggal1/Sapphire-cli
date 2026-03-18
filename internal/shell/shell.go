@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -56,6 +58,7 @@ type Shell struct {
 	mu         sync.Mutex
 	logger     Logger
 	blockFuncs []BlockFunc
+	backend    string
 }
 
 // Options for creating a new shell
@@ -64,6 +67,7 @@ type Options struct {
 	Env        []string
 	Logger     Logger
 	BlockFuncs []BlockFunc
+	Backend    string
 }
 
 // NewShell creates a new shell instance with the given options
@@ -87,11 +91,17 @@ func NewShell(opts *Options) *Shell {
 		logger = noopLogger{}
 	}
 
+	backend := opts.Backend
+	if backend == "" {
+		backend = "posix"
+	}
+
 	return &Shell{
 		cwd:        cwd,
 		env:        env,
 		logger:     logger,
 		blockFuncs: opts.BlockFuncs,
+		backend:    backend,
 	}
 }
 
@@ -260,6 +270,10 @@ func (s *Shell) updateShellFromRunner(runner *interp.Runner) {
 
 // execCommon is the shared implementation for executing commands
 func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr io.Writer) (err error) {
+	if s.backend == "native" {
+		return s.execNative(ctx, command, stdout, stderr)
+	}
+
 	var runner *interp.Runner
 	defer func() {
 		if r := recover(); r != nil {
@@ -283,6 +297,30 @@ func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr i
 
 	err = runner.Run(ctx, line)
 	return err
+}
+
+// execNative executes the command natively using os/exec.
+func (s *Shell) execNative(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	
+	cmd.Dir = s.cwd
+	cmd.Env = s.env
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	err := cmd.Run()
+	if err != nil {
+		s.logger.InfoPersist("command finished", "command", command, "err", err)
+		return fmt.Errorf("could not run native command: %w", err)
+	}
+	
+	s.logger.InfoPersist("command finished", "command", command, "err", nil)
+	return nil
 }
 
 // exec executes commands using a cross-platform shell interpreter.

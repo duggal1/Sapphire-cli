@@ -870,6 +870,7 @@ func allToolNames() []string {
 		"view",
 		"single_view",
 		"agentic_view",
+		"apply_patch",
 		"write",
 		"list_tools",
 		"search_tools",
@@ -927,6 +928,7 @@ func (c *Config) SetupAgents() {
 		"edit":           {},
 		"single_edit":    {},
 		"agentic_edit":   {},
+		"apply_patch":    {},
 		"write":          {},
 	}
 	for _, tool := range allowedTools {

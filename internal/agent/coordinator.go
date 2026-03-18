@@ -118,6 +118,7 @@ type coordinator struct {
 	mcpRegistryLastFetch      time.Time
 	mcpRegistryFetchInFlight  bool
 	toolCacheMu               sync.RWMutex
+	memoryPipe                *memoryPipeline
 	cachedTools               []fantasy.AgentTool
 	cachedToolNames           []string
 	mcpPreflightMu            sync.Mutex
@@ -213,6 +214,10 @@ func NewCoordinator(
 		mcpPreflightInFlight:      make(map[string]bool),
 		mcpSelectionCache:         make(map[string]mcpSelectionSnapshot),
 		mcpSelectionInFlight:      make(map[string]bool),
+	}
+	c.memoryPipe = newMemoryPipeline(c)
+	if err := c.memoryPipe.EnsureMemoryFolder(); err != nil {
+		slog.Warn("Failed to ensure memory folder", "error", err)
 	}
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
@@ -1268,6 +1273,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
 		tools.NewSingleEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
 		tools.NewMultiEditTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
+		tools.NewApplyPatchTool(workingDir),
 		tools.NewFetchTool(c.permissions, workingDir, nil),
 		tools.NewGlobTool(workingDir),
 		tools.NewMemoryQueryTool(c.memory),

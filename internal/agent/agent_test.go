@@ -659,12 +659,10 @@ func BenchmarkBuildSummaryPrompt(b *testing.B) {
 	}
 
 	for _, tc := range cases {
-		todos := makeTestTodos(tc.numTodos)
-
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				_ = buildSummaryPrompt(todos)
+				_ = buildSummaryPrompt()
 			}
 		})
 	}

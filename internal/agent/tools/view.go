@@ -25,15 +25,33 @@ import (
 //go:embed view.md
 var viewDescription []byte
 
-// ViewParams defines the parameters for the file viewing tool.
+// ViewParams defines the parameters for the file viewing tool (Codex-compatible).
 type ViewParams struct {
 	FilePaths []string `json:"file_paths,omitempty" description:"The paths to the files to read. Max concurrent reads will apply."`
 	FilePath  string   `json:"file_path,omitempty" description:"The path to the file to read (legacy single file)"`
 	Paths     []string `json:"paths,omitempty" description:"Alias for file_paths"`
 	Files     []string `json:"files,omitempty" description:"Alias for file_paths"`
 	Path      string   `json:"path,omitempty" description:"Alias for file_path"`
-	Offset    int      `json:"offset,omitempty" description:"The line number to start reading from (0-based, applies to single file only)"`
-	Limit     int      `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000, applies to single file only)"`
+	// Codex-compatible: 1-indexed offset (user-friendly)
+	Offset    int      `json:"offset,omitempty" description:"The line number to start reading from (1-based, defaults to 1)"`
+	Limit     int      `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
+	// Codex-compatible: Reading modes
+	Mode        string           `json:"mode,omitempty" description:"Reading mode: 'slice' (default) or 'indentation' (Codex-compatible)"`
+	Indentation *IndentationMode `json:"indentation,omitempty" description:"Indentation-aware reading options (Codex-compatible)"`
+}
+
+// IndentationMode provides indentation-aware reading configuration (Codex-compatible).
+type IndentationMode struct {
+	// AnchorLine is the line to anchor indentation detection (defaults to offset)
+	AnchorLine *int `json:"anchor_line,omitempty"`
+	// MaxLevels is max indentation depth to collect (0 = unlimited)
+	MaxLevels *int `json:"max_levels,omitempty"`
+	// IncludeSiblings includes sibling blocks at same indentation
+	IncludeSiblings *bool `json:"include_siblings,omitempty"`
+	// IncludeHeader includes header lines above anchor block
+	IncludeHeader *bool `json:"include_header,omitempty"`
+	// MaxLines is hard cap on returned lines (defaults to limit)
+	MaxLines *int `json:"max_lines,omitempty"`
 }
 
 type ViewPermissionsParams struct {
@@ -74,7 +92,14 @@ const (
 	DefaultReadLimit    = 2000
 	MaxLineLength       = 2000
 	viewTimeout         = 8 * time.Second
+	
+	// Codex-compatible constants
+	TAB_WIDTH      = 4  // Tab expansion width (Codex default)
+	MAX_LINE_WIDTH = 500 // Codex max line display width
 )
+
+// COMMENT_PREFIXES for comment detection (Codex-compatible)
+var COMMENT_PREFIXES = []string{"#", "//", "--", "/*", "*", ";;", ";", "'"}
 
 // NewViewTool creates a tool for reading file contents with support for line numbering and diagnostics.
 func NewViewTool(
@@ -286,7 +311,8 @@ func NewViewTool(
 						return
 					}
 
-					content, hasMore, err := readTextFile(ctx, fullPath, params.Offset, limit)
+					// Codex-compatible: Use readTextFileWithMode for indentation-aware reading
+					content, hasMore, err := readTextFileWithMode(ctx, fullPath, params.Offset, limit, params.Mode, params.Indentation)
 					if err != nil {
 						results[idx] = fileResult{filePath: filePath, err: fmt.Errorf("error reading file %s: %w", filePath, err)}
 						return
@@ -302,7 +328,8 @@ func NewViewTool(
 					mu.Unlock()
 
 					output := fmt.Sprintf("<file path=\"%s\">\n", filePath)
-					output += addLineNumbers(content, params.Offset+1)
+					// Codex-compatible: 1-indexed line numbers
+					output += addLineNumbers(content, params.Offset)
 					if hasMore {
 						output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)", params.Offset+len(strings.Split(content, "\n")))
 					}
@@ -572,6 +599,264 @@ func isInSkillsPath(filePath string, skillsPaths []string) bool {
 	}
 
 	return false
+}
+
+// =============================================================================
+// Codex-Compatible Reading Features
+// =============================================================================
+
+// LineRecord represents a single line with metadata (Codex-compatible).
+type LineRecord struct {
+	Number  int    `json:"number"`   // 1-indexed line number
+	Raw     string `json:"raw"`      // Raw line content
+	Display string `json:"display"`  // Tab-expanded display content
+	Indent  int    `json:"indent"`   // Indentation level in spaces
+}
+
+// IsBlank returns true if the line is empty or whitespace-only.
+func (lr *LineRecord) IsBlank() bool {
+	return strings.TrimSpace(lr.Raw) == ""
+}
+
+// IsComment returns true if the line starts with a comment prefix.
+func (lr *LineRecord) IsComment() bool {
+	trimmed := strings.TrimSpace(lr.Raw)
+	for _, prefix := range COMMENT_PREFIXES {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandTabs converts tabs to spaces using TAB_WIDTH (Codex-compatible).
+func expandTabs(line string, tabWidth int) string {
+	var result strings.Builder
+	result.Grow(len(line) + tabWidth) // Pre-allocate for efficiency
+	for _, r := range line {
+		if r == '\t' {
+			spaces := tabWidth - (result.Len() % tabWidth)
+			for i := 0; i < spaces; i++ {
+				result.WriteByte(' ')
+			}
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// measureIndent returns the indentation level in spaces (Codex-compatible).
+func measureIndent(line string) int {
+	indent := 0
+	for _, r := range line {
+		if r == ' ' {
+			indent++
+		} else if r == '\t' {
+			indent += TAB_WIDTH
+		} else {
+			break
+		}
+	}
+	return indent
+}
+
+// formatLine formats a line for display with tab expansion and truncation.
+func formatLine(bytes []byte) string {
+	decoded := string(bytes)
+	if len(decoded) > MAX_LINE_WIDTH {
+		// Truncate at character boundary
+		for i := MAX_LINE_WIDTH; i > 0; i-- {
+			if utf8.RuneStart(decoded[i]) {
+				return decoded[:i] + "..."
+			}
+		}
+		return "..."
+	}
+	return expandTabs(decoded, TAB_WIDTH)
+}
+
+// readTextFileWithMode reads a file with the specified mode (Codex-compatible).
+// Supports both slice mode and indentation-aware mode.
+func readTextFileWithMode(ctx context.Context, filePath string, offset, limit int, mode string, indentation *IndentationMode) (string, bool, error) {
+	// Convert 1-indexed offset to internal 1-indexed (Codex uses 1-indexed)
+	if offset <= 0 {
+		offset = 1 // Default to first line (Codex-compatible)
+	}
+	
+	if mode == "indentation" && indentation != nil {
+		// Indentation-aware reading (Codex feature)
+		content, err := readIndentationBlock(ctx, filePath, offset, limit, indentation)
+		if err != nil {
+			return "", false, err
+		}
+		return content, false, nil
+	}
+	
+	// Default slice mode
+	content, hasMore, err := readTextFile(ctx, filePath, offset, limit)
+	if err != nil {
+		return "", false, err
+	}
+	
+	// Apply tab expansion to output
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = expandTabs(line, TAB_WIDTH)
+	}
+	
+	return strings.Join(lines, "\n"), hasMore, nil
+}
+
+// readIndentationBlock reads a file with indentation-aware block detection.
+func readIndentationBlock(ctx context.Context, filePath string, offset, limit int, indentation *IndentationMode) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	defer file.Close()
+
+	// Collect all lines with metadata
+	var lines []LineRecord
+	scanner := NewLineScanner(file)
+	number := 0
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		number++
+		raw := scanner.Text()
+		lines = append(lines, LineRecord{
+			Number:  number,
+			Raw:     raw,
+			Display: formatLine([]byte(raw)),
+			Indent:  measureIndent(raw),
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if len(lines) == 0 {
+		return "", fmt.Errorf("file is empty")
+	}
+
+	// Determine anchor line (Codex-compatible: defaults to offset)
+	anchorLine := offset
+	if indentation.AnchorLine != nil && *indentation.AnchorLine > 0 {
+		anchorLine = *indentation.AnchorLine
+	}
+	if anchorLine > len(lines) {
+		return "", fmt.Errorf("offset/anchor_line exceeds file length (%d lines)", len(lines))
+	}
+
+	// Compute effective indents (propagate non-blank indents to blank lines)
+	effectiveIndents := computeEffectiveIndents(lines)
+	anchorIndex := anchorLine - 1
+	anchorIndent := effectiveIndents[anchorIndex]
+
+	// Determine max indentation depth to collect
+	maxLevels := 0
+	if indentation.MaxLevels != nil {
+		maxLevels = *indentation.MaxLevels
+	}
+	minIndent := 0
+	if maxLevels > 0 {
+		minIndent = anchorIndent - (maxLevels * TAB_WIDTH)
+	}
+
+	// Determine limit
+	finalLimit := limit
+	if indentation.MaxLines != nil && *indentation.MaxLines > 0 {
+		finalLimit = min(finalLimit, *indentation.MaxLines)
+	}
+
+	// Collect lines around anchor using two-pointer technique
+	includeSiblings := false
+	if indentation.IncludeSiblings != nil {
+		includeSiblings = *indentation.IncludeSiblings
+	}
+	
+	var out []LineRecord
+	out = append(out, lines[anchorIndex])
+	
+	i := anchorIndex - 1 // up cursor
+	j := anchorIndex + 1 // down cursor
+	
+	for len(out) < finalLimit && (i >= 0 || j < len(lines)) {
+		progressed := false
+		
+		// Move up
+		if i >= 0 && effectiveIndents[i] >= minIndent {
+			if includeSiblings || effectiveIndents[i] > minIndent {
+				out = append([]LineRecord{lines[i]}, out...)
+				progressed = true
+			}
+			i--
+		}
+		
+		// Move down
+		if j < len(lines) && effectiveIndents[j] >= minIndent {
+			if includeSiblings || effectiveIndents[j] > minIndent {
+				out = append(out, lines[j])
+				progressed = true
+			}
+			j++
+		}
+		
+		if !progressed {
+			break
+		}
+	}
+
+	// Trim empty lines from start and end
+	out = trimEmptyLines(out)
+
+	// Format output with line numbers
+	var result []string
+	for _, line := range out {
+		result = append(result, fmt.Sprintf("L%d: %s", line.Number, line.Display))
+	}
+
+	return strings.Join(result, "\n"), nil
+}
+
+// computeEffectiveIndents computes effective indentation for each line.
+// Blank lines inherit the previous non-blank line's indentation.
+func computeEffectiveIndents(lines []LineRecord) []int {
+	effective := make([]int, len(lines))
+	previousIndent := 0
+	for i, line := range lines {
+		if line.IsBlank() {
+			effective[i] = previousIndent
+		} else {
+			previousIndent = line.Indent
+			effective[i] = previousIndent
+		}
+	}
+	return effective
+}
+
+// trimEmptyLines removes empty lines from the start and end of a slice.
+func trimEmptyLines(lines []LineRecord) []LineRecord {
+	if len(lines) == 0 {
+		return lines
+	}
+	
+	start := 0
+	for start < len(lines) && lines[start].IsBlank() {
+		start++
+	}
+	
+	end := len(lines) - 1
+	for end >= start && lines[end].IsBlank() {
+		end--
+	}
+	
+	if start > end {
+		return []LineRecord{}
+	}
+	return lines[start : end+1]
 }
 
 // detectLiteralEscapes warns the agent if the file contains literal '\n' or '\t'

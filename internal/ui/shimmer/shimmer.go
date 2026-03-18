@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/sapphire/internal/ui/anim"
+
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 )
@@ -207,4 +210,11 @@ func ShimmerWithDotPrefix(text string) string {
 		return dot
 	}
 	return dot + " " + strings.Join(ShimmerSpans(text), "")
+}
+
+// ShimmerTickCmd returns a command that triggers a shimmer tick.
+func ShimmerTickCmd() func() tea.Msg {
+	return func() tea.Msg {
+		return anim.StepMsg{ID: "default"}
+	}
 }

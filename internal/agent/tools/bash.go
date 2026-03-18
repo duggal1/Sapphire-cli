@@ -602,3 +602,16 @@ func normalizeWorkingDir(path string) string {
 	}
 	return filepath.ToSlash(path)
 }
+
+
+
+// JobListResponseMetadata is metadata for job list responses.
+type JobListResponseMetadata struct {
+	Jobs []struct {
+		ShellID         string `json:"shell_id"`
+		Status          string `json:"status"`
+		Description     string `json:"description"`
+		Command         string `json:"command"`
+		WorkingDirectory string `json:"working_directory"`
+	} `json:"jobs"`
+}

@@ -59,6 +59,9 @@ type subAgentRunner struct {
 	lastError      string
 	lastProgress   string
 	lastSubmission string
+	validationPassed bool
+	validationErrors string
+	validationHasChanges bool
 	submissions    map[string]*subAgentSubmission
 	inputCh        chan subAgentInput
 	closed         bool
@@ -156,6 +159,9 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		Domains:          r.assignment.Domains,
 		StartedAt:        r.assignment.CreatedAt,
 		UpdatedAt:        r.assignment.UpdatedAt,
+		ValidationPassed: r.validationPassed,
+		ValidationErrors: r.validationErrors,
+		ValidationHasChanges: r.validationHasChanges,
 	}
 }
 
@@ -267,6 +273,9 @@ type subAgentSnapshot struct {
 	Domains          []string       `json:"domains,omitempty"`
 	StartedAt        time.Time      `json:"started_at,omitempty"`
 	UpdatedAt        time.Time      `json:"updated_at,omitempty"`
+	ValidationPassed bool           `json:"validation_passed,omitempty"`
+	ValidationErrors string         `json:"validation_errors,omitempty"`
+	ValidationHasChanges bool       `json:"validation_has_changes,omitempty"`
 }
 
 type subAgentStatusEntry struct {
@@ -283,6 +292,9 @@ type subAgentCollectedResult struct {
 	Progress     string         `json:"progress,omitempty"`
 	WorkDir      string         `json:"work_dir,omitempty"`
 	Branch       string         `json:"branch,omitempty"`
+	ValidationPassed bool        `json:"validation_passed,omitempty"`
+	ValidationErrors string      `json:"validation_errors,omitempty"`
+	ValidationHasChanges bool    `json:"validation_has_changes,omitempty"`
 }
 
 type spawnAgentOptions struct {
@@ -291,10 +303,12 @@ type spawnAgentOptions struct {
 	Title            string
 	Worktree         bool
 	ReuseWorktree    bool
+	AllowReuse       bool
 	WorktreePath     string
 	Branch           string
 	WriteManifest    []string
 	DefinitionOfDone string
+	TestCommand      string
 	AgentID          string
 	Model            string
 	ReasoningEffort  string
@@ -315,21 +329,21 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		}
 	}
 	decision := evaluateSubAgentLaunch(promptText)
+	assignmentID := fmt.Sprintf("subagent-%d", time.Now().UnixNano())
 
 	agentID := "agent-" + uuid.New().String()
 	workDir := c.cfg.WorkingDir()
 	cleanup := func() {}
 	branch := strings.TrimSpace(opts.Branch)
 
-	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, opts.WriteManifest)
-	assignment, assignmentPrompt := buildSubAgentAssignment(parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone)
-
 	if opts.Worktree {
 		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, parentSessionID, agentID, subAgentWorktreeSpec{
 			WorktreePath: opts.WorktreePath,
 			Branch:       branch,
 			Reuse:        opts.ReuseWorktree,
+			AllowReuse:   opts.AllowReuse,
 			TaskKey:      decision.TaskKey,
+			AssignmentID: assignmentID,
 		})
 		if err != nil {
 			return "", "", err
@@ -338,6 +352,16 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		branch = wtBranch
 		cleanup = wtCleanup
 
+	}
+
+	writeManifest := opts.WriteManifest
+	if writeManifest == nil {
+		writeManifest = []string{}
+	}
+	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, writeManifest)
+	assignment, assignmentPrompt := buildSubAgentAssignment(assignmentID, parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone, opts.TestCommand)
+
+	if opts.Worktree {
 		// Write TASK.md into the worktree
 		if err := writeSubAgentTaskContext(workDir, assignment); err != nil {
 			slog.Warn("Failed to write sub-agent task context", "workdir", workDir, "error", err)
@@ -387,10 +411,12 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		return "", "", fmt.Errorf("create sub-agent session: %w", err)
 	}
 	if err := c.recordSubAgentMetadata(ctx, session.ID, subAgentMetadata{
+		AssignmentID:     assignment.ID,
 		WorktreePath:     workDir,
 		Branch:           branch,
 		WriteManifest:    normalizedManifest,
 		DefinitionOfDone: opts.DefinitionOfDone,
+		TestCommand:      opts.TestCommand,
 	}); err != nil {
 		cleanup()
 		return "", "", err
@@ -475,17 +501,34 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		workDir := runner.workDir
 		branch := runner.assignment.Branch
 		taskSlug := runner.assignment.TaskKey
+		testCommand := runner.assignment.TestCommand
+		taskTitle := runner.assignment.Title
 		runner.mu.Unlock()
 		var validationReport string
 		if workDir != "" && isSubAgentWorktree(workDir) {
-			vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationGateTimeout)
-			vResult := validateWorktreeResult(vCtx, workDir, branch, "")
+			vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)
+			vResult := validateWorktreeResult(vCtx, workDir, branch, testCommand)
 			vCancel()
 			validationReport = formatValidationReport(vResult)
+			runner.mu.Lock()
+			runner.validationPassed = vResult.Passed
+			runner.validationErrors = vResult.Errors
+			runner.validationHasChanges = vResult.HasChanges
+			runner.mu.Unlock()
 
 			// If validation failed and there was no run error, note it
 			if !vResult.Passed && err == nil {
 				result += validationReport
+			}
+
+			// Auto-commit on success with changes
+			if err == nil && vResult.Passed && vResult.HasChanges {
+				commitCtx, commitCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+				commitErr := autoCommitWorktree(commitCtx, workDir, defaultSubAgentCommitMessage(taskTitle, taskSlug))
+				commitCancel()
+				if commitErr != nil {
+					err = fmt.Errorf("auto-commit failed: %w", commitErr)
+				}
 			}
 
 			// Quarantine on failure with changes
@@ -618,12 +661,18 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	cleanup := func() {}
 	meta, _ := c.loadSubAgentMetadata(ctx, sess.ID)
 	branch := strings.TrimSpace(meta.Branch)
+	assignmentID := strings.TrimSpace(meta.AssignmentID)
+	if assignmentID == "" {
+		assignmentID = fmt.Sprintf("subagent-resume-%d", time.Now().UnixNano())
+	}
 	if meta.WorktreePath != "" {
 		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, effectiveParent, agentID, subAgentWorktreeSpec{
 			WorktreePath: meta.WorktreePath,
 			Branch:       branch,
 			Reuse:        true,
+			AllowReuse:   true,
 			TaskKey:      "",
+			AssignmentID: assignmentID,
 		})
 		if err != nil {
 			slog.Warn("Failed to restore sub-agent worktree; falling back to repo root", "error", err)
@@ -659,7 +708,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		task = c.resumeSubAgentTask(ctx, sess)
 	}
 	decision := evaluateSubAgentLaunch(task)
-	assignment, _ := buildSubAgentAssignment(effectiveParent, sess.Title, task, workDir, decision, normalizedManifest, branch, meta.DefinitionOfDone)
+	assignment, _ := buildSubAgentAssignment(assignmentID, effectiveParent, sess.Title, task, workDir, decision, normalizedManifest, branch, meta.DefinitionOfDone, meta.TestCommand)
 
 	runner = &subAgentRunner{
 		id:            agentID,
@@ -802,6 +851,9 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 		Progress:     r.lastProgress,
 		WorkDir:      r.workDir,
 		Branch:       r.assignment.Branch,
+		ValidationPassed: r.validationPassed,
+		ValidationErrors: r.validationErrors,
+		ValidationHasChanges: r.validationHasChanges,
 	}
 	if submission := r.submissions[r.lastSubmission]; submission != nil {
 		if submission.Status != "" {

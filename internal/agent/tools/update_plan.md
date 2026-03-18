@@ -36,9 +36,10 @@ Each plan item should:
 1. **Create the plan early**: Call update_plan before starting complex work
 2. **Keep it short**: 5-7 steps maximum, each step 5-7 words
 3. **Update progress**: Mark steps as in_progress when starting, completed when done
-4. **One active step**: Only one step should be in_progress at a time
-5. **Verify completion**: Mark steps completed only after verification
-6. **Don't repeat**: The harness displays the plan - don't repeat it in your response
+4. **Full list every time**: Always send the complete, current plan. Do not omit existing steps.
+5. **One active step**: Only one step should be in_progress at a time
+6. **Verify completion**: Mark steps completed only after verification
+7. **Don't repeat**: The harness displays the plan - don't repeat it in your response
 
 ## Example
 

@@ -26,7 +26,7 @@ func writeSubAgentTaskContext(workDir string, assignment subAgentAssignment) err
 	}
 
 	// Orchestrator Protocol Section
-	if len(orchestratorPrompt) > 0 {
+	if orchestrator := activeSubAgentOrchestratorPrompt(); orchestrator != "" {
 		builder.WriteString("\n## Orchestrator Protocol\n")
 		builder.WriteString("This worktree is governed by strict orchestrator rules:\n")
 		builder.WriteString("- Autonomy: Use tools and terminal to solve blockers.\n")
@@ -43,12 +43,19 @@ func writeSubAgentTaskContext(workDir string, assignment subAgentAssignment) err
 		builder.WriteString(strings.TrimSpace(assignment.DefinitionOfDone))
 		builder.WriteString("\n")
 	}
+	if assignment.TestCommand != "" {
+		builder.WriteString("\n## Test Command\n")
+		builder.WriteString(strings.TrimSpace(assignment.TestCommand))
+		builder.WriteString("\n")
+	}
 
 	builder.WriteString("\n## Validation Gate Expectations\n")
 	builder.WriteString("After you report STATUS: done, a validation gate will run:\n")
 	builder.WriteString("1. `git diff --stat`: Verifies semantic changes.\n")
 	builder.WriteString("2. Build Verification: Project must build successfully.\n")
 	builder.WriteString("3. Test Verification: Existing and new tests must pass.\n")
+	builder.WriteString("4. Lint Verification: Lint checks must pass if available.\n")
+	builder.WriteString("5. Security Verification: Security scan must pass if available.\n")
 	builder.WriteString("\n**IMPORTANT**: If you fail validation, this worktree will be quarantined for audit. Do not submit until the project is stable.\n")
 
 	builder.WriteString("\n## Memory Protocol\n")

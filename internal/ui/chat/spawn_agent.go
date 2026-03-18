@@ -2,7 +2,6 @@ package chat
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/charmbracelet/sapphire/internal/agent"
 	"github.com/charmbracelet/sapphire/internal/message"
@@ -45,17 +44,15 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		return joinToolParts(header, sty.Tool.ErrorMessage.Render("Sub-agent launch rejected"))
 	}
 
-	if !opts.HasResult() || opts.Result.Content == "" {
-		return header
-	}
-
 	var payload agent.SpawnAgentParams
 	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &payload)
 
-	status := "Sub-agent launched"
-	if payload.Title != "" {
-		status = fmt.Sprintf("Sub-agent launched: %s", payload.Title)
-	}
+	var result subAgentSpawnResult
+	_ = json.Unmarshal([]byte(resultContent(opts)), &result)
 
-	return joinToolParts(header, sty.Tool.ContentLine.Render(status))
+	body := renderSubAgentSpawnBody(sty, &payload, &result, cappedWidth-toolBodyLeftPaddingTotal)
+	if body == "" {
+		return header
+	}
+	return joinToolParts(header, sty.Tool.Body.Render(body))
 }

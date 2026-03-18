@@ -247,6 +247,16 @@ func NewToolMessageItem(
 		item = NewBackgroundSubAgentsToolMessageItem(sty, toolCall, result, canceled)
 	case agent.SpawnAgentToolName:
 		item = NewSpawnAgentToolMessageItem(sty, toolCall, result, canceled)
+	case agent.ResumeAgentToolName:
+		item = NewResumeAgentToolMessageItem(sty, toolCall, result, canceled)
+	case agent.SendInputToolName:
+		item = NewSendInputToolMessageItem(sty, toolCall, result, canceled)
+	case agent.WaitAgentsToolName:
+		item = NewWaitAgentsToolMessageItem(sty, toolCall, result, canceled)
+	case agent.CollectResultToolName:
+		item = NewCollectResultToolMessageItem(sty, toolCall, result, canceled)
+	case agent.CloseAgentToolName:
+		item = NewCloseAgentToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticFetchToolName:
 		item = NewAgenticFetchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WebFetchToolName:

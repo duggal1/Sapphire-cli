@@ -14,6 +14,9 @@ var coderPromptTmpl []byte
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
+//go:embed templates/plan_tool.md.tpl
+var planToolPromptTmpl []byte
+
 //go:embed templates/initialize.md.tpl
 var initializePromptTmpl []byte
 
@@ -22,6 +25,9 @@ var structuredSummaryPromptTmpl []byte
 
 //go:embed templates/orchestrator.md.tpl
 var orchestratorPrompt []byte
+
+//go:embed templates/subagent_orchestrator.md.tpl
+var subAgentOrchestratorPrompt []byte
 
 //go:embed templates/memory_read.md.tpl
 var memoryReadPrompt []byte
@@ -34,6 +40,7 @@ var memoryConsolidationPrompt []byte
 
 // coderPrompt creates a new prompt specifically tailored for the coding agent.
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
+	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
 	systemPrompt, err := prompt.NewPrompt("coder", string(coderPromptTmpl), opts...)
 	if err != nil {
 		return nil, err
@@ -42,6 +49,7 @@ func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 }
 
 func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
+	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
 	systemPrompt, err := prompt.NewPrompt("task", string(taskPromptTmpl), opts...)
 	if err != nil {
 		return nil, err

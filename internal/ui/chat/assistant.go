@@ -99,6 +99,7 @@ func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	if !a.isSpinning() {
 		return nil
 	}
+	a.skillFrame++
 	return a.anim.Animate(msg)
 }
 

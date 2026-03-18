@@ -14,6 +14,8 @@ const (
 	validationDiffMaxLines  = 500
 	validationBuildTimeout  = 60 * time.Second
 	validationTestTimeout   = 120 * time.Second
+	validationLintTimeout   = 60 * time.Second
+	validationSecurityTimeout = 120 * time.Second
 )
 
 // validationResult holds the outcome of a worktree validation gate.
@@ -22,6 +24,8 @@ type validationResult struct {
 	DiffSummary string `json:"diff_summary,omitempty"`
 	BuildOutput string `json:"build_output,omitempty"`
 	TestOutput  string `json:"test_output,omitempty"`
+	LintOutput  string `json:"lint_output,omitempty"`
+	SecurityOutput string `json:"security_output,omitempty"`
 	Errors      string `json:"errors,omitempty"`
 	HasChanges  bool   `json:"has_changes"`
 }
@@ -101,6 +105,48 @@ func validateWorktreeResult(ctx context.Context, worktreeDir, baseBranch, testCo
 		result.TestOutput = "no test command detected"
 	}
 
+	// Phase 4: Lint verification (optional)
+	lintCmd := detectLintCommand(worktreeDir)
+	if lintCmd != "" {
+		lintCtx, lintCancel := context.WithTimeout(ctx, validationLintTimeout)
+		defer lintCancel()
+		lintOut, lintErr := runWorktreeShellCommand(lintCtx, worktreeDir, lintCmd)
+		if lintErr != nil {
+			result.Passed = false
+			result.LintOutput = truncateOutput(lintOut, 2000)
+			if result.Errors == "" {
+				result.Errors = fmt.Sprintf("lint failed: %s", lintErr)
+			} else {
+				result.Errors += fmt.Sprintf("; lint failed: %s", lintErr)
+			}
+		} else {
+			result.LintOutput = "lint passed"
+		}
+	} else {
+		result.LintOutput = "no lint command detected"
+	}
+
+	// Phase 5: Security verification (optional)
+	securityCmd := detectSecurityCommand(worktreeDir)
+	if securityCmd != "" {
+		secCtx, secCancel := context.WithTimeout(ctx, validationSecurityTimeout)
+		defer secCancel()
+		secOut, secErr := runWorktreeShellCommand(secCtx, worktreeDir, securityCmd)
+		if secErr != nil {
+			result.Passed = false
+			result.SecurityOutput = truncateOutput(secOut, 2000)
+			if result.Errors == "" {
+				result.Errors = fmt.Sprintf("security scan failed: %s", secErr)
+			} else {
+				result.Errors += fmt.Sprintf("; security scan failed: %s", secErr)
+			}
+		} else {
+			result.SecurityOutput = "security scan passed"
+		}
+	} else {
+		result.SecurityOutput = "no security command detected"
+	}
+
 	return result
 }
 
@@ -129,6 +175,12 @@ func formatValidationReport(result validationResult) string {
 	}
 	if result.TestOutput != "" {
 		builder.WriteString(fmt.Sprintf("Test: %s\n", result.TestOutput))
+	}
+	if result.LintOutput != "" {
+		builder.WriteString(fmt.Sprintf("Lint: %s\n", result.LintOutput))
+	}
+	if result.SecurityOutput != "" {
+		builder.WriteString(fmt.Sprintf("Security: %s\n", result.SecurityOutput))
 	}
 	if result.Errors != "" {
 		builder.WriteString(fmt.Sprintf("Errors: %s\n", result.Errors))
@@ -198,6 +250,40 @@ func detectTestCommand(worktreeDir string) string {
 	return ""
 }
 
+// detectLintCommand inspects the worktree to determine the lint command.
+func detectLintCommand(worktreeDir string) string {
+	if fileExists(worktreeDir, "Taskfile.yaml") {
+		return "task lint"
+	}
+	if fileExists(worktreeDir, ".golangci.yml") || fileExists(worktreeDir, ".golangci.yaml") {
+		return "golangci-lint run"
+	}
+	if fileExists(worktreeDir, "go.mod") {
+		return "golangci-lint run"
+	}
+	if fileExists(worktreeDir, "package.json") {
+		return "npm run lint --if-present"
+	}
+	if fileExists(worktreeDir, "Cargo.toml") {
+		return "cargo clippy"
+	}
+	return ""
+}
+
+// detectSecurityCommand inspects the worktree to determine the security scan command.
+func detectSecurityCommand(worktreeDir string) string {
+	if fileExists(worktreeDir, "Taskfile.yaml") {
+		return "task security"
+	}
+	if fileExists(worktreeDir, "go.mod") {
+		return "gosec ./..."
+	}
+	if fileExists(worktreeDir, "package.json") {
+		return "npm run security --if-present"
+	}
+	return ""
+}
+
 // fileExists checks if a file exists in the given directory.
 func fileExists(dir, name string) bool {
 	info, err := exec.Command("test", "-f", dir+"/"+name).CombinedOutput()
@@ -213,11 +299,40 @@ func truncateOutput(output string, maxLen int) string {
 	return output[:maxLen] + "\n... (truncated)"
 }
 
+func defaultSubAgentCommitMessage(title, taskKey string) string {
+	cleanTitle := strings.TrimSpace(title)
+	if cleanTitle == "" {
+		cleanTitle = strings.TrimSpace(taskKey)
+	}
+	if cleanTitle == "" {
+		cleanTitle = "sub-agent changes"
+	}
+	return fmt.Sprintf("agent: %s", cleanTitle)
+}
+
+func autoCommitWorktree(ctx context.Context, worktreeDir, message string) error {
+	if strings.TrimSpace(worktreeDir) == "" {
+		return fmt.Errorf("worktree dir is required")
+	}
+	_, err := runWorktreeCommand(ctx, worktreeDir, "git", "add", "-A")
+	if err != nil {
+		return err
+	}
+	output, err := runWorktreeCommand(ctx, worktreeDir, "git", "commit", "-m", message)
+	if err != nil {
+		if strings.Contains(strings.ToLower(output), "nothing to commit") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // runValidationGateAsync runs the validation gate asynchronously and logs the result.
 // It returns the validation result on the provided channel.
 func runValidationGateAsync(ctx context.Context, worktreeDir, baseBranch, testCommand string, resultCh chan<- validationResult) {
 	go func() {
-		vCtx, vCancel := context.WithTimeout(ctx, validationBuildTimeout+validationTestTimeout+validationGateTimeout)
+		vCtx, vCancel := context.WithTimeout(ctx, validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)
 		defer vCancel()
 		result := validateWorktreeResult(vCtx, worktreeDir, baseBranch, testCommand)
 		if !result.Passed {

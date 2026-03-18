@@ -13,10 +13,12 @@ import (
 const subAgentMetadataTag = "subagent_metadata"
 
 type subAgentMetadata struct {
+	AssignmentID     string   `json:"assignment_id,omitempty"`
 	WorktreePath     string   `json:"worktree_path,omitempty"`
 	Branch           string   `json:"branch,omitempty"`
 	WriteManifest    []string `json:"write_manifest,omitempty"`
 	DefinitionOfDone string   `json:"definition_of_done,omitempty"`
+	TestCommand      string   `json:"test_command,omitempty"`
 }
 
 func (c *coordinator) recordSubAgentMetadata(ctx context.Context, sessionID string, meta subAgentMetadata) error {

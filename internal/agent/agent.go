@@ -171,7 +171,7 @@ type SessionAgent interface {
 	Summarize(context.Context, string, fantasy.ProviderOptions) error
 	Model() Model
 	SetWorkingDir(string)
-	SessionID() string  // Get the current session ID (for plan mode filtering)
+	SessionID() string // Get the current session ID (for plan mode filtering)
 }
 
 type SubmissionStatus string
@@ -221,7 +221,7 @@ type sessionAgent struct {
 	pythonFailures atomic.Int32
 	workingDir     *csync.Value[string]
 	writeScope     *tools.WriteScope
-	sessionID      string  // Current session ID (for plan mode filtering)
+	sessionID      string // Current session ID (for plan mode filtering)
 }
 
 type SessionAgentOptions struct {
@@ -1210,7 +1210,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	// Codex-style compaction: build history and retry with trimming on context exceeded
 	aiMsgs, _ := a.preparePrompt(msgs, "")
-	
+
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
 	defer a.activeRequests.Del(sessionID)
@@ -1231,16 +1231,16 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	var truncatedCount int
 	maxRetries := 3
 	var finalNarrativeResp *fantasy.AgentResult
-	
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Prepare prompt with current history
 		summaryPromptText := buildSummaryPrompt()
-		
+
 		// Stream summary
 		narrativeAgent := fantasy.NewAgent(largeModel.Model,
 			fantasy.WithSystemPrompt(string(summaryPrompt)),
 		)
-		
+
 		narrativeResp, streamErr := narrativeAgent.Stream(genCtx, fantasy.AgentStreamCall{
 			Prompt:          summaryPromptText,
 			Messages:        aiMsgs,
@@ -1273,14 +1273,14 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 				return nil
 			},
 		})
-		
+
 		// Handle stream errors
 		if streamErr != nil {
 			if errors.Is(streamErr, context.Canceled) {
 				_ = a.messages.Delete(ctx, summaryMessage.ID)
 				return streamErr
 			}
-			
+
 			// Codex-style: on context exceeded, trim oldest message and retry
 			if isContextWindowExceeded(streamErr) && len(aiMsgs) > 1 {
 				slog.Warn("Context window exceeded during compaction; removing oldest history item",
@@ -1289,7 +1289,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 				truncatedCount++
 				continue
 			}
-			
+
 			// Max retries exceeded or non-retryable error
 			if attempt < maxRetries {
 				time.Sleep(streamRetryBackoff * time.Duration(attempt+1))
@@ -1297,7 +1297,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			}
 			return streamErr
 		}
-		
+
 		// Success - exit retry loop
 		finalNarrativeResp = narrativeResp
 		break
@@ -1305,18 +1305,18 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	// Codex-style: build compacted history with token-budgeted user messages
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	
+
 	// Collect user messages (excluding summaries) - Codex's collect_user_messages
 	userMessages := collectUserMessages(msgs)
-	
+
 	// Build compacted history with token limit - Codex's build_compacted_history_with_limit
 	compactedHistory := buildCompactedHistory(userMessages, summaryMessage.Content().Text, compactUserMessageMaxTokens)
-	
+
 	// Codex-style: summary_prefix + summary content
 	summaryText := string(summaryPrefix) + "\n" + compactedHistory
 	summaryMessage.Parts = []message.ContentPart{message.TextContent{Text: summaryText}}
 	_ = a.updateMessage(genCtx, summaryMessage, dbOpLongTimeout)
-	
+
 	// Persist structured summary
 	a.persistStructuredSummary(genCtx, sessionID, aiMsgs, nil, opts, systemPromptPrefix, largeModel.Model)
 
@@ -1325,17 +1325,17 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		a.updateSessionUsage(largeModel, &currentSession, finalNarrativeResp.TotalUsage, nil)
 	}
 	currentSession.SummaryMessageID = summaryMessage.ID
-	
+
 	// Reset checkpoint state for next compaction cycle
 	if a.pmem != nil {
 		a.pmem.ResetCheckpointState()
 	}
-	
+
 	// Audit log for long-horizon tasks
 	if a.isLongHorizon(sessionID) && a.longHorizon != nil {
 		a.longHorizon.AppendAudit(ctx, sessionID, "Completed summarization checkpoint and structured extraction.")
 	}
-	
+
 	// Save session
 	_, err = a.saveSessionWithTimeout(genCtx, currentSession)
 	return err
@@ -1504,11 +1504,13 @@ func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, atta
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
 					`Plan tool protocol for multi-step tasks (Codex update_plan):
 1. Call update_plan BEFORE technical work with 5-7 steps max, each 5-7 words
-2. Keep exactly one step in_progress at a time
-3. Update the full plan after each milestone
-4. Mark steps completed only after verification (tests pass, errors fixed)
-5. Do not abandon the plan - complete every step
-6. Do NOT repeat the full plan after calling update_plan - the harness already displays it
+2. Always send the FULL plan on every update; do not omit existing items
+3. Keep exactly one step in_progress at a time
+4. Status transitions must be pending -> in_progress -> completed
+5. Mark steps completed only after verification (tests pass, errors fixed)
+6. Do not batch-complete items after the fact
+7. Do not abandon the plan - complete every step
+8. Do NOT repeat the full plan after calling update_plan - the harness already displays it
 
 Skip this only for a single non-destructive read requiring exactly one tool call.`,
 				),
@@ -1525,7 +1527,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`For multi-step tasks, use the update_plan tool BEFORE execution: create 5-7 steps max (each 5-7 words), keep one step in_progress, update after milestones, complete every step. Do NOT repeat the plan - the harness displays it.`,
+					`For multi-step tasks, use update_plan before execution: 5-7 steps max (5-7 words each), always send the full plan, keep one step in_progress, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
 				),
 			))
 		}
@@ -1633,13 +1635,13 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}
 	// COMMENTED OUT - TODO LIST DISABLED
 	/*
-	var currentSession session.Session
-	if sessionCtx, cancel := withTimeout(ctx, memoryCallTimeout); sessionCtx != nil {
-		if loadedSession, err := a.getSessionWithTimeout(sessionCtx, sessionID); err == nil {
-			currentSession = loadedSession
+		var currentSession session.Session
+		if sessionCtx, cancel := withTimeout(ctx, memoryCallTimeout); sessionCtx != nil {
+			if loadedSession, err := a.getSessionWithTimeout(sessionCtx, sessionID); err == nil {
+				currentSession = loadedSession
+			}
+			cancel()
 		}
-		cancel()
-	}
 	*/
 	if continuity := buildSessionContinuityInjection(structuredSummary, nil); continuity != "" { // COMMENTED OUT todos
 		retHistory = append([]fantasy.Message{
@@ -1716,7 +1718,7 @@ func isContextWindowExceeded(err error) bool {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "context") && 
+	return strings.Contains(errStr, "context") &&
 		(strings.Contains(errStr, "exceed") || strings.Contains(errStr, "limit") || strings.Contains(errStr, "maximum"))
 }
 
@@ -1744,15 +1746,15 @@ func buildCompactedHistory(userMessages []string, summaryText string, maxTokens 
 		}
 		return summaryText
 	}
-	
+
 	// Select user messages within token budget (reverse order to keep recent)
 	var selectedMessages []string
 	remaining := maxTokens
-	
+
 	for i := len(userMessages) - 1; i >= 0 && remaining > 0; i-- {
 		msg := userMessages[i]
 		tokens := estimateTokens(msg)
-		
+
 		if tokens <= remaining {
 			selectedMessages = append(selectedMessages, msg)
 			remaining -= tokens
@@ -1765,23 +1767,23 @@ func buildCompactedHistory(userMessages []string, summaryText string, maxTokens 
 			break
 		}
 	}
-	
+
 	// Reverse to restore original order
 	for i, j := 0, len(selectedMessages)-1; i < j; i, j = i+1, j-1 {
 		selectedMessages[i], selectedMessages[j] = selectedMessages[j], selectedMessages[i]
 	}
-	
+
 	// Build compacted history
 	var sb strings.Builder
 	for _, msg := range selectedMessages {
 		sb.WriteString(msg)
 		sb.WriteString("\n")
 	}
-	
+
 	if summaryText != "" {
 		sb.WriteString(summaryText)
 	}
-	
+
 	return sb.String()
 }
 
@@ -2373,15 +2375,15 @@ func buildSessionContinuityInjection(structured *memory.StructuredSummaryData, t
 
 	// COMMENTED OUT - TODO LIST DISABLED
 	/*
-	if len(todoStates) > 0 {
-		sb.WriteString("\n### Active Todo State\n")
-		for _, todo := range todoStates {
-			if strings.TrimSpace(todo.Content) == "" {
-				continue
+		if len(todoStates) > 0 {
+			sb.WriteString("\n### Active Todo State\n")
+			for _, todo := range todoStates {
+				if strings.TrimSpace(todo.Content) == "" {
+					continue
+				}
+				fmt.Fprintf(&sb, "- [%s] %s\n", todo.Status, todo.Content)
 			}
-			fmt.Fprintf(&sb, "- [%s] %s\n", todo.Status, todo.Content)
 		}
-	}
 	*/
 
 	if len(structured.Decisions) > 0 {

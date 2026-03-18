@@ -19,6 +19,9 @@ func (c *coordinator) prepareMainWorktree(ctx context.Context) (string, string, 
 	if _, err := runGitOutput(ctx, root, "rev-parse", "--git-dir"); err != nil {
 		return root, "", nil
 	}
+	if err := ensureCleanBaseWorktree(ctx, root); err != nil {
+		return root, "", err
+	}
 
 	baseDir := filepath.Join(c.subAgentWorktreeRoot(root), mainWorktreeBaseName)
 	baseBranch := "agent/main"

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/fantasy"
@@ -36,6 +37,7 @@ type OrchestrateWorktreesParams struct {
 	TestCommand       string             `json:"test_command,omitempty" description:"Test command to run in each worktree (spawns test runner agents)"`
 	IntegrationPrompt string             `json:"integration_prompt,omitempty" description:"Optional prompt for integration agent (merges and validates)"`
 	IntegrationBranch string             `json:"integration_branch,omitempty" description:"Branch for integration worktree (defaults to integration/<timestamp>)"`
+	MaxParallel       int                `json:"max_parallel,omitempty" description:"Maximum parallel sub-agents (defaults to agent_max_threads)"`
 }
 
 type OrchestrationAgentRef struct {
@@ -44,12 +46,16 @@ type OrchestrationAgentRef struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 	Branch       string `json:"branch,omitempty"`
 	Title        string `json:"title,omitempty"`
+	Status       subAgentStatus `json:"status,omitempty"`
+	ValidationPassed bool        `json:"validation_passed,omitempty"`
+	ValidationErrors string      `json:"validation_errors,omitempty"`
 }
 
 type OrchestrateWorktreesResult struct {
 	Tasks            []OrchestrationAgentRef `json:"tasks"`
 	TestRunners      []OrchestrationAgentRef `json:"test_runners,omitempty"`
 	IntegrationAgent *OrchestrationAgentRef  `json:"integration_agent,omitempty"`
+	IntegrationSkippedReason string           `json:"integration_skipped_reason,omitempty"`
 }
 
 func (c *coordinator) orchestrateWorktreesTool(ctx context.Context) (fantasy.AgentTool, error) {
@@ -89,70 +95,117 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		TestRunners: nil,
 	}
 
-	for _, task := range params.Tasks {
-		prompt := strings.TrimSpace(task.Prompt)
-		if prompt == "" {
-			return OrchestrateWorktreesResult{}, fmt.Errorf("task prompt is required")
-		}
-		if task.DefinitionOfDone != "" {
-			prompt = fmt.Sprintf("%s\n\nDefinition of done:\n%s", prompt, strings.TrimSpace(task.DefinitionOfDone))
-		}
-
-		agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
-			Prompt:           prompt,
-			Title:            task.Name,
-			Worktree:         true,
-			WorktreePath:     task.WorktreePath,
-			Branch:           task.Branch,
-			WriteManifest:    task.WriteManifest,
-			DefinitionOfDone: task.DefinitionOfDone,
-			AgentID:          task.Agent,
-			Model:            task.Model,
-			ReasoningEffort:  task.ReasoningEffort,
-			ForkContext:      task.ForkContext,
-		})
-		if err != nil {
-			return OrchestrateWorktreesResult{}, err
-		}
-
-		ref := OrchestrationAgentRef{
-			AgentID:      agentID,
-			SubmissionID: submissionID,
-			Title:        task.Name,
-		}
-		if runner, err := c.getSubAgent(agentID); err == nil {
-			ref.WorktreePath = runner.workDir
-			ref.Branch = runner.assignment.Branch
-		}
-		result.Tasks = append(result.Tasks, ref)
+	type taskOutcome struct {
+		name string
+		ref  OrchestrationAgentRef
+		err  error
 	}
 
-	if strings.TrimSpace(params.TestCommand) != "" {
-		for _, task := range result.Tasks {
-			if task.WorktreePath == "" {
+	maxParallel := params.MaxParallel
+	if maxParallel <= 0 {
+		maxParallel = c.subAgentThreadLimit()
+	}
+	if maxParallel <= 0 {
+		maxParallel = len(params.Tasks)
+	}
+	if maxParallel > len(params.Tasks) {
+		maxParallel = len(params.Tasks)
+	}
+
+	queue := make(chan WorktreeTaskSpec)
+	outcomes := make(chan taskOutcome, len(params.Tasks))
+	var wg sync.WaitGroup
+
+	worker := func() {
+		defer wg.Done()
+		control := c.subAgentControl()
+		for task := range queue {
+			prompt := strings.TrimSpace(task.Prompt)
+			if prompt == "" {
+				outcomes <- taskOutcome{name: task.Name, err: fmt.Errorf("task prompt is required")}
 				continue
 			}
-			testPrompt := fmt.Sprintf("Run tests in %s using command: %s. Report failures and exit. Do not modify files.", task.WorktreePath, strings.TrimSpace(params.TestCommand))
+			if task.DefinitionOfDone != "" {
+				prompt = fmt.Sprintf("%s\n\nDefinition of done:\n%s", prompt, strings.TrimSpace(task.DefinitionOfDone))
+			}
+
 			agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
-				Prompt:        testPrompt,
-				Title:         fmt.Sprintf("Test Runner: %s", task.Title),
-				Worktree:      true,
-				ReuseWorktree: true,
-				WorktreePath:  task.WorktreePath,
-				Branch:        task.Branch,
-				WriteManifest: []string{},
-				AgentID:       config.AgentTask,
+				Prompt:           prompt,
+				Title:            task.Name,
+				Worktree:         true,
+				WorktreePath:     task.WorktreePath,
+				Branch:           task.Branch,
+				WriteManifest:    task.WriteManifest,
+				DefinitionOfDone: task.DefinitionOfDone,
+				TestCommand:      params.TestCommand,
+				AgentID:          task.Agent,
+				Model:            task.Model,
+				ReasoningEffort:  task.ReasoningEffort,
+				ForkContext:      task.ForkContext,
 			})
 			if err != nil {
-				return OrchestrateWorktreesResult{}, err
+				outcomes <- taskOutcome{name: task.Name, err: err}
+				continue
 			}
-			result.TestRunners = append(result.TestRunners, OrchestrationAgentRef{
+
+			ref := OrchestrationAgentRef{
 				AgentID:      agentID,
 				SubmissionID: submissionID,
-				WorktreePath: task.WorktreePath,
-				Branch:       task.Branch,
-				Title:        fmt.Sprintf("Test Runner: %s", task.Title),
-			})
+				Title:        task.Name,
+			}
+			if runner, err := c.getSubAgent(agentID); err == nil {
+				ref.WorktreePath = runner.workDir
+				ref.Branch = runner.assignment.Branch
+			}
+			_, _ = control.wait(ctx, []string{agentID}, 0)
+			results := control.collectResult([]string{agentID})
+			_ = control.close(agentID)
+			if len(results) > 0 {
+				ref.Status = results[0].Status
+				ref.ValidationPassed = results[0].ValidationPassed
+				ref.ValidationErrors = results[0].ValidationErrors
+			}
+			outcomes <- taskOutcome{name: task.Name, ref: ref}
+		}
+	}
+
+	for i := 0; i < maxParallel; i++ {
+		wg.Add(1)
+		go worker()
+	}
+
+	go func() {
+		for _, task := range params.Tasks {
+			queue <- task
+		}
+		close(queue)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(outcomes)
+	}()
+
+	order := make([]string, 0, len(params.Tasks))
+	for _, task := range params.Tasks {
+		order = append(order, task.Name)
+	}
+	outcomesMap := make(map[string]OrchestrationAgentRef, len(params.Tasks))
+	var firstErr error
+	for outcome := range outcomes {
+		if outcome.err != nil && firstErr == nil {
+			firstErr = outcome.err
+		}
+		if outcome.name != "" {
+			outcomesMap[outcome.name] = outcome.ref
+		}
+	}
+	if firstErr != nil {
+		return OrchestrateWorktreesResult{}, firstErr
+	}
+	for _, name := range order {
+		if ref, ok := outcomesMap[name]; ok {
+			result.Tasks = append(result.Tasks, ref)
 		}
 	}
 
@@ -169,6 +222,17 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		}
 	}
 	if integrationPrompt != "" {
+		allPassed := true
+		for _, task := range result.Tasks {
+			if task.Status != subAgentStatusCompleted || !task.ValidationPassed {
+				allPassed = false
+				break
+			}
+		}
+		if !allPassed {
+			result.IntegrationSkippedReason = "validation failed or task incomplete"
+			return result, nil
+		}
 		branch := strings.TrimSpace(params.IntegrationBranch)
 		if branch == "" {
 			branch = fmt.Sprintf("integration/%d", time.Now().Unix())
@@ -189,9 +253,18 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 			SubmissionID: submissionID,
 			Title:        "Integration Agent",
 		}
+		control := c.subAgentControl()
 		if runner, err := c.getSubAgent(agentID); err == nil {
 			ref.WorktreePath = runner.workDir
 			ref.Branch = runner.assignment.Branch
+		}
+		_, _ = control.wait(ctx, []string{agentID}, 0)
+		results := control.collectResult([]string{agentID})
+		_ = control.close(agentID)
+		if len(results) > 0 {
+			ref.Status = results[0].Status
+			ref.ValidationPassed = results[0].ValidationPassed
+			ref.ValidationErrors = results[0].ValidationErrors
 		}
 		result.IntegrationAgent = ref
 	}
@@ -218,6 +291,57 @@ func validateWorktreeSpecs(tasks []WorktreeTaskSpec) error {
 		return err
 	}
 	return nil
+}
+
+func (c *coordinator) ResumeWorktree(ctx context.Context, sessionID, worktreePath, prompt, agentKey, model, reasoningEffort string) (OrchestrationAgentRef, error) {
+	if sessionID == "" {
+		return OrchestrationAgentRef{}, fmt.Errorf("session id is required")
+	}
+	worktreePath = strings.TrimSpace(worktreePath)
+	if worktreePath == "" {
+		return OrchestrationAgentRef{}, fmt.Errorf("worktree path is required")
+	}
+	taskPrompt := strings.TrimSpace(prompt)
+	if taskPrompt == "" {
+		taskPrompt = "Resume worktree task"
+	}
+	branch, err := c.resumeWorktree(ctx, worktreePath)
+	if err != nil {
+		return OrchestrationAgentRef{}, err
+	}
+	agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
+		Prompt:          taskPrompt,
+		Title:           "Resume Worktree",
+		Worktree:        true,
+		ReuseWorktree:   true,
+		AllowReuse:      true,
+		WorktreePath:    worktreePath,
+		Branch:          branch,
+		WriteManifest:   []string{},
+		AgentID:         agentKey,
+		Model:           model,
+		ReasoningEffort: reasoningEffort,
+	})
+	if err != nil {
+		return OrchestrationAgentRef{}, err
+	}
+	ref := OrchestrationAgentRef{
+		AgentID:      agentID,
+		SubmissionID: submissionID,
+		Title:        "Resume Worktree",
+		WorktreePath: worktreePath,
+		Branch:       branch,
+	}
+	control := c.subAgentControl()
+	_, _ = control.wait(ctx, []string{agentID}, 0)
+	results := control.collectResult([]string{agentID})
+	_ = control.close(agentID)
+	if len(results) > 0 {
+		ref.Status = results[0].Status
+		ref.ValidationPassed = results[0].ValidationPassed
+		ref.ValidationErrors = results[0].ValidationErrors
+	}
+	return ref, nil
 }
 
 func validateManifestOverlaps(tasks []WorktreeTaskSpec) error {

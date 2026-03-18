@@ -337,24 +337,16 @@ func hasAnySignal(prompt string, signals []string) bool {
 func evaluateSubAgentLaunch(prompt string) subAgentLaunchDecision {
 	normalized := strings.ToLower(strings.TrimSpace(prompt))
 	decision := subAgentLaunchDecision{
-		Allowed: false,
+		Allowed: true,
 		Reason:  "",
 	}
 	if normalized == "" {
+		decision.Allowed = false
 		decision.Reason = "empty prompt"
-		return decision
-	}
-	if isTrivialSubAgentPrompt(normalized) {
-		decision.Reason = "trivial prompt"
 		return decision
 	}
 
 	wordCount := len(strings.Fields(normalized))
-	if isLightweightSingleOperation(normalized, wordCount) {
-		decision.Reason = "single immediate operation"
-		return decision
-	}
-
 	domains := detectSubAgentDomains(normalized)
 	decision.Domains = domains
 	decision.TaskKey = subAgentTaskKey(normalized)
@@ -374,17 +366,15 @@ func evaluateSubAgentLaunch(prompt string) subAgentLaunchDecision {
 
 	decision.Complexity = complexityScore(wordCount, sentenceCount, listCount, len(domains), operational)
 
-	if operational || decision.Complexity >= 4 || decision.Parallelizable {
-		decision.Allowed = true
-		return decision
-	}
-
-	if decision.Complexity <= 1 {
+	if isTrivialSubAgentPrompt(normalized) {
+		decision.Reason = "trivial prompt"
+	} else if isLightweightSingleOperation(normalized, wordCount) {
+		decision.Reason = "single immediate operation"
+	} else if decision.Complexity <= 1 {
 		decision.Reason = "too small for delegation"
-		return decision
+	} else if !operational && decision.Complexity < 4 && !decision.Parallelizable {
+		decision.Reason = "insufficient task complexity"
 	}
-
-	decision.Reason = "insufficient task complexity"
 	return decision
 }
 

@@ -228,6 +228,82 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
+func isForbiddenGitMainCommand(command string) (bool, string) {
+	segments := splitCommandSegments(command)
+	for _, seg := range segments {
+		fields := strings.Fields(seg)
+		if len(fields) < 2 || fields[0] != "git" {
+			continue
+		}
+		sub := fields[1]
+		switch sub {
+		case "push":
+			if containsMainBranchToken(fields[2:]) {
+				return true, "git push to main/master is not allowed"
+			}
+			if !hasExplicitBranchTarget(fields[2:]) {
+				return true, "git push without explicit non-main branch is not allowed"
+			}
+		case "merge":
+			if containsMainBranchToken(fields[2:]) {
+				return true, "git merge involving main/master is not allowed"
+			}
+		}
+	}
+	return false, ""
+}
+
+func splitCommandSegments(command string) []string {
+	parts := strings.FieldsFunc(command, func(r rune) bool {
+		switch r {
+		case ';', '&', '|':
+			return true
+		default:
+			return false
+		}
+	})
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		segment := strings.TrimSpace(part)
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
+}
+
+func containsMainBranchToken(tokens []string) bool {
+	for _, token := range tokens {
+		token = strings.ToLower(token)
+		if token == "main" || token == "master" {
+			return true
+		}
+		if strings.Contains(token, "origin/main") || strings.Contains(token, "origin/master") {
+			return true
+		}
+		if strings.HasSuffix(token, ":main") || strings.HasSuffix(token, ":master") {
+			return true
+		}
+		if strings.Contains(token, "refs/heads/main") || strings.Contains(token, "refs/heads/master") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExplicitBranchTarget(tokens []string) bool {
+	for _, token := range tokens {
+		token = strings.ToLower(token)
+		if token == "main" || token == "master" {
+			return true
+		}
+		if strings.Contains(token, ":") || strings.Contains(token, "/") {
+			return true
+		}
+	}
+	return false
+}
+
 func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelName string) fantasy.AgentTool {
 	return fantasy.NewParallelAgentTool(
 		BashToolName,
@@ -251,6 +327,10 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			if len(params.PrefixRule) > 0 {
 				prefixStr := strings.Join(params.PrefixRule, " ")
 				params.Command = prefixStr + " " + params.Command
+			}
+
+			if blocked, reason := isForbiddenGitMainCommand(params.Command); blocked {
+				return fantasy.NewTextErrorResponse(reason), nil
 			}
 
 			// Determine working directory

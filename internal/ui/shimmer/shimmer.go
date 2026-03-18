@@ -199,5 +199,12 @@ func ShimmerText(text string) string {
 // Renders a shimmering "• text" — dot prefix shimmers alongside the text.
 
 func ShimmerWithDotPrefix(text string) string {
-	return strings.Join(ShimmerSpans("• "+text), "")
+	processStartOnce.Do(func() {
+		processStart = time.Now()
+	})
+	dot := Spinner(&processStart, true)
+	if strings.TrimSpace(text) == "" {
+		return dot
+	}
+	return dot + " " + strings.Join(ShimmerSpans(text), "")
 }

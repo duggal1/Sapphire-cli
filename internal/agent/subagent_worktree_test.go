@@ -16,9 +16,9 @@ func TestPrepareSubAgentWorktreeRecoversLockedMissingWorktree(t *testing.T) {
 	t.Parallel()
 
 	root := initGitRepo(t)
-	worktreeDir := filepath.Join(root, "worktrees", "analysis")
+	worktreeDir := filepath.Join(root, "worktrees", "agent", "test", "analysis")
 
-	runGitTest(t, root, "worktree", "add", "-b", "subagent/analysis", worktreeDir, "HEAD")
+	runGitTest(t, root, "worktree", "add", "-b", "agent/test/analysis", worktreeDir, "HEAD")
 	runGitTest(t, root, "worktree", "lock", "--reason", "initializing", worktreeDir)
 	require.NoError(t, os.RemoveAll(worktreeDir))
 
@@ -27,12 +27,13 @@ func TestPrepareSubAgentWorktreeRecoversLockedMissingWorktree(t *testing.T) {
 	coord := &coordinator{cfg: cfg}
 	gotDir, branch, cleanup, err := coord.prepareSubAgentWorktree(context.Background(), "session-1", "agent-1", subAgentWorktreeSpec{
 		WorktreePath: worktreeDir,
-		Branch:       "subagent/analysis",
+		Branch:       "agent/test/analysis",
 		TaskKey:      "analysis",
+		AssignmentID: "test",
 	})
 	require.NoError(t, err)
 	require.Equal(t, worktreeDir, gotDir)
-	require.Equal(t, "subagent/analysis", branch)
+	require.Equal(t, "agent/test/analysis", branch)
 	require.DirExists(t, gotDir)
 	cleanup()
 }
@@ -65,20 +66,21 @@ func TestPrepareSubAgentWorktreeRejectsActivePathCollision(t *testing.T) {
 		subAgentRegistry: newSubAgentRegistry(),
 		worktreeOps:      make(map[string]*sync.Mutex),
 	}
-	worktreeDir := filepath.Join(root, "worktrees", "shared")
+	worktreeDir := filepath.Join(root, "worktrees", "agent", "test", "shared")
 	coord.subAgentRegistry.upsert("agent-existing", &subAgentRunner{
 		id:      "agent-existing",
 		workDir: worktreeDir,
 		status:  subAgentStatusRunning,
 		assignment: subAgentAssignment{
-			Branch: "subagent/shared",
+			Branch: "agent/test/shared",
 		},
 	})
 
 	_, _, _, err = coord.prepareSubAgentWorktree(context.Background(), "session-1", "agent-new", subAgentWorktreeSpec{
 		WorktreePath: worktreeDir,
-		Branch:       "subagent/shared",
+		Branch:       "agent/test/shared",
 		TaskKey:      "shared",
+		AssignmentID: "test",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already owned by active sub-agent")

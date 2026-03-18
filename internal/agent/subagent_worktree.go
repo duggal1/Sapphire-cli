@@ -18,7 +18,9 @@ type subAgentWorktreeSpec struct {
 	WorktreePath string
 	Branch       string
 	Reuse        bool
+	AllowReuse   bool
 	TaskKey      string
+	AssignmentID string
 }
 
 func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, agentID string, spec subAgentWorktreeSpec) (string, string, func(), error) {
@@ -29,7 +31,7 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 
 	worktreeDir := spec.WorktreePath
 	if strings.TrimSpace(worktreeDir) == "" {
-		worktreeDir = c.defaultSubAgentWorktreePath(root, spec.TaskKey, spec.Branch, agentID)
+		worktreeDir = c.defaultSubAgentWorktreePath(root, spec.TaskKey, spec.AssignmentID)
 	}
 	if !filepath.IsAbs(worktreeDir) {
 		worktreeDir = filepath.Join(root, worktreeDir)
@@ -40,17 +42,37 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 
 	branch := sanitizeBranchName(spec.Branch)
 	if branch == "" {
-		branch = defaultSubAgentBranch(spec.TaskKey, agentID)
+		branch = defaultSubAgentBranch(spec.TaskKey, spec.AssignmentID)
+	}
+
+	if spec.Reuse && !spec.AllowReuse {
+		return "", "", func() {}, fmt.Errorf("worktree reuse is forbidden; use resume_agent to continue an existing worktree")
 	}
 
 	if spec.Reuse {
+		if !isParseableWorktreePath(root, worktreeDir) {
+			return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected worktrees/agent/<id>/<task-slug>", worktreeDir)
+		}
 		if !isSubAgentWorktree(worktreeDir) {
 			return "", "", func() {}, fmt.Errorf("worktree %s does not exist for reuse", worktreeDir)
 		}
 		if current, err := currentWorktreeBranch(ctx, worktreeDir); err == nil && current != "" {
 			branch = current
 		}
+		if !isParseableAgentBranch(branch) {
+			return "", "", func() {}, fmt.Errorf("branch %s is not allowed; expected format agent/<id>/<task-slug>", branch)
+		}
 		return worktreeDir, branch, func() {}, nil
+	}
+
+	if err := ensureCleanBaseWorktree(ctx, root); err != nil {
+		return "", "", func() {}, err
+	}
+	if !isParseableAgentBranch(branch) {
+		return "", "", func() {}, fmt.Errorf("branch %s is not allowed; expected format agent/<id>/<task-slug>", branch)
+	}
+	if !isParseableWorktreePath(root, worktreeDir) {
+		return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected worktrees/agent/<id>/<task-slug>", worktreeDir)
 	}
 
 	if owner := c.activeSubAgentUsingWorktree(worktreeDir, agentID); owner != "" {
@@ -83,16 +105,16 @@ func (c *coordinator) subAgentWorktreeRoot(root string) string {
 	return filepath.Join(root, "worktrees")
 }
 
-func (c *coordinator) defaultSubAgentWorktreePath(root, taskKey, branch, agentID string) string {
-	slug := worktreeTaskSlug(taskKey, branch)
+func (c *coordinator) defaultSubAgentWorktreePath(root, taskKey, assignmentID string) string {
+	slug := worktreeTaskSlug(taskKey, "")
 	if slug == "" {
 		slug = "task"
 	}
-	shortID := shortAgentID(agentID)
-	if shortID == "" {
-		shortID = "agent"
+	id := sanitizeWorktreeSlug(assignmentID)
+	if id == "" {
+		id = "agent"
 	}
-	return filepath.Join(c.subAgentWorktreeRoot(root), "agent", shortID, slug)
+	return filepath.Join(c.subAgentWorktreeRoot(root), "agent", id, slug)
 }
 
 func (c *coordinator) subAgentWorktreeCleanup(root, worktreeDir string) func() {
@@ -244,6 +266,50 @@ func sanitizeWorktreeSlug(name string) string {
 	return strings.Trim(name, "-")
 }
 
+func ensureCleanBaseWorktree(ctx context.Context, root string) error {
+	if root == "" {
+		return fmt.Errorf("working directory not configured")
+	}
+	clean, err := isWorktreeClean(ctx, root)
+	if err != nil {
+		return fmt.Errorf("check base worktree clean: %w", err)
+	}
+	if !clean {
+		return fmt.Errorf("base worktree has uncommitted changes; commit or stash before spawning a worktree")
+	}
+	return nil
+}
+
+func isParseableAgentBranch(branch string) bool {
+	parts := strings.Split(strings.TrimSpace(branch), "/")
+	if len(parts) != 3 {
+		return false
+	}
+	if parts[0] != "agent" {
+		return false
+	}
+	return parts[1] != "" && parts[2] != ""
+}
+
+func isParseableWorktreePath(root, worktreeDir string) bool {
+	if root == "" || worktreeDir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, worktreeDir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	parts := strings.Split(rel, "/")
+	if len(parts) != 4 {
+		return false
+	}
+	if parts[0] != "worktrees" || parts[1] != "agent" {
+		return false
+	}
+	return parts[2] != "" && parts[3] != ""
+}
+
 func sanitizeBranchName(branch string) string {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
@@ -256,24 +322,16 @@ func sanitizeBranchName(branch string) string {
 	return branch
 }
 
-func defaultSubAgentBranch(taskKey, agentID string) string {
+func defaultSubAgentBranch(taskKey, assignmentID string) string {
 	slug := worktreeTaskSlug(taskKey, "")
 	if slug == "" {
 		slug = "task"
 	}
-	shortID := shortAgentID(agentID)
-	if shortID == "" {
-		shortID = "session"
+	id := sanitizeWorktreeSlug(assignmentID)
+	if id == "" {
+		id = "session"
 	}
-	return fmt.Sprintf("agent/%s/%s", shortID, slug)
-}
-
-func shortAgentID(agentID string) string {
-	shortID := strings.TrimPrefix(agentID, "agent-")
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-	return shortID
+	return fmt.Sprintf("agent/%s/%s", id, slug)
 }
 
 func branchExists(root, branch string) bool {

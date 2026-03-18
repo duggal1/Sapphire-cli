@@ -59,6 +59,7 @@ type Coordinator interface {
 	Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
 	Submit(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (SubmissionResult, error)
 	OrchestrateWorktrees(ctx context.Context, sessionID string, params OrchestrateWorktreesParams) (OrchestrateWorktreesResult, error)
+	ResumeWorktree(ctx context.Context, sessionID, worktreePath, prompt, agentKey, model, reasoningEffort string) (OrchestrationAgentRef, error)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -1106,21 +1107,32 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 	})
 
 	wg.Go(func() error {
-		tools, err := c.buildToolsForWorkingDir(ctx, agent, workingDir)
+		agentTools, err := c.buildToolsForWorkingDir(ctx, agent, workingDir)
 		if err != nil {
 			return err
 		}
 		if isSubAgent {
-			tools = filterTools(tools, map[string]struct{}{
+			agentTools = filterTools(agentTools, map[string]struct{}{
 				AgentToolName:                {},
 				SpawnAgentsOnCSVToolName:     {},
 				ReportAgentJobResultToolName: {},
 				OrchestrateWorktreesToolName: {},
+				SpawnAgentToolName:           {},
+				ResumeAgentToolName:          {},
+				SendInputToolName:            {},
+				WaitAgentsToolName:           {},
+				CollectResultToolName:        {},
+				CloseAgentToolName:           {},
+				tools.WriteToolName:          {},
+				tools.EditToolName:           {},
+				tools.SingleEditToolName:     {},
+				tools.AgenticEditToolName:    {},
+				tools.ApplyPatchToolName:     {},
 			})
 		}
-		result.SetTools(tools)
+		result.SetTools(agentTools)
 		if !isSubAgent {
-			c.setToolCache(tools)
+			c.setToolCache(agentTools)
 		}
 		return nil
 	})

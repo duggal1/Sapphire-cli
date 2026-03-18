@@ -30,9 +30,7 @@ var worktreesOrchestrateCmd = &cobra.Command{
 		event.SetNonInteractive(true)
 
 		specPath, _ := cmd.Flags().GetString("spec")
-		if strings.TrimSpace(specPath) == "" {
-			return fmt.Errorf("spec is required")
-		}
+		resumePath, _ := cmd.Flags().GetString("resume")
 
 		sessionTitle, _ := cmd.Flags().GetString("session-title")
 		if strings.TrimSpace(sessionTitle) == "" {
@@ -52,11 +50,6 @@ var worktreesOrchestrateCmd = &cobra.Command{
 			return fmt.Errorf("no providers configured - please run 'sapphire' to set up a provider interactively")
 		}
 
-		params, err := loadWorktreeSpec(specPath)
-		if err != nil {
-			return err
-		}
-
 		event.AppInitialized()
 
 		session, err := app.Sessions.Create(ctx, sessionTitle)
@@ -64,12 +57,30 @@ var worktreesOrchestrateCmd = &cobra.Command{
 			return err
 		}
 
-		result, err := app.AgentCoordinator.OrchestrateWorktrees(ctx, session.ID, params)
-		if err != nil {
-			return err
+		if strings.TrimSpace(resumePath) != "" {
+			resumePrompt, _ := cmd.Flags().GetString("resume-prompt")
+			agentKey, _ := cmd.Flags().GetString("agent")
+			model, _ := cmd.Flags().GetString("model")
+			reasoningEffort, _ := cmd.Flags().GetString("reasoning-effort")
+			ref, err := app.AgentCoordinator.ResumeWorktree(ctx, session.ID, resumePath, resumePrompt, agentKey, model, reasoningEffort)
+			if err != nil {
+				return err
+			}
+			renderWorktreeGrid(os.Stdout, agent.OrchestrateWorktreesResult{Tasks: []agent.OrchestrationAgentRef{ref}})
+		} else {
+			if strings.TrimSpace(specPath) == "" {
+				return fmt.Errorf("spec is required")
+			}
+			params, err := loadWorktreeSpec(specPath)
+			if err != nil {
+				return err
+			}
+			result, err := app.AgentCoordinator.OrchestrateWorktrees(ctx, session.ID, params)
+			if err != nil {
+				return err
+			}
+			renderWorktreeGrid(os.Stdout, result)
 		}
-
-		renderWorktreeGrid(os.Stdout, result)
 		event.AppExited()
 		return nil
 	},
@@ -77,6 +88,11 @@ var worktreesOrchestrateCmd = &cobra.Command{
 
 func init() {
 	worktreesOrchestrateCmd.Flags().StringP("spec", "s", "", "Path to JSON/YAML orchestration spec")
+	worktreesOrchestrateCmd.Flags().String("resume", "", "Resume an orphaned worktree by path")
+	worktreesOrchestrateCmd.Flags().String("resume-prompt", "", "Prompt for resumed worktree")
+	worktreesOrchestrateCmd.Flags().String("agent", "", "Agent profile to use for resume")
+	worktreesOrchestrateCmd.Flags().String("model", "", "Model override for resume")
+	worktreesOrchestrateCmd.Flags().String("reasoning-effort", "", "Reasoning effort override for resume (low, medium, high)")
 	worktreesOrchestrateCmd.Flags().String("session-title", "", "Parent session title")
 	worktreesCmd.AddCommand(worktreesOrchestrateCmd)
 }

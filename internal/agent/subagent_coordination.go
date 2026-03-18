@@ -18,6 +18,7 @@ type subAgentAssignment struct {
 	Branch          string
 	WriteManifest   []string
 	DefinitionOfDone string
+	TestCommand     string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -33,10 +34,23 @@ type subAgentReport struct {
 	Blockers string
 }
 
-func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decision subAgentLaunchDecision, manifest []string, branch string, definitionOfDone string) (subAgentAssignment, string) {
+func activeSubAgentOrchestratorPrompt() string {
+	if len(subAgentOrchestratorPrompt) > 0 {
+		return string(subAgentOrchestratorPrompt)
+	}
+	if len(orchestratorPrompt) > 0 {
+		return string(orchestratorPrompt)
+	}
+	return ""
+}
+
+func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir string, decision subAgentLaunchDecision, manifest []string, branch string, definitionOfDone string, testCommand string) (subAgentAssignment, string) {
 	now := time.Now()
+	if strings.TrimSpace(assignmentID) == "" {
+		assignmentID = fmt.Sprintf("subagent-%d", now.UnixNano())
+	}
 	assignment := subAgentAssignment{
-		ID:              fmt.Sprintf("subagent-%d", now.UnixNano()),
+		ID:              assignmentID,
 		ParentSessionID: parentSessionID,
 		Title:           title,
 		Task:            strings.TrimSpace(task),
@@ -47,6 +61,7 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 		Branch:          branch,
 		WriteManifest:   append([]string{}, manifest...),
 		DefinitionOfDone: strings.TrimSpace(definitionOfDone),
+		TestCommand:     strings.TrimSpace(testCommand),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -59,9 +74,9 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 	builder := &strings.Builder{}
 
 	// Inject orchestrator prompt as system context for the sub-agent
-	if len(orchestratorPrompt) > 0 {
+	if orchestrator := activeSubAgentOrchestratorPrompt(); orchestrator != "" {
 		builder.WriteString("<orchestrator_protocol>\n")
-		builder.WriteString(string(orchestratorPrompt))
+		builder.WriteString(orchestrator)
 		builder.WriteString("\n</orchestrator_protocol>\n\n")
 	}
 
@@ -82,6 +97,10 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 		builder.WriteString("\n\nDefinition of done:\n")
 		builder.WriteString(assignment.DefinitionOfDone)
 	}
+	if assignment.TestCommand != "" {
+		builder.WriteString("\n\nTest command:\n")
+		builder.WriteString(assignment.TestCommand)
+	}
 	builder.WriteString("\n\nConstraints:\n")
 	builder.WriteString("- Stay within the assigned domain and task scope.\n")
 	builder.WriteString("- Use tools and terminal commands as needed; run commands inside the workdir.\n")
@@ -100,9 +119,9 @@ func buildSubAgentAssignment(parentSessionID, title, task, workDir string, decis
 	builder.WriteString("- Report absolute file paths for any findings or edits.\n")
 	builder.WriteString("- If blocked, say so explicitly and state the missing information.\n\n")
 	builder.WriteString("Validation gate:\n")
-	builder.WriteString("- After completion, a validation gate runs automatically: diff, build, test.\n")
+	builder.WriteString("- After completion, a validation gate runs automatically: diff, build, test, lint, security scan.\n")
 	builder.WriteString("- Failed validation quarantines the worktree instead of deleting it.\n")
-	builder.WriteString("- Ensure your changes build and pass tests before reporting STATUS: done.\n\n")
+	builder.WriteString("- Ensure your changes build, test, lint, and scan before reporting STATUS: done.\n\n")
 	builder.WriteString("Output format (strict):\n")
 	builder.WriteString("STATUS: done | blocked | needs_followup\n")
 	builder.WriteString("SUMMARY: <one paragraph>\n")
@@ -120,9 +139,9 @@ func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string,
 	builder := &strings.Builder{}
 
 	// Inject orchestrator context on followup as well
-	if len(orchestratorPrompt) > 0 {
+	if orchestrator := activeSubAgentOrchestratorPrompt(); orchestrator != "" {
 		builder.WriteString("<orchestrator_protocol>\n")
-		builder.WriteString(string(orchestratorPrompt))
+		builder.WriteString(orchestrator)
 		builder.WriteString("\n</orchestrator_protocol>\n\n")
 	}
 

@@ -1337,7 +1337,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	s.Tool.ListRoot = base.Foreground(fgTree)
 	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.ListFile = base.Foreground(lipgloss.Color("#F1D7E8"))
+	s.Tool.ListFile = base.Foreground(lipgloss.Color("#FFD7F2")).Bold(true)
 	s.Tool.ListMeta = base.Foreground(fgMuted)
 	s.Tool.ListHint = base.Foreground(warning)
 	s.Tool.GrepFile = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)

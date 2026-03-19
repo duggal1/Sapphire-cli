@@ -166,11 +166,6 @@ func (a *AssistantMessageItem) Message() *message.Message {
 func (a *AssistantMessageItem) RawRender(width int) string {
 	cappedWidth := cappedMessageWidth(width)
 
-	var spinner string
-	if a.isSpinning() {
-		spinner = a.renderSpinning()
-	}
-
 	content, height, ok := a.getCachedRender(cappedWidth)
 	if !ok {
 		content = a.renderMessageContent(cappedWidth)
@@ -179,15 +174,7 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 		a.setCachedRender(content, cappedWidth, height)
 	}
 
-	highlightedContent := a.renderHighlighted(content, cappedWidth, height)
-	if spinner != "" {
-		if highlightedContent != "" {
-			highlightedContent += "\n\n"
-		}
-		return highlightedContent + spinner
-	}
-
-	return highlightedContent
+	return a.renderHighlighted(content, cappedWidth, height)
 }
 
 // Render implements MessageItem.
@@ -321,11 +308,6 @@ func (a *AssistantMessageItem) renderThinkingMarkdown(content string, width int)
 	return strings.TrimSpace(result)
 }
 
-// renderThinkingShimmer renders a beautiful text shimmer for "Thinking..." with Codex-style dot.
-func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
-	return styles.ShimmerText(a.sty, "Thinking", 0)
-}
-
 func (a *AssistantMessageItem) renderModelOutput(content string, width int) string {
 	return prefixRenderedBlock(
 		a.sty.Base.Foreground(a.sty.White).Render("•"),
@@ -341,17 +323,6 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 		return content
 	}
 	return strings.TrimSuffix(result, "\n")
-}
-func (a *AssistantMessageItem) renderSpinning() string {
-	if a.message.IsThinking() {
-		return a.renderThinkingShimmer(0)
-	}
-	return a.renderMainLoadingShimmer()
-}
-
-func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
-	label := loadingPhraseForMessage(a.message.ID)
-	return styles.ShimmerText(a.sty, label, 0)
 }
 
 func prefixRenderedBlock(prefix, block string) string {

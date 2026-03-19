@@ -426,7 +426,7 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 // pendingTool renders a tool that is still in progress.
 func pendingTool(sty *styles.Styles, name string) string {
 	icon := sty.Tool.IconPending.Render()
-	toolName := styles.ShimmerText(sty, name, 0)
+	toolName := sty.Tool.NameNormal.Render(name)
 
 	return fmt.Sprintf("%s %s", icon, toolName)
 }

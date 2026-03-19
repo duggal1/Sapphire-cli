@@ -2663,7 +2663,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	editorHeight := 5
 	footerHeight := 0
 	if m.assistantFooter != nil {
-		footerHeight = 2
+		footerHeight = m.assistantFooter.Height()
 	}
 	// The sidebar width
 	sidebarWidth := 30

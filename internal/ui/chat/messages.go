@@ -238,6 +238,16 @@ func (a *AssistantInfoItem) SetRequestTiming(start, end time.Time) {
 	a.clearCache()
 }
 
+func (a *AssistantInfoItem) Height() int {
+	if a == nil {
+		return 0
+	}
+	if a.shouldAnimate() && a.renderLiveStatusLabel() != "" {
+		return 3
+	}
+	return 2
+}
+
 // MessageID returns the backing assistant message ID.
 func (a *AssistantInfoItem) MessageID() string {
 	if a.message == nil {
@@ -354,7 +364,11 @@ func (a *AssistantInfoItem) renderFooter(width int, stats, model string) string 
 		return borderLine
 	}
 
-	return borderLine + "\n" + row
+	lines := []string{borderLine, row}
+	if statusLine := a.renderLiveStatusLine(width); statusLine != "" {
+		lines = append(lines, statusLine)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a *AssistantInfoItem) renderFooterRow(width int, left, right string) string {
@@ -449,6 +463,42 @@ func (a *AssistantInfoItem) renderDurationSeconds(finish *message.Finish) float6
 		return 0
 	}
 	return duration
+}
+
+func (a *AssistantInfoItem) renderLiveStatusLine(width int) string {
+	label := a.renderLiveStatusLabel()
+	if label == "" {
+		return ""
+	}
+	line := styles.ShimmerText(a.sty, label, 0)
+	if width > 0 && lipgloss.Width(line) > width {
+		line = ansi.Truncate(line, width, "…")
+	}
+	return line
+}
+
+func (a *AssistantInfoItem) renderLiveStatusLabel() string {
+	if !a.shouldAnimate() || a.message == nil {
+		return ""
+	}
+	if a.message.IsThinking() {
+		return "Thinking"
+	}
+	activeTools := make([]string, 0, len(a.message.ToolCalls()))
+	for _, tc := range a.message.ToolCalls() {
+		if tc.Finished {
+			continue
+		}
+		activeTools = append(activeTools, genericPrettyName(tc.Name))
+	}
+	switch len(activeTools) {
+	case 0:
+		return loadingPhraseForMessage(a.message.ID)
+	case 1:
+		return activeTools[0]
+	default:
+		return fmt.Sprintf("%s + %d more", activeTools[0], len(activeTools)-1)
+	}
 }
 
 func (a *AssistantInfoItem) shouldAnimate() bool {

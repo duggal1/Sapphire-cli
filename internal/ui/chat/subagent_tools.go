@@ -250,7 +250,7 @@ func renderSubAgentSimpleTool(sty *styles.Styles, width int, opts *ToolRenderOpt
 }
 
 func renderSubAgentSimpleBody(sty *styles.Styles, opts *ToolRenderOpts, width int) string {
-	params := parseSubAgentSimpleParams(opts.ToolCall.Input)
+	params := parseSubAgentSimpleParams(sty, opts.ToolCall.Input)
 	payload := parseSubAgentSimpleResult(resultContent(opts))
 	if len(params) == 0 && len(payload) == 0 {
 		return ""
@@ -267,17 +267,21 @@ func renderSubAgentSimpleBody(sty *styles.Styles, opts *ToolRenderOpts, width in
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
-func parseSubAgentSimpleParams(raw string) []*TreeNode {
+func parseSubAgentSimpleParams(sty *styles.Styles, raw string) []*TreeNode {
 	if strings.TrimSpace(raw) == "" {
 		return nil
 	}
 
 	var payload struct {
-		ID        string   `json:"id"`
-		Message   string   `json:"message,omitempty"`
-		Interrupt bool     `json:"interrupt,omitempty"`
-		TimeoutMS int64    `json:"timeout_ms,omitempty"`
-		IDs       []string `json:"ids,omitempty"`
+		ID           string   `json:"id"`
+		Message      string   `json:"message,omitempty"`
+		Interrupt    bool     `json:"interrupt,omitempty"`
+		TimeoutMS    int64    `json:"timeout_ms,omitempty"`
+		IDs          []string `json:"ids,omitempty"`
+		Branch       string   `json:"branch,omitempty"`
+		WorktreePath string   `json:"worktree_path,omitempty"`
+		WorktreeDir  string   `json:"worktree_dir,omitempty"`
+		WorkDir      string   `json:"work_dir,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return nil
@@ -303,6 +307,9 @@ func parseSubAgentSimpleParams(raw string) []*TreeNode {
 	if payload.TimeoutMS > 0 {
 		nodes = append(nodes, &TreeNode{Label: subAgentKVLabel("Timeout", fmt.Sprintf("%dms", payload.TimeoutMS))})
 	}
+	if worktreeNode := renderSubAgentWorktreeDetails(sty, firstNonEmptyOrchestrationValue(payload.WorktreePath, payload.WorktreeDir, payload.WorkDir), payload.Branch); worktreeNode != nil {
+		nodes = append(nodes, worktreeNode)
+	}
 
 	return nodes
 }
@@ -326,6 +333,20 @@ func parseSubAgentSimpleResult(raw string) []*TreeNode {
 	}
 	if status, ok := payload["status"].(string); ok && status != "" {
 		nodes = append(nodes, &TreeNode{Label: subAgentKVLabel("Status", status)})
+	}
+	worktree := ""
+	for _, key := range []string{"worktree_path", "worktree_dir", "worktree_directory", "work_dir"} {
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			worktree = value
+			break
+		}
+	}
+	branch := ""
+	if value, ok := payload["branch"].(string); ok {
+		branch = value
+	}
+	if worktreeNode := renderSubAgentWorktreeDetails(nil, worktree, branch); worktreeNode != nil {
+		nodes = append(nodes, worktreeNode)
 	}
 
 	return nodes
@@ -486,9 +507,17 @@ func renderWorktreeNode(sty *styles.Styles, enabled *bool, path, branch string) 
 	if !useWorktree {
 		return nil
 	}
+	return renderSubAgentWorktreeDetails(sty, path, branch)
+}
+
+func renderSubAgentWorktreeDetails(sty *styles.Styles, path, branch string) *TreeNode {
 	children := make([]*TreeNode, 0, 2)
 	if path != "" {
-		children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
+		if sty != nil {
+			children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
+		} else {
+			children = append(children, &TreeNode{Label: formatRelativePath(path)})
+		}
 	} else {
 		children = append(children, &TreeNode{Label: "auto"})
 	}

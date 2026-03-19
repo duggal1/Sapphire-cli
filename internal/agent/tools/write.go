@@ -140,6 +140,7 @@ func NewWriteTool(
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)
 			}
+			QueueGitSnapshot(ctx, filePath)
 
 			// Check if file exists in history
 			file, err := files.GetByPathAndSession(ctx, filePath, sessionID)

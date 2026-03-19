@@ -210,6 +210,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
+	QueueGitSnapshot(edit.ctx, filePath)
 
 	// File can't be in the history so we create a new file history
 	_, err = edit.files.Create(edit.ctx, sessionID, filePath, "")
@@ -333,6 +334,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
+	QueueGitSnapshot(edit.ctx, filePath)
 
 	// Check if file exists in history
 	file, err := edit.files.GetByPathAndSession(edit.ctx, filePath, sessionID)
@@ -464,6 +466,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
+	QueueGitSnapshot(edit.ctx, filePath)
 
 	// Check if file exists in history
 	file, err := edit.files.GetByPathAndSession(edit.ctx, filePath, sessionID)

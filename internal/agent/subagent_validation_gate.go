@@ -10,24 +10,24 @@ import (
 )
 
 const (
-	validationGateTimeout   = 30 * time.Second
-	validationDiffMaxLines  = 500
-	validationBuildTimeout  = 60 * time.Second
-	validationTestTimeout   = 120 * time.Second
-	validationLintTimeout   = 60 * time.Second
+	validationGateTimeout     = 30 * time.Second
+	validationDiffMaxLines    = 500
+	validationBuildTimeout    = 60 * time.Second
+	validationTestTimeout     = 120 * time.Second
+	validationLintTimeout     = 60 * time.Second
 	validationSecurityTimeout = 120 * time.Second
 )
 
 // validationResult holds the outcome of a worktree validation gate.
 type validationResult struct {
-	Passed      bool   `json:"passed"`
-	DiffSummary string `json:"diff_summary,omitempty"`
-	BuildOutput string `json:"build_output,omitempty"`
-	TestOutput  string `json:"test_output,omitempty"`
-	LintOutput  string `json:"lint_output,omitempty"`
+	Passed         bool   `json:"passed"`
+	DiffSummary    string `json:"diff_summary,omitempty"`
+	BuildOutput    string `json:"build_output,omitempty"`
+	TestOutput     string `json:"test_output,omitempty"`
+	LintOutput     string `json:"lint_output,omitempty"`
 	SecurityOutput string `json:"security_output,omitempty"`
-	Errors      string `json:"errors,omitempty"`
-	HasChanges  bool   `json:"has_changes"`
+	Errors         string `json:"errors,omitempty"`
+	HasChanges     bool   `json:"has_changes"`
 }
 
 // validateWorktreeResult runs the validation gate on a completed sub-agent worktree.
@@ -321,8 +321,23 @@ func autoCommitWorktree(ctx context.Context, worktreeDir, message string) error 
 	output, err := runWorktreeCommand(ctx, worktreeDir, "git", "commit", "-m", message)
 	if err != nil {
 		if strings.Contains(strings.ToLower(output), "nothing to commit") {
-			return nil
+			return finalizeSnapshotTip(ctx, worktreeDir, message)
 		}
+		return err
+	}
+	return nil
+}
+
+func finalizeSnapshotTip(ctx context.Context, worktreeDir, message string) error {
+	lastSubject, err := runWorktreeCommand(ctx, worktreeDir, "git", "log", "-1", "--pretty=%s")
+	if err != nil {
+		return nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(lastSubject), "chore(snapshot): sapphire auto-snapshot ") {
+		return nil
+	}
+	_, err = runWorktreeCommand(ctx, worktreeDir, "git", "commit", "--allow-empty", "-m", message)
+	if err != nil {
 		return err
 	}
 	return nil

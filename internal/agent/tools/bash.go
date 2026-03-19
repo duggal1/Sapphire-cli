@@ -22,8 +22,8 @@ import (
 
 // BashParams defines the parameters for the bash execution tool.
 type BashParams struct {
-	Description     string `json:"description" description:"A brief description of what the command does, try to keep it under 30 characters or so"`
-	Command         string `json:"command" description:"The command to execute"`
+	Description     string   `json:"description" description:"A brief description of what the command does, try to keep it under 30 characters or so"`
+	Command         string   `json:"command" description:"The command to execute"`
 	WorkingDir      string   `json:"working_dir,omitempty" description:"The working directory to execute the command in (defaults to current directory)"`
 	RunInBackground bool     `json:"run_in_background,omitempty" description:"Set to true (boolean) to run this command in the background. Use job_output to read the output later."`
 	Backend         string   `json:"backend,omitempty" description:"Execution backend: 'posix' (default, mvdan/sh emulation) or 'native' (os/exec native shell)."`
@@ -33,11 +33,11 @@ type BashParams struct {
 
 func (p *BashParams) UnmarshalJSON(data []byte) error {
 	type rawBashParams struct {
-		Description      string `json:"description"`
-		Command          string `json:"command"`
-		Cmd              string `json:"cmd"`
-		BashCommand      string `json:"bash_command"`
-		Script           string `json:"script"`
+		Description      string   `json:"description"`
+		Command          string   `json:"command"`
+		Cmd              string   `json:"cmd"`
+		BashCommand      string   `json:"bash_command"`
+		Script           string   `json:"script"`
 		WorkingDir       string   `json:"working_dir"`
 		WorkingDirectory string   `json:"working_directory"`
 		RunInBackground  bool     `json:"run_in_background"`
@@ -63,8 +63,8 @@ func (p *BashParams) UnmarshalJSON(data []byte) error {
 }
 
 type BashPermissionsParams struct {
-	Description     string `json:"description"`
-	Command         string `json:"command"`
+	Description     string   `json:"description"`
+	Command         string   `json:"command"`
 	WorkingDir      string   `json:"working_dir"`
 	RunInBackground bool     `json:"run_in_background"`
 	Backend         string   `json:"backend,omitempty"`
@@ -253,6 +253,40 @@ func isForbiddenGitMainCommand(command string) (bool, string) {
 	return false, ""
 }
 
+func isForbiddenIsolatedGitCommand(command, workingDir string) (bool, string) {
+	if !isSapphireWorktreeDir(workingDir) {
+		return false, ""
+	}
+	segments := splitCommandSegments(command)
+	for _, seg := range segments {
+		fields := strings.Fields(seg)
+		if len(fields) < 2 || fields[0] != "git" {
+			continue
+		}
+		switch fields[1] {
+		case "push":
+			return true, "git push is blocked in isolated sub-agent worktrees; push remains manual"
+		case "restore":
+			return true, "git restore is blocked in isolated sub-agent worktrees"
+		case "clean":
+			return true, "git clean is blocked in isolated sub-agent worktrees"
+		case "rebase":
+			return true, "git rebase is blocked in isolated sub-agent worktrees"
+		case "reset":
+			for _, arg := range fields[2:] {
+				if strings.EqualFold(arg, "--hard") {
+					return true, "git reset --hard is blocked in isolated sub-agent worktrees"
+				}
+			}
+		case "worktree":
+			if len(fields) >= 3 && fields[2] == "remove" {
+				return true, "git worktree remove is blocked in isolated sub-agent worktrees"
+			}
+		}
+	}
+	return false, ""
+}
+
 func splitCommandSegments(command string) []string {
 	parts := strings.FieldsFunc(command, func(r rune) bool {
 		switch r {
@@ -335,6 +369,9 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
+			if blocked, reason := isForbiddenIsolatedGitCommand(params.Command, execWorkingDir); blocked {
+				return fantasy.NewTextErrorResponse(reason), nil
+			}
 
 			isSafeReadOnly := false
 			cmdLower := strings.ToLower(params.Command)
@@ -361,7 +398,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 						ToolName:    BashToolName,
 						Action:      "execute",
 						Description: fmt.Sprintf("Execute command: %s", params.Command),
-						Params:      BashPermissionsParams{
+						Params: BashPermissionsParams{
 							Description:     params.Description,
 							Command:         params.Command,
 							WorkingDir:      params.WorkingDir,
@@ -603,15 +640,13 @@ func normalizeWorkingDir(path string) string {
 	return filepath.ToSlash(path)
 }
 
-
-
 // JobListResponseMetadata is metadata for job list responses.
 type JobListResponseMetadata struct {
 	Jobs []struct {
-		ShellID         string `json:"shell_id"`
-		Status          string `json:"status"`
-		Description     string `json:"description"`
-		Command         string `json:"command"`
+		ShellID          string `json:"shell_id"`
+		Status           string `json:"status"`
+		Description      string `json:"description"`
+		Command          string `json:"command"`
 		WorkingDirectory string `json:"working_directory"`
 	} `json:"jobs"`
 }

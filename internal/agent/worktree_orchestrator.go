@@ -22,8 +22,9 @@ const OrchestrateWorktreesToolName = "orchestrate_worktrees"
 type WorktreeTaskSpec struct {
 	Name             string   `json:"name" description:"Short task name (used for titles and worktree defaults)"`
 	Prompt           string   `json:"prompt" description:"Sub-agent task prompt"`
+	Isolation        string   `json:"isolation,omitempty" description:"Isolation mode for the sub-agent. Use 'worktree'."`
 	Branch           string   `json:"branch,omitempty" description:"Branch name for the worktree"`
-	WorktreePath     string   `json:"worktree_path,omitempty" description:"Explicit worktree path (defaults to repo-root/worktrees/<task>)"`
+	WorktreePath     string   `json:"worktree_path,omitempty" description:"Explicit worktree path (defaults to repo-root/.sapphire/worktrees/agent/<id>/<task>)"`
 	WriteManifest    []string `json:"write_manifest" description:"Allowed write paths (relative to repo root). Empty list = read-only."`
 	DefinitionOfDone string   `json:"definition_of_done,omitempty" description:"Acceptance criteria for completion"`
 	Agent            string   `json:"agent,omitempty" description:"Agent profile to use (coder or task)"`
@@ -41,21 +42,21 @@ type OrchestrateWorktreesParams struct {
 }
 
 type OrchestrationAgentRef struct {
-	AgentID      string `json:"agent_id"`
-	SubmissionID string `json:"submission_id"`
-	WorktreePath string `json:"worktree_path,omitempty"`
-	Branch       string `json:"branch,omitempty"`
-	Title        string `json:"title,omitempty"`
-	Status       subAgentStatus `json:"status,omitempty"`
-	ValidationPassed bool        `json:"validation_passed,omitempty"`
-	ValidationErrors string      `json:"validation_errors,omitempty"`
+	AgentID          string         `json:"agent_id"`
+	SubmissionID     string         `json:"submission_id"`
+	WorktreePath     string         `json:"worktree_path,omitempty"`
+	Branch           string         `json:"branch,omitempty"`
+	Title            string         `json:"title,omitempty"`
+	Status           subAgentStatus `json:"status,omitempty"`
+	ValidationPassed bool           `json:"validation_passed,omitempty"`
+	ValidationErrors string         `json:"validation_errors,omitempty"`
 }
 
 type OrchestrateWorktreesResult struct {
-	Tasks            []OrchestrationAgentRef `json:"tasks"`
-	TestRunners      []OrchestrationAgentRef `json:"test_runners,omitempty"`
-	IntegrationAgent *OrchestrationAgentRef  `json:"integration_agent,omitempty"`
-	IntegrationSkippedReason string           `json:"integration_skipped_reason,omitempty"`
+	Tasks                    []OrchestrationAgentRef `json:"tasks"`
+	TestRunners              []OrchestrationAgentRef `json:"test_runners,omitempty"`
+	IntegrationAgent         *OrchestrationAgentRef  `json:"integration_agent,omitempty"`
+	IntegrationSkippedReason string                  `json:"integration_skipped_reason,omitempty"`
 }
 
 func (c *coordinator) orchestrateWorktreesTool(ctx context.Context) (fantasy.AgentTool, error) {
@@ -283,6 +284,9 @@ func validateWorktreeSpecs(tasks []WorktreeTaskSpec) error {
 			return fmt.Errorf("duplicate task name: %s", name)
 		}
 		seen[name] = struct{}{}
+		if isolation := strings.TrimSpace(task.Isolation); isolation != "" && !strings.EqualFold(isolation, "worktree") {
+			return fmt.Errorf("task %s uses unsupported isolation %q; orchestrate_worktrees requires isolation=worktree", name, isolation)
+		}
 		if task.WriteManifest == nil {
 			return fmt.Errorf("write_manifest is required for task %s", name)
 		}

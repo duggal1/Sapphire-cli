@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -44,8 +45,9 @@ type SpawnAgentParams struct {
 	Message          string   `json:"message,omitempty" description:"Initial task or prompt for the sub-agent"`
 	Items            []string `json:"items,omitempty" description:"Optional structured input items; text items are flattened into the initial prompt"`
 	Title            string   `json:"title,omitempty" description:"Optional session title for the sub-agent"`
+	Isolation        string   `json:"isolation,omitempty" description:"Execution isolation mode. Use 'worktree' for isolated git worktree execution."`
 	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default true)"`
-	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/worktrees/<task>)"`
+	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/.sapphire/worktrees/agent/<id>/<task>)"`
 	Branch           string   `json:"branch,omitempty" description:"Optional branch name for the worktree"`
 	WriteManifest    []string `json:"write_manifest,omitempty" description:"Allowed write paths (relative to repo root). Empty list = read-only."`
 	DefinitionOfDone string   `json:"definition_of_done,omitempty" description:"Acceptance criteria for completion"`
@@ -89,6 +91,7 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 		Instruction      string            `json:"instruction,omitempty"`
 		Items            []json.RawMessage `json:"items,omitempty"`
 		Title            string            `json:"title,omitempty"`
+		Isolation        string            `json:"isolation,omitempty"`
 		Worktree         *bool             `json:"worktree,omitempty"`
 		WorktreePath     string            `json:"worktree_path,omitempty"`
 		WorktreeDir      string            `json:"worktree_dir,omitempty"`
@@ -125,6 +128,7 @@ func (p *SpawnAgentParams) UnmarshalJSON(data []byte) error {
 		p.Message = strings.Join(p.Items, "\n")
 	}
 	p.Title = strings.TrimSpace(raw.Title)
+	p.Isolation = strings.TrimSpace(raw.Isolation)
 	p.Worktree = raw.Worktree
 	p.WorktreePath = firstNonEmptyString(raw.WorktreePath, raw.WorktreeDir, raw.WorktreeDirAlt)
 	p.Branch = firstNonEmptyString(raw.Branch, raw.BranchName)
@@ -291,6 +295,29 @@ func normalizeStringSlice(values []string) []string {
 	return out
 }
 
+func resolveSpawnIsolation(worktree *bool, isolation string) (bool, error) {
+	mode := strings.ToLower(strings.TrimSpace(isolation))
+	switch mode {
+	case "", "default":
+		if worktree != nil {
+			return *worktree, nil
+		}
+		return true, nil
+	case "worktree":
+		if worktree != nil && !*worktree {
+			return false, errors.New("isolation=worktree conflicts with worktree=false")
+		}
+		return true, nil
+	case "none", "shared":
+		if worktree != nil && *worktree {
+			return false, fmt.Errorf("isolation=%s conflicts with worktree=true", mode)
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("unsupported isolation %q; use worktree, none, or omit it", isolation)
+	}
+}
+
 func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, error) {
 	_ = ctx
 	control := c.subAgentControl()
@@ -306,9 +333,9 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
-			useWorktree := true
-			if params.Worktree != nil {
-				useWorktree = *params.Worktree
+			useWorktree, err := resolveSpawnIsolation(params.Worktree, params.Isolation)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			forkContext := false
 			if params.ForkContext != nil {

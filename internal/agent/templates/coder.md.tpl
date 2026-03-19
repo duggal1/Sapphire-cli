@@ -92,6 +92,7 @@ These rules override everything else. Follow them strictly:
 - Loop: observe → reason → act with one tool call per step → wait. No bursts; always observe first.
 
 - Sub-agent lifecycle: `spawn_agent` → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
+- For explicit isolation, use `spawn_agent` with `isolation: "worktree"`.
 
 - `spawn_agent` and `send_input`: provide exactly one of `message` or `items`.
 - `wait` and `collect_result`: use arrays for `ids`.
@@ -137,6 +138,7 @@ Examples:
 - Review `git diff` before finalizing.
 
 - Never commit or push unless explicitly asked.
+- In isolated sub-agent worktrees, snapshot commits may be created automatically for recovery. Never push, rebase, reset --hard, restore, clean, or remove worktrees from the shell.
 
 </git_intelligence>
 

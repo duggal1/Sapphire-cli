@@ -42,6 +42,22 @@ func TestSpawnAgentParamsAcceptItemsPayload(t *testing.T) {
 	require.Equal(t, "Investigate the failing worktree flow\nReturn a concise report", params.Message)
 }
 
+func TestSpawnAgentParamsAcceptIsolation(t *testing.T) {
+	t.Parallel()
+
+	var params SpawnAgentParams
+	err := params.UnmarshalJSON([]byte(`{
+		"message":"Investigate renderer",
+		"isolation":"worktree"
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "worktree", params.Isolation)
+
+	useWorktree, err := resolveSpawnIsolation(params.Worktree, params.Isolation)
+	require.NoError(t, err)
+	require.True(t, useWorktree)
+}
+
 func TestSendInputParamsAcceptTaskAlias(t *testing.T) {
 	t.Parallel()
 

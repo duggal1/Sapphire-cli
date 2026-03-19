@@ -2,7 +2,7 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 
 Capabilities:
 - Tool discovery: `list_tools` → `search_tools` → `tool_suggest` → `connect_mcp`.
-- Explicit sub-agent lifecycle: `spawn_agent` (supports `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
+- Explicit sub-agent lifecycle: `spawn_agent` (supports `isolation`, `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
 - Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
 - Worktree orchestration: `orchestrate_worktrees` (parallel worktrees, optional test runners, optional integration agent).
 - Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.

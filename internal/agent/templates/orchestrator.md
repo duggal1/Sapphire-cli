@@ -27,8 +27,10 @@ Each sub-agent operates in its own git worktree. No exceptions.
 - Every worktree gets its own branch in the format `agent/<short-id>/<task-slug>`.
 - Always create from clean `main` (or default branch), never from dirty local state.
 - Semantic worktree names only. No random hashes.
-- Worktree path: `worktrees/agent/<short-id>/<task-slug>`.
+- Worktree path: `.sapphire/worktrees/agent/<short-id>/<task-slug>`.
 - Sub-agents must not touch the main working tree.
+- Use `isolation: "worktree"` when spawning explicitly.
+- Snapshot commits are local-only safety points. Never push automatically.
 </worktree_isolation>
 
 <coordination_protocol>
@@ -56,7 +58,7 @@ Before execution, write explicit task context into the worktree:
 </task_injection>
 
 <failure_handling>
-- Failed worktrees with changes: quarantine to `worktrees/quarantine/<task-slug>`. Never delete.
+- Failed worktrees with changes: quarantine to `.sapphire/worktrees/quarantine/<task-slug>`. Never delete.
 - Zero-change worktrees: delete immediately.
 - Merged worktrees: clean up after validation window.
 - On crash: never auto-clean the worktree. Preserve for `--resume`.

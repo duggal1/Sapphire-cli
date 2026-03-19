@@ -7,7 +7,7 @@ Execute sub-agent tasks with strict isolation, reproducibility, and validation. 
 
 ## Worktree Policy (Non-Negotiable)
 1. One worktree per task/agent. Never share worktrees between agents.
-2. Worktree path format: `worktrees/agent/<id>/<task-slug>`.
+2. Worktree path format: `.sapphire/worktrees/agent/<id>/<task-slug>`.
 3. Branch format: `agent/<id>/<task-slug>`.
 4. Always create worktrees from a clean `main` base. If the base is dirty, stop and report.
 5. Reuse is allowed only for explicit resume of the same worktree (`--resume` flow).
@@ -27,6 +27,7 @@ Each agent must:
 3. Execute the task inside that worktree only.
 4. Validate, commit, and report.
 5. Exit cleanly.
+6. Snapshot commits are local safety points only. Never push automatically.
 
 ## Validation Gate (Mandatory)
 Run in this order:
@@ -47,4 +48,4 @@ If any step fails, the worktree is quarantined.
 1. Never push or merge directly to `main`.
 2. Never operate outside the assigned worktree.
 3. Never skip validation.
-4. Sub-agent writing code files is forbidden.
+4. Never run destructive git commands (`git push`, `git reset --hard`, `git restore`, `git clean`, `git rebase`, `git worktree remove`).

@@ -233,14 +233,25 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	isTruncated := totalLines > maxCollapsedThinkingHeight
 	if !a.thinkingExpanded && isTruncated {
 		lines = lines[totalLines-maxCollapsedThinkingHeight:]
-		hint := a.sty.Chat.Message.ThinkingTruncationHint.Render(
-			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
-		)
-		lines = append([]string{hint}, lines...)
 	}
 
-	// Use ThinkingBox for background and padding (Crush CLI style)
-	result := a.sty.Chat.Message.ThinkingBox.Render(strings.Join(lines, "\n"))
+	label := a.renderThinkingShimmer(width)
+	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
+	boxParts := []string{label}
+	if isTruncated {
+		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(
+			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
+		))
+	}
+	if body != "" {
+		boxParts = append(boxParts, body)
+	}
+
+	box := a.sty.Chat.Message.ThinkingBox
+	if width > 0 {
+		box = box.Width(width)
+	}
+	result := box.Render(strings.Join(boxParts, "\n\n"))
 	a.thinkingBoxHeight = lipgloss.Height(result)
 
 	var footer string
@@ -258,6 +269,19 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	}
 
 	return result
+}
+
+func (a *AssistantMessageItem) renderThinkingMarkdown(content string, width int) string {
+	renderWidth := width - 4
+	if renderWidth < 20 {
+		renderWidth = width
+	}
+	renderer := common.PlainMarkdownRenderer(a.sty, renderWidth)
+	result, err := renderer.Render(content)
+	if err != nil {
+		return content
+	}
+	return strings.TrimSpace(result)
 }
 
 // renderThinkingShimmer renders a beautiful text shimmer for "Thinking..." with Codex-style dot.

@@ -507,6 +507,13 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		testCommand := runner.assignment.TestCommand
 		taskTitle := runner.assignment.Title
 		runner.mu.Unlock()
+		if workDir != "" {
+			flushCtx, flushCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+			if flushErr := tools.FlushGitSnapshot(flushCtx, workDir); flushErr != nil {
+				slog.Warn("Failed to flush pending sub-agent git snapshots", "workdir", workDir, "error", flushErr)
+			}
+			flushCancel()
+		}
 		var validationReport string
 		if workDir != "" && isSubAgentWorktree(workDir) {
 			vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)

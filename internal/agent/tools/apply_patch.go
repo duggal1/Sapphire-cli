@@ -60,7 +60,7 @@ func (p *ApplyPatchParams) UnmarshalJSON(data []byte) error {
 	if p.ExecutionMode == "" {
 		p.ExecutionMode = raw.Mode
 	}
-	
+
 	p.Justification = raw.Justification
 
 	return nil
@@ -104,10 +104,18 @@ func NewApplyPatchTool(workingDir string) fantasy.AgentTool {
 			// File exists, proceed with mode.
 
 			if mode == "delegate" {
-				return applyPatchDelegate(ctx, absPath, params.UnifiedDiff, workingDir)
+				response, err := applyPatchDelegate(ctx, absPath, params.UnifiedDiff, workingDir)
+				if err == nil {
+					QueueGitSnapshot(ctx, absPath)
+				}
+				return response, err
 			}
 
-			return applyPatchDirect(ctx, absPath, params.UnifiedDiff, workingDir)
+			response, err := applyPatchDirect(ctx, absPath, params.UnifiedDiff, workingDir)
+			if err == nil {
+				QueueGitSnapshot(ctx, absPath)
+			}
+			return response, err
 		},
 	)
 }

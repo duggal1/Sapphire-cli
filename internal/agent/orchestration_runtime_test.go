@@ -9,6 +9,7 @@ import (
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/message"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,7 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		memory:             orchestrationMemoryStub{},
 		mailbox:            nil,
 	}
+	coord.checkpointService = agentmemory.NewCheckpointService(store, checkpointMessageSourceStub{}, coord.memory, nil)
 	runner := &subAgentRunner{
 		id:            "agent-auth",
 		sessionID:     "sub-session",
@@ -103,14 +105,17 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		CreatedAt:   time.Now().UTC(),
 	}))
 	_, err = store.SaveCheckpoint(ctx, orchestrationdb.SessionCheckpoint{
-		SessionID:      "sub-session",
-		AgentID:        "agent-auth",
-		WorkItemID:     "work-auth",
-		SummaryJSON:    `{"phase":"subagent_turn_completed","status":"completed","result":"auth path updated"}`,
-		AuditTail:      "milestone auth complete",
-		MailCursor:     1,
-		ActivityCursor: 2,
-		CreatedAt:      time.Now().UTC(),
+		SessionID:         "sub-session",
+		AgentID:           "agent-auth",
+		WorkItemID:        "work-auth",
+		MessageCount:      60,
+		SummaryJSON:       `{"phase":"subagent_turn_completed","status":"completed","result":"auth path updated","summary":"use mailbox handoffs"}`,
+		AuditTail:         "milestone auth complete",
+		PendingTasksJSON:  `["verify auth tests"]`,
+		FilesModifiedJSON: `["internal/agent/subagent_manager.go"]`,
+		MailCursor:        1,
+		ActivityCursor:    2,
+		CreatedAt:         time.Now().UTC(),
 	})
 	require.NoError(t, err)
 
@@ -122,4 +127,11 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 	require.Contains(t, ctxBlock, "running")
 	require.Contains(t, ctxBlock, "Latest Checkpoint")
 	require.Contains(t, ctxBlock, "auth path updated")
+	require.Contains(t, ctxBlock, "verify auth tests")
+}
+
+type checkpointMessageSourceStub struct{}
+
+func (checkpointMessageSourceStub) List(context.Context, string) ([]message.Message, error) {
+	return nil, nil
 }

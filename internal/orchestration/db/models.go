@@ -70,13 +70,36 @@ type DispatchQueueItem struct {
 }
 
 type SessionCheckpoint struct {
-	ID             string    `json:"id"`
-	SessionID      string    `json:"session_id"`
-	AgentID        string    `json:"agent_id"`
-	WorkItemID     string    `json:"work_item_id"`
-	SummaryJSON    string    `json:"summary_json"`
-	AuditTail      string    `json:"audit_tail"`
-	MailCursor     int64     `json:"mail_cursor"`
-	ActivityCursor int64     `json:"activity_cursor"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	SessionID          string    `json:"session_id"`
+	AgentID            string    `json:"agent_id"`
+	WorkItemID         string    `json:"work_item_id"`
+	ParentCheckpointID string    `json:"parent_checkpoint_id"`
+	MessageCount       int       `json:"message_count"`
+	SummaryJSON        string    `json:"summary_json"`
+	AuditTail          string    `json:"audit_tail"`
+	PendingTasksJSON   string    `json:"pending_tasks_json"`
+	FilesModifiedJSON  string    `json:"files_modified_json"`
+	MailCursor         int64     `json:"mail_cursor"`
+	ActivityCursor     int64     `json:"activity_cursor"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type DecisionRecord struct {
+	ID                 string    `json:"id"`
+	SessionID          string    `json:"session_id"`
+	Category           string    `json:"category"`
+	Key                string    `json:"key"`
+	Value              string    `json:"value"`
+	Confidence         string    `json:"confidence"`
+	SourceCheckpointID string    `json:"source_checkpoint_id"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type UserPreference struct {
+	Key             string    `json:"key"`
+	Value           string    `json:"value"`
+	Confidence      string    `json:"confidence"`
+	SourceSessionID string    `json:"source_session_id"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }

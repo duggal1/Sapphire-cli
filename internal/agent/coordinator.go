@@ -163,6 +163,7 @@ type coordinator struct {
 	mcpRegistryFetchInFlight  bool
 	toolCacheMu               sync.RWMutex
 	memoryPipe                *memoryPipeline
+	checkpointService         *memory.CheckpointService
 	cachedTools               []fantasy.AgentTool
 	cachedToolNames           []string
 	mcpPreflightMu            sync.Mutex
@@ -312,7 +313,6 @@ func NewCoordinator(
 				slog.Debug("Persistent memory system initialized")
 			}
 		}
-
 		// Initialize embedding-based skill retrieval.
 		c.initEmbeddingService()
 
@@ -329,6 +329,7 @@ func NewCoordinator(
 			}
 		}
 	}
+	c.checkpointService = memory.NewCheckpointService(c.orchestrationStore, c.messages, c.memory, c.pmem)
 
 	agentCfg, ok := cfg.Agents[config.AgentCoder]
 	if !ok {
@@ -1169,6 +1170,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		LongHorizon:          c.longHorizon,
 		MemoryConsolidator:   c.ConsolidateMemory,
 		WaitBackground:       c.waitForBackgroundWork,
+		CheckpointTurn:       c.checkpointTurn,
 		WriteScope:           writeScope,
 	})
 

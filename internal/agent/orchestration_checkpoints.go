@@ -2,40 +2,42 @@ package agent
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 )
 
 const checkpointSnippetLimit = 280
 
 func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, agentID, workItemID, auditSource string, summary map[string]any) {
-	if c == nil || c.orchestrationStore == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(agentID) == "" {
+	if c == nil || c.checkpointService == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(agentID) == "" {
 		return
 	}
 	auditTail := ""
 	if auditSource != "" {
 		auditTail = truncateForContext(c.GetLongHorizonAuditTail(auditSource, maxLongHorizonChars), maxLongHorizonChars)
 	}
-	summaryJSON := "{}"
-	if summary != nil {
-		if data, err := json.Marshal(summary); err == nil {
-			summaryJSON = string(data)
-		}
-	}
-	_, _ = c.orchestrationStore.SaveCheckpoint(ctx, orchestrationdb.SessionCheckpoint{
-		SessionID:      sessionID,
-		AgentID:        agentID,
-		WorkItemID:     strings.TrimSpace(workItemID),
-		SummaryJSON:    summaryJSON,
-		AuditTail:      auditTail,
-		MailCursor:     time.Now().UTC().Unix(),
-		ActivityCursor: time.Now().UTC().Unix(),
-		CreatedAt:      time.Now().UTC(),
+	phase := firstSummaryString(summary, "phase")
+	status := firstSummaryString(summary, "status")
+	prompt := firstSummaryString(summary, "prompt")
+	result := firstSummaryString(summary, "result")
+	_, _, _ = c.checkpointService.Record(ctx, agentmemory.CheckpointParams{
+		SessionID:       sessionID,
+		AgentID:         agentID,
+		WorkItemID:      strings.TrimSpace(workItemID),
+		AuditTail:       auditTail,
+		Phase:           phase,
+		Prompt:          prompt,
+		Result:          result,
+		Status:          status,
+		Summary:         summary,
+		Force:           true,
+		MailCursor:      time.Now().UTC().Unix(),
+		ActivityCursor:  time.Now().UTC().Unix(),
 	})
 }
 
@@ -57,21 +59,18 @@ func buildCheckpointSummary(phase, prompt, result, status string, fields map[str
 }
 
 func (c *coordinator) renderCheckpointContext(ctx context.Context, sessionID, agentID string) string {
-	if c == nil || c.orchestrationStore == nil || strings.TrimSpace(sessionID) == "" {
+	if c == nil || c.checkpointService == nil || strings.TrimSpace(sessionID) == "" {
 		return ""
 	}
-	checkpoint, err := c.orchestrationStore.LatestCheckpoint(ctx, sessionID, agentID)
+	snapshot, err := c.checkpointService.Resume(ctx, sessionID, agentID)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return ""
-		}
 		return ""
 	}
 	var summary map[string]any
-	if err := json.Unmarshal([]byte(checkpoint.SummaryJSON), &summary); err != nil {
+	if err := json.Unmarshal([]byte(snapshot.Checkpoint.SummaryJSON), &summary); err != nil {
 		return ""
 	}
-	lines := make([]string, 0, 6)
+	lines := make([]string, 0, 16)
 	if phase := firstSummaryString(summary, "phase"); phase != "" {
 		lines = append(lines, fmt.Sprintf("- Phase: %s", phase))
 	}
@@ -84,17 +83,45 @@ func (c *coordinator) renderCheckpointContext(ctx context.Context, sessionID, ag
 	if result := firstSummaryString(summary, "result"); result != "" {
 		lines = append(lines, fmt.Sprintf("- Result: %s", result))
 	}
-	if workItem := strings.TrimSpace(checkpoint.WorkItemID); workItem != "" {
+	if summaryText := firstSummaryString(summary, "summary"); summaryText != "" {
+		lines = append(lines, fmt.Sprintf("- Summary: %s", summaryText))
+	}
+	if workItem := strings.TrimSpace(snapshot.Checkpoint.WorkItemID); workItem != "" {
 		lines = append(lines, fmt.Sprintf("- Work item: %s", workItem))
 	}
-	lines = append(lines, fmt.Sprintf("- Checkpoint age: %s", time.Since(checkpoint.CreatedAt).Truncate(time.Second)))
-	if auditTail := strings.TrimSpace(checkpoint.AuditTail); auditTail != "" {
+	if snapshot.Checkpoint.MessageCount > 0 {
+		lines = append(lines, fmt.Sprintf("- Message count: %d", snapshot.Checkpoint.MessageCount))
+	}
+	if len(snapshot.PendingTasks) > 0 {
+		lines = append(lines, "- Pending tasks: "+strings.Join(limitSlice(snapshot.PendingTasks, 3), " | "))
+	}
+	if len(snapshot.FilesModified) > 0 {
+		lines = append(lines, "- Files modified: "+strings.Join(limitSlice(snapshot.FilesModified, 3), " | "))
+	}
+	if len(snapshot.UserPreferences) > 0 {
+		lines = append(lines, "- Preferences: "+renderPreferencesInline(snapshot.UserPreferences, 3))
+	}
+	if len(snapshot.Decisions) > 0 {
+		lines = append(lines, "- Decisions: "+renderDecisionsInline(snapshot.Decisions, 3))
+	}
+	if len(snapshot.DecisionConflicts) > 0 {
+		lines = append(lines, "- Decision conflicts: "+strings.Join(limitSlice(snapshot.DecisionConflicts, 2), " | "))
+	}
+	lines = append(lines, fmt.Sprintf("- Checkpoint age: %s", time.Since(snapshot.Checkpoint.CreatedAt).Truncate(time.Second)))
+	if auditTail := strings.TrimSpace(snapshot.Checkpoint.AuditTail); auditTail != "" {
 		lines = append(lines, "- Audit tail: "+truncateForContext(strings.ReplaceAll(auditTail, "\n", " "), checkpointSnippetLimit))
+	}
+	if retrieval := strings.TrimSpace(snapshot.RetrievalContext); retrieval != "" {
+		lines = append(lines, "- Retrieval memory loaded")
 	}
 	if len(lines) == 0 {
 		return ""
 	}
-	return "### Latest Checkpoint\n" + strings.Join(lines, "\n")
+	block := "### Latest Checkpoint\n" + strings.Join(lines, "\n")
+	if retrieval := strings.TrimSpace(snapshot.RetrievalContext); retrieval != "" {
+		block += "\n\n### Retrieved Memory\n" + retrieval
+	}
+	return block
 }
 
 func firstSummaryString(summary map[string]any, key string) string {
@@ -110,4 +137,53 @@ func firstSummaryString(summary map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(text)
+}
+
+func (c *coordinator) checkpointTurn(ctx context.Context, sessionID, prompt, result, status string, force bool) {
+	if c == nil || c.checkpointService == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	agentID := c.mailboxIdentityForSession(sessionID)
+	workItemID := ""
+	auditTail := c.GetLongHorizonAuditTail(sessionID, maxLongHorizonChars)
+	if runner := c.runnerBySessionID(sessionID); runner != nil {
+		agentID = runner.id
+		workItemID = runner.assignment.ID
+		if strings.TrimSpace(runner.parentSession) != "" {
+			auditTail = c.GetLongHorizonAuditTail(runner.parentSession, maxLongHorizonChars)
+		}
+	}
+	_, _, _ = c.checkpointService.Record(ctx, agentmemory.CheckpointParams{
+		SessionID:      sessionID,
+		AgentID:        agentID,
+		WorkItemID:     workItemID,
+		AuditTail:      auditTail,
+		Phase:          "turn",
+		Prompt:         prompt,
+		Result:         result,
+		Status:         status,
+		Force:          force,
+		MailCursor:     time.Now().UTC().Unix(),
+		ActivityCursor: time.Now().UTC().Unix(),
+	})
+}
+
+func renderPreferencesInline(items []orchestrationdb.UserPreference, max int) string {
+	parts := make([]string, 0, max)
+	for _, item := range limitSlice(items, max) {
+		parts = append(parts, fmt.Sprintf("%s=%s", item.Key, item.Value))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func renderDecisionsInline(items []orchestrationdb.DecisionRecord, max int) string {
+	parts := make([]string, 0, max)
+	for _, item := range limitSlice(items, max) {
+		parts = append(parts, fmt.Sprintf("%s.%s=%s", item.Category, item.Key, item.Value))
+	}
+	return strings.Join(parts, " | ")
 }

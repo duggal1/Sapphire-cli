@@ -218,6 +218,7 @@ type sessionAgent struct {
 	longHorizonInit         *csync.Map[string, bool]
 	memoryConsolidator      func(ctx context.Context, sessionID string) error
 	waitBackground          func(ctx context.Context, sessionID string) error
+	checkpointTurn          func(ctx context.Context, sessionID, prompt, result, status string, force bool)
 
 	// Python tool failure tracking - quit after 3 consecutive failures
 	pythonFailures atomic.Int32
@@ -244,6 +245,7 @@ type SessionAgentOptions struct {
 	LongHorizon          *longhorizon.Manager
 	MemoryConsolidator   func(ctx context.Context, sessionID string) error
 	WaitBackground       func(ctx context.Context, sessionID string) error
+	CheckpointTurn       func(ctx context.Context, sessionID, prompt, result, status string, force bool)
 }
 
 // NewSessionAgent initializes a new session-based AI agent with the provided configuration options.
@@ -273,6 +275,7 @@ func NewSessionAgent(
 		longHorizonSessions:     csync.NewMap[string, bool](),
 		longHorizonInit:         csync.NewMap[string, bool](),
 		memoryConsolidator:      opts.MemoryConsolidator,
+		checkpointTurn:          opts.CheckpointTurn,
 	}
 }
 
@@ -1153,6 +1156,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		a.activeRequests.Del(call.SessionID)
 		cancel()
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "error", true)
+		}
 		queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 		if ok && len(queuedMessages) > 0 {
 			firstQueuedMessage := queuedMessages[0]
@@ -1187,6 +1193,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 		}
 		a.postCompactionInjection.Set(call.SessionID, true)
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, "context compacted", "compacted", true)
+		}
 		// Queue the message again so it doesn't get dropped.
 		existing, ok := a.messageQueue.Get(call.SessionID)
 		if !ok {
@@ -1200,6 +1209,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Release active request before processing queued messages.
 	a.activeRequests.Del(call.SessionID)
 	cancel()
+	if a.checkpointTurn != nil {
+		resultText := ""
+		if result != nil {
+			resultText = result.Response.Content.Text()
+		}
+		a.checkpointTurn(ctx, call.SessionID, call.Prompt, resultText, "completed", false)
+	}
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {

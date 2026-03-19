@@ -133,14 +133,18 @@ func TestStoreDispatchQueueAndCheckpointLifecycle(t *testing.T) {
 	require.Equal(t, "agent-queue-1", dispatches[0].AssignedAgentID)
 
 	checkpoint, err := store.SaveCheckpoint(ctx, SessionCheckpoint{
-		SessionID:      "session-1",
-		AgentID:        "main:session-1",
-		WorkItemID:     "work-queue-1",
-		SummaryJSON:    `{"phase":"resume","status":"running"}`,
-		AuditTail:      "latest audit line",
-		MailCursor:     11,
-		ActivityCursor: 22,
-		CreatedAt:      time.Now().UTC(),
+		SessionID:          "session-1",
+		AgentID:            "main:session-1",
+		WorkItemID:         "work-queue-1",
+		ParentCheckpointID: "checkpoint-0",
+		MessageCount:       51,
+		SummaryJSON:        `{"phase":"resume","status":"running"}`,
+		AuditTail:          "latest audit line",
+		PendingTasksJSON:   `["finish health checks"]`,
+		FilesModifiedJSON:  `["internal/agent/coordinator.go"]`,
+		MailCursor:         11,
+		ActivityCursor:     22,
+		CreatedAt:          time.Now().UTC(),
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, checkpoint.ID)
@@ -148,5 +152,31 @@ func TestStoreDispatchQueueAndCheckpointLifecycle(t *testing.T) {
 	latest, err := store.LatestCheckpoint(ctx, "session-1", "main:session-1")
 	require.NoError(t, err)
 	require.Equal(t, "work-queue-1", latest.WorkItemID)
+	require.Equal(t, 51, latest.MessageCount)
 	require.Contains(t, latest.SummaryJSON, `"phase":"resume"`)
+
+	_, err = store.SaveDecision(ctx, DecisionRecord{
+		SessionID:          "session-1",
+		Category:           "architecture",
+		Key:                "database",
+		Value:              "postgresql",
+		Confidence:         "confirmed",
+		SourceCheckpointID: checkpoint.ID,
+		CreatedAt:          time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	decisions, err := store.ListDecisionRecords(ctx, "session-1", 10)
+	require.NoError(t, err)
+	require.Len(t, decisions, 1)
+
+	require.NoError(t, store.UpsertUserPreference(ctx, UserPreference{
+		Key:             "user.name",
+		Value:           "Harshit",
+		Confidence:      "confirmed",
+		SourceSessionID: "session-1",
+		UpdatedAt:       time.Now().UTC(),
+	}))
+	prefs, err := store.ListUserPreferences(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, prefs, 1)
 }

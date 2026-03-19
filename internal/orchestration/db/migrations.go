@@ -79,13 +79,36 @@ var schemaStatements = []string{
 		session_id TEXT NOT NULL,
 		agent_id TEXT NOT NULL,
 		work_item_id TEXT NOT NULL DEFAULT '',
+		parent_checkpoint_id TEXT NOT NULL DEFAULT '',
+		message_count INTEGER NOT NULL DEFAULT 0,
 		summary_json TEXT NOT NULL DEFAULT '{}',
 		audit_tail TEXT NOT NULL DEFAULT '',
+		pending_tasks_json TEXT NOT NULL DEFAULT '[]',
+		files_modified_json TEXT NOT NULL DEFAULT '[]',
 		mail_cursor INTEGER NOT NULL DEFAULT 0,
 		activity_cursor INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_agent_created ON session_checkpoints(session_id, agent_id, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS decisions (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		category TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		confidence TEXT NOT NULL DEFAULT 'tentative',
+		source_checkpoint_id TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_decisions_session_created ON decisions(session_id, created_at DESC);`,
+	`CREATE INDEX IF NOT EXISTS idx_decisions_category_key_created ON decisions(category, key, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS user_preferences (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		confidence TEXT NOT NULL DEFAULT 'confirmed',
+		source_session_id TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL
+	);`,
 }
 
 func ensureSchema(ctx context.Context, conn *sql.DB) error {
@@ -98,6 +121,18 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(ctx, conn, "agent_state", "created_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "session_checkpoints", "parent_checkpoint_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "session_checkpoints", "message_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "session_checkpoints", "pending_tasks_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "session_checkpoints", "files_modified_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	return nil

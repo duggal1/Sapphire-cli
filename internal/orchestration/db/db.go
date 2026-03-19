@@ -859,14 +859,19 @@ func (s *Store) SaveCheckpoint(ctx context.Context, checkpoint SessionCheckpoint
 	_, err := s.conn.ExecContext(
 		ctx,
 		`INSERT INTO session_checkpoints (
-			id, session_id, agent_id, work_item_id, summary_json, audit_tail, mail_cursor, activity_cursor, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, session_id, agent_id, work_item_id, parent_checkpoint_id, message_count, summary_json, audit_tail,
+			pending_tasks_json, files_modified_json, mail_cursor, activity_cursor, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		checkpoint.ID,
 		stringsTrim(checkpoint.SessionID),
 		stringsTrim(checkpoint.AgentID),
 		stringsTrim(checkpoint.WorkItemID),
+		stringsTrim(checkpoint.ParentCheckpointID),
+		checkpoint.MessageCount,
 		checkpoint.SummaryJSON,
 		checkpoint.AuditTail,
+		firstNonEmptyJSON(checkpoint.PendingTasksJSON, "[]"),
+		firstNonEmptyJSON(checkpoint.FilesModifiedJSON, "[]"),
 		checkpoint.MailCursor,
 		checkpoint.ActivityCursor,
 		checkpoint.CreatedAt.UTC().Unix(),
@@ -881,7 +886,8 @@ func (s *Store) LatestCheckpoint(ctx context.Context, sessionID, agentID string)
 	if s == nil || s.conn == nil {
 		return SessionCheckpoint{}, fmt.Errorf("orchestration store is not initialized")
 	}
-	query := `SELECT id, session_id, agent_id, work_item_id, summary_json, audit_tail, mail_cursor, activity_cursor, created_at
+	query := `SELECT id, session_id, agent_id, work_item_id, parent_checkpoint_id, message_count, summary_json, audit_tail,
+	                 pending_tasks_json, files_modified_json, mail_cursor, activity_cursor, created_at
 	            FROM session_checkpoints
 	           WHERE session_id = ?`
 	args := []any{stringsTrim(sessionID)}
@@ -896,6 +902,222 @@ func (s *Store) LatestCheckpoint(ctx context.Context, sessionID, agentID string)
 		return SessionCheckpoint{}, fmt.Errorf("get latest checkpoint: %w", err)
 	}
 	return item, nil
+}
+
+func (s *Store) ListCheckpoints(ctx context.Context, sessionID, agentID string, limit int) ([]SessionCheckpoint, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, session_id, agent_id, work_item_id, parent_checkpoint_id, message_count, summary_json, audit_tail,
+	                 pending_tasks_json, files_modified_json, mail_cursor, activity_cursor, created_at
+	            FROM session_checkpoints
+	           WHERE session_id = ?`
+	args := []any{stringsTrim(sessionID)}
+	if agentID = stringsTrim(agentID); agentID != "" {
+		query += ` AND agent_id = ?`
+		args = append(args, agentID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list checkpoints: %w", err)
+	}
+	defer rows.Close()
+	var items []SessionCheckpoint
+	for rows.Next() {
+		item, err := scanCheckpoint(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan checkpoint: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate checkpoints: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) DeleteCheckpoints(ctx context.Context, ids []string) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	ids = normalizeStringArgs(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.conn.ExecContext(ctx, fmt.Sprintf(`DELETE FROM session_checkpoints WHERE id IN (%s)`, strings.Join(placeholders, ",")), args...)
+	if err != nil {
+		return fmt.Errorf("delete checkpoints: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SaveDecision(ctx context.Context, item DecisionRecord) (DecisionRecord, error) {
+	if s == nil || s.conn == nil {
+		return DecisionRecord{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	if stringsTrim(item.ID) == "" {
+		item.ID = uuid.NewString()
+	}
+	if stringsTrim(item.SessionID) == "" {
+		return DecisionRecord{}, fmt.Errorf("decision session_id is required")
+	}
+	if stringsTrim(item.Category) == "" || stringsTrim(item.Key) == "" || stringsTrim(item.Value) == "" {
+		return DecisionRecord{}, fmt.Errorf("decision category, key, and value are required")
+	}
+	if stringsTrim(item.Confidence) == "" {
+		item.Confidence = "tentative"
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO decisions (id, session_id, category, key, value, confidence, source_checkpoint_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.ID,
+		stringsTrim(item.SessionID),
+		stringsTrim(item.Category),
+		stringsTrim(item.Key),
+		stringsTrim(item.Value),
+		stringsTrim(item.Confidence),
+		stringsTrim(item.SourceCheckpointID),
+		item.CreatedAt.UTC().Unix(),
+	)
+	if err != nil {
+		return DecisionRecord{}, fmt.Errorf("save decision: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) ListDecisionRecords(ctx context.Context, sessionID string, limit int) ([]DecisionRecord, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT id, session_id, category, key, value, confidence, source_checkpoint_id, created_at
+		   FROM decisions
+		  WHERE session_id = ?
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		stringsTrim(sessionID),
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list decisions: %w", err)
+	}
+	defer rows.Close()
+	var items []DecisionRecord
+	for rows.Next() {
+		item, err := scanDecisionRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan decision: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate decisions: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) GetUserPreference(ctx context.Context, key string) (UserPreference, error) {
+	if s == nil || s.conn == nil {
+		return UserPreference{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT key, value, confidence, source_session_id, updated_at
+		   FROM user_preferences
+		  WHERE key = ?`,
+		stringsTrim(key),
+	)
+	item, err := scanUserPreference(row)
+	if err != nil {
+		return UserPreference{}, fmt.Errorf("get user preference: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) UpsertUserPreference(ctx context.Context, item UserPreference) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	if stringsTrim(item.Key) == "" {
+		return fmt.Errorf("user preference key is required")
+	}
+	if stringsTrim(item.Confidence) == "" {
+		item.Confidence = "confirmed"
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = time.Now().UTC()
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO user_preferences (key, value, confidence, source_session_id, updated_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(key) DO UPDATE SET
+		   value = excluded.value,
+		   confidence = excluded.confidence,
+		   source_session_id = excluded.source_session_id,
+		   updated_at = excluded.updated_at`,
+		stringsTrim(item.Key),
+		stringsTrim(item.Value),
+		stringsTrim(item.Confidence),
+		stringsTrim(item.SourceSessionID),
+		item.UpdatedAt.UTC().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert user preference: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListUserPreferences(ctx context.Context, limit int) ([]UserPreference, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT key, value, confidence, source_session_id, updated_at
+		   FROM user_preferences
+		  ORDER BY updated_at DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list user preferences: %w", err)
+	}
+	defer rows.Close()
+	var items []UserPreference
+	for rows.Next() {
+		item, err := scanUserPreference(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan user preference: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user preferences: %w", err)
+	}
+	return items, nil
 }
 
 func (s *Store) MarshalDetails(details any) string {
@@ -941,6 +1163,14 @@ func normalizeStringArgs(values []string) []string {
 		return nil
 	}
 	return out
+}
+
+func firstNonEmptyJSON(value string, fallback string) string {
+	value = stringsTrim(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 type scanner interface {
@@ -1137,8 +1367,12 @@ func scanCheckpoint(row scanner) (SessionCheckpoint, error) {
 		&item.SessionID,
 		&item.AgentID,
 		&item.WorkItemID,
+		&item.ParentCheckpointID,
+		&item.MessageCount,
 		&item.SummaryJSON,
 		&item.AuditTail,
+		&item.PendingTasksJSON,
+		&item.FilesModifiedJSON,
 		&item.MailCursor,
 		&item.ActivityCursor,
 		&createdAtUnix,
@@ -1147,6 +1381,34 @@ func scanCheckpoint(row scanner) (SessionCheckpoint, error) {
 	}
 	if createdAtUnix > 0 {
 		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanDecisionRecord(row scanner) (DecisionRecord, error) {
+	var (
+		item          DecisionRecord
+		createdAtUnix int64
+	)
+	if err := row.Scan(&item.ID, &item.SessionID, &item.Category, &item.Key, &item.Value, &item.Confidence, &item.SourceCheckpointID, &createdAtUnix); err != nil {
+		return DecisionRecord{}, err
+	}
+	if createdAtUnix > 0 {
+		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanUserPreference(row scanner) (UserPreference, error) {
+	var (
+		item          UserPreference
+		updatedAtUnix int64
+	)
+	if err := row.Scan(&item.Key, &item.Value, &item.Confidence, &item.SourceSessionID, &updatedAtUnix); err != nil {
+		return UserPreference{}, err
+	}
+	if updatedAtUnix > 0 {
+		item.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
 	}
 	return item, nil
 }

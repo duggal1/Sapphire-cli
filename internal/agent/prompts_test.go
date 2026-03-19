@@ -46,3 +46,39 @@ func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptTemplatesDoNotMispositionWorktreeHelper(t *testing.T) {
+	checks := []struct {
+		name    string
+		text    string
+		forbid  []string
+		require []string
+	}{
+		{
+			name:   "initialize",
+			text:   string(initializePromptTmpl),
+			forbid: []string{"Worktree orchestration: `orchestrate_worktrees` (parallel worktrees, optional test runners, optional integration agent)."},
+			require: []string{
+				"`orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.",
+			},
+		},
+		{
+			name:   "agentic_fetch",
+			text:   string(agenticFetchPromptTmpl),
+			forbid: []string{"orchestrate_worktrees"},
+		},
+	}
+
+	for _, check := range checks {
+		for _, forbidden := range check.forbid {
+			if strings.Contains(check.text, forbidden) {
+				t.Fatalf("%s prompt still contains forbidden text %q", check.name, forbidden)
+			}
+		}
+		for _, required := range check.require {
+			if !strings.Contains(check.text, required) {
+				t.Fatalf("%s prompt missing required text %q", check.name, required)
+			}
+		}
+	}
+}

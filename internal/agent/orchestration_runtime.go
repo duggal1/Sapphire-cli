@@ -77,6 +77,10 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 		return
 	}
 	runner.mu.Lock()
+	lastHeartbeat := runner.lastHeartbeat
+	if lastHeartbeat.IsZero() {
+		lastHeartbeat = time.Now().UTC()
+	}
 	state := orchestrationdb.AgentState{
 		AgentID:       runner.id,
 		Role:          "subagent",
@@ -86,7 +90,7 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 		Branch:        runner.assignment.Branch,
 		HookBeadID:    runner.assignment.ID,
 		ParentAgentID: mainAgentMailboxID(runner.parentSession),
-		LastHeartbeat: time.Now().UTC(),
+		LastHeartbeat: lastHeartbeat,
 		CreatedAt:     runner.assignment.CreatedAt,
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -138,10 +142,10 @@ func workItemStatusForRunner(status subAgentStatus) string {
 	switch status {
 	case subAgentStatusRunning:
 		return "in_progress"
+	case subAgentStatusStuck, subAgentStatusError:
+		return "blocked"
 	case subAgentStatusCompleted, subAgentStatusClosed:
 		return "closed"
-	case subAgentStatusError:
-		return "blocked"
 	default:
 		return "open"
 	}

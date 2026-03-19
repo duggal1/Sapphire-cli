@@ -7,7 +7,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	uistyles "github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // UpdatePlanToolMessageItem renders update_plan as a Codex-style todo list.
@@ -50,7 +49,7 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		return ""
 	}
 
-	title := uistyles.ApplyBoldForegroundGrad(sty, "To-Do", sty.GreenLight, sty.Tertiary)
+	title := sty.Base.Foreground(sty.GreenLight).Bold(true).Render("To-Do")
 	lines := []string{sty.Base.Foreground(sty.GreenLight).Render("• ") + title}
 
 	indented := make([]string, 0, len(args.Plan)+1)

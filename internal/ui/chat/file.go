@@ -254,7 +254,7 @@ func buildViewDetailsRoot(
 	if isSingleView {
 		scopeNode := &TreeNode{Label: subAgentKVLabel("Scope", viewScope(entries))}
 		scopeNode.Children = append(scopeNode.Children,
-			&TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(entries[0]))},
+			&TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(sty, entries[0]))},
 			&TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))},
 			&TreeNode{Label: subAgentKVLabel("Purpose", "inspect single-file context")},
 		)
@@ -375,10 +375,10 @@ func viewRootLabel(sty *styles.Styles, toolTitle string) string {
 	return sty.Tool.ListRoot.Render(toolTitle)
 }
 
-func renderViewFileLabel(entry fileContextEntry) string {
-	label := filepath.Base(entry.Path)
+func renderViewFileLabel(sty *styles.Styles, entry fileContextEntry) string {
+	label := sty.Tool.ListFile.Bold(true).Render(filepath.Base(entry.Path))
 	if entry.LineStart > 0 && entry.LineEnd >= entry.LineStart {
-		label += fmt.Sprintf(" L%d-L%d", entry.LineStart, entry.LineEnd)
+		label += sty.Tool.ListMeta.Render(fmt.Sprintf(" L%d-L%d", entry.LineStart, entry.LineEnd))
 	}
 	return label
 }

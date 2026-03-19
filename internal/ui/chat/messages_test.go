@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/message"
@@ -24,8 +25,8 @@ func TestAssistantThinkingRenderUsesThinkingBoxPresentation(t *testing.T) {
 	})
 
 	rendered := ansi.Strip(item.Render(100))
-	if !strings.Contains(rendered, "Thinking") {
-		t.Fatalf("expected thinking label, got %q", rendered)
+	if strings.Count(rendered, "Thinking") != 1 {
+		t.Fatalf("expected exactly one thinking label, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "Analyzing") || !strings.Contains(rendered, "first") {
 		t.Fatalf("expected rendered thinking markdown, got %q", rendered)
@@ -47,5 +48,32 @@ func TestUserMessageUsesChevronPrefix(t *testing.T) {
 	rendered := ansi.Strip(item.Render(80))
 	if !strings.HasPrefix(rendered, "> hello") {
 		t.Fatalf("expected chevron prefix, got %q", rendered)
+	}
+}
+
+func TestAssistantInfoItemRendersLiveFooterBeforeFinish(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	msg := &message.Message{
+		ID:        "assistant-footer",
+		Role:      message.Assistant,
+		Model:     "gpt-test",
+		Parts:     []message.ContentPart{},
+		CreatedAt: time.Now().Unix(),
+	}
+
+	item, ok := NewAssistantInfoItem(&sty, msg, nil, time.Now()).(*AssistantInfoItem)
+	if !ok {
+		t.Fatal("expected assistant info item")
+	}
+	item.SetRequestTiming(time.Now().Add(-2*time.Second), time.Time{})
+
+	rendered := ansi.Strip(item.RawRender(100))
+	if !strings.Contains(rendered, "[⏱") || !strings.Contains(rendered, "0 in") || !strings.Contains(rendered, "0 out") {
+		t.Fatalf("expected live footer stats, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "gpt-test") {
+		t.Fatalf("expected model name in footer, got %q", rendered)
 	}
 }

@@ -1337,7 +1337,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	s.Tool.ListRoot = base.Foreground(fgTree)
 	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.ListFile = base.Foreground(fgTree)
+	s.Tool.ListFile = base.Foreground(lipgloss.Color("#F1D7E8"))
 	s.Tool.ListMeta = base.Foreground(fgMuted)
 	s.Tool.ListHint = base.Foreground(warning)
 	s.Tool.GrepFile = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
@@ -1457,12 +1457,12 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Chat.Message.AssistantInfoProvider = s.Subtle
 	s.Chat.Message.AssistantInfoDuration = s.Base
 
-	s.Chat.Message.ThinkingBox = s.Subtle.Background(bgBaseLighter).Padding(1, 2)
+	s.Chat.Message.ThinkingBox = s.Base.Foreground(lipgloss.Color("#F6EEFF")).Background(lipgloss.Color("#171428")).Padding(1, 2)
 
 	// Thinking section styles
-	s.Chat.Message.ThinkingTruncationHint = s.Muted
-	s.Chat.Message.ThinkingFooterTitle = base.Foreground(secondary)
-	s.Chat.Message.ThinkingFooterDuration = s.Subtle
+	s.Chat.Message.ThinkingTruncationHint = base.Foreground(lipgloss.Color("#B8A7FF"))
+	s.Chat.Message.ThinkingFooterTitle = base.Foreground(lipgloss.Color("#72F1FF"))
+	s.Chat.Message.ThinkingFooterDuration = base.Foreground(lipgloss.Color("#F1D7E8"))
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(tertiary)

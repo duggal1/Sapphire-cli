@@ -175,6 +175,37 @@ func TestWaitSubAgentsReturnsWhenAnyAgentFinishes(t *testing.T) {
 	require.Equal(t, subAgentStatusRunning, statuses["agent-running"])
 }
 
+func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
+	t.Parallel()
+
+	coord := &coordinator{
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+	runner := &subAgentRunner{
+		id:             "agent-stale",
+		sessionID:      "session-stale",
+		status:         subAgentStatusRunning,
+		lastSubmission: "submission-stale",
+		lastHeartbeat:  time.Now().UTC().Add(-1 * time.Minute),
+		submissions: map[string]*subAgentSubmission{
+			"submission-stale": {
+				ID:          "submission-stale",
+				Status:      subAgentStatusRunning,
+				HeartbeatAt: time.Now().UTC().Add(-1 * time.Minute),
+			},
+		},
+		assignment:   subAgentAssignment{Task: "Investigate stall"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
+	}
+	coord.subAgentRegistry.upsert("agent-stale", runner)
+
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-stale"}, 3*time.Second)
+	require.False(t, timedOut)
+	require.Len(t, snapshots, 1)
+	require.Equal(t, subAgentStatusStuck, snapshots[0].Status)
+}
+
 func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {
 	t.Parallel()
 

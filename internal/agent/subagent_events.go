@@ -12,7 +12,9 @@ type SubAgentLifecycleStage string
 const (
 	SubAgentStageSpawned   SubAgentLifecycleStage = "spawned"
 	SubAgentStageRunning   SubAgentLifecycleStage = "running"
+	SubAgentStageHeartbeat SubAgentLifecycleStage = "heartbeat"
 	SubAgentStageWaiting   SubAgentLifecycleStage = "waiting"
+	SubAgentStageStuck     SubAgentLifecycleStage = "stuck"
 	SubAgentStageCompleted SubAgentLifecycleStage = "completed"
 	SubAgentStageFailed    SubAgentLifecycleStage = "failed"
 	SubAgentStageClosed    SubAgentLifecycleStage = "closed"
@@ -21,7 +23,9 @@ const (
 const (
 	SubAgentSpawnedEvent   pubsub.EventType = "subagent_spawned"
 	SubAgentRunningEvent   pubsub.EventType = "subagent_running"
+	SubAgentHeartbeatEvent pubsub.EventType = "subagent_heartbeat"
 	SubAgentWaitingEvent   pubsub.EventType = "subagent_waiting"
+	SubAgentStuckEvent     pubsub.EventType = "subagent_stuck"
 	SubAgentCompletedEvent pubsub.EventType = "subagent_completed"
 	SubAgentFailedEvent    pubsub.EventType = "subagent_failed"
 	SubAgentClosedEvent    pubsub.EventType = "subagent_closed"

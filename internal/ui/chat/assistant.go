@@ -194,24 +194,18 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 func (a *AssistantMessageItem) Render(width int) string {
 	// XXX: Here, we're manually applying the focused/blurred styles because
 	// using lipgloss.Render can degrade performance for long messages due to
-	// it's wrapping logic.
+	// its wrapping logic.
 	// We already know that the content is wrapped to the correct width in
 	// RawRender, so we can just apply the styles directly to each line.
-	focused := a.sty.Chat.Message.AssistantFocused.Render("•")
-	blurred := a.sty.Chat.Message.AssistantBlurred.Render("•")
+	focused := a.sty.Chat.Message.AssistantFocused.Render()
+	blurred := a.sty.Chat.Message.AssistantBlurred.Render()
 	rendered := a.RawRender(width)
-	prefix := blurred
-	if a.focused {
-		prefix = focused
-	}
-	prefix += " "
-	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		if i == 0 {
-			lines[i] = prefix + line
+		if a.focused {
+			lines[i] = focused + line
 		} else {
-			lines[i] = indent + line
+			lines[i] = blurred + line
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -240,7 +234,7 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 		if thinking != "" || len(messageParts) > 0 {
 			messageParts = append(messageParts, "")
 		}
-		messageParts = append(messageParts, a.renderMarkdown(content, width))
+		messageParts = append(messageParts, a.renderModelOutput(content, width))
 	}
 
 	// finally add any finish reason info
@@ -279,9 +273,8 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = lines[totalLines-maxCollapsedThinkingHeight:]
 	}
 
-	label := a.renderThinkingShimmer(width)
 	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
-	boxParts := []string{label}
+	boxParts := []string{}
 	if isTruncated {
 		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
@@ -333,6 +326,13 @@ func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
 	return styles.ShimmerText(a.sty, "Thinking", 0)
 }
 
+func (a *AssistantMessageItem) renderModelOutput(content string, width int) string {
+	return prefixRenderedBlock(
+		a.sty.Base.Foreground(a.sty.White).Render("•"),
+		a.renderMarkdown(content, width),
+	)
+}
+
 // renderMarkdown renders content as markdown.
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
@@ -352,6 +352,24 @@ func (a *AssistantMessageItem) renderSpinning() string {
 func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
 	label := loadingPhraseForMessage(a.message.ID)
 	return styles.ShimmerText(a.sty, label, 0)
+}
+
+func prefixRenderedBlock(prefix, block string) string {
+	block = strings.TrimRight(block, "\n")
+	if block == "" {
+		return ""
+	}
+	prefix += " "
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefix + line
+			continue
+		}
+		lines[i] = indent + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func loadingPhraseForMessage(messageID string) string {

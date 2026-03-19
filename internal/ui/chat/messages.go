@@ -269,6 +269,10 @@ func (a *AssistantInfoItem) Render(width int) string {
 }
 
 func (a *AssistantInfoItem) renderContent(width int) string {
+	if a.message == nil {
+		return ""
+	}
+
 	finish := a.message.FinishPart()
 
 	modelName := strings.TrimSpace(a.message.Model)
@@ -309,29 +313,27 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	modelLine := a.sty.Chat.Message.AssistantInfoModel.Render(modelName)
 
 	duration := a.renderDurationFormatted(finish)
+	promptTokens := int64(0)
+	completionTokens := int64(0)
+	cachedTokens := int64(0)
+	thoughtsTokens := int64(0)
+	if finish != nil {
+		promptTokens = finish.PromptTokens
+		completionTokens = finish.CompletionTokens
+		cachedTokens = finish.CachedTokens
+		thoughtsTokens = finish.ThoughtsTokens
+	}
 
 	parts := []string{
 		duration,
+		formatUsageTokens(promptTokens) + " in",
+		formatUsageTokens(completionTokens) + " out",
+		formatUsageTokens(cachedTokens) + " cached",
+		formatUsageTokens(thoughtsTokens) + " thoughts",
 	}
 
 	if finish != nil && finish.AvgLatencyMs > 0 {
 		parts = append(parts, fmt.Sprintf("%.0fms", finish.AvgLatencyMs))
-	}
-
-	if finish != nil && finish.PromptTokens > 0 {
-		parts = append(parts, formatUsageTokens(finish.PromptTokens)+" in")
-	}
-
-	if finish != nil && finish.CompletionTokens > 0 {
-		parts = append(parts, formatUsageTokens(finish.CompletionTokens)+" out")
-	}
-
-	if finish != nil && finish.CachedTokens > 0 {
-		parts = append(parts, formatUsageTokens(finish.CachedTokens)+" cached")
-	}
-
-	if finish != nil && finish.ThoughtsTokens > 0 {
-		parts = append(parts, formatUsageTokens(finish.ThoughtsTokens)+" thoughts")
 	}
 
 	dot := a.sty.Base.Foreground(lipgloss.Color("240")).Render(" · ")

@@ -24,6 +24,7 @@ type subAgentStatus string
 const (
 	subAgentStatusQueued    subAgentStatus = "queued"
 	subAgentStatusRunning   subAgentStatus = "running"
+	subAgentStatusStuck     subAgentStatus = "stuck"
 	subAgentStatusCompleted subAgentStatus = "completed"
 	subAgentStatusError     subAgentStatus = "error"
 	subAgentStatusClosed    subAgentStatus = "closed"
@@ -33,16 +34,21 @@ const (
 	subAgentSessionLoadTimeout   = 10 * time.Second
 	subAgentMessageListTimeout   = 5 * time.Second
 	subAgentForkContextTimeout   = 10 * time.Second
+	subAgentHeartbeatInterval    = 5 * time.Second
+	subAgentHeartbeatStaleAge    = 20 * time.Second
+	subAgentTurnTimeout          = 5 * time.Minute
+	subAgentWaitPollInterval     = 2 * time.Second
 )
 
 type subAgentSubmission struct {
-	ID        string
-	Prompt    string
-	Status    subAgentStatus
-	Result    string
-	Err       string
-	StartedAt time.Time
-	EndedAt   time.Time
+	ID          string
+	Prompt      string
+	Status      subAgentStatus
+	Result      string
+	Err         string
+	StartedAt   time.Time
+	HeartbeatAt time.Time
+	EndedAt     time.Time
 }
 
 type subAgentInput struct {
@@ -71,6 +77,8 @@ type subAgentRunner struct {
 	closed               bool
 	pending              int
 	cancel               context.CancelFunc
+	lastHeartbeat        time.Time
+	heartbeatContext     string
 	assignment           subAgentAssignment
 	statusBroker         *pubsub.Broker[subAgentStatus]
 	mu                   sync.Mutex
@@ -166,6 +174,8 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		ValidationPassed:     r.validationPassed,
 		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
+		LastHeartbeat:        r.lastHeartbeat,
+		HeartbeatContext:     r.heartbeatContext,
 	}
 }
 
@@ -177,15 +187,18 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 		return ""
 	}
 	r.submissions[submissionID] = &subAgentSubmission{
-		ID:     submissionID,
-		Prompt: prompt,
-		Status: subAgentStatusQueued,
+		ID:          submissionID,
+		Prompt:      prompt,
+		Status:      subAgentStatusQueued,
+		HeartbeatAt: time.Now().UTC(),
 	}
 	r.pending++
 	r.status = subAgentStatusQueued
 	r.lastResult = ""
 	r.lastError = ""
 	r.lastProgress = ""
+	r.lastHeartbeat = time.Now().UTC()
+	r.heartbeatContext = "queued for execution"
 	r.assignment.UpdatedAt = time.Now()
 	broker := r.statusBroker
 	r.mu.Unlock()
@@ -216,6 +229,108 @@ func (r *subAgentRunner) sendInput(input subAgentInput) (ok bool) {
 	}()
 	r.inputCh <- input
 	return true
+}
+
+func (c *coordinator) startSubAgentHeartbeat(runner *subAgentRunner, submissionID string) func() {
+	if runner == nil || submissionID == "" {
+		return func() {}
+	}
+	stopCh := make(chan struct{})
+	ticker := time.NewTicker(subAgentHeartbeatInterval)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				runner.mu.Lock()
+				if runner.closed || runner.lastSubmission != submissionID || runner.status != subAgentStatusRunning {
+					runner.mu.Unlock()
+					return
+				}
+				now := time.Now().UTC()
+				runner.lastHeartbeat = now
+				runner.heartbeatContext = "executing assigned task"
+				runner.assignment.UpdatedAt = now
+				if submission := runner.submissions[submissionID]; submission != nil {
+					submission.HeartbeatAt = now
+				}
+				payload := runner.lifecycleEventLocked(submissionID, SubAgentStageHeartbeat, "")
+				broker := runner.statusBroker
+				runner.mu.Unlock()
+
+				c.syncRunnerOrchestrationState(context.Background(), runner)
+				c.recordOrchestrationActivity(context.Background(), runner.id, "heartbeat", map[string]any{
+					"submission_id": submissionID,
+					"status":        subAgentStatusRunning,
+				})
+				publishSubAgentStatus(broker, subAgentStatusRunning)
+				publishSubAgentLifecycleEvent(SubAgentHeartbeatEvent, payload)
+			}
+		}
+	}()
+
+	return func() {
+		close(stopCh)
+	}
+}
+
+func (c *coordinator) failSubAgentSubmission(runner *subAgentRunner, submissionID, reason string, status subAgentStatus, stage SubAgentLifecycleStage, eventType pubsub.EventType) {
+	if runner == nil {
+		return
+	}
+	now := time.Now().UTC()
+	runner.mu.Lock()
+	submission := runner.submissions[submissionID]
+	if submission == nil {
+		submission = &subAgentSubmission{ID: submissionID}
+		runner.submissions[submissionID] = submission
+	}
+	if isSubAgentFinalStatus(submission.Status) && isSubAgentFinalStatus(runner.status) {
+		runner.mu.Unlock()
+		return
+	}
+	submission.Status = status
+	submission.Err = reason
+	submission.EndedAt = now
+	submission.HeartbeatAt = now
+	runner.status = status
+	runner.lastError = reason
+	runner.lastProgress = ""
+	runner.lastHeartbeat = now
+	runner.heartbeatContext = reason
+	runner.assignment.UpdatedAt = now
+	cancel := runner.cancel
+	runner.cancel = nil
+	broker := runner.statusBroker
+	payload := runner.lifecycleEventLocked(submissionID, stage, reason)
+	runner.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
+		"submission_id": submissionID,
+		"status":        status,
+		"error":         reason,
+	})
+	publishSubAgentStatus(broker, status)
+	publishSubAgentLifecycleEvent(eventType, payload)
+}
+
+func (r *subAgentRunner) heartbeatStale(now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastHeartbeat.IsZero() {
+		return false
+	}
+	if !isSubAgentActiveStatus(r.status) {
+		return false
+	}
+	return now.Sub(r.lastHeartbeat) > subAgentHeartbeatStaleAge
 }
 
 func (r *subAgentRunner) interrupt() {
@@ -280,6 +395,8 @@ type subAgentSnapshot struct {
 	ValidationPassed     bool           `json:"validation_passed,omitempty"`
 	ValidationErrors     string         `json:"validation_errors,omitempty"`
 	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
+	LastHeartbeat        time.Time      `json:"last_heartbeat,omitempty"`
+	HeartbeatContext     string         `json:"heartbeat_context,omitempty"`
 }
 
 type subAgentStatusEntry struct {
@@ -299,6 +416,8 @@ type subAgentCollectedResult struct {
 	ValidationPassed     bool           `json:"validation_passed,omitempty"`
 	ValidationErrors     string         `json:"validation_errors,omitempty"`
 	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
+	LastHeartbeat        time.Time      `json:"last_heartbeat,omitempty"`
+	HeartbeatContext     string         `json:"heartbeat_context,omitempty"`
 }
 
 type spawnAgentOptions struct {
@@ -468,167 +587,202 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 
 func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 	for input := range runner.inputCh {
-		runner.mu.Lock()
-		if runner.closed {
-			runner.mu.Unlock()
-			continue
-		}
-		submission := runner.submissions[input.submissionID]
-		if submission == nil {
-			submission = &subAgentSubmission{ID: input.submissionID, Prompt: input.prompt}
-			runner.submissions[input.submissionID] = submission
-		}
-		if submission.Status == subAgentStatusRunning || submission.Status == subAgentStatusCompleted || submission.Status == subAgentStatusError {
-			runner.mu.Unlock()
-			continue
-		}
-		submission.Status = subAgentStatusRunning
-		submission.StartedAt = time.Now()
-		runner.status = subAgentStatusRunning
-		if runner.pending > 0 {
-			runner.pending--
-		}
-		runner.lastSubmission = input.submissionID
-		runner.lastError = ""
-		runner.lastProgress = ""
-		runner.assignment.UpdatedAt = time.Now()
-		broker := runner.statusBroker
-		runner.mu.Unlock()
-		publishSubAgentStatus(broker, subAgentStatusRunning)
-		c.syncRunnerOrchestrationState(context.Background(), runner)
+		func(input subAgentInput) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					c.failSubAgentSubmission(runner, input.submissionID, fmt.Sprintf("sub-agent loop panic: %v", recovered), subAgentStatusError, SubAgentStageFailed, SubAgentFailedEvent)
+				}
+			}()
 
-		c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
-
-		runCtx, cancel := context.WithCancel(context.Background())
-		runner.mu.Lock()
-		runner.cancel = cancel
-		runner.mu.Unlock()
-
-		prompt := input.prompt
-		if mailboxSummary := c.drainRunnerInboxSummary(context.Background(), runner); mailboxSummary != "" {
-			prompt = mailboxSummary + "\n\n" + prompt
-		}
-		skillContext := c.buildSubAgentPersistentMemoryContext(context.Background(), runner)
-		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt, skillContext)
-		cancel()
-
-		// Run validation gate on the worktree if it exists
-		runner.mu.Lock()
-		workDir := runner.workDir
-		branch := runner.assignment.Branch
-		taskSlug := runner.assignment.TaskKey
-		testCommand := runner.assignment.TestCommand
-		taskTitle := runner.assignment.Title
-		runner.mu.Unlock()
-		if workDir != "" {
-			flushCtx, flushCancel := context.WithTimeout(context.Background(), validationGateTimeout)
-			if flushErr := tools.FlushGitSnapshot(flushCtx, workDir); flushErr != nil {
-				slog.Warn("Failed to flush pending sub-agent git snapshots", "workdir", workDir, "error", flushErr)
-			}
-			flushCancel()
-		}
-		var validationReport string
-		if workDir != "" && isSubAgentWorktree(workDir) {
-			vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)
-			vResult := validateWorktreeResult(vCtx, workDir, branch, testCommand)
-			vCancel()
-			validationReport = formatValidationReport(vResult)
 			runner.mu.Lock()
-			runner.validationPassed = vResult.Passed
-			runner.validationErrors = vResult.Errors
-			runner.validationHasChanges = vResult.HasChanges
-			runner.mu.Unlock()
-
-			// If validation failed and there was no run error, note it
-			if !vResult.Passed && err == nil {
-				result += validationReport
-			}
-
-			// Zero-change auto-delete: worktrees with no changes are dead weight
-			if !vResult.HasChanges {
-				slog.Info("Worktree has zero changes, auto-deleting immediately", "workdir", workDir)
-				if root := c.cfg.WorkingDir(); root != "" {
-					_ = removeWorktree(root, workDir)
-				}
-			}
-
-			// Auto-commit on success with changes
-			if err == nil && vResult.Passed && vResult.HasChanges {
-				commitCtx, commitCancel := context.WithTimeout(context.Background(), validationGateTimeout)
-				commitErr := autoCommitWorktree(commitCtx, workDir, defaultSubAgentCommitMessage(taskTitle, taskSlug))
-				commitCancel()
-				if commitErr != nil {
-					err = fmt.Errorf("auto-commit failed: %w", commitErr)
-				}
-			}
-
-			// Failed-test archival: archive to review/ branch namespace, then quarantine
-			if !vResult.Passed && vResult.HasChanges {
-				if root := c.cfg.WorkingDir(); root != "" {
-					archiveCtx, archiveCancel := context.WithTimeout(context.Background(), validationGateTimeout)
-					archiveWorktreeToReviewBranch(archiveCtx, workDir, branch, taskSlug)
-					archiveCancel()
-					_ = c.quarantineWorktree(root, workDir, taskSlug)
-				}
-			}
-
-			// Crash preservation: on error with changes, keep worktree alive as crash dump
-			if err != nil && vResult.HasChanges {
-				slog.Warn("Agent errored — preserving worktree as crash dump", "workdir", workDir, "error", err)
-				runner.mu.Lock()
-				runner.cleanup = func() {} // noop: never auto-clean on crash
+			if runner.closed {
 				runner.mu.Unlock()
+				return
 			}
-		}
-
-		eventType := SubAgentCompletedEvent
-		stage := SubAgentStageCompleted
-		errMsg := ""
-		var payload SubAgentLifecycleEvent
-		runner.mu.Lock()
-		runner.cancel = nil
-		submission.EndedAt = time.Now()
-		if err != nil {
-			submission.Status = subAgentStatusError
-			submission.Err = err.Error()
-			runner.status = subAgentStatusError
-			runner.lastError = err.Error()
-			runner.lastProgress = ""
-			eventType = SubAgentFailedEvent
-			stage = SubAgentStageFailed
-			errMsg = err.Error()
-		} else {
-			submission.Status = subAgentStatusCompleted
-			// Append validation report to result
-			finalResult := result
-			if validationReport != "" && !strings.Contains(result, "VALIDATION GATE") {
-				finalResult += validationReport
+			submission := runner.submissions[input.submissionID]
+			if submission == nil {
+				submission = &subAgentSubmission{ID: input.submissionID, Prompt: input.prompt}
+				runner.submissions[input.submissionID] = submission
 			}
-			submission.Result = finalResult
-			runner.status = subAgentStatusCompleted
-			report := parseSubAgentReport(finalResult)
-			if report.Summary != "" {
-				runner.lastResult = report.Summary
-			} else {
-				runner.lastResult = finalResult
+			if submission.Status == subAgentStatusRunning || isSubAgentFinalStatus(submission.Status) {
+				runner.mu.Unlock()
+				return
 			}
-			if report.Progress != "" {
-				runner.lastProgress = report.Progress
+			now := time.Now().UTC()
+			submission.Status = subAgentStatusRunning
+			submission.StartedAt = now
+			submission.HeartbeatAt = now
+			runner.status = subAgentStatusRunning
+			if runner.pending > 0 {
+				runner.pending--
 			}
+			runner.lastSubmission = input.submissionID
 			runner.lastError = ""
+			runner.lastProgress = ""
+			runner.lastHeartbeat = now
+			runner.heartbeatContext = "starting sub-agent run"
+			runner.assignment.UpdatedAt = now
+			broker := runner.statusBroker
+			runner.mu.Unlock()
+			publishSubAgentStatus(broker, subAgentStatusRunning)
+			c.syncRunnerOrchestrationState(context.Background(), runner)
 
-			// Trigger async memory extraction on successful completion
-			if c.memoryPipe != nil {
-				c.memoryPipe.TriggerPostCompletion(runner.sessionID, finalResult)
+			c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
+
+			runCtx, cancel := context.WithTimeout(context.Background(), subAgentTurnTimeout)
+			runner.mu.Lock()
+			runner.cancel = cancel
+			runner.mu.Unlock()
+			stopHeartbeat := c.startSubAgentHeartbeat(runner, input.submissionID)
+
+			prompt := input.prompt
+			if mailboxSummary := c.drainRunnerInboxSummary(context.Background(), runner); mailboxSummary != "" {
+				prompt = mailboxSummary + "\n\n" + prompt
 			}
-		}
-		runner.assignment.UpdatedAt = time.Now()
-		broker = runner.statusBroker
-		payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
-		runner.mu.Unlock()
-		c.syncRunnerOrchestrationState(context.Background(), runner)
-		publishSubAgentStatus(broker, payload.Status)
-		publishSubAgentLifecycleEvent(eventType, payload)
+			skillContext := c.buildSubAgentPersistentMemoryContext(context.Background(), runner)
+			result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt, skillContext)
+			stopHeartbeat()
+			cancel()
+			timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded)
+
+			runner.mu.Lock()
+			workDir := runner.workDir
+			branch := runner.assignment.Branch
+			taskSlug := runner.assignment.TaskKey
+			testCommand := runner.assignment.TestCommand
+			taskTitle := runner.assignment.Title
+			runner.mu.Unlock()
+			if workDir != "" {
+				flushCtx, flushCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+				if flushErr := tools.FlushGitSnapshot(flushCtx, workDir); flushErr != nil {
+					slog.Warn("Failed to flush pending sub-agent git snapshots", "workdir", workDir, "error", flushErr)
+				}
+				flushCancel()
+			}
+
+			var validationReport string
+			if workDir != "" && isSubAgentWorktree(workDir) {
+				vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)
+				vResult := validateWorktreeResult(vCtx, workDir, branch, testCommand)
+				vCancel()
+				validationReport = formatValidationReport(vResult)
+				runner.mu.Lock()
+				runner.validationPassed = vResult.Passed
+				runner.validationErrors = vResult.Errors
+				runner.validationHasChanges = vResult.HasChanges
+				runner.mu.Unlock()
+
+				if !vResult.Passed && err == nil {
+					result += validationReport
+				}
+				if !vResult.HasChanges {
+					slog.Info("Worktree has zero changes, auto-deleting immediately", "workdir", workDir)
+					if root := c.cfg.WorkingDir(); root != "" {
+						_ = removeWorktree(root, workDir)
+					}
+				}
+				if err == nil && vResult.Passed && vResult.HasChanges {
+					commitCtx, commitCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+					commitErr := autoCommitWorktree(commitCtx, workDir, defaultSubAgentCommitMessage(taskTitle, taskSlug))
+					commitCancel()
+					if commitErr != nil {
+						err = fmt.Errorf("auto-commit failed: %w", commitErr)
+					}
+				}
+				if !vResult.Passed && vResult.HasChanges {
+					if root := c.cfg.WorkingDir(); root != "" {
+						archiveCtx, archiveCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+						archiveWorktreeToReviewBranch(archiveCtx, workDir, branch, taskSlug)
+						archiveCancel()
+						_ = c.quarantineWorktree(root, workDir, taskSlug)
+					}
+				}
+				if err != nil && vResult.HasChanges {
+					slog.Warn("Agent errored — preserving worktree as crash dump", "workdir", workDir, "error", err)
+					runner.mu.Lock()
+					runner.cleanup = func() {}
+					runner.mu.Unlock()
+				}
+			}
+
+			eventType := SubAgentCompletedEvent
+			stage := SubAgentStageCompleted
+			errMsg := ""
+			var payload SubAgentLifecycleEvent
+			runner.mu.Lock()
+			runner.cancel = nil
+			submission = runner.submissions[input.submissionID]
+			if submission == nil {
+				submission = &subAgentSubmission{ID: input.submissionID}
+				runner.submissions[input.submissionID] = submission
+			}
+			now = time.Now().UTC()
+			if submission.Status == subAgentStatusStuck || submission.Status == subAgentStatusClosed {
+				runner.mu.Unlock()
+				return
+			}
+			submission.EndedAt = now
+			submission.HeartbeatAt = now
+			runner.lastHeartbeat = now
+			if timedOut {
+				timeoutErr := fmt.Sprintf("sub-agent turn timed out after %s", subAgentTurnTimeout)
+				submission.Status = subAgentStatusStuck
+				submission.Err = timeoutErr
+				runner.status = subAgentStatusStuck
+				runner.lastError = timeoutErr
+				runner.lastProgress = ""
+				runner.heartbeatContext = timeoutErr
+				eventType = SubAgentStuckEvent
+				stage = SubAgentStageStuck
+				errMsg = timeoutErr
+			} else if err != nil {
+				submission.Status = subAgentStatusError
+				submission.Err = err.Error()
+				runner.status = subAgentStatusError
+				runner.lastError = err.Error()
+				runner.lastProgress = ""
+				runner.heartbeatContext = err.Error()
+				eventType = SubAgentFailedEvent
+				stage = SubAgentStageFailed
+				errMsg = err.Error()
+			} else {
+				submission.Status = subAgentStatusCompleted
+				finalResult := result
+				if validationReport != "" && !strings.Contains(result, "VALIDATION GATE") {
+					finalResult += validationReport
+				}
+				submission.Result = finalResult
+				runner.status = subAgentStatusCompleted
+				report := parseSubAgentReport(finalResult)
+				if report.Summary != "" {
+					runner.lastResult = report.Summary
+				} else {
+					runner.lastResult = finalResult
+				}
+				if report.Progress != "" {
+					runner.lastProgress = report.Progress
+				} else {
+					runner.lastProgress = ""
+				}
+				runner.lastError = ""
+				runner.heartbeatContext = "completed"
+				if c.memoryPipe != nil {
+					c.memoryPipe.TriggerPostCompletion(runner.sessionID, finalResult)
+				}
+			}
+			runner.assignment.UpdatedAt = now
+			broker = runner.statusBroker
+			payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
+			runner.mu.Unlock()
+			c.syncRunnerOrchestrationState(context.Background(), runner)
+			c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
+				"submission_id": input.submissionID,
+				"status":        payload.Status,
+				"error":         errMsg,
+			})
+			publishSubAgentStatus(broker, payload.Status)
+			publishSubAgentLifecycleEvent(eventType, payload)
+		}(input)
 	}
 }
 
@@ -833,6 +987,8 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 	}
 
 	completed := make(chan struct{}, len(ids))
+	pollTicker := time.NewTicker(subAgentWaitPollInterval)
+	defer pollTicker.Stop()
 	for _, id := range ids {
 		runner, err := c.getSubAgent(id)
 		if err != nil {
@@ -876,13 +1032,33 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 		}(updates, runner)
 	}
 
-	select {
-	case <-waitCtx.Done():
-		snapshots, _ := c.snapshotSubAgentsByID(ids)
-		return snapshots, true
-	case <-completed:
-		snapshots, _ := c.snapshotSubAgentsByID(ids)
-		return snapshots, false
+	for {
+		select {
+		case <-waitCtx.Done():
+			snapshots, _ := c.snapshotSubAgentsByID(ids)
+			return snapshots, true
+		case <-completed:
+			snapshots, _ := c.snapshotSubAgentsByID(ids)
+			return snapshots, false
+		case <-pollTicker.C:
+			for _, id := range ids {
+				runner, err := c.getSubAgent(id)
+				if err != nil {
+					continue
+				}
+				if !runner.heartbeatStale(time.Now().UTC()) {
+					continue
+				}
+				runner.mu.Lock()
+				submissionID := runner.lastSubmission
+				runner.mu.Unlock()
+				c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStaleAge), subAgentStatusStuck, SubAgentStageStuck, SubAgentStuckEvent)
+			}
+			snapshots, allFinal := c.snapshotSubAgentsByID(ids)
+			if allFinal {
+				return snapshots, false
+			}
+		}
 	}
 }
 
@@ -920,6 +1096,8 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 		ValidationPassed:     r.validationPassed,
 		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
+		LastHeartbeat:        r.lastHeartbeat,
+		HeartbeatContext:     r.heartbeatContext,
 	}
 	if submission := r.submissions[r.lastSubmission]; submission != nil {
 		if submission.Status != "" {

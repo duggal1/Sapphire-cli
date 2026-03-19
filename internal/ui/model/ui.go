@@ -761,11 +761,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case shimmer.ShimmerTickMsg:
-		if m.state == uiChat {
-			if m.chat.InvalidateShimmeringItems() {
-				if cmd := shimmer.ShimmerTickCmd(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+		activeShimmer := false
+		if m.state == uiChat && m.chat.InvalidateShimmeringItems() {
+			activeShimmer = true
+		}
+		if m.assistantFooter != nil && m.assistantFooter.OnShimmerTick() {
+			activeShimmer = true
+		}
+		if activeShimmer {
+			if cmd := shimmer.ShimmerTickCmd(); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 	case spinner.TickMsg:
@@ -935,21 +940,32 @@ func (m *UI) updateAssistantFooter(msg *message.Message) {
 	}
 
 	finish := msg.FinishPart()
-	if finish == nil || finish.Reason != message.FinishReasonEndTurn {
-		if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
-			m.assistantFooter.SetMessage(msg)
+	lastUserTime := time.Unix(m.lastUserMessageTime, 0)
+	start := lastUserTime
+	if msg.CreatedAt > 0 {
+		createdAt := time.Unix(msg.CreatedAt, 0)
+		if start.IsZero() || createdAt.Before(start) {
+			start = createdAt
 		}
-		return
+	}
+	if start.IsZero() {
+		start = time.Now()
 	}
 
-	lastUserTime := time.Unix(m.lastUserMessageTime, 0)
+	var end time.Time
+	if finish != nil && finish.Time > 0 {
+		end = time.Unix(finish.Time, 0)
+	}
+
 	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
 		m.assistantFooter.SetMessage(msg)
 		m.assistantFooter.SetLastUserMessageTime(lastUserTime)
+		m.assistantFooter.SetRequestTiming(start, end)
 		return
 	}
 
 	if infoItem, ok := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), lastUserTime).(*chat.AssistantInfoItem); ok {
+		infoItem.SetRequestTiming(start, end)
 		m.assistantFooter = infoItem
 	}
 }

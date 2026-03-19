@@ -33,7 +33,7 @@ type SpawnAgentToolRenderContext struct{}
 func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Spawn Agent", opts.Anim)
+		return pendingTool(sty, "Spawn Agent")
 	}
 
 	header := toolHeader(sty, opts.Status, "Spawn Agent", cappedWidth, opts.Compact)

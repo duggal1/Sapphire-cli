@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"image/color"
 	"io"
 	"log/slog"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"charm.land/fantasy"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
@@ -38,7 +36,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/duggal1/Sapphire-cli/internal/update"
 	"github.com/duggal1/Sapphire-cli/internal/version"
@@ -231,15 +228,8 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		if f, ok := output.(*os.File); ok && stdinTTY && stdoutTTY {
 			hasDarkBG = lipgloss.HasDarkBackground(os.Stdin, f)
 		}
-		defaultFG := lipgloss.LightDark(hasDarkBG)(charmtone.Pepper, t.FgBase)
-
-		spinner = format.NewSpinner(ctx, cancel, anim.Settings{
-			Size:        10,
-			Label:       "Generating",
-			LabelColor:  defaultFG,
-			GradColors:  []color.Color{t.Primary, t.Secondary},
-			CycleColors: true,
-		})
+		defaultFG := lipgloss.LightDark(hasDarkBG)(t.Primary, t.FgBase)
+		spinner = format.NewSpinner(ctx, cancel, "Generating", t.Base.Foreground(defaultFG))
 		spinner.Start()
 	}
 

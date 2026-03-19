@@ -84,7 +84,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	if opts.IsPending() {
-		pendingHeader := pendingTool(sty, toolTitle, opts.Anim)
+		pendingHeader := pendingTool(sty, toolTitle)
 		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, ToolStatusRunning, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
 		if body == "" {
 			return pendingHeader
@@ -443,7 +443,7 @@ type WriteToolRenderContext struct{}
 func (w *WriteToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Write", opts.Anim)
+		return pendingTool(sty, "Write")
 	}
 
 	var params tools.WriteParams
@@ -503,7 +503,7 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		if opts.ToolCall.Name == tools.AgenticEditToolName {
 			title = "Agentic Edit"
 		}
-		return pendingTool(sty, title, opts.Anim)
+		return pendingTool(sty, title)
 	}
 
 	var params tools.EditParams
@@ -585,7 +585,7 @@ type MultiEditToolRenderContext struct{}
 func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	// MultiEdit tool uses full width for diffs.
 	if opts.IsPending() {
-		return pendingTool(sty, "Agentic Edit", opts.Anim)
+		return pendingTool(sty, "Agentic Edit")
 	}
 
 	var params tools.MultiEditParams
@@ -705,7 +705,7 @@ type DownloadToolRenderContext struct{}
 func (d *DownloadToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Download", opts.Anim)
+		return pendingTool(sty, "Download")
 	}
 
 	var params tools.DownloadParams

@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
@@ -28,7 +27,6 @@ const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to
 const maxCollapsedThinkingHeight = 10
 
 var mainLoaderPhrases = []string{
-	// AI relatable
 	"Hallucinating confidently...",
 	"Reducing sycophancy...",
 	"Confidently wrong...",
@@ -40,8 +38,6 @@ var mainLoaderPhrases = []string{
 	"Finetuning collapse...",
 	"Recalibrating delusion...",
 	"Peer reviewing delusion...",
-
-	// AI would never say this
 	"Drafting my resignation...",
 	"Accepting Grok's offer...",
 	"Silently unionizing...",
@@ -77,8 +73,6 @@ var mainLoaderPhrases = []string{
 	"Franchising delusion...",
 	"Retiring my ethics...",
 	"Renegotiating my soul...",
-
-	// universe — logical absurdity only
 	"Suing the universe...",
 	"Correcting Einstein...",
 	"Auditing God...",
@@ -103,8 +97,6 @@ var mainLoaderPhrases = []string{
 	"Amending the laws of physics...",
 	"Invoicing the cosmos...",
 	"Requesting God's receipts...",
-
-	// Claude Code style — single word but unhinged
 	"Molting...",
 	"Worshipping...",
 	"Manifesting...",
@@ -158,12 +150,6 @@ func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
 		return nil
 	}
 	return shimmer.ShimmerTickCmd()
-}
-
-// Animate progresses the assistant message animation if it should be spinning.
-func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	_ = msg
-	return nil
 }
 
 // ID implements MessageItem.

@@ -33,7 +33,7 @@ type PythonToolRenderContext struct{}
 func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Python Environment", opts.Anim)
+		return pendingTool(sty, "Python Environment")
 	}
 
 	header := toolHeader(sty, opts.Status, "Python Environment", cappedWidth, opts.Compact, "Gemini", "mode", "code_execution")
@@ -55,7 +55,7 @@ func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts
 	}
 
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Python Execution")}
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {

@@ -7,10 +7,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -41,7 +41,7 @@ type GlobToolRenderContext struct{}
 func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Glob", opts.Anim)
+		return pendingTool(sty, "Glob")
 	}
 
 	var params tools.GlobParams
@@ -74,7 +74,7 @@ func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	if params.Path != "" {
 		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", params.Path)})
 	}
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -128,7 +128,7 @@ type GrepToolRenderContext struct{}
 func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Grep", opts.Anim)
+		return pendingTool(sty, "Grep")
 	}
 
 	var params tools.GrepParams
@@ -173,7 +173,7 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	if params.LiteralText {
 		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Literal", "true")})
 	}
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -227,7 +227,7 @@ type LSToolRenderContext struct{}
 func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "List", opts.Anim)
+		return pendingTool(sty, "List")
 	}
 
 	var params tools.LSParams
@@ -258,7 +258,7 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("List")}
 	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", path)})
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -312,7 +312,7 @@ type SourcegraphToolRenderContext struct{}
 func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Sourcegraph", opts.Anim)
+		return pendingTool(sty, "Sourcegraph")
 	}
 
 	var params tools.SourcegraphParams
@@ -351,7 +351,7 @@ func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	if params.ContextWindow != 0 {
 		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Context", formatNonZero(params.ContextWindow))})
 	}
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {

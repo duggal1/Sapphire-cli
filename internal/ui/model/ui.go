@@ -81,6 +81,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/ultraviolet/layout"
+	"github.com/charmbracelet/x/editor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
@@ -94,7 +97,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/duggal1/Sapphire-cli/internal/session"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/attachments"
 	"github.com/duggal1/Sapphire-cli/internal/ui/chat"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
@@ -106,9 +108,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 	"github.com/duggal1/Sapphire-cli/internal/version"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/ultraviolet/layout"
-	"github.com/charmbracelet/x/editor"
 )
 
 // MouseScrollThreshold defines how many lines to scroll the chat when a mouse
@@ -756,17 +755,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
-				}
-			}
-		}
-	case anim.StepMsg:
-		if m.state == uiChat {
-			if cmd := m.chat.Animate(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
 				}
 			}
 		}

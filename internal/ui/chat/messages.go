@@ -11,14 +11,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/message"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/attachments"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/list"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // MessageLeftPaddingTotal is the total width reserved for message prefixes.
@@ -36,7 +36,6 @@ type Identifiable interface {
 // Animatable is an interface for items that support animation.
 type Animatable interface {
 	StartAnimation() tea.Cmd
-	Animate(msg anim.StepMsg) tea.Cmd
 }
 
 // ShimmerTickable is implemented by items that need cache invalidation on
@@ -199,7 +198,6 @@ type AssistantInfoItem struct {
 	lastUserMessageTime time.Time
 	requestStartedAt    time.Time
 	requestCompletedAt  time.Time
-	anim                *anim.Anim
 }
 
 // NewAssistantInfoItem creates a new AssistantInfoItem.
@@ -211,7 +209,6 @@ func NewAssistantInfoItem(sty *styles.Styles, message *message.Message, cfg *con
 		sty:                 sty,
 		cfg:                 cfg,
 		lastUserMessageTime: lastUserMessageTime,
-		anim:                anim.New(anim.Settings{ID: AssistantInfoID(message.ID), Size: 1}),
 	}
 }
 
@@ -220,16 +217,7 @@ func (a *AssistantInfoItem) StartAnimation() tea.Cmd {
 	if !a.shouldAnimate() {
 		return nil
 	}
-	return a.anim.Start()
-}
-
-// Animate implements Animatable.
-func (a *AssistantInfoItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if !a.shouldAnimate() {
-		return nil
-	}
-	a.clearCache()
-	return a.anim.Animate(msg)
+	return shimmer.ShimmerTickCmd()
 }
 
 // SetMessage updates the underlying assistant message.
@@ -466,6 +454,15 @@ func (a *AssistantInfoItem) shouldAnimate() bool {
 		return true
 	}
 	return a.message != nil && !a.message.IsFinished()
+}
+
+// OnShimmerTick invalidates the footer while request timing is still changing.
+func (a *AssistantInfoItem) OnShimmerTick() bool {
+	if !a.shouldAnimate() {
+		return false
+	}
+	a.clearCache()
+	return true
 }
 
 func formatUsageTokens(n int64) string {

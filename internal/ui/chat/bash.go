@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // -----------------------------------------------------------------------------
@@ -44,7 +44,7 @@ type BashToolRenderContext struct{}
 func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Bash", opts.Anim)
+		return pendingTool(sty, "Bash")
 	}
 
 	var params tools.BashParams
@@ -97,7 +97,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Bash Process")}
 	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Command", cmd)})
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -117,7 +117,7 @@ func (b *BashToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	outputNode := &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")}
 	root.Children = append(root.Children, outputNode)
-	
+
 	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
 	// Append multiline output below the tree
 	outBlock := toolOutputPlainContent(sty, output, bodyWidth, opts.ExpandedContent)
@@ -153,7 +153,7 @@ type JobOutputToolRenderContext struct{}
 func (j *JobOutputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim)
+		return pendingTool(sty, "Job")
 	}
 
 	var params tools.JobOutputParams
@@ -204,7 +204,7 @@ type JobKillToolRenderContext struct{}
 func (j *JobKillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Job", opts.Anim)
+		return pendingTool(sty, "Job")
 	}
 
 	var params tools.JobKillParams
@@ -255,7 +255,7 @@ type JobListToolRenderContext struct{}
 func (j *JobListToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Job List", opts.Anim)
+		return pendingTool(sty, "Job List")
 	}
 
 	header := toolHeader(sty, opts.Status, "Job List", cappedWidth, opts.Compact)
@@ -350,7 +350,7 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 
 	outputNode := &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Output")}
 	root.Children = append(root.Children, outputNode)
-	
+
 	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
 	outBlock := toolOutputPlainContent(sty, content, bodyWidth, opts.ExpandedContent)
 	fullBody := body + "\n" + outBlock

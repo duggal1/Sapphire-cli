@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/message"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -51,26 +49,6 @@ func NewAgentToolMessageItem(
 	return t
 }
 
-// Animate progresses the message animation if it should be spinning.
-func (a *AgentToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if a.result != nil || a.Status() == ToolStatusCanceled {
-		return nil
-	}
-	if msg.ID == a.ID() {
-		a.clearCache()
-		return a.anim.Animate(msg)
-	}
-	for _, nestedTool := range a.nestedTools {
-		if msg.ID != nestedTool.ID() {
-			continue
-		}
-		if s, ok := nestedTool.(Animatable); ok {
-			return s.Animate(msg)
-		}
-	}
-	return nil
-}
-
 // NestedTools returns the nested tools.
 func (a *AgentToolMessageItem) NestedTools() []ToolMessageItem {
 	return a.nestedTools
@@ -108,7 +86,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	}
 
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.agent.nestedTools) == 0 {
-		return pendingAgentTool(sty, opts.Anim)
+		return pendingAgentTool(sty)
 	}
 
 	prompt := params.Prompt
@@ -165,8 +143,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	return result
 }
 
-func pendingAgentTool(sty *styles.Styles, anim *anim.Anim) string {
-	_ = anim
+func pendingAgentTool(sty *styles.Styles) string {
 	icon := sty.Tool.IconPending.Render()
 	label := styles.ShimmerTextWarm(sty, "Agent", 0)
 	return fmt.Sprintf("%s %s", icon, label)
@@ -294,7 +271,7 @@ type agenticFetchParams struct {
 func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.fetch.nestedTools) == 0 {
-		return pendingTool(sty, "Agentic Fetch", opts.Anim)
+		return pendingTool(sty, "Agentic Fetch")
 	}
 
 	var params agenticFetchParams

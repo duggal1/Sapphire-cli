@@ -40,7 +40,7 @@ type FetchToolRenderContext struct{}
 func (f *FetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Fetch", opts.Anim)
+		return pendingTool(sty, "Fetch")
 	}
 
 	var params tools.FetchParams
@@ -78,7 +78,7 @@ func (f *FetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	if params.Timeout != 0 {
 		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Timeout", formatTimeout(params.Timeout))})
 	}
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -145,7 +145,7 @@ type WebFetchToolRenderContext struct{}
 func (w *WebFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Fetch", opts.Anim)
+		return pendingTool(sty, "Fetch")
 	}
 
 	var params tools.WebFetchParams
@@ -170,7 +170,7 @@ func (w *WebFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Web Fetch")}
 	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("URL", params.URL)})
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -224,7 +224,7 @@ type WebSearchToolRenderContext struct{}
 func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Search", opts.Anim)
+		return pendingTool(sty, "Search")
 	}
 
 	var params tools.GoogleSearchParams
@@ -253,7 +253,7 @@ func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Search")}
 	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Query", query)})
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {
@@ -307,7 +307,7 @@ type GoogleSearchToolRenderContext struct{}
 func (g *GoogleSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Google Grounding", opts.Anim)
+		return pendingTool(sty, "Google Grounding")
 	}
 
 	var params tools.WebSearchParams
@@ -332,7 +332,7 @@ func (g *GoogleSearchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Google Grounding")}
 	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Query", params.Query)})
-	
+
 	statusStr := "running"
 	if opts.HasResult() {
 		if opts.Status == ToolStatusError {

@@ -16,7 +16,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/fsext"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/stringext"
-	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
@@ -91,7 +90,6 @@ func (d *DefaultToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 type ToolRenderOpts struct {
 	ToolCall        message.ToolCall
 	Result          *message.ToolResult
-	Anim            *anim.Anim
 	ExpandedContent bool
 	Compact         bool
 	IsSpinning      bool
@@ -153,7 +151,6 @@ type baseToolMessageItem struct {
 	spinningFunc SpinningFunc
 
 	sty             *styles.Styles
-	anim            *anim.Anim
 	expandedContent bool
 }
 
@@ -299,12 +296,6 @@ func (t *baseToolMessageItem) StartAnimation() tea.Cmd {
 	return shimmer.ShimmerTickCmd()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
-func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	_ = msg
-	return nil
-}
-
 // RawRender implements [MessageItem].
 func (t *baseToolMessageItem) RawRender(width int) string {
 	toolItemWidth := width - MessageLeftPaddingTotal
@@ -318,7 +309,6 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
 			ToolCall:        t.toolCall,
 			Result:          t.result,
-			Anim:            t.anim,
 			ExpandedContent: t.expandedContent,
 			Compact:         t.isCompact,
 			IsSpinning:      t.isSpinning(),
@@ -433,9 +423,8 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-// pendingTool renders a tool that is still in progress with an animation.
-func pendingTool(sty *styles.Styles, name string, anim *anim.Anim) string {
-	_ = anim
+// pendingTool renders a tool that is still in progress.
+func pendingTool(sty *styles.Styles, name string) string {
 	icon := sty.Tool.IconPending.Render()
 	toolName := styles.ShimmerText(sty, name, 0)
 

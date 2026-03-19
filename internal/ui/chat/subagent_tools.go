@@ -126,7 +126,7 @@ type WaitAgentsToolRenderContext struct{}
 func (w *WaitAgentsToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Wait Agents", opts.Anim)
+		return pendingTool(sty, "Wait Agents")
 	}
 
 	header := toolHeader(sty, opts.Status, "Wait Agents", cappedWidth, opts.Compact)
@@ -174,7 +174,7 @@ type CollectResultToolRenderContext struct{}
 func (c *CollectResultToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, "Collect Results", opts.Anim)
+		return pendingTool(sty, "Collect Results")
 	}
 
 	header := toolHeader(sty, opts.Status, "Collect Results", cappedWidth, opts.Compact)
@@ -230,7 +230,7 @@ func (c *CloseAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 func renderSubAgentSimpleTool(sty *styles.Styles, width int, opts *ToolRenderOpts, title string) string {
 	cappedWidth := cappedMessageWidth(width)
 	if opts.IsPending() {
-		return pendingTool(sty, title, opts.Anim)
+		return pendingTool(sty, title)
 	}
 
 	header := toolHeader(sty, opts.Status, title, cappedWidth, opts.Compact)

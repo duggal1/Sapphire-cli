@@ -728,28 +728,3 @@ func (d *DownloadToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
 	return joinToolParts(header, body)
 }
-
-
-// Stub types for missing context
-type fileContextEntry struct {
-	Path      string
-	Content   string
-	Selected  bool
-	LineStart int
-	LineEnd   int
-}
-
-func buildFileContextRoot(sty *styles.Styles, title string, entries []fileContextEntry) *TreeNode {
-	if len(entries) == 0 {
-		return nil
-	}
-	return &TreeNode{Label: title}
-}
-
-func fileContextEntriesFromPaths(paths []string) []fileContextEntry {
-	entries := make([]fileContextEntry, len(paths))
-	for i, p := range paths {
-		entries[i] = fileContextEntry{Path: p}
-	}
-	return entries
-}

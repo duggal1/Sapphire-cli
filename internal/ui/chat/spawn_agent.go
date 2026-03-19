@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/charmbracelet/sapphire/internal/agent"
 	"github.com/charmbracelet/sapphire/internal/message"
@@ -40,8 +41,16 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		return header
 	}
 
-	if opts.Status == ToolStatusError {
-		return joinToolParts(header, sty.Tool.ErrorMessage.Render("Sub-agent launch rejected"))
+	lower := strings.ToLower(resultContent(opts))
+	if strings.Contains(lower, "launch rejected") || strings.Contains(lower, "too small for delegation") {
+		root := &TreeNode{
+			Label: sty.Tool.ListRoot.Render("Sub-Agent"),
+			Children: []*TreeNode{
+				{Label: subAgentKVLabel("Status", "handled locally")},
+			},
+		}
+		body := strings.Join(renderTreeWithRoot(root, cappedWidth-toolBodyLeftPaddingTotal), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
 	}
 
 	var payload agent.SpawnAgentParams
@@ -49,6 +58,30 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 
 	var result subAgentSpawnResult
 	_ = json.Unmarshal([]byte(resultContent(opts)), &result)
+
+	if opts.Status == ToolStatusError {
+		errorText := strings.TrimSpace(resultContent(opts))
+		if errorText == "" {
+			errorText = "launch failed"
+		}
+		children := []*TreeNode{}
+		if payload.Title != "" {
+			children = append(children, &TreeNode{Label: subAgentKVLabel("Title", payload.Title)})
+		}
+		if payload.Agent != "" {
+			children = append(children, &TreeNode{Label: subAgentKVLabel("Profile", payload.Agent)})
+		}
+		children = append(children,
+			&TreeNode{Label: subAgentKVLabel("Status", "error")},
+			&TreeNode{Label: subAgentKVLabel("Error", oneLine(errorText))},
+		)
+		root := &TreeNode{
+			Label:    sty.Tool.ListRoot.Render("Sub-Agent"),
+			Children: children,
+		}
+		body := strings.Join(renderTreeWithRoot(root, cappedWidth-toolBodyLeftPaddingTotal), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
 
 	body := renderSubAgentSpawnBody(sty, &payload, &result, cappedWidth-toolBodyLeftPaddingTotal)
 	if body == "" {

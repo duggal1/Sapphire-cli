@@ -347,20 +347,12 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 		if params.ReasoningEffort != "" {
 			sections = append(sections, &TreeNode{Label: subAgentKVLabel("Reasoning", params.ReasoningEffort)})
 		}
-		if worktreeNode := renderWorktreeNode(params.Worktree, params.WorktreePath, params.Branch); worktreeNode != nil {
+		if worktreeNode := renderWorktreeNode(sty, params.Worktree, params.WorktreePath, params.Branch); worktreeNode != nil {
 			sections = append(sections, worktreeNode)
 		}
 		if len(params.WriteManifest) > 0 {
-			children := make([]*TreeNode, 0, len(params.WriteManifest))
-			for _, entry := range params.WriteManifest {
-				entry = strings.TrimSpace(entry)
-				if entry == "" {
-					continue
-				}
-				children = append(children, &TreeNode{Label: formatRelativePath(entry)})
-			}
-			if len(children) > 0 {
-				sections = append(sections, &TreeNode{Label: "Write Manifest", Children: children})
+			if writeScope := buildFileContextRoot(sty, "Write Scope", fileContextEntriesFromPaths(params.WriteManifest)); writeScope != nil {
+				sections = append(sections, writeScope)
 			}
 		}
 		if params.DefinitionOfDone != "" {
@@ -441,7 +433,7 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult) 
 	if entry.WorkDir != "" || entry.Branch != "" {
 		worktreeChildren := make([]*TreeNode, 0, 2)
 		if entry.WorkDir != "" {
-			worktreeChildren = append(worktreeChildren, &TreeNode{Label: formatRelativePath(entry.WorkDir)})
+			worktreeChildren = append(worktreeChildren, buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{entry.WorkDir}))...)
 		}
 		if entry.Branch != "" {
 			worktreeChildren = append(worktreeChildren, &TreeNode{Label: subAgentKVLabel("Branch", entry.Branch)})
@@ -462,10 +454,12 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult) 
 		sections = append(sections, &TreeNode{Label: subAgentKVLabel("Result", oneLine(entry.Result))})
 	}
 	if len(report.Files) > 0 {
-		sections = append(sections, &TreeNode{Label: "Files", Children: renderPathChildren(report.Files)})
+		if filesRead := buildFileContextRoot(sty, "Files Read", fileContextEntriesFromPaths(report.Files)); filesRead != nil {
+			sections = append(sections, filesRead)
+		}
 	}
 	if len(report.Commands) > 0 {
-		sections = append(sections, &TreeNode{Label: "Commands", Children: renderCommandChildren(report.Commands)})
+		sections = append(sections, &TreeNode{Label: "Tool Calls", Children: renderCommandChildren(report.Commands)})
 	}
 	if report.Risks != "" {
 		sections = append(sections, &TreeNode{Label: subAgentKVLabel("Risks", oneLine(report.Risks))})
@@ -484,7 +478,7 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult) 
 	return &TreeNode{Label: label, Children: sections}
 }
 
-func renderWorktreeNode(enabled *bool, path, branch string) *TreeNode {
+func renderWorktreeNode(sty *styles.Styles, enabled *bool, path, branch string) *TreeNode {
 	useWorktree := true
 	if enabled != nil {
 		useWorktree = *enabled
@@ -494,7 +488,7 @@ func renderWorktreeNode(enabled *bool, path, branch string) *TreeNode {
 	}
 	children := make([]*TreeNode, 0, 2)
 	if path != "" {
-		children = append(children, &TreeNode{Label: formatRelativePath(path)})
+		children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
 	} else {
 		children = append(children, &TreeNode{Label: "auto"})
 	}

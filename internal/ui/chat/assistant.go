@@ -335,9 +335,8 @@ func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
 	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
-	// !hasToolCalls is explicitly removed here to conform to Crush CLI logic
-	// The loader will permanently spin until IsFinished triggers, overriding UI blocks.
-	return (isThinking || !isFinished) && !hasContent
+	hasToolCalls := len(a.message.ToolCalls()) > 0
+	return (isThinking || !isFinished) && !hasContent && !hasToolCalls
 }
 
 // SetMessage is used to update the underlying message.

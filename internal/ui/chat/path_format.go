@@ -14,6 +14,11 @@ func formatRelativePath(path string) string {
 	if path == "" {
 		return ""
 	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
 	clean := filepath.Clean(path)
 	if !filepath.IsAbs(clean) {
 		return filepath.ToSlash(clean)
@@ -21,10 +26,17 @@ func formatRelativePath(path string) string {
 	if cwd, err := os.Getwd(); err == nil {
 		if rel, err := filepath.Rel(cwd, clean); err == nil {
 			rel = filepath.Clean(rel)
-			if rel != "." && !strings.HasPrefix(rel, "..") {
+			if rel == "." {
+				return filepath.Base(clean)
+			}
+			if !strings.HasPrefix(rel, "..") {
 				return filepath.ToSlash(rel)
 			}
 		}
 	}
-	return fsext.PrettyPath(clean)
+	pretty := filepath.ToSlash(fsext.PrettyPath(clean))
+	if strings.HasPrefix(pretty, "/") {
+		return strings.TrimPrefix(pretty, "/")
+	}
+	return pretty
 }

@@ -1,3 +1,59 @@
+// Package model implements the main terminal user interface (TUI) for Sapphire CLI.
+// This file (ui.go) is the backbone of the entire terminal interface, orchestrating:
+//
+// **User Input Flow:**
+//   - Text input rendering via textarea component
+//   - Input submission and immediate loader/spinner rendering
+//   - Chat message display (thinking bubbles, agent output, tool calls)
+//   - Attachment handling and completions
+//
+// **Sub-Agent Orchestration Display:**
+//   - Renders sub-agent lifecycle states (spawned, running, completed, closed)
+//   - Displays git worktree isolation status for each sub-agent
+//   - Shows parallel agent execution progress and results
+//   - Visualizes agent-to-agent communication (send_input, wait, collect_result)
+//
+// **Git Worktree Integration:**
+//   - Sub-agents operate in isolated git worktrees (worktrees/agent/<id>/<task-slug>)
+//   - Each worktree has its own branch (agent/<id>/<task-slug>)
+//   - Worktree creation, validation, and cleanup are reflected in UI
+//   - Quarantined worktrees (failed with changes) preserved for review
+//
+// **Memory Systems:**
+//   - Phase 1 Memory: Real-time extraction from tool results during rollout
+//   - Phase 2 Memory: Consolidation into MEMORY.md and memory_summary.md
+//   - Long-horizon persistence: runbook.md, frozen_spec.md, milestones.json, audit.log
+//   - Context compaction triggers at 75%-90% window usage
+//   - Tiered memory injection (Hot Memory / Project Constitution)
+//
+// **Agent Lifecycle Tools:**
+//   - spawn_agent: Creates sub-agent with isolated worktree, explicit scope, success criteria
+//   - resume_agent: Reconnects to existing/orphaned sub-agent worktree
+//   - send_input: Provides additional context/steering to running sub-agents
+//   - wait: Blocks until sub-agents complete (always before yielding to user)
+//   - collect_result: Retrieves sub-agent output and diff
+//   - close_agent: Releases resources after validation
+//
+// **Coordination Protocol:**
+//   - Maximum 6 active sub-agents simultaneously
+//   - Parallel spawning for independent workstreams
+//   - Validation gate: auto-diff, tests, lint, build before integration
+//   - Progress updates on agent completion/issues
+//
+// **State Management:**
+//   - uiFocusState: Tracks focus (editor, main, none)
+//   - uiState: Tracks UI state (onboarding, initialize, landing, chat)
+//   - Session files, LSP states, MCP states tracked per-session
+//   - Dialog overlays for commands, permissions, plan approval
+//
+// For detailed sub-agent and worktree implementation, see:
+//   - internal/agent/subagent_worktree.go (git worktree operations)
+//   - internal/agent/subagent_manager.go (sub-agent lifecycle)
+//   - internal/agent/coordinator.go (orchestration coordination)
+//   - internal/agent/memory_pipeline.go (Phase 1/2 memory extraction)
+//   - internal/memory/system.go (persistent memory system)
+//   - internal/agent/longhorizon/manager.go (long-term task persistence)
+//   - internal/agent/collab_tools.go (spawn_agent tool implementation)
 package model
 
 import (
@@ -46,6 +102,7 @@ import (
 	"github.com/charmbracelet/sapphire/internal/ui/dialog"
 	fimage "github.com/charmbracelet/sapphire/internal/ui/image"
 	"github.com/charmbracelet/sapphire/internal/ui/logo"
+	"github.com/charmbracelet/sapphire/internal/ui/shimmer"
 	"github.com/charmbracelet/sapphire/internal/ui/styles"
 	"github.com/charmbracelet/sapphire/internal/ui/util"
 	"github.com/charmbracelet/sapphire/internal/version"
@@ -184,9 +241,6 @@ type UI struct {
 
 	// Chat components
 	chat *Chat
-
-	// assistantFooter holds the single live assistant metadata/timer footer.
-	assistantFooter *chat.AssistantInfoItem
 
 	// onboarding state
 	onboarding struct {
@@ -511,10 +565,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.updateSessionMessage(msg.Payload))
 		case pubsub.DeletedEvent:
 			m.chat.RemoveMessage(msg.Payload.ID)
-			if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.Payload.ID {
-				m.assistantFooter = nil
-				m.updateLayoutAndSize()
-			}
 		}
 		// start the spinner if there is a new message
 		if hasInProgressTodo(m.session.Todos) && m.isAgentBusy() && !m.todoIsSpinning {
@@ -714,13 +764,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := m.chat.Animate(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			if m.assistantFooter != nil && msg.ID == m.assistantFooter.ID() {
-				if cmd := m.assistantFooter.Animate(msg); cmd != nil {
+			if m.chat.Follow() {
+				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+		}
+	case shimmer.ShimmerTickMsg:
+		if m.state == uiChat {
+			if m.chat.InvalidateShimmeringItems() {
+				if cmd := shimmer.ShimmerTickCmd(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
@@ -820,7 +873,6 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 
 	// Add messages to chat with linked tool results
 	items := make([]chat.MessageItem, 0, len(msgs)*2)
-	m.assistantFooter = nil
 	for _, msg := range msgPtrs {
 		switch msg.Role {
 		case message.User:
@@ -828,8 +880,9 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		case message.Assistant:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
-			if cmd := m.setAssistantFooter(msg); cmd != nil {
-				cmds = append(cmds, cmd)
+			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
+				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
+				items = append(items, infoItem)
 			}
 		default:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
@@ -876,22 +929,6 @@ func dedupeMessageItems(items []chat.MessageItem) []chat.MessageItem {
 		out = append(out, item)
 	}
 	return out
-}
-
-func (m *UI) setAssistantFooter(msg *message.Message) tea.Cmd {
-	if msg == nil || msg.Role != message.Assistant {
-		return nil
-	}
-
-	start := time.Unix(m.lastUserMessageTime, 0)
-	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
-		m.assistantFooter.SetMessage(msg)
-		m.assistantFooter.SetLastUserMessageTime(start)
-		return nil
-	}
-
-	m.assistantFooter = chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), start).(*chat.AssistantInfoItem)
-	return m.assistantFooter.StartAnimation()
 }
 
 func (m *UI) refreshModelStateDialogs() {
@@ -1000,15 +1037,20 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.chat.AppendMessages(items...)
-		if cmd := m.setAssistantFooter(&msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
 		if m.chat.Follow() {
 			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
-		m.chat.SelectLast()
+		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
+			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
+			m.chat.AppendMessages(infoItem)
+			if m.chat.Follow() {
+				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+		}
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -1057,18 +1099,27 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
-			assistantItem.SetMessage(&msg)
+			if cmd := assistantItem.SetMessage(&msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			m.chat.InvalidateMessage(msg.ID)
 		}
-	}
-	if cmd := m.setAssistantFooter(&msg); cmd != nil {
-		cmds = append(cmds, cmd)
 	}
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
 	// if the message of the assistant does not have any  response just tool calls we need to remove it
 	if !shouldRenderAssistant && len(msg.ToolCalls()) > 0 && existingItem != nil {
 		m.chat.RemoveMessage(msg.ID)
+		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem != nil {
+			m.chat.RemoveMessage(chat.AssistantInfoID(msg.ID))
+		}
+	}
+
+	if shouldRenderAssistant && msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
+		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
+			newInfoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
+			m.chat.AppendMessages(newInfoItem)
+		}
 	}
 
 	var items []chat.MessageItem
@@ -1101,8 +1152,8 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		m.chat.SelectLast()
 	}
-	m.chat.SelectLast()
 
 	return tea.Sequence(cmds...)
 }
@@ -2141,9 +2192,6 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 
 		m.chat.Draw(scr, layout.main)
-		if layout.assistantFooter.Dy() > 0 && m.assistantFooter != nil {
-			uv.NewStyledString(m.assistantFooter.Render(layout.assistantFooter.Dx())).Draw(scr, layout.assistantFooter)
-		}
 		if layout.pills.Dy() > 0 && m.pillsView != "" {
 			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
@@ -2622,17 +2670,6 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			uiLayout.pills = pillsRect
 		}
 
-		footerHeight := 0
-		if m.assistantFooter != nil && contentRect.Dy() > 2 {
-			footerHeight = min(3, contentRect.Dy()-1)
-		}
-		if footerHeight > 0 {
-			chatRect, footerRect := layout.SplitVertical(contentRect, layout.Fixed(contentRect.Dy()-footerHeight))
-			uiLayout.main = chatRect
-			uiLayout.assistantFooter = footerRect
-			return
-		}
-
 		uiLayout.main = contentRect
 	}
 
@@ -2754,9 +2791,6 @@ type uiLayout struct {
 
 	// session details is the area for the session details overlay in compact mode.
 	sessionDetails uv.Rectangle
-
-	// assistantFooter is the persistent assistant metadata footer area.
-	assistantFooter uv.Rectangle
 }
 
 func (m *UI) openEditor(value string) tea.Cmd {

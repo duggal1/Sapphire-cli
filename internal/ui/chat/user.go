@@ -72,11 +72,10 @@ func (m *UserMessageItem) RawRender(width int) string {
 func (m *UserMessageItem) Render(width int) string {
 	var prefix string
 	if m.focused {
-		prefix = m.sty.Chat.Message.UserFocused.Render(">")
+		prefix = m.sty.Chat.Message.UserFocused.Render()
 	} else {
-		prefix = m.sty.Chat.Message.UserBlurred.Render(">")
+		prefix = m.sty.Chat.Message.UserBlurred.Render()
 	}
-	prefix += " "
 	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	lines := strings.Split(m.RawRender(width), "\n")
 	for i, line := range lines {
@@ -103,7 +102,7 @@ func (m *UserMessageItem) Message() *message.Message {
 func (m *UserMessageItem) renderAttachments(width int) string {
 	var attachments []message.Attachment
 	var pasteBlocks []message.Attachment
-	
+
 	for _, at := range m.message.BinaryContent() {
 		att := message.Attachment{
 			FileName: at.Path,
@@ -117,14 +116,14 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 			attachments = append(attachments, att)
 		}
 	}
-	
+
 	var parts []string
-	
+
 	// Render regular attachments as badges
 	if len(attachments) > 0 {
 		parts = append(parts, m.attachments.Render(attachments, false, false, -1, width))
 	}
-	
+
 	// Render paste blocks with full content
 	for _, pb := range pasteBlocks {
 		content := string(pb.Content)
@@ -132,7 +131,7 @@ func (m *UserMessageItem) renderAttachments(width int) string {
 			parts = append(parts, m.sty.Tool.Body.Render(content))
 		}
 	}
-	
+
 	if len(parts) == 0 {
 		return ""
 	}

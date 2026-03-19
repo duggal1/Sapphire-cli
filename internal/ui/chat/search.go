@@ -68,8 +68,36 @@ func (g *GlobToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := renderGlobOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Glob")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Pattern", params.Pattern)})
+	if params.Path != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", params.Path)})
+	}
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Results")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := renderGlobOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -133,8 +161,42 @@ func (g *GrepToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := renderGrepOutput(sty, params.Pattern, params.LiteralText, opts.Result.Content, bodyWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Grep")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Pattern", params.Pattern)})
+	if params.Path != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", params.Path)})
+	}
+	if params.Include != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Include", params.Include)})
+	}
+	if params.LiteralText {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Literal", "true")})
+	}
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Results")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := renderGrepOutput(sty, params.Pattern, params.LiteralText, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -193,8 +255,33 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := renderListOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("List")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", path)})
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Directory Tree")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := renderListOutput(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent)
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 // -----------------------------------------------------------------------------
@@ -255,8 +342,39 @@ func (s *SourcegraphToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
-	return joinToolParts(header, body)
+
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Sourcegraph")}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Query", params.Query)})
+	if params.Count != 0 {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Count", formatNonZero(params.Count))})
+	}
+	if params.ContextWindow != 0 {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Context", formatNonZero(params.ContextWindow))})
+	}
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if !opts.ExpandedContent {
+		summary := renderBashOutputSummary(sty, opts.Result.Content, bodyWidth)
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", summary)})
+		body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+		return joinToolParts(header, sty.Tool.Body.Render(body))
+	}
+
+	root.Children = append(root.Children, &TreeNode{Label: sty.Tool.BashOutputLabel.Render("Results")})
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
+	outBlock := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	fullBody := body + "\n" + outBlock
+
+	return joinToolParts(header, sty.Tool.Body.Render(fullBody))
 }
 
 func renderGlobOutput(sty *styles.Styles, content string, width int, expanded bool) string {

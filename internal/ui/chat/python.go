@@ -54,14 +54,41 @@ func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts
 		_ = json.Unmarshal([]byte(opts.Result.Metadata), &metadata)
 	}
 
+	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Python Execution")}
+	
+	statusStr := "running"
+	if opts.HasResult() {
+		if opts.Status == ToolStatusError {
+			statusStr = "error"
+		} else {
+			statusStr = "success"
+		}
+	}
+	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Status", statusStr)})
+
+	if input := strings.TrimSpace(params.Code); input != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Task", "provided")})
+	}
+
+	code := strings.TrimSpace(metadata.ExecutedCode)
+	if code != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Code", "executed")})
+	}
+
+	if opts.HasResult() && opts.Result.Content != "" && opts.Result.Content != "No output" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Output", "produced")})
+	}
+
+	body := strings.Join(renderTreeWithRoot(root, bodyWidth), "\n")
 	var sections []string
+	sections = append(sections, sty.Tool.Body.Render(body))
+
 	if input := strings.TrimSpace(params.Code); input != "" {
 		taskHeader := " " + sty.Tool.ResourceName.Render("Task")
 		taskBody := toolOutputSmartContent(sty, "task.txt", input, bodyWidth, opts.ExpandedContent)
 		sections = append(sections, strings.Join([]string{taskHeader, taskBody}, "\n"))
 	}
 
-	code := strings.TrimSpace(metadata.ExecutedCode)
 	if code != "" {
 		codeHeader := " " + sty.Tool.ResourceName.Render("Executed Python")
 		codeBody := toolOutputCodeContent(sty, "script.py", code, 0, bodyWidth, opts.ExpandedContent)
@@ -79,7 +106,7 @@ func (p *PythonToolRenderContext) RenderTool(sty *styles.Styles, width int, opts
 		sections = append(sections, strings.Join([]string{outputHeader, outputBody}, "\n"))
 	}
 
-	if len(sections) == 0 {
+	if len(sections) == 1 && opts.HasResult() {
 		fallbackHeader := " " + sty.Tool.ResourceName.Render("Execution Result")
 		fallbackBody := sty.Tool.Body.Render(toolOutputPlainContent(sty, "No Python execution details available.", bodyWidth, opts.ExpandedContent))
 		sections = append(sections, strings.Join([]string{fallbackHeader, fallbackBody}, "\n"))

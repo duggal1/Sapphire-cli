@@ -217,6 +217,8 @@ func NewToolMessageItem(
 		item = NewJobOutputToolMessageItem(sty, toolCall, result, canceled)
 	case tools.JobKillToolName:
 		item = NewJobKillToolMessageItem(sty, toolCall, result, canceled)
+	case tools.JobListToolName:
+		item = NewJobListToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ViewToolName, tools.SingleViewToolName, tools.AgenticViewToolName:
 		item = NewViewToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WriteToolName:
@@ -345,8 +347,12 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 
 // Render renders the tool message item at the given width.
 func (t *baseToolMessageItem) Render(width int) string {
+	raw := t.RawRender(width)
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
 	prefix := "  "
-	lines := strings.Split(t.RawRender(width), "\n")
+	lines := strings.Split(raw, "\n")
 	for i, ln := range lines {
 		lines[i] = prefix + ln
 	}

@@ -229,7 +229,31 @@ func (m *Chat) Animate(msg anim.StepMsg) tea.Cmd {
 
 	// Item is visible - remove from paused set and animate.
 	delete(m.pausedAnimations, msg.ID)
+	m.list.InvalidateItem(idx)
 	return animatable.Animate(msg)
+}
+
+// InvalidateShimmeringItems clears visible cached renders for items that animate
+// on shimmer timer frames and reports whether any active shimmer items remain.
+func (m *Chat) InvalidateShimmeringItems() bool {
+	startIdx, endIdx := m.list.VisibleItemIndices()
+	if startIdx < 0 || endIdx < startIdx {
+		return false
+	}
+
+	active := false
+	for idx := startIdx; idx <= endIdx; idx++ {
+		item := m.list.ItemAt(idx)
+		tickable, ok := item.(chat.ShimmerTickable)
+		if !ok {
+			continue
+		}
+		if tickable.OnShimmerTick() {
+			active = true
+			m.list.InvalidateItem(idx)
+		}
+	}
+	return active
 }
 
 // RestartPausedVisibleAnimations restarts animations for items that were paused

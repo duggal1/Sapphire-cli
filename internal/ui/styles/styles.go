@@ -43,7 +43,7 @@ const (
 	ImageIcon string = "■"
 	TextIcon  string = "≡"
 
-	ScrollbarThumb string = " "
+	ScrollbarThumb string = ">"
 	ScrollbarTrack string = " "
 
 	LSPErrorIcon   string = "E"
@@ -587,7 +587,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 		// Borders
 		border      = lipgloss.Color("#33294A")
-		borderFocus = lipgloss.Color("#7B3FF2")
+		borderFocus = lipgloss.Color("#9327ffff")
 
 		// Status palette
 		error   = lipgloss.Color("#FF7AA8")
@@ -972,9 +972,9 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 	}
 
-	// PlainMarkdown style - multi-color for thinking content.
-	plainBg := (*string)(nil)
-	plainFg := stringPtr("#F4EEFF")
+	// PlainMarkdown style - neutral thinking body with purple/pink accents.
+	plainBg := stringPtr(bgBaseLighterHex)
+	plainFg := stringPtr(fgSubtle.Hex())
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -1214,7 +1214,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	// borders
-	s.FocusedMessageBorder = lipgloss.Border{}
+	s.FocusedMessageBorder = lipgloss.Border{Left: "▌"}
 
 	// text presets
 	s.Base = lipgloss.NewStyle().Foreground(fgBase)
@@ -1275,7 +1275,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.ParamKey = s.Subtle
 
 	// Content rendering - prepared styles that accept width parameter
-	codeBg := lipgloss.Color("#1A1624") // Darker purple-black for cleaner code blocks
+	codeBg := bgBaseLighter
 	s.Tool.ContentLine = s.Base.Foreground(fgBase).Background(bgOverlay).Padding(0, 1)
 	s.Tool.ContentTruncation = s.Muted.Background(bgOverlay).Padding(0, 1)
 	s.Tool.ContentCodeLine = s.Base.Background(codeBg).Padding(0, 1)
@@ -1420,16 +1420,19 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Files.Deletions = s.Base.Foreground(red).Bold(true)
 
 	// Chat
-	offWhite := lipgloss.Color("#E6E6E6")
-	thinkingText := lipgloss.Color("#EDE6F7")
-	thinkingAccent := lipgloss.Color("#D9B2F0")
+	messageFocussedBorder := lipgloss.Border{
+		Left: "▌",
+	}
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
-	s.Chat.Message.UserBlurred = lipgloss.NewStyle().Foreground(primary).SetString("> ")
-	s.Chat.Message.UserFocused = lipgloss.NewStyle().Foreground(primary).SetString("> ")
-	s.Chat.Message.AssistantBlurred = lipgloss.NewStyle().Foreground(offWhite).Faint(true)
-	s.Chat.Message.AssistantFocused = lipgloss.NewStyle().Foreground(offWhite).Faint(true)
-	s.Chat.Message.Thinking = lipgloss.NewStyle().Foreground(thinkingText).MaxHeight(10)
+	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(primary).BorderStyle(lipgloss.NormalBorder())
+	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(primary).BorderStyle(messageFocussedBorder)
+	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
+	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
+		BorderForeground(greenDark).BorderStyle(messageFocussedBorder)
+	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Chat.Message.ErrorTag = lipgloss.NewStyle().
 		Foreground(error).
 		Bold(true)
@@ -1440,22 +1443,25 @@ func DefaultStyles(yellowMode bool) Styles {
 		PaddingLeft(2)
 
 	// Message item styles
-	s.Chat.Message.ToolCallFocused = s.Muted
-	s.Chat.Message.ToolCallBlurred = s.Muted
+	s.Chat.Message.ToolCallFocused = s.Muted.PaddingLeft(1).
+		BorderStyle(messageFocussedBorder).
+		BorderLeft(true).
+		BorderForeground(greenDark)
+	s.Chat.Message.ToolCallBlurred = s.Muted.PaddingLeft(2)
 	// No padding or border for compact tool calls within messages
 	s.Chat.Message.ToolCallCompact = s.Muted
-	s.Chat.Message.SectionHeader = s.Base
+	s.Chat.Message.SectionHeader = s.Base.PaddingLeft(2)
 	s.Chat.Message.AssistantInfoIcon = s.Subtle
 	s.Chat.Message.AssistantInfoModel = s.Muted
 	s.Chat.Message.AssistantInfoProvider = s.Subtle
-	s.Chat.Message.AssistantInfoDuration = s.Subtle
+	s.Chat.Message.AssistantInfoDuration = s.Base
 
-	s.Chat.Message.ThinkingBox = s.Base
+	s.Chat.Message.ThinkingBox = s.Subtle.Background(bgBaseLighter).Padding(1, 2)
 
 	// Thinking section styles
-	s.Chat.Message.ThinkingTruncationHint = lipgloss.NewStyle().Foreground(thinkingAccent)
-	s.Chat.Message.ThinkingFooterTitle = lipgloss.NewStyle().Foreground(thinkingAccent)
-	s.Chat.Message.ThinkingFooterDuration = lipgloss.NewStyle().Foreground(thinkingAccent)
+	s.Chat.Message.ThinkingTruncationHint = s.Muted
+	s.Chat.Message.ThinkingFooterTitle = base.Foreground(secondary)
+	s.Chat.Message.ThinkingFooterDuration = s.Subtle
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(tertiary)

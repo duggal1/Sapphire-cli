@@ -3,23 +3,14 @@ package styles
 import (
 	"fmt"
 	"image/color"
-	"math"
-	"os"
 	"strings"
-	"sync"
-	"time"
 
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/sapphire/internal/ui/shimmer"
 	"github.com/lucasb-eyer/go-colorful"
 	"github.com/rivo/uniseg"
 )
 
-// ForegroundGrad returns a slice of strings representing the input string
-// rendered with a horizontal gradient foreground from color1 to color2. Each
-// string in the returned slice corresponds to a grapheme cluster in the input
-// string. If bold is true, the rendered strings will be bolded.
+
 func ForegroundGrad(t *Styles, input string, bold bool, color1, color2 color.Color) []string {
 	if input == "" {
 		return []string{""}
@@ -145,223 +136,7 @@ func ApplyForegroundGradShifted(t *Styles, input string, shift int, stops ...col
 	return o.String()
 }
 
-// shimmerRGB represents a color in the shimmer palette.
-type shimmerRGB struct {
-	r float64
-	g float64
-	b float64
-}
-
-// shimmerStartTime anchors the shimmer sweep to process lifetime.
-var shimmerStartTime = time.Now()
-
-func splitGraphemeClusters(input string) []string {
-	var clusters []string
-	gr := uniseg.NewGraphemes(input)
-	for gr.Next() {
-		clusters = append(clusters, string(gr.Runes()))
-	}
-	return clusters
-}
-
-func clamp01(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
-}
-
-func clampFloat(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// cosineBell returns a smooth 0..1 intensity for a distance within a half-width.
-func cosineBell(dist, halfWidth float64) float64 {
-	if halfWidth <= 0 || dist >= halfWidth {
-		return 0
-	}
-	x := math.Pi * (dist / halfWidth)
-	return 0.5 * (1.0 + math.Cos(x))
-}
-
-func shimmerColor(c shimmerRGB) color.Color {
-	return color.RGBA{
-		R: uint8(math.Round(clampFloat(c.r, 0, 255))),
-		G: uint8(math.Round(clampFloat(c.g, 0, 255))),
-		B: uint8(math.Round(clampFloat(c.b, 0, 255))),
-		A: 0xff,
-	}
-}
-
-// lerpShimmer linearly interpolates between two shimmerRGB colors.
-func lerpShimmer(a, b shimmerRGB, t float64) shimmerRGB {
-	t = clamp01(t)
-	return shimmerRGB{
-		r: a.r + (b.r-a.r)*t,
-		g: a.g + (b.g-a.g)*t,
-		b: a.b + (b.b-a.b)*t,
-	}
-}
-
-// shimmerTextWithPalette renders luxurious off-white text with a cool metallic
-// shimmer band that has grey shoulders and a brighter core.
-//
-// palette[0] = base text
-// palette[1] = shimmer shoulder
-// palette[2] = shimmer core
-func shimmerTextWithPalette(t *Styles, input string, shift int, palette []shimmerRGB, durationSec float64) string {
-	if input == "" {
-		return ""
-	}
-
-	clusters := splitGraphemeClusters(input)
-	if len(clusters) == 0 {
-		return ""
-	}
-
-	if len(palette) < 3 {
-		return t.Base.Bold(true).Render(input)
-	}
-
-	n := len(clusters)
-
-	// Extra runway so the shimmer enters and exits cleanly instead of clipping.
-	padding := maxInt(8, int(math.Ceil(float64(n)*0.55)))
-	period := float64(n + padding*2)
-
-	if durationSec <= 0 {
-		durationSec = 1.85
-	}
-
-	// Primary motion is time-based for smoothness.
-	// shift is used only as a subtle phase offset so external ticks can still
-	// influence the sweep without making motion jumpy.
-	elapsed := time.Since(shimmerStartTime).Seconds()
-	basePos := math.Mod((elapsed/durationSec)*period, period)
-	phaseOffset := math.Mod(float64(shift)*0.025, period)
-	pos := math.Mod(basePos+phaseOffset, period)
-	if pos < 0 {
-		pos += period
-	}
-
-	// Tighter and cleaner than the original wide wash.
-	// This makes the shimmer actually read on short labels.
-	bandHalfWidth := clampFloat(float64(n)*0.40, 3.5, 8.0)
-	coreHalfWidth := clampFloat(bandHalfWidth*0.34, 1.15, 2.8)
-
-	baseColor := palette[0]
-	shoulderColor := palette[1]
-	coreColor := palette[2]
-
-	var o strings.Builder
-	for i, cluster := range clusters {
-		iPos := float64(i + padding)
-		dist := math.Abs(iPos - pos)
-
-		// Broad silver shoulder.
-		shoulder := math.Pow(cosineBell(dist, bandHalfWidth), 1.12)
-
-		// Bright tighter center.
-		core := math.Pow(cosineBell(dist, coreHalfWidth), 1.04)
-
-		// Build the shimmer in layers:
-		// base -> grey shoulder -> soft-white core.
-		c := lerpShimmer(baseColor, shoulderColor, shoulder*0.78)
-		c = lerpShimmer(c, coreColor, core*0.96)
-
-		style := t.Base.Foreground(shimmerColor(c)).Bold(true)
-		fmt.Fprint(&o, style.Render(cluster))
-	}
-
-	return o.String()
-}
-
-// Neutral palette: off-white resting text with a cool grey/silver shimmer.
-var shimmerNeutralPalette = []shimmerRGB{
-	{245, 245, 244}, // base: neutral-100
-	{214, 211, 209}, // shoulder: neutral-300
-	{255, 255, 253}, // core: soft white
-}
-
-// Warm palette: slightly warmer off-white for softer UI surfaces.
-var shimmerWarmPalette = []shimmerRGB{
-	{245, 240, 235}, // base
-	{221, 210, 198}, // shoulder
-	{255, 249, 242}, // core
-}
-
-var shimmerProcessStart time.Time
-var shimmerProcessOnce sync.Once
-
-func shimmerElapsed() time.Duration {
-	shimmerProcessOnce.Do(func() {
-		shimmerProcessStart = time.Now()
-	})
-	return time.Since(shimmerProcessStart)
-}
-
-func shimmerHasTrueColor() bool {
-	return colorprofile.Detect(os.Stdout, os.Environ()) == colorprofile.TrueColor
-}
-
-func shimmerColorToRGB(c color.Color) (uint8, uint8, uint8, bool) {
-	if c == nil {
-		return 0, 0, 0, false
-	}
-	r, g, b, _ := c.RGBA()
-	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), true
-}
-
-func shimmerBaseColor(t *Styles) (uint8, uint8, uint8) {
-	if t != nil {
-		if r, g, b, ok := shimmerColorToRGB(t.FgBase); ok {
-			return r, g, b
-		}
-	}
-	return 128, 128, 128
-}
-
-func shimmerHighlightColor(t *Styles) (uint8, uint8, uint8) {
-	if t != nil {
-		if r, g, b, ok := shimmerColorToRGB(t.BgBase); ok {
-			return r, g, b
-		}
-	}
-	return 255, 255, 255
-}
-
-func shimmerBlend(a, b [3]uint8, t float32) (uint8, uint8, uint8) {
-	r := uint8(float32(a[0])*t + float32(b[0])*(1.0-t))
-	g := uint8(float32(a[1])*t + float32(b[1])*(1.0-t))
-	bl := uint8(float32(a[2])*t + float32(b[2])*(1.0-t))
-	return r, g, bl
-}
-
-func shimmerFallback(intensity float32) lipgloss.Style {
-	if intensity < 0.2 {
-		return lipgloss.NewStyle().Faint(true)
-	}
-	if intensity < 0.6 {
-		return lipgloss.NewStyle()
-	}
-	return lipgloss.NewStyle().Bold(true)
-}
+// ── shimmer wrappers ──────────────────────────────────────────────────────────
 
 func ShimmerTextCodex(t *Styles, input string) string {
 	_ = t
@@ -370,7 +145,7 @@ func ShimmerTextCodex(t *Styles, input string) string {
 
 func ShimmerTextWithDot(t *Styles, input string) string {
 	_ = t
-	return shimmer.ShimmerWithDotPrefix(input)
+	return shimmer.ShimmerWithDot(input)
 }
 
 func ShimmerText(t *Styles, input string, shift int) string {
@@ -388,7 +163,18 @@ func ShimmerTextWarm(t *Styles, input string, shift int) string {
 	return ShimmerTextCodex(t, input)
 }
 
-// blendColors returns a slice of colors blended between the given keys.
+// ── internal helpers ──────────────────────────────────────────────────────────
+
+func splitGraphemeClusters(input string) []string {
+	var clusters []string
+	gr := uniseg.NewGraphemes(input)
+	for gr.Next() {
+		clusters = append(clusters, string(gr.Runes()))
+	}
+	return clusters
+}
+
+// blendColors returns a slice of colors blended between the given stops.
 // Blending is done in RGB space to avoid hue shifts through purple.
 func blendColors(size int, stops ...color.Color) []color.Color {
 	if size <= 0 || len(stops) < 2 {
@@ -403,12 +189,10 @@ func blendColors(size int, stops ...color.Color) []color.Color {
 	numSegments := len(stopsPrime) - 1
 	blended := make([]color.Color, 0, size)
 
-	// Calculate how many colors each segment should have.
 	segmentSizes := make([]int, numSegments)
 	baseSize := size / numSegments
 	remainder := size % numSegments
 
-	// Distribute the remainder across segments.
 	for i := 0; i < numSegments; i++ {
 		segmentSizes[i] = baseSize
 		if i < remainder {
@@ -416,7 +200,6 @@ func blendColors(size int, stops ...color.Color) []color.Color {
 		}
 	}
 
-	// Generate colors for each segment using RGB blending to avoid purple shift.
 	for i := 0; i < numSegments; i++ {
 		c1 := stopsPrime[i]
 		c2 := stopsPrime[i+1]

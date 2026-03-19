@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 )
 
 //go:embed templates/list_skills.md

@@ -6,8 +6,8 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 	"golang.org/x/text/cases"

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
 )
 
 type MemoryQueryParams struct {

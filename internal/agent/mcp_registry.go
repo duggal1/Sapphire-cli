@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 func (c *coordinator) loadRegistryDefinitions(ctx context.Context) []config.RegistryMCPDefinition {

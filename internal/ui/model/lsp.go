@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/app"
-	"github.com/charmbracelet/sapphire/internal/lsp"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/app"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 

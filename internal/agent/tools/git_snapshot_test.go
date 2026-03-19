@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/stretchr/testify/require"
 )
 

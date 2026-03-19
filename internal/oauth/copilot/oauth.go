@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/oauth"
+	"github.com/duggal1/Sapphire-cli/internal/oauth"
 )
 
 const (

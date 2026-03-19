@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/message"
 )
 
 func (c *coordinator) respondWithText(ctx context.Context, sessionID, text string) (*fantasy.AgentResult, error) {

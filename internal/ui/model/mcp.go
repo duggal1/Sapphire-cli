@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // mcpInfo renders the MCP status section showing active MCP clients and their

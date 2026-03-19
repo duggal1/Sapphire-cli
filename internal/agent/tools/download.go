@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/filepathext"
-	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/filepathext"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 )
 
 type DownloadParams struct {

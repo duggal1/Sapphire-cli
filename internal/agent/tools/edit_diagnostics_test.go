@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/db"
-	"github.com/charmbracelet/sapphire/internal/filetracker"
-	"github.com/charmbracelet/sapphire/internal/lsp"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/stretchr/testify/require"
 )

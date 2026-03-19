@@ -8,14 +8,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/charmbracelet/sapphire/internal/commands"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/oauth"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/session"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/util"
+	"github.com/duggal1/Sapphire-cli/internal/commands"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/oauth"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 )
 
 // ActionClose is a message to close the current dialog.

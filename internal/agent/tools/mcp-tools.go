@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 )
 
 // GetMCPTools gets all the currently available MCP tools.

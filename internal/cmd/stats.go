@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/db"
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )

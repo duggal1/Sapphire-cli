@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/home"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"

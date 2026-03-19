@@ -10,9 +10,9 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
-	"github.com/charmbracelet/sapphire/internal/fsext"
-	"github.com/charmbracelet/sapphire/internal/ui/list"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/ui/list"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/ordered"
 )

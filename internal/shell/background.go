@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/charmbracelet/sapphire/internal/env"
+	"github.com/duggal1/Sapphire-cli/internal/env"
 	"github.com/stretchr/testify/require"
 )
 

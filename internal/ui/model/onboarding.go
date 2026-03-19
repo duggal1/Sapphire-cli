@@ -9,11 +9,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/charmbracelet/sapphire/internal/agent"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/home"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/util"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 )
 
 // markProjectInitialized marks the current project as initialized in the config.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/charmbracelet/sapphire/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
 )
 
 const mcpPolicyBlock = `<mcp_policy>

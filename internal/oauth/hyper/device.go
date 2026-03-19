@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/agent/hyper"
-	"github.com/charmbracelet/sapphire/internal/event"
-	"github.com/charmbracelet/sapphire/internal/oauth"
+	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
+	"github.com/duggal1/Sapphire-cli/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/oauth"
 )
 
 // DeviceAuthResponse contains the response from the device authorization endpoint.

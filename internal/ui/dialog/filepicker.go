@@ -14,9 +14,9 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/home"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	fimage "github.com/charmbracelet/sapphire/internal/ui/image"
+	"github.com/duggal1/Sapphire-cli/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	fimage "github.com/duggal1/Sapphire-cli/internal/ui/image"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 

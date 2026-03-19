@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/agent/memory"
-	"github.com/charmbracelet/sapphire/internal/db"
-	"github.com/charmbracelet/sapphire/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
 )
 
 type Indexer struct {

@@ -17,9 +17,9 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/catwalk/pkg/embedded"
-	"github.com/charmbracelet/sapphire/internal/agent/hyper"
-	"github.com/charmbracelet/sapphire/internal/csync"
-	"github.com/charmbracelet/sapphire/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/home"
 	"github.com/charmbracelet/x/etag"
 )
 

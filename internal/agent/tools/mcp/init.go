@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/csync"
-	"github.com/charmbracelet/sapphire/internal/home"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/pubsub"
-	"github.com/charmbracelet/sapphire/internal/version"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

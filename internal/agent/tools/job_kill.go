@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/shell"
+	"github.com/duggal1/Sapphire-cli/internal/shell"
 )
 
 const (

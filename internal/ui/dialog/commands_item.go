@@ -1,7 +1,7 @@
 package dialog
 
 import (
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/sahilm/fuzzy"
 )
 

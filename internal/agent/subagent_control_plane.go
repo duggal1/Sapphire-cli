@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 )
 
 const subAgentStatusUpdatedEvent pubsub.EventType = "subagent_status_updated"

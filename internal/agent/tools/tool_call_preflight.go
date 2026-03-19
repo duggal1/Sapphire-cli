@@ -11,7 +11,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/schema"
-	"github.com/charmbracelet/sapphire/internal/filetracker"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
 )
 
 var (

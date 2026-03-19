@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
 

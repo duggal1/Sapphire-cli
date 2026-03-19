@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 )
 
 const agentJobPollInterval = 250 * time.Millisecond

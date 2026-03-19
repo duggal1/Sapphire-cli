@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/agent/memory"
-	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 const (

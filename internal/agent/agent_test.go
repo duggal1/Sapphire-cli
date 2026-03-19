@@ -10,9 +10,9 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/x/vcr"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

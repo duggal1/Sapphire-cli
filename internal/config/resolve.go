@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/env"
-	"github.com/charmbracelet/sapphire/internal/shell"
+	"github.com/duggal1/Sapphire-cli/internal/env"
+	"github.com/duggal1/Sapphire-cli/internal/shell"
 )
 
 type VariableResolver interface {

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/db"
-	"github.com/charmbracelet/sapphire/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/google/uuid"
 )
 

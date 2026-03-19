@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 )
 
 func (c *coordinator) validateSubAgentLaunch(ctx context.Context, sessionID, prompt string) (subAgentLaunchDecision, error) {

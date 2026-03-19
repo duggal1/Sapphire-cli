@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/stretchr/testify/require"
 )
 

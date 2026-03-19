@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 
-	"github.com/charmbracelet/sapphire/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/google/uuid"
 )
 

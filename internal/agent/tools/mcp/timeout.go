@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 func withMCPTimeout(ctx context.Context, cfg *config.Config, name string) (context.Context, context.CancelFunc) {

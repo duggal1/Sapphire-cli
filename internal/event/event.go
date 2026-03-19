@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/version"
+	"github.com/duggal1/Sapphire-cli/internal/version"
 	"github.com/posthog/posthog-go"
 )
 

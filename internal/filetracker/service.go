@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/db"
 )
 
 // Service defines the interface for tracking file reads in sessions.

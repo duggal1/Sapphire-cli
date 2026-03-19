@@ -17,14 +17,14 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
-	"github.com/charmbracelet/sapphire/internal/app"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/db"
-	"github.com/charmbracelet/sapphire/internal/event"
-	"github.com/charmbracelet/sapphire/internal/projects"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	ui "github.com/charmbracelet/sapphire/internal/ui/model"
-	"github.com/charmbracelet/sapphire/internal/version"
+	"github.com/duggal1/Sapphire-cli/internal/app"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/projects"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	ui "github.com/duggal1/Sapphire-cli/internal/ui/model"
+	"github.com/duggal1/Sapphire-cli/internal/version"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
@@ -102,7 +102,7 @@ sapphire --data-dir /path/to/custom/.sapphire
 		if _, err := program.Run(); err != nil {
 			event.Error(err)
 			slog.Error("TUI run error", "error", err)
-			return errors.New("Sapphire crashed. If metrics are enabled, we were notified about it. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/charmbracelet/sapphire/issues/new?template=bug.yml") //nolint:staticcheck
+			return errors.New("Sapphire crashed. If metrics are enabled, we were notified about it. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/duggal1/Sapphire-cli/issues/new?template=bug.yml") //nolint:staticcheck
 		}
 		return nil
 	},

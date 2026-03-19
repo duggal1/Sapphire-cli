@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 type scoredRegistryMCP struct {

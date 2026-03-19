@@ -11,8 +11,8 @@ import (
 	"sync"
 
 	"github.com/charlievieth/fastwalk"
-	"github.com/charmbracelet/sapphire/internal/csync"
-	"github.com/charmbracelet/sapphire/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/home"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 

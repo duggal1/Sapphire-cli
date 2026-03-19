@@ -11,9 +11,9 @@ import (
 
 	"charm.land/fantasy"
 
-	"github.com/charmbracelet/sapphire/internal/agent/prompt"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 )
 
 //go:embed templates/agentic_fetch.md

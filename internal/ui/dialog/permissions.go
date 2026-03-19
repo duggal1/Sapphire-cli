@@ -10,12 +10,12 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/fsext"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/stringext"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/stringext"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 

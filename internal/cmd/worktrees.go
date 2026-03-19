@@ -13,8 +13,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/charmbracelet/sapphire/internal/agent"
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

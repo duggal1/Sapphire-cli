@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/shell"
+	"github.com/duggal1/Sapphire-cli/internal/shell"
 	"github.com/stretchr/testify/require"
 )
 

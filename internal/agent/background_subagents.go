@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/google/uuid"
 )
 

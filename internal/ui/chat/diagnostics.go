@@ -6,10 +6,10 @@ package chat
 import (
 	"encoding/json"
 
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/fsext"
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // -----------------------------------------------------------------------------

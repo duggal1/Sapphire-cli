@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
 )
 
 const LSPRestartToolName = "lsp_restart"

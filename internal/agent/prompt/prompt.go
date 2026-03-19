@@ -11,10 +11,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/home"
-	"github.com/charmbracelet/sapphire/internal/shell"
-	"github.com/charmbracelet/sapphire/internal/skills"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/shell"
+	"github.com/duggal1/Sapphire-cli/internal/skills"
 )
 
 const gitPromptTimeout = 750 * time.Millisecond

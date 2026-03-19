@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/planmode"
-	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 )
 
 //go:embed set_mode.md

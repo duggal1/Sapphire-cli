@@ -6,7 +6,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 
-	"github.com/charmbracelet/sapphire/internal/cmd"
+	"github.com/duggal1/Sapphire-cli/internal/cmd"
 	_ "github.com/joho/godotenv/autoload"
 )
 

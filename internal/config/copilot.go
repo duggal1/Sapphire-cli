@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/charmbracelet/sapphire/internal/oauth"
-	"github.com/charmbracelet/sapphire/internal/oauth/copilot"
+	"github.com/duggal1/Sapphire-cli/internal/oauth"
+	"github.com/duggal1/Sapphire-cli/internal/oauth/copilot"
 )
 
 func (c *Config) ImportCopilot() (*oauth.Token, bool) {

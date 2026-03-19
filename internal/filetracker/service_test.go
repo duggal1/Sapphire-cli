@@ -6,7 +6,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/stretchr/testify/require"
 )
 

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/google/uuid"
 )
 

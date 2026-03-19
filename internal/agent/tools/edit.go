@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/diff"
-	"github.com/charmbracelet/sapphire/internal/filepathext"
-	"github.com/charmbracelet/sapphire/internal/filetracker"
-	"github.com/charmbracelet/sapphire/internal/fsext"
-	"github.com/charmbracelet/sapphire/internal/history"
+	"github.com/duggal1/Sapphire-cli/internal/diff"
+	"github.com/duggal1/Sapphire-cli/internal/filepathext"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/history"
 
-	"github.com/charmbracelet/sapphire/internal/lsp"
-	"github.com/charmbracelet/sapphire/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 )
 
 // EditParams defines the parameters for the file editing tool.

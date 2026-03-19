@@ -1,6 +1,6 @@
 # Sapphire CLI - Agent.md (Source of Truth)
 
-**Repository:** https://github.com/charmbracelet/sapphire
+**Repository:** https://github.com/duggal1/Sapphire-cli
 **Language:** Go 1.26.1
 **Last Updated:** 2026-03-17
 
@@ -32,13 +32,16 @@
 Sapphire CLI is a terminal-first AI assistant for software development. It provides session-based AI agent functionality with support for:
 
 - Multi-provider LLM integration (OpenAI, Anthropic, Google Gemini, Azure, Bedrock, OpenRouter, Vercel)
-- Sub-agent spawning and coordination
+- Sub-agent spawning and coordination with worktree isolation
 - Tool execution with permission management
+- Automatic snapshot commits for recoverability
+- Git safety policy (no autonomous push/merge/rebase)
 - Model Context Protocol (MCP) integration
 - Language Server Protocol (LSP) integration
 - Skills system (Agent Skills open standard)
 - Long-horizon task management
 - Worktree-based parallel execution
+- Validation gate for sub-agent output (build, test, lint, security)
 - TUI and non-interactive modes
 
 ---
@@ -165,7 +168,8 @@ User Input (TUI or CLI)
 | `subagent_guardrails.go` | Sub-agent spawn limits and validation |
 | `subagent_metadata.go` | Sub-agent metadata persistence |
 | `subagent_supervisor.go` | Sub-agent supervision |
-| `subagent_worktree.go` | Sub-agent worktree preparation |
+| `subagent_worktree.go` | Sub-agent worktree preparation, lifecycle, cleanup, quarantine |
+| `subagent_validation_gate.go` | Validation gate for completed sub-agent work (diff, build, test, lint, security) |
 | `agent_tool.go` | Agent tool definitions |
 | `agent_job_manager.go` | Background agent job management |
 | `agent_job_runner.go` | Agent job execution |
@@ -282,7 +286,7 @@ User Input (TUI or CLI)
 | `dirs.go` | Directory commands |
 | `logs.go` | Log viewing |
 | `stats.go` | Usage statistics |
-| `worktrees.go` | Worktree management |
+| `worktrees.go` | Worktree management (orchestrate, clean --merged) |
 | `update_providers.go` | Provider updates |
 | `schema.go` | Schema generation |
 
@@ -727,13 +731,82 @@ func main() {
 
 ### Architecture
 
-Sapphire implements a Codex-inspired sub-agent system with:
+Sapphire implements a multi-agent orchestration system with:
 
+- Worktree-based isolation for sub-agents
+- Automatic snapshot commits for recoverability
+- Destructive Git command denial for safety
+- Human-controlled integration (no auto-push/merge)
 - Hierarchical spawning with depth limits
 - Status tracking and pub/sub
 - Context forking
-- Worktree isolation
-- Completion notifications
+- Completion signals
+
+### Worktree Isolation
+
+Each sub-agent operates in an isolated Git worktree under `.sapphire/worktrees/agent/<agent-id>/<task-slug>/`.
+
+**Worktree structure:**
+```
+repo-root/
+├── .sapphire/
+│   ├── worktrees/
+│   │   └── agent/
+│   │       ├── <agent-id-1>/
+│   │       │   └── <task-slug>/
+│   │       └── <agent-id-2>/
+│   │           └── <task-slug>/
+│   └── quarantine/
+│       └── <failed-worktree>/
+```
+
+**Branch naming:** `agent/<agent-id>/<task-slug>`
+
+**Base branch selection:**
+1. `main` if it exists
+2. `master` if `main` does not exist
+3. `origin/HEAD` if remote tracking exists
+4. `HEAD` as final fallback
+
+### Snapshot Commits
+
+Automatic local snapshot commits are created after meaningful file writes with a 1.5-second debounce.
+
+**Snapshot manager:** `internal/agent/tools/git_snapshot.go`
+
+**Behavior:**
+- Triggered after file writes in any Git worktree
+- Debounced to batch rapid writes
+- Flushable on demand before task completion
+- Local-only commits (never auto-pushed)
+- Actor naming: `main-agent` for main workspace, `<agent-id>-<task-slug>` for sub-agents
+
+**Commit format:**
+```
+snapshot: <actor-name> <timestamp>
+```
+
+**Example:**
+```
+snapshot: main-agent 20260319-143022
+snapshot: agent-1-render-fix 20260319-143045
+```
+
+### Git Safety Policy
+
+All agents are blocked from destructive Git operations by default.
+
+**Blocked commands:**
+- `git push` - agents never push autonomously
+- `git merge` - integration is human-controlled
+- `git rebase` - history rewriting blocked
+- `git restore` - destructive recovery blocked
+- `git clean` - file deletion blocked
+- `git reset --hard` - hard reset blocked
+- `git worktree remove` - worktree deletion blocked
+- `git branch -d/-D` - branch deletion blocked
+
+**Implementation:** `internal/agent/tools/bash.go::isForbiddenGitAgentCommand()`
 
 ### Spawn Flow
 
@@ -792,6 +865,47 @@ Events published on:
 - Failed
 - Closed
 
+### Worktree Lifecycle
+
+**Creation:**
+1. Validate worktree path format (`.sapphire/worktrees/agent/<id>/<slug>`)
+2. Validate branch format (`agent/<id>/<task-slug>`)
+3. Ensure base worktree is clean
+4. Create worktree from base branch
+5. Add `.sapphire/worktrees/` to `.gitignore`
+
+**Cleanup:**
+- Zero-change worktrees: deleted immediately
+- Failed worktrees with changes: quarantined to `.sapphire/quarantine/`
+- Merged worktrees: removed via human-triggered `sapphire worktree clean --merged`
+- Crashed worktrees: preserved for `--resume` flow
+
+**Review branch archival:**
+Failed worktrees with validation failures can be archived to `review/<task-slug>` branches for later inspection.
+
+### Validation Gate
+
+**File:** `internal/agent/subagent_validation_gate.go`
+
+**Validation phases:**
+1. Git diff stat against base branch
+2. Build verification (auto-detected: `go build`, `npm run build`, `cargo build`)
+3. Test verification (auto-detected: `go test`, `npm test`, `cargo test`)
+4. Lint verification (auto-detected: `golangci-lint`, `npm run lint`, `task lint`)
+5. Security scan (auto-detected: `gosec`, `npm run security`, `task security`)
+
+**Output:** Validation report with pass/fail status, diff summary, and error messages.
+
+### Worktree Orchestration CLI
+
+**Command:** `sapphire worktrees` (alias: `sapphire worktree`)
+
+**Subcommands:**
+- `sapphire worktrees orchestrate` - Spawn sub-agents from spec file
+- `sapphire worktrees clean --merged` - Remove merged worktrees
+
+**File:** `internal/cmd/worktrees.go`
+
 ---
 
 ## Tool System
@@ -818,12 +932,28 @@ Tools are implemented using `fantasy.AgentTool` from charm.land/fantasy.
 - `description` - Brief description
 - `working_dir` - Working directory
 - `run_in_background` - Background execution
+- `backend` - Execution backend (posix/native)
+- `justification` - Audit trail
+- `prefix_rule` - Commands to prepend
 
 **Banned Commands:**
 - Network tools: curl, wget, ssh, scp
 - Package managers: apt, yum, pacman, brew
 - System modification: sudo, systemctl, mount
 - Network config: iptables, ifconfig
+
+**Git Safety Policy:**
+The following Git commands are blocked for all agents:
+- `git push` - push remains human-controlled
+- `git merge` - integration remains human-controlled
+- `git rebase` - history rewriting blocked
+- `git restore` - destructive recovery blocked
+- `git clean` - file deletion blocked
+- `git reset --hard` - hard reset blocked
+- `git worktree remove` - worktree deletion blocked
+- `git branch -d/-D` - branch deletion blocked
+
+**Implementation:** `isForbiddenGitAgentCommand()`
 
 #### Edit Tool (`internal/agent/tools/edit.go`)
 
@@ -844,6 +974,32 @@ Tools are implemented using `fantasy.AgentTool` from charm.land/fantasy.
 - LSP diagnostics integration
 - Diff generation
 - File creation support
+- Automatic snapshot commit queuing
+
+#### Git Snapshot Tool (`internal/agent/tools/git_snapshot.go`)
+
+**Purpose:** Automatic local snapshot commits for recoverability.
+
+**Behavior:**
+- Automatically triggered after file writes
+- 1.5-second debounce for batched writes
+- Flushable on demand before task completion
+- Creates local-only commits (never pushed)
+- Actor naming based on worktree type
+
+**Functions:**
+- `QueueGitSnapshot(ctx, mutatedPath)` - Queue a snapshot commit
+- `FlushGitSnapshot(ctx, worktreeDir)` - Flush pending snapshots
+- `commitGitSnapshot(worktreeDir)` - Create snapshot commit
+
+**Commit format:**
+```
+snapshot: <actor-name> <timestamp>
+```
+
+**Actor naming:**
+- Main workspace: `main-agent`
+- Sub-agent worktrees: `<agent-id>-<task-slug>`
 
 #### View Tool (`internal/agent/tools/view.go`)
 

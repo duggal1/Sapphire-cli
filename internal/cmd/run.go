@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"charm.land/log/v2"
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 	"github.com/spf13/cobra"
 )
 

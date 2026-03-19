@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/charmbracelet/sapphire/internal/csync"
-	"github.com/charmbracelet/sapphire/internal/shell"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/shell"
 )
 
 var (

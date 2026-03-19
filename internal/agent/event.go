@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 )
 
 func (a *sessionAgent) eventPromptSent(sessionID string) {

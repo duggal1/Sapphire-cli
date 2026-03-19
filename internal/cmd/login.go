@@ -9,11 +9,11 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
-	hyperp "github.com/charmbracelet/sapphire/internal/agent/hyper"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/oauth"
-	"github.com/charmbracelet/sapphire/internal/oauth/copilot"
-	"github.com/charmbracelet/sapphire/internal/oauth/hyper"
+	hyperp "github.com/duggal1/Sapphire-cli/internal/agent/hyper"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/oauth"
+	"github.com/duggal1/Sapphire-cli/internal/oauth/copilot"
+	"github.com/duggal1/Sapphire-cli/internal/oauth/hyper"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )

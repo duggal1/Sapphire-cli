@@ -5,7 +5,7 @@ import (
 	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/ui/shimmer"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/lucasb-eyer/go-colorful"
 	"github.com/rivo/uniseg"
 )

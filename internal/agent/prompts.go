@@ -4,8 +4,8 @@ import (
 	"context"
 	_ "embed"
 
-	"github.com/charmbracelet/sapphire/internal/agent/prompt"
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 //go:embed templates/coder.md.tpl

@@ -15,11 +15,11 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/filepathext"
-	"github.com/charmbracelet/sapphire/internal/filetracker"
-	"github.com/charmbracelet/sapphire/internal/lsp"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/skills"
+	"github.com/duggal1/Sapphire-cli/internal/filepathext"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/skills"
 )
 
 //go:embed view.md

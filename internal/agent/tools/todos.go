@@ -12,7 +12,7 @@ import (
 	"fmt"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 )
 
 //go:embed todos.md

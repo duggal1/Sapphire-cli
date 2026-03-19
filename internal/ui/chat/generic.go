@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/stringext"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/stringext"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // GenericToolMessageItem is a message item that represents an unknown tool call.

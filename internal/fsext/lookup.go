@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/charmbracelet/sapphire/internal/home"
+	"github.com/duggal1/Sapphire-cli/internal/home"
 )
 
 // Lookup searches for a target files or directories starting from dir

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/charmbracelet/sapphire/internal/log"
+	"github.com/duggal1/Sapphire-cli/internal/log"
 )
 
 // getRg initializes the ripgrep binary path by searching the system executable directories.

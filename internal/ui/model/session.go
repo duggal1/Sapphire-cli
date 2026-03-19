@@ -10,13 +10,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/diff"
-	"github.com/charmbracelet/sapphire/internal/fsext"
-	"github.com/charmbracelet/sapphire/internal/history"
-	"github.com/charmbracelet/sapphire/internal/session"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
-	"github.com/charmbracelet/sapphire/internal/ui/util"
+	"github.com/duggal1/Sapphire-cli/internal/diff"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/history"
+	"github.com/duggal1/Sapphire-cli/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 	"github.com/charmbracelet/x/ansi"
 )
 

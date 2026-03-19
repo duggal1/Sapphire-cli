@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/oauth/copilot"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/oauth/copilot"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 )
 
 func NewOAuthCopilot(

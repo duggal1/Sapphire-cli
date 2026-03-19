@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/filetracker"
-	"github.com/charmbracelet/sapphire/internal/history"
-	"github.com/charmbracelet/sapphire/internal/permission"
-	"github.com/charmbracelet/sapphire/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
+	"github.com/duggal1/Sapphire-cli/internal/history"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
 

@@ -3,7 +3,7 @@ package agent
 import (
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 )
 
 func (c *coordinator) publishSubAgentEvent(eventType pubsub.EventType, runner *subAgentRunner, submissionID string, stage SubAgentLifecycleStage, errMsg string) {

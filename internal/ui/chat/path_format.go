@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
 )
 
 // formatRelativePath returns a repo-scoped relative path when possible.

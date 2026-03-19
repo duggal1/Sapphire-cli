@@ -15,7 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/lucasb-eyer/go-colorful"
 
-	"github.com/charmbracelet/sapphire/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
 )
 
 const (

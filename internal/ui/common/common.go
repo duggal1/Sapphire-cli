@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/sapphire/internal/app"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
-	"github.com/charmbracelet/sapphire/internal/ui/util"
+	"github.com/duggal1/Sapphire-cli/internal/app"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 

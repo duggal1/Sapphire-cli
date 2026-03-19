@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/charmbracelet/sapphire/internal/fsext"
+	"github.com/duggal1/Sapphire-cli/internal/fsext"
 )
 
 const (

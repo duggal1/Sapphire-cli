@@ -24,7 +24,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/fantasy/object"
-	"github.com/charmbracelet/sapphire/internal/event"
+	"github.com/duggal1/Sapphire-cli/internal/event"
 )
 
 //go:generate wget -O provider.json https://hyper.charm.land/api/v1/provider

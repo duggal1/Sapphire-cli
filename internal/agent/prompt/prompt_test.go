@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/sapphire/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 func TestGetGitStatusReturnsQuicklyOutsideGitRepo(t *testing.T) {

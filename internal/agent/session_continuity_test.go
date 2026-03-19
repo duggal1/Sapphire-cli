@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	agentmemory "github.com/charmbracelet/sapphire/internal/agent/memory"
-	"github.com/charmbracelet/sapphire/internal/session"
+	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/stretchr/testify/require"
 )
 

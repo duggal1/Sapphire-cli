@@ -7,8 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/sapphire/internal/session"
-	"github.com/charmbracelet/sapphire/internal/ui/styles"
+	"github.com/duggal1/Sapphire-cli/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 )
 

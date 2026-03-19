@@ -11,12 +11,12 @@ import (
 
 	"github.com/google/uuid"
 
-	promptpkg "github.com/charmbracelet/sapphire/internal/agent/prompt"
-	"github.com/charmbracelet/sapphire/internal/agent/tools"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/message"
-	"github.com/charmbracelet/sapphire/internal/pubsub"
-	"github.com/charmbracelet/sapphire/internal/session"
+	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 )
 
 type subAgentStatus string

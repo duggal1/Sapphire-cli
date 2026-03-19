@@ -12,7 +12,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
-	"github.com/charmbracelet/sapphire/internal/ui/diffview"
+	"github.com/duggal1/Sapphire-cli/internal/ui/diffview"
 	"github.com/charmbracelet/x/exp/charmtone"
 )
 

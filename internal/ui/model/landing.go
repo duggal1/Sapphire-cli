@@ -2,9 +2,9 @@ package model
 
 import (
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/sapphire/internal/agent"
-	"github.com/charmbracelet/sapphire/internal/config"
-	"github.com/charmbracelet/sapphire/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/charmbracelet/ultraviolet/layout"
 )
 

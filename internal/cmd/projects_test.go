@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/charmbracelet/sapphire/internal/projects"
+	"github.com/duggal1/Sapphire-cli/internal/projects"
 	"github.com/stretchr/testify/require"
 )
 

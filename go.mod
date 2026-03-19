@@ -1,4 +1,4 @@
-module github.com/charmbracelet/sapphire
+module github.com/duggal1/Sapphire-cli
 
 go 1.26.1
 

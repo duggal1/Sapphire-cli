@@ -1,8 +1,6 @@
 package memory
 
 import (
-	"fmt"
-	"time"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -159,20 +157,3 @@ func (s *memoryService) SearchCodebaseKnowledge(ctx context.Context, query strin
 	return knowledge, nil
 }
 
-// RolloutSummaryFileStemFromParts creates a filename stem from parts.
-func RolloutSummaryFileStemFromParts(sessionID string, t time.Time, slug *string) string {
-	if slug != nil && *slug != "" {
-		return *slug
-	}
-	return sessionID
-}
-
-// FormatRolloutSummaryHeader formats a rollout summary header.
-func FormatRolloutSummaryHeader(sessionID string, timestamp, summaryPath, cwd, extra string) string {
-	return fmt.Sprintf("# Rollout Summary: %s\n\n", sessionID)
-}
-
-// FormatRawMemoryEntryHeader formats a raw memory entry header.
-func FormatRawMemoryEntryHeader(sessionID string, timestamp, cwd, summaryPath, filename string) string {
-	return fmt.Sprintf("## Memory Entry: %s\n\n", sessionID)
-}

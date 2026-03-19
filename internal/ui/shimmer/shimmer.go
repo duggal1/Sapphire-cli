@@ -13,8 +13,8 @@ import (
 )
 
 const (
-    sweepDuration  = 800 * time.Millisecond  // was 1300 — faster sweep
-    bandHalfWidth  = 10.0                     // was 5.0 — wider shimmer band
+    sweepDuration  = 650 * time.Millisecond  // was 1300 — faster sweep
+    bandHalfWidth  = 14.0                     // was 5.0 — wider shimmer band
     shimmerPadding = 10
 )
 

@@ -29,7 +29,14 @@ const (
 )
 
 func (c *coordinator) Close() error {
-	if c == nil || c.orchestrationStore == nil {
+	if c == nil {
+		return nil
+	}
+	if c.supervisor != nil {
+		c.supervisor.Stop()
+	}
+	c.stopOrchestrationServices()
+	if c.orchestrationStore == nil {
 		return nil
 	}
 	return c.orchestrationStore.Close()
@@ -305,6 +312,9 @@ func (c *coordinator) buildMainOrchestrationMemoryContext(ctx context.Context, s
 	if staleSection := c.renderStaleAgentsContext(ctx); staleSection != "" {
 		sections = append(sections, staleSection)
 	}
+	if checkpointSection := c.renderCheckpointContext(ctx, sessionID, parentID); checkpointSection != "" {
+		sections = append(sections, checkpointSection)
+	}
 	if len(sections) == 0 {
 		return ""
 	}
@@ -349,6 +359,9 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	}
 	if activitySection := c.renderRecentAgentActivityContext(ctx, runner.id); activitySection != "" {
 		sections = append(sections, activitySection)
+	}
+	if checkpointSection := c.renderCheckpointContext(ctx, runner.sessionID, runner.id); checkpointSection != "" {
+		sections = append(sections, checkpointSection)
 	}
 
 	if len(sections) == 0 {

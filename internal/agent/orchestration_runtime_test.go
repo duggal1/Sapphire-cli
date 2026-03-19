@@ -102,6 +102,17 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		DetailsJSON: `{"phase":"implementation"}`,
 		CreatedAt:   time.Now().UTC(),
 	}))
+	_, err = store.SaveCheckpoint(ctx, orchestrationdb.SessionCheckpoint{
+		SessionID:      "sub-session",
+		AgentID:        "agent-auth",
+		WorkItemID:     "work-auth",
+		SummaryJSON:    `{"phase":"subagent_turn_completed","status":"completed","result":"auth path updated"}`,
+		AuditTail:      "milestone auth complete",
+		MailCursor:     1,
+		ActivityCursor: 2,
+		CreatedAt:      time.Now().UTC(),
+	})
+	require.NoError(t, err)
 
 	ctxBlock := coord.buildSubAgentPersistentMemoryContext(ctx, runner)
 	require.Contains(t, ctxBlock, "PERSISTENT MEMORY")
@@ -109,4 +120,6 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 	require.Contains(t, ctxBlock, "Auth flow")
 	require.Contains(t, ctxBlock, "agent-auth")
 	require.Contains(t, ctxBlock, "running")
+	require.Contains(t, ctxBlock, "Latest Checkpoint")
+	require.Contains(t, ctxBlock, "auth path updated")
 }

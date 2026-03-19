@@ -49,3 +49,34 @@ type WorkItem struct {
 	CreatedAt    time.Time `json:"created_at"`
 	ClosedAt     time.Time `json:"closed_at,omitempty"`
 }
+
+type DispatchQueueItem struct {
+	ID              string    `json:"id"`
+	SessionID       string    `json:"session_id"`
+	WorkItemID      string    `json:"work_item_id"`
+	TargetScope     string    `json:"target_scope"`
+	Status          string    `json:"status"`
+	Priority        int       `json:"priority"`
+	PayloadJSON     string    `json:"payload_json"`
+	RetryCount      int       `json:"retry_count"`
+	LastError       string    `json:"last_error"`
+	AvailableAt     time.Time `json:"available_at"`
+	LeasedBy        string    `json:"leased_by"`
+	LeasedAt        time.Time `json:"leased_at,omitempty"`
+	AssignedAgentID string    `json:"assigned_agent_id,omitempty"`
+	SubmissionID    string    `json:"submission_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type SessionCheckpoint struct {
+	ID             string    `json:"id"`
+	SessionID      string    `json:"session_id"`
+	AgentID        string    `json:"agent_id"`
+	WorkItemID     string    `json:"work_item_id"`
+	SummaryJSON    string    `json:"summary_json"`
+	AuditTail      string    `json:"audit_tail"`
+	MailCursor     int64     `json:"mail_cursor"`
+	ActivityCursor int64     `json:"activity_cursor"`
+	CreatedAt      time.Time `json:"created_at"`
+}

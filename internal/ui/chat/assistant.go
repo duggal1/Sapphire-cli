@@ -19,11 +19,10 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
-// assistantMessageTruncateFormat is the text shown when an assistant message is
-// truncated.
+
 const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
 
-// maxCollapsedThinkingHeight defines the maximum height of the thinking
+
 const maxCollapsedThinkingHeight = 10
 
 var mainLoaderPhrases = []string{

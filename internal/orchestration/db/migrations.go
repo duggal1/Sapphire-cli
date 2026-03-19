@@ -54,6 +54,38 @@ var schemaStatements = []string{
 		closed_at INTEGER NOT NULL DEFAULT 0
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_work_items_assignee_status ON work_items(assignee, status, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS dispatch_queue (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		work_item_id TEXT NOT NULL DEFAULT '',
+		target_scope TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL,
+		priority INTEGER NOT NULL DEFAULT 2,
+		payload_json TEXT NOT NULL DEFAULT '{}',
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT NOT NULL DEFAULT '',
+		available_at INTEGER NOT NULL,
+		leased_by TEXT NOT NULL DEFAULT '',
+		leased_at INTEGER NOT NULL DEFAULT 0,
+		assigned_agent_id TEXT NOT NULL DEFAULT '',
+		submission_id TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_dispatch_queue_status_available ON dispatch_queue(status, available_at, priority, created_at);`,
+	`CREATE INDEX IF NOT EXISTS idx_dispatch_queue_session_status ON dispatch_queue(session_id, status, updated_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS session_checkpoints (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		work_item_id TEXT NOT NULL DEFAULT '',
+		summary_json TEXT NOT NULL DEFAULT '{}',
+		audit_tail TEXT NOT NULL DEFAULT '',
+		mail_cursor INTEGER NOT NULL DEFAULT 0,
+		activity_cursor INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_agent_created ON session_checkpoints(session_id, agent_id, created_at DESC);`,
 }
 
 func ensureSchema(ctx context.Context, conn *sql.DB) error {

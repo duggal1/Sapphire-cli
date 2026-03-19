@@ -28,6 +28,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
+	agentsupervisor "github.com/duggal1/Sapphire-cli/internal/agent/supervisor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
@@ -148,6 +149,9 @@ type coordinator struct {
 	mailbox                   *agentmailbox.Service
 	stateService              *agentstate.Service
 	activityService           *agentactivity.Service
+	supervisor                *agentsupervisor.Service
+	orchestrationSvcCancel    context.CancelFunc
+	orchestrationSvcWG        sync.WaitGroup
 	mainWorktreeDir           string
 	mainWorktreeBranch        string
 	worktreeOpsMu             sync.Mutex
@@ -267,6 +271,13 @@ func NewCoordinator(
 	c.mailbox = agentmailbox.NewService(orchestrationStore, c.nudgeMailboxRecipient)
 	c.stateService = agentstate.NewService(orchestrationStore)
 	c.activityService = agentactivity.NewService(orchestrationStore)
+	c.supervisor = agentsupervisor.NewService(orchestrationStore, c.stateService, c.activityService, c.mailbox, agentsupervisor.Hooks{
+		GetRuntimeSnapshot:        c.supervisorRuntimeSnapshot,
+		ResolveMainMailboxID:      mainAgentMailboxID,
+		EnsureDispatchForWorkItem: c.ensureDispatchForWorkItem,
+	})
+	c.supervisor.Start(ctx)
+	c.startOrchestrationServices()
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
 		c.mainWorktreeDir = worktreeDir
@@ -554,6 +565,11 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 
 	cachedTools, _ := c.getToolCache()
 	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
+	if c.longHorizon != nil {
+		if c.GetLongHorizonState(env.sessionID) != "" || len(strings.Fields(env.userPrompt)) >= 80 || shouldDelegateToSubAgents(env.userPrompt) {
+			c.ensureLongHorizonDispatch(ctx, env.sessionID, env.userPrompt)
+		}
+	}
 	c.syncMainAgentOrchestrationState(ctx, env.sessionID)
 	if orchestrationContext := c.buildMainOrchestrationMemoryContext(ctx, env.sessionID); strings.TrimSpace(orchestrationContext) != "" {
 		if skillContext != "" {
@@ -585,17 +601,22 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		"session_id": env.sessionID,
 		"message_id": env.userMessage.ID,
 	})
+	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
+		"message_id": env.userMessage.ID,
+	}))
 	result, err := c.currentAgent.Run(ctx, call)
 	if err != nil {
 		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
 			"session_id": env.sessionID,
 			"error":      err.Error(),
 		})
+		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, err.Error(), "error", nil))
 		return nil, err
 	}
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
 		"session_id": env.sessionID,
 	})
+	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, result.Response.Content.Text(), "completed", nil))
 	return result, nil
 }
 

@@ -317,6 +317,11 @@ func (c *coordinator) failSubAgentSubmission(runner *subAgentRunner, submissionI
 		"status":        status,
 		"error":         reason,
 	})
+	if c.supervisor != nil {
+		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
+			c.supervisor.NotifyCompletion(snapshot)
+		}
+	}
 	publishSubAgentStatus(broker, status)
 	publishSubAgentLifecycleEvent(eventType, payload)
 }
@@ -421,6 +426,7 @@ type subAgentCollectedResult struct {
 }
 
 type spawnAgentOptions struct {
+	WorkItemID       string
 	Prompt           string
 	PromptItems      []string
 	Title            string
@@ -452,7 +458,10 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		}
 	}
 	decision := evaluateSubAgentLaunch(promptText)
-	assignmentID := fmt.Sprintf("subagent-%d", time.Now().UnixNano())
+	assignmentID := strings.TrimSpace(opts.WorkItemID)
+	if assignmentID == "" {
+		assignmentID = fmt.Sprintf("subagent-%d", time.Now().UnixNano())
+	}
 
 	agentID := "agent-" + uuid.New().String()
 	workDir := c.cfg.WorkingDir()
@@ -566,6 +575,11 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
 	c.syncRunnerOrchestrationState(context.Background(), runner)
+	if c.supervisor != nil {
+		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
+			c.supervisor.TrackAgent(snapshot)
+		}
+	}
 
 	c.publishSubAgentEvent(SubAgentSpawnedEvent, runner, "", SubAgentStageSpawned, "")
 
@@ -626,6 +640,11 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.mu.Unlock()
 			publishSubAgentStatus(broker, subAgentStatusRunning)
 			c.syncRunnerOrchestrationState(context.Background(), runner)
+			c.writeSessionCheckpoint(context.Background(), runner.sessionID, runner.id, runner.assignment.ID, runner.parentSession, buildCheckpointSummary("subagent_turn_started", input.prompt, "", "running", map[string]any{
+				"submission_id": input.submissionID,
+				"branch":        runner.assignment.Branch,
+				"task_key":      runner.assignment.TaskKey,
+			}))
 
 			c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
 
@@ -780,6 +799,18 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				"status":        payload.Status,
 				"error":         errMsg,
 			})
+			if c.supervisor != nil {
+				if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
+					c.supervisor.NotifyCompletion(snapshot)
+				}
+			}
+			c.writeSessionCheckpoint(context.Background(), runner.sessionID, runner.id, runner.assignment.ID, runner.parentSession, buildCheckpointSummary(string(stage), input.prompt, firstNonEmptyString(runner.lastResult, errMsg), string(payload.Status), map[string]any{
+				"submission_id": input.submissionID,
+				"progress":      runner.lastProgress,
+				"branch":        runner.assignment.Branch,
+				"task_key":      runner.assignment.TaskKey,
+				"heartbeat":     runner.heartbeatContext,
+			}))
 			publishSubAgentStatus(broker, payload.Status)
 			publishSubAgentLifecycleEvent(eventType, payload)
 		}(input)
@@ -924,6 +955,11 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
 	c.syncRunnerOrchestrationState(context.Background(), runner)
+	if c.supervisor != nil {
+		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
+			c.supervisor.TrackAgent(snapshot)
+		}
+	}
 	c.recordOrchestrationActivity(context.Background(), runner.id, "resumed", map[string]any{
 		"workdir": runner.workDir,
 		"branch":  runner.assignment.Branch,

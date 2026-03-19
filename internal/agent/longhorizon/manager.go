@@ -3,6 +3,7 @@ package longhorizon
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -40,6 +41,20 @@ type State struct {
 	RunbookPath string
 	AuditPath   string
 	Activated   bool
+}
+
+type Plan struct {
+	Session      string      `json:"session"`
+	GeneratedAt  string      `json:"generated_at"`
+	Milestones   []Milestone `json:"milestones"`
+	SourcePrompt string      `json:"source_prompt"`
+}
+
+type Milestone struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Condition string `json:"condition"`
+	Status    string `json:"status"`
 }
 
 type Manager struct {
@@ -182,6 +197,38 @@ func (m *Manager) BuildInjection(sessionID string) string {
 	sb.WriteString("\n</long_horizon_audit>\n\n")
 
 	return sb.String()
+}
+
+func (m *Manager) ReadPlan(sessionID string) (Plan, error) {
+	m.mu.Lock()
+	state := m.state(sessionID)
+	m.mu.Unlock()
+	if !state.Activated || state.PlanPath == "" {
+		return Plan{}, fmt.Errorf("long-horizon plan not initialized")
+	}
+	data, err := os.ReadFile(state.PlanPath)
+	if err != nil {
+		return Plan{}, err
+	}
+	var plan Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+func (m *Manager) ReadSpec(sessionID string) (string, error) {
+	m.mu.Lock()
+	state := m.state(sessionID)
+	m.mu.Unlock()
+	if !state.Activated || state.SpecPath == "" {
+		return "", fmt.Errorf("long-horizon spec not initialized")
+	}
+	data, err := os.ReadFile(state.SpecPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func renderSpec(sessionID, userPrompt string) string {

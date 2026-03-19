@@ -554,6 +554,350 @@ func (s *Store) ListWorkItemsByAssignee(ctx context.Context, assignee string, li
 	return scanWorkItemRows(rows)
 }
 
+func (s *Store) ListWorkItemsByStatus(ctx context.Context, statuses []string, limit int) ([]WorkItem, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	placeholders := make([]string, 0, len(statuses))
+	args := make([]any, 0, len(statuses)+1)
+	for _, status := range statuses {
+		placeholders = append(placeholders, "?")
+		args = append(args, status)
+	}
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(
+		ctx,
+		fmt.Sprintf(
+			`SELECT id, type, title, description, status, assignee, parent_id, dependencies, created_at, closed_at
+			   FROM work_items
+			  WHERE status IN (%s)
+			  ORDER BY created_at ASC
+			  LIMIT ?`,
+			strings.Join(placeholders, ","),
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list work items by status: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkItemRows(rows)
+}
+
+func (s *Store) EnqueueDispatch(ctx context.Context, item DispatchQueueItem) (DispatchQueueItem, error) {
+	if s == nil || s.conn == nil {
+		return DispatchQueueItem{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	now := time.Now().UTC()
+	if stringsTrim(item.ID) == "" {
+		item.ID = uuid.NewString()
+	}
+	if stringsTrim(item.SessionID) == "" {
+		return DispatchQueueItem{}, fmt.Errorf("dispatch session_id is required")
+	}
+	if stringsTrim(item.Status) == "" {
+		item.Status = "queued"
+	}
+	if stringsTrim(item.PayloadJSON) == "" {
+		item.PayloadJSON = "{}"
+	}
+	if item.AvailableAt.IsZero() {
+		item.AvailableAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO dispatch_queue (
+			id, session_id, work_item_id, target_scope, status, priority, payload_json, retry_count, last_error,
+			available_at, leased_by, leased_at, assigned_agent_id, submission_id, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.ID,
+		stringsTrim(item.SessionID),
+		stringsTrim(item.WorkItemID),
+		stringsTrim(item.TargetScope),
+		stringsTrim(item.Status),
+		item.Priority,
+		item.PayloadJSON,
+		item.RetryCount,
+		item.LastError,
+		item.AvailableAt.UTC().Unix(),
+		stringsTrim(item.LeasedBy),
+		timeToUnix(item.LeasedAt),
+		stringsTrim(item.AssignedAgentID),
+		stringsTrim(item.SubmissionID),
+		item.CreatedAt.UTC().Unix(),
+		item.UpdatedAt.UTC().Unix(),
+	)
+	if err != nil {
+		return DispatchQueueItem{}, fmt.Errorf("enqueue dispatch: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) LeaseDispatch(ctx context.Context, leaseOwner string, limit int) ([]DispatchQueueItem, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	leaseOwner = stringsTrim(leaseOwner)
+	if leaseOwner == "" {
+		return nil, fmt.Errorf("lease owner is required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin dispatch lease transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT id, session_id, work_item_id, target_scope, status, priority, payload_json, retry_count, last_error,
+		        available_at, leased_by, leased_at, assigned_agent_id, submission_id, created_at, updated_at
+		   FROM dispatch_queue
+		  WHERE status = 'queued' AND available_at <= ?
+		  ORDER BY priority ASC, created_at ASC
+		  LIMIT ?`,
+		time.Now().UTC().Unix(),
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("select dispatch lease candidates: %w", err)
+	}
+	items, scanErr := scanDispatchRows(rows)
+	rows.Close()
+	if scanErr != nil {
+		err = scanErr
+		return nil, err
+	}
+
+	leased := make([]DispatchQueueItem, 0, len(items))
+	now := time.Now().UTC()
+	for _, item := range items {
+		result, execErr := tx.ExecContext(
+			ctx,
+			`UPDATE dispatch_queue
+			    SET status = 'leased', leased_by = ?, leased_at = ?, updated_at = ?
+			  WHERE id = ? AND status = 'queued'`,
+			leaseOwner,
+			now.Unix(),
+			now.Unix(),
+			item.ID,
+		)
+		if execErr != nil {
+			err = fmt.Errorf("lease dispatch item %s: %w", item.ID, execErr)
+			return nil, err
+		}
+		affected, affErr := result.RowsAffected()
+		if affErr != nil {
+			err = fmt.Errorf("inspect dispatch lease rows affected: %w", affErr)
+			return nil, err
+		}
+		if affected != 1 {
+			continue
+		}
+		item.Status = "leased"
+		item.LeasedBy = leaseOwner
+		item.LeasedAt = now
+		item.UpdatedAt = now
+		leased = append(leased, item)
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit dispatch lease transaction: %w", err)
+	}
+	return leased, nil
+}
+
+func (s *Store) UpdateDispatch(ctx context.Context, item DispatchQueueItem) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	if stringsTrim(item.ID) == "" {
+		return fmt.Errorf("dispatch id is required")
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = time.Now().UTC()
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`UPDATE dispatch_queue
+		    SET status = ?,
+		        retry_count = ?,
+		        last_error = ?,
+		        available_at = ?,
+		        leased_by = ?,
+		        leased_at = ?,
+		        assigned_agent_id = ?,
+		        submission_id = ?,
+		        updated_at = ?
+		  WHERE id = ?`,
+		stringsTrim(item.Status),
+		item.RetryCount,
+		item.LastError,
+		timeToUnix(item.AvailableAt),
+		stringsTrim(item.LeasedBy),
+		timeToUnix(item.LeasedAt),
+		stringsTrim(item.AssignedAgentID),
+		stringsTrim(item.SubmissionID),
+		item.UpdatedAt.UTC().Unix(),
+		item.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update dispatch item: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListDispatches(ctx context.Context, sessionID string, statuses []string, limit int) ([]DispatchQueueItem, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	query := `SELECT id, session_id, work_item_id, target_scope, status, priority, payload_json, retry_count, last_error,
+	                 available_at, leased_by, leased_at, assigned_agent_id, submission_id, created_at, updated_at
+	            FROM dispatch_queue
+	           WHERE 1 = 1`
+	args := make([]any, 0, len(statuses)+2)
+	if sessionID = stringsTrim(sessionID); sessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, sessionID)
+	}
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		query += ` AND status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	query += ` ORDER BY priority ASC, created_at ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list dispatch queue: %w", err)
+	}
+	defer rows.Close()
+	return scanDispatchRows(rows)
+}
+
+func (s *Store) ListDispatchesByWorkItem(ctx context.Context, workItemID string, statuses []string, limit int) ([]DispatchQueueItem, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	workItemID = stringsTrim(workItemID)
+	if workItemID == "" {
+		return nil, fmt.Errorf("work item id is required")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	query := `SELECT id, session_id, work_item_id, target_scope, status, priority, payload_json, retry_count, last_error,
+	                 available_at, leased_by, leased_at, assigned_agent_id, submission_id, created_at, updated_at
+	            FROM dispatch_queue
+	           WHERE work_item_id = ?`
+	args := []any{workItemID}
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		query += ` AND status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	query += ` ORDER BY created_at ASC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list dispatches by work item: %w", err)
+	}
+	defer rows.Close()
+	return scanDispatchRows(rows)
+}
+
+func (s *Store) SaveCheckpoint(ctx context.Context, checkpoint SessionCheckpoint) (SessionCheckpoint, error) {
+	if s == nil || s.conn == nil {
+		return SessionCheckpoint{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	now := time.Now().UTC()
+	if stringsTrim(checkpoint.ID) == "" {
+		checkpoint.ID = uuid.NewString()
+	}
+	if stringsTrim(checkpoint.SessionID) == "" {
+		return SessionCheckpoint{}, fmt.Errorf("checkpoint session_id is required")
+	}
+	if stringsTrim(checkpoint.AgentID) == "" {
+		return SessionCheckpoint{}, fmt.Errorf("checkpoint agent_id is required")
+	}
+	if stringsTrim(checkpoint.SummaryJSON) == "" {
+		checkpoint.SummaryJSON = "{}"
+	}
+	if checkpoint.CreatedAt.IsZero() {
+		checkpoint.CreatedAt = now
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO session_checkpoints (
+			id, session_id, agent_id, work_item_id, summary_json, audit_tail, mail_cursor, activity_cursor, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		checkpoint.ID,
+		stringsTrim(checkpoint.SessionID),
+		stringsTrim(checkpoint.AgentID),
+		stringsTrim(checkpoint.WorkItemID),
+		checkpoint.SummaryJSON,
+		checkpoint.AuditTail,
+		checkpoint.MailCursor,
+		checkpoint.ActivityCursor,
+		checkpoint.CreatedAt.UTC().Unix(),
+	)
+	if err != nil {
+		return SessionCheckpoint{}, fmt.Errorf("save session checkpoint: %w", err)
+	}
+	return checkpoint, nil
+}
+
+func (s *Store) LatestCheckpoint(ctx context.Context, sessionID, agentID string) (SessionCheckpoint, error) {
+	if s == nil || s.conn == nil {
+		return SessionCheckpoint{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	query := `SELECT id, session_id, agent_id, work_item_id, summary_json, audit_tail, mail_cursor, activity_cursor, created_at
+	            FROM session_checkpoints
+	           WHERE session_id = ?`
+	args := []any{stringsTrim(sessionID)}
+	if agentID = stringsTrim(agentID); agentID != "" {
+		query += ` AND agent_id = ?`
+		args = append(args, agentID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT 1`
+	row := s.conn.QueryRowContext(ctx, query, args...)
+	item, err := scanCheckpoint(row)
+	if err != nil {
+		return SessionCheckpoint{}, fmt.Errorf("get latest checkpoint: %w", err)
+	}
+	return item, nil
+}
+
 func (s *Store) MarshalDetails(details any) string {
 	if details == nil {
 		return "{}"
@@ -581,6 +925,22 @@ func timeToUnix(t time.Time) int64 {
 
 func stringsTrim(v string) string {
 	return strings.TrimSpace(v)
+}
+
+func normalizeStringArgs(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := stringsTrim(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 type scanner interface {
@@ -707,4 +1067,86 @@ func scanWorkItemRows(rows *sql.Rows) ([]WorkItem, error) {
 		return nil, fmt.Errorf("iterate work items: %w", err)
 	}
 	return items, nil
+}
+
+func scanDispatch(row scanner) (DispatchQueueItem, error) {
+	var (
+		item            DispatchQueueItem
+		availableAtUnix int64
+		leasedAtUnix    int64
+		createdAtUnix   int64
+		updatedAtUnix   int64
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.SessionID,
+		&item.WorkItemID,
+		&item.TargetScope,
+		&item.Status,
+		&item.Priority,
+		&item.PayloadJSON,
+		&item.RetryCount,
+		&item.LastError,
+		&availableAtUnix,
+		&item.LeasedBy,
+		&leasedAtUnix,
+		&item.AssignedAgentID,
+		&item.SubmissionID,
+		&createdAtUnix,
+		&updatedAtUnix,
+	); err != nil {
+		return DispatchQueueItem{}, err
+	}
+	if availableAtUnix > 0 {
+		item.AvailableAt = time.Unix(availableAtUnix, 0).UTC()
+	}
+	if leasedAtUnix > 0 {
+		item.LeasedAt = time.Unix(leasedAtUnix, 0).UTC()
+	}
+	if createdAtUnix > 0 {
+		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	if updatedAtUnix > 0 {
+		item.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanDispatchRows(rows *sql.Rows) ([]DispatchQueueItem, error) {
+	var items []DispatchQueueItem
+	for rows.Next() {
+		item, err := scanDispatch(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan dispatch item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dispatch items: %w", err)
+	}
+	return items, nil
+}
+
+func scanCheckpoint(row scanner) (SessionCheckpoint, error) {
+	var (
+		item          SessionCheckpoint
+		createdAtUnix int64
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.SessionID,
+		&item.AgentID,
+		&item.WorkItemID,
+		&item.SummaryJSON,
+		&item.AuditTail,
+		&item.MailCursor,
+		&item.ActivityCursor,
+		&createdAtUnix,
+	); err != nil {
+		return SessionCheckpoint{}, err
+	}
+	if createdAtUnix > 0 {
+		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	return item, nil
 }

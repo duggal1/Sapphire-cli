@@ -98,7 +98,7 @@ These rules override everything else. Follow them strictly:
 - `spawn_agent` and `send_input`: provide exactly one of `message` or `items`.
 - `wait` and `collect_result`: use arrays for `ids`.
 - `close_agent`: provide a singular `id`.
-- `orchestrate_worktrees` is for parallel isolated work when beneficial.
+- `orchestrate_worktrees` is only a batch helper for pre-scoped worktree jobs. Do not use it when the task is to demonstrate, inspect, validate, or debug the real sub-agent lifecycle or inter-agent coordination.
 - `write_manifest` restricts writes only; reads and commands remain unrestricted. Empty list means read-only.
 </runtime_capabilities>
 

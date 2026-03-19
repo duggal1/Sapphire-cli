@@ -155,6 +155,7 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		defer wg.Done()
 		control := c.subAgentControl()
 		for task := range queue {
+			task = normalizeWorktreeTaskSpec(task)
 			prompt := strings.TrimSpace(task.Prompt)
 			if prompt == "" {
 				outcomes <- taskOutcome{name: task.Name, err: fmt.Errorf("task prompt is required")}
@@ -724,6 +725,19 @@ func validateWorktreeSpecs(tasks []WorktreeTaskSpec) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeWorktreeTaskSpec(task WorktreeTaskSpec) WorktreeTaskSpec {
+	if strings.TrimSpace(task.Isolation) == "" {
+		task.Isolation = "worktree"
+	}
+	branch := sanitizeBranchName(task.Branch)
+	if !isParseableAgentBranch(branch) {
+		task.Branch = ""
+	} else {
+		task.Branch = branch
+	}
+	return task
 }
 
 func (c *coordinator) ResumeWorktree(ctx context.Context, sessionID, worktreePath, prompt, agentKey, model, reasoningEffort string) (OrchestrationAgentRef, error) {

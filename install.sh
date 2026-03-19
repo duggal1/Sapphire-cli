@@ -12,13 +12,15 @@ echo "📦 Step 1/4: Cleaning module cache..."
 go clean -modcache 2>/dev/null || true
 
 echo "📦 Step 2/4: Downloading dependencies..."
-go mod download
+env GOMODCACHE="${GOMODCACHE:-/tmp/sapphire-go-mod}" go mod download
 
 echo "📦 Step 3/4: Tidying dependencies..."
-go mod tidy
+env GOMODCACHE="${GOMODCACHE:-/tmp/sapphire-go-mod}" go mod tidy
 
 echo "🔨 Step 4/4: Building binary..."
-go build -ldflags="-s -w" -o ./sapphire .
+env GOCACHE="${GOCACHE:-/tmp/sapphire-go-build}" \
+  GOMODCACHE="${GOMODCACHE:-/tmp/sapphire-go-mod}" \
+  go build -buildvcs=false -ldflags="-s -w" -o ./sapphire .
 
 echo ""
 echo "✅ Build complete!"

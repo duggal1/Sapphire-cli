@@ -484,8 +484,8 @@ func (s *Store) UpsertWorkItem(ctx context.Context, item WorkItem) error {
 	}
 	_, err := s.conn.ExecContext(
 		ctx,
-		`INSERT INTO work_items (id, type, title, description, status, assignee, parent_id, dependencies, created_at, closed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO work_items (id, type, title, description, status, assignee, parent_id, convoy_id, dependencies, created_at, closed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 			type = excluded.type,
 			title = excluded.title,
@@ -493,6 +493,7 @@ func (s *Store) UpsertWorkItem(ctx context.Context, item WorkItem) error {
 			status = excluded.status,
 			assignee = excluded.assignee,
 			parent_id = excluded.parent_id,
+			convoy_id = excluded.convoy_id,
 			dependencies = excluded.dependencies,
 			closed_at = excluded.closed_at`,
 		stringsTrim(item.ID),
@@ -502,6 +503,7 @@ func (s *Store) UpsertWorkItem(ctx context.Context, item WorkItem) error {
 		stringsTrim(item.Status),
 		stringsTrim(item.Assignee),
 		stringsTrim(item.ParentID),
+		stringsTrim(item.ConvoyID),
 		item.Dependencies,
 		item.CreatedAt.UTC().Unix(),
 		timeToUnix(item.ClosedAt),
@@ -518,7 +520,7 @@ func (s *Store) GetWorkItem(ctx context.Context, workItemID string) (WorkItem, e
 	}
 	row := s.conn.QueryRowContext(
 		ctx,
-		`SELECT id, type, title, description, status, assignee, parent_id, dependencies, created_at, closed_at
+		`SELECT id, type, title, description, status, assignee, parent_id, convoy_id, dependencies, created_at, closed_at
 		 FROM work_items
 		 WHERE id = ?`,
 		stringsTrim(workItemID),
@@ -539,7 +541,7 @@ func (s *Store) ListWorkItemsByAssignee(ctx context.Context, assignee string, li
 	}
 	rows, err := s.conn.QueryContext(
 		ctx,
-		`SELECT id, type, title, description, status, assignee, parent_id, dependencies, created_at, closed_at
+		`SELECT id, type, title, description, status, assignee, parent_id, convoy_id, dependencies, created_at, closed_at
 		 FROM work_items
 		 WHERE assignee = ?
 		 ORDER BY created_at DESC
@@ -575,7 +577,7 @@ func (s *Store) ListWorkItemsByStatus(ctx context.Context, statuses []string, li
 	rows, err := s.conn.QueryContext(
 		ctx,
 		fmt.Sprintf(
-			`SELECT id, type, title, description, status, assignee, parent_id, dependencies, created_at, closed_at
+			`SELECT id, type, title, description, status, assignee, parent_id, convoy_id, dependencies, created_at, closed_at
 			   FROM work_items
 			  WHERE status IN (%s)
 			  ORDER BY created_at ASC
@@ -589,6 +591,319 @@ func (s *Store) ListWorkItemsByStatus(ctx context.Context, statuses []string, li
 	}
 	defer rows.Close()
 	return scanWorkItemRows(rows)
+}
+
+func (s *Store) ListWorkItemsByConvoy(ctx context.Context, convoyID string, limit int) ([]WorkItem, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	convoyID = stringsTrim(convoyID)
+	if convoyID == "" {
+		return nil, fmt.Errorf("convoy id is required")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT id, type, title, description, status, assignee, parent_id, convoy_id, dependencies, created_at, closed_at
+		   FROM work_items
+		  WHERE convoy_id = ?
+		  ORDER BY created_at ASC
+		  LIMIT ?`,
+		convoyID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list work items by convoy: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkItemRows(rows)
+}
+
+func (s *Store) SaveConvoy(ctx context.Context, convoy Convoy) (Convoy, error) {
+	if s == nil || s.conn == nil {
+		return Convoy{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	now := time.Now().UTC()
+	if stringsTrim(convoy.ID) == "" {
+		convoy.ID = uuid.NewString()
+	}
+	if stringsTrim(convoy.Name) == "" {
+		convoy.Name = convoy.ID
+	}
+	if stringsTrim(convoy.MergeStrategy) == "" {
+		convoy.MergeStrategy = "direct"
+	}
+	if stringsTrim(convoy.Status) == "" {
+		convoy.Status = "open"
+	}
+	if convoy.CreatedAt.IsZero() {
+		convoy.CreatedAt = now
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO convoys (id, name, owner, notify, merge_strategy, status, created_at, closed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   name = excluded.name,
+		   owner = excluded.owner,
+		   notify = excluded.notify,
+		   merge_strategy = excluded.merge_strategy,
+		   status = excluded.status,
+		   closed_at = excluded.closed_at`,
+		stringsTrim(convoy.ID),
+		stringsTrim(convoy.Name),
+		stringsTrim(convoy.Owner),
+		stringsTrim(convoy.Notify),
+		stringsTrim(convoy.MergeStrategy),
+		stringsTrim(convoy.Status),
+		convoy.CreatedAt.UTC().Unix(),
+		timeToUnix(convoy.ClosedAt),
+	)
+	if err != nil {
+		return Convoy{}, fmt.Errorf("save convoy: %w", err)
+	}
+	return convoy, nil
+}
+
+func (s *Store) GetConvoy(ctx context.Context, convoyID string) (Convoy, error) {
+	if s == nil || s.conn == nil {
+		return Convoy{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT id, name, owner, notify, merge_strategy, status, created_at, closed_at
+		   FROM convoys
+		  WHERE id = ?`,
+		stringsTrim(convoyID),
+	)
+	item, err := scanConvoy(row)
+	if err != nil {
+		return Convoy{}, fmt.Errorf("get convoy: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) ListConvoys(ctx context.Context, statuses []string, limit int) ([]Convoy, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, name, owner, notify, merge_strategy, status, created_at, closed_at
+	            FROM convoys
+	           WHERE 1 = 1`
+	args := make([]any, 0, len(statuses)+1)
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		query += ` AND status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list convoys: %w", err)
+	}
+	defer rows.Close()
+	var items []Convoy
+	for rows.Next() {
+		item, err := scanConvoy(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan convoy: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate convoys: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) AddConvoyTracks(ctx context.Context, convoyID string, workItemIDs []string) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	convoyID = stringsTrim(convoyID)
+	if convoyID == "" {
+		return fmt.Errorf("convoy id is required")
+	}
+	workItemIDs = normalizeStringArgs(workItemIDs)
+	if len(workItemIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Unix()
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin convoy track transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, workItemID := range workItemIDs {
+		if _, execErr := tx.ExecContext(
+			ctx,
+			`INSERT INTO convoy_tracks (convoy_id, work_item_id, added_at)
+			 VALUES (?, ?, ?)
+			 ON CONFLICT(convoy_id, work_item_id) DO NOTHING`,
+			convoyID,
+			workItemID,
+			now,
+		); execErr != nil {
+			err = fmt.Errorf("add convoy track %s: %w", workItemID, execErr)
+			return err
+		}
+		if _, execErr := tx.ExecContext(
+			ctx,
+			`UPDATE work_items
+			    SET convoy_id = ?
+			  WHERE id = ?`,
+			convoyID,
+			workItemID,
+		); execErr != nil {
+			err = fmt.Errorf("update work item convoy id %s: %w", workItemID, execErr)
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit convoy track transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListConvoyTracks(ctx context.Context, convoyID string) ([]ConvoyTrack, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT convoy_id, work_item_id, added_at
+		   FROM convoy_tracks
+		  WHERE convoy_id = ?
+		  ORDER BY added_at ASC`,
+		stringsTrim(convoyID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list convoy tracks: %w", err)
+	}
+	defer rows.Close()
+	var items []ConvoyTrack
+	for rows.Next() {
+		var (
+			item      ConvoyTrack
+			addedUnix int64
+		)
+		if err := rows.Scan(&item.ConvoyID, &item.WorkItemID, &addedUnix); err != nil {
+			return nil, fmt.Errorf("scan convoy track: %w", err)
+		}
+		if addedUnix > 0 {
+			item.AddedAt = time.Unix(addedUnix, 0).UTC()
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate convoy tracks: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) UpsertAgentHook(ctx context.Context, hook AgentHook) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	if stringsTrim(hook.AgentID) == "" {
+		return fmt.Errorf("agent hook agent_id is required")
+	}
+	if stringsTrim(hook.Status) == "" {
+		hook.Status = "idle"
+	}
+	if hook.HookedAt.IsZero() && stringsTrim(hook.HookBeadID) != "" {
+		hook.HookedAt = time.Now().UTC()
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO agent_hooks (agent_id, hook_bead_id, hooked_at, status)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(agent_id) DO UPDATE SET
+		   hook_bead_id = excluded.hook_bead_id,
+		   hooked_at = excluded.hooked_at,
+		   status = excluded.status`,
+		stringsTrim(hook.AgentID),
+		stringsTrim(hook.HookBeadID),
+		timeToUnix(hook.HookedAt),
+		stringsTrim(hook.Status),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert agent hook: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetAgentHook(ctx context.Context, agentID string) (AgentHook, error) {
+	if s == nil || s.conn == nil {
+		return AgentHook{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT agent_id, hook_bead_id, hooked_at, status
+		   FROM agent_hooks
+		  WHERE agent_id = ?`,
+		stringsTrim(agentID),
+	)
+	item, err := scanAgentHook(row)
+	if err != nil {
+		return AgentHook{}, fmt.Errorf("get agent hook: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) ListAgentHooks(ctx context.Context, statuses []string, limit int) ([]AgentHook, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT agent_id, hook_bead_id, hooked_at, status
+	            FROM agent_hooks
+	           WHERE 1 = 1`
+	args := make([]any, 0, len(statuses)+1)
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			placeholders = append(placeholders, "?")
+			args = append(args, status)
+		}
+		query += ` AND status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	query += ` ORDER BY hooked_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list agent hooks: %w", err)
+	}
+	defer rows.Close()
+	var items []AgentHook
+	for rows.Next() {
+		item, err := scanAgentHook(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan agent hook: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate agent hooks: %w", err)
+	}
+	return items, nil
 }
 
 func (s *Store) EnqueueDispatch(ctx context.Context, item DispatchQueueItem) (DispatchQueueItem, error) {

@@ -45,9 +45,34 @@ type WorkItem struct {
 	Status       string    `json:"status"`
 	Assignee     string    `json:"assignee"`
 	ParentID     string    `json:"parent_id"`
+	ConvoyID     string    `json:"convoy_id"`
 	Dependencies string    `json:"dependencies"`
 	CreatedAt    time.Time `json:"created_at"`
 	ClosedAt     time.Time `json:"closed_at,omitempty"`
+}
+
+type Convoy struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Owner         string    `json:"owner"`
+	Notify        string    `json:"notify"`
+	MergeStrategy string    `json:"merge_strategy"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	ClosedAt      time.Time `json:"closed_at,omitempty"`
+}
+
+type ConvoyTrack struct {
+	ConvoyID   string    `json:"convoy_id"`
+	WorkItemID string    `json:"work_item_id"`
+	AddedAt    time.Time `json:"added_at"`
+}
+
+type AgentHook struct {
+	AgentID    string    `json:"agent_id"`
+	HookBeadID string    `json:"hook_bead_id"`
+	HookedAt   time.Time `json:"hooked_at"`
+	Status     string    `json:"status"`
 }
 
 type DispatchQueueItem struct {

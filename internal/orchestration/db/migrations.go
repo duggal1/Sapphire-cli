@@ -49,11 +49,38 @@ var schemaStatements = []string{
 		status TEXT NOT NULL,
 		assignee TEXT NOT NULL DEFAULT '',
 		parent_id TEXT NOT NULL DEFAULT '',
+		convoy_id TEXT NOT NULL DEFAULT '',
 		dependencies TEXT NOT NULL DEFAULT '[]',
 		created_at INTEGER NOT NULL,
 		closed_at INTEGER NOT NULL DEFAULT 0
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_work_items_assignee_status ON work_items(assignee, status, created_at DESC);`,
+	`CREATE INDEX IF NOT EXISTS idx_work_items_convoy_status ON work_items(convoy_id, status, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS convoys (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		owner TEXT NOT NULL DEFAULT '',
+		notify TEXT NOT NULL DEFAULT '',
+		merge_strategy TEXT NOT NULL DEFAULT 'direct',
+		status TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		closed_at INTEGER NOT NULL DEFAULT 0
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_convoys_status_created_at ON convoys(status, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS convoy_tracks (
+		convoy_id TEXT NOT NULL,
+		work_item_id TEXT NOT NULL,
+		added_at INTEGER NOT NULL,
+		PRIMARY KEY (convoy_id, work_item_id)
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_convoy_tracks_work_item ON convoy_tracks(work_item_id, added_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS agent_hooks (
+		agent_id TEXT PRIMARY KEY,
+		hook_bead_id TEXT NOT NULL DEFAULT '',
+		hooked_at INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'idle'
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_agent_hooks_status_hooked_at ON agent_hooks(status, hooked_at DESC);`,
 	`CREATE TABLE IF NOT EXISTS dispatch_queue (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -133,6 +160,9 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(ctx, conn, "session_checkpoints", "files_modified_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "work_items", "convoy_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil

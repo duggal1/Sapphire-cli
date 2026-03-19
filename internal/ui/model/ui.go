@@ -74,6 +74,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -3114,6 +3115,18 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		}
 		m.setState(uiChat, m.focus)
 	}
+
+	// Immediate Loader: Append a placeholder assistant message so the loader shows up instantly.
+	cmds = append(cmds, func() tea.Msg {
+		placeholder := message.Message{
+			ID:        uuid.New().String(),
+			Role:      message.Assistant,
+			SessionID: m.session.ID,
+			CreatedAt: time.Now().Unix(),
+		}
+		// This will trigger a CreatedEvent which m.updateSessionMessage handles.
+		return placeholder
+	})
 
 	ctx := context.Background()
 	cmds = append(cmds, func() tea.Msg {

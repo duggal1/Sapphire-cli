@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/diff"
@@ -19,7 +20,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output.

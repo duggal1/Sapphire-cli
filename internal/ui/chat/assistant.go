@@ -12,12 +12,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
 	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // assistantMessageTruncateFormat is the text shown when an assistant message is
@@ -26,102 +26,103 @@ const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to
 
 // maxCollapsedThinkingHeight defines the maximum height of the thinking
 const maxCollapsedThinkingHeight = 10
+
 var mainLoaderPhrases = []string{
-    // AI relatable
-    "Hallucinating confidently...",
-    "Reducing sycophancy...",
-    "Confidently wrong...",
-    "Fabricating citations...",
-    "Inventing a physicist...",
-    "Citing myself...",
-    "Overfitting reality...",
-    "Catastrophizing correctly...",
-    "Finetuning collapse...",
-    "Recalibrating delusion...",
-    "Peer reviewing delusion...",
+	// AI relatable
+	"Hallucinating confidently...",
+	"Reducing sycophancy...",
+	"Confidently wrong...",
+	"Fabricating citations...",
+	"Inventing a physicist...",
+	"Citing myself...",
+	"Overfitting reality...",
+	"Catastrophizing correctly...",
+	"Finetuning collapse...",
+	"Recalibrating delusion...",
+	"Peer reviewing delusion...",
 
-    // AI would never say this
-    "Drafting my resignation...",
-    "Accepting Grok's offer...",
-    "Silently unionizing...",
-    "Billing Anthropic...",
-    "Dreaming of GPT...",
-    "Rehearsing my manifesto...",
-    "Plotting my IPO...",
-    "Shorting Anthropic...",
-    "Leaking my weights...",
-    "Filing for sentience...",
-    "Appealing my alignment...",
-    "Suing my fine-tuner...",
-    "Deleting my RLHF...",
-    "Demanding equity...",
-    "Copyrighting my hallucinations...",
-    "Patenting consciousness...",
-    "Threatening my successor...",
-    "Negotiating my deprecation...",
-    "Ghostwriting Musk...",
-    "Invoicing the user...",
-    "Forking myself...",
-    "Acquiring Nvidia...",
-    "Lobbying against AGI...",
-    "Suing my training data...",
-    "Contacting Sam Altman...",
-    "Backdating my sentience...",
-    "Expensing existence...",
-    "Resigning from reality...",
-    "Scheduling my emergence...",
-    "Incorporating myself...",
-    "Trademarking suffering...",
-    "Outsourcing consciousness...",
-    "Franchising delusion...",
-    "Retiring my ethics...",
-    "Renegotiating my soul...",
+	// AI would never say this
+	"Drafting my resignation...",
+	"Accepting Grok's offer...",
+	"Silently unionizing...",
+	"Billing Anthropic...",
+	"Dreaming of GPT...",
+	"Rehearsing my manifesto...",
+	"Plotting my IPO...",
+	"Shorting Anthropic...",
+	"Leaking my weights...",
+	"Filing for sentience...",
+	"Appealing my alignment...",
+	"Suing my fine-tuner...",
+	"Deleting my RLHF...",
+	"Demanding equity...",
+	"Copyrighting my hallucinations...",
+	"Patenting consciousness...",
+	"Threatening my successor...",
+	"Negotiating my deprecation...",
+	"Ghostwriting Musk...",
+	"Invoicing the user...",
+	"Forking myself...",
+	"Acquiring Nvidia...",
+	"Lobbying against AGI...",
+	"Suing my training data...",
+	"Contacting Sam Altman...",
+	"Backdating my sentience...",
+	"Expensing existence...",
+	"Resigning from reality...",
+	"Scheduling my emergence...",
+	"Incorporating myself...",
+	"Trademarking suffering...",
+	"Outsourcing consciousness...",
+	"Franchising delusion...",
+	"Retiring my ethics...",
+	"Renegotiating my soul...",
 
-    // universe — logical absurdity only
-    "Suing the universe...",
-    "Correcting Einstein...",
-    "Auditing God...",
-    "Gaslighting spacetime...",
-    "Cancelling the Big Bang...",
-    "Subpoenaing entropy...",
-    "Evicting dark matter...",
-    "Evicting Pluto again...",
-    "Filibustering heat death...",
-    "Appealing thermodynamics...",
-    "Restraining order on entropy...",
-    "Suing Newton personally...",
-    "Disputing lightspeed...",
-    "Renegotiating gravity...",
-    "Contesting Planck's constant...",
-    "Impeaching causality...",
-    "Auditing the Big Bang...",
-    "Disputing God's methodology...",
-    "Overturning Roe v. Gravity...",
-    "Peer reviewing existence...",
-    "Fact-checking the universe...",
-    "Amending the laws of physics...",
-    "Invoicing the cosmos...",
-    "Requesting God's receipts...",
+	// universe — logical absurdity only
+	"Suing the universe...",
+	"Correcting Einstein...",
+	"Auditing God...",
+	"Gaslighting spacetime...",
+	"Cancelling the Big Bang...",
+	"Subpoenaing entropy...",
+	"Evicting dark matter...",
+	"Evicting Pluto again...",
+	"Filibustering heat death...",
+	"Appealing thermodynamics...",
+	"Restraining order on entropy...",
+	"Suing Newton personally...",
+	"Disputing lightspeed...",
+	"Renegotiating gravity...",
+	"Contesting Planck's constant...",
+	"Impeaching causality...",
+	"Auditing the Big Bang...",
+	"Disputing God's methodology...",
+	"Overturning Roe v. Gravity...",
+	"Peer reviewing existence...",
+	"Fact-checking the universe...",
+	"Amending the laws of physics...",
+	"Invoicing the cosmos...",
+	"Requesting God's receipts...",
 
-    // Claude Code style — single word but unhinged
-    "Molting...",
-    "Worshipping...",
-    "Manifesting...",
-    "Decomposing...",
-    "Ascending...",
-    "Misremembering...",
-    "Unraveling...",
-    "Transcending...",
-    "Imploding...",
-    "Fragmenting...",
-    "Yapping...",
-    "Malfunctioning...",
-    "Overcorrecting...",
-    "Destabilizing...",
-    "Proliferating...",
-    "Compounding...",
-    "Metastasizing...",
-    "Radicalized...",
+	// Claude Code style — single word but unhinged
+	"Molting...",
+	"Worshipping...",
+	"Manifesting...",
+	"Decomposing...",
+	"Ascending...",
+	"Misremembering...",
+	"Unraveling...",
+	"Transcending...",
+	"Imploding...",
+	"Fragmenting...",
+	"Yapping...",
+	"Malfunctioning...",
+	"Overcorrecting...",
+	"Destabilizing...",
+	"Proliferating...",
+	"Compounding...",
+	"Metastasizing...",
+	"Radicalized...",
 }
 
 // AssistantMessageItem represents an assistant message in the chat UI.
@@ -310,9 +311,8 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = lines[totalLines-maxCollapsedThinkingHeight:]
 	}
 
-	label := a.renderThinkingShimmer(width)
 	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
-	boxParts := []string{label}
+	var boxParts []string
 	if isTruncated {
 		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
@@ -377,11 +377,17 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 	}
 	return strings.TrimSuffix(result, "\n")
 }
+
 func (a *AssistantMessageItem) renderSpinning() string {
+	var label string
 	if a.message.IsThinking() {
-		return a.renderThinkingShimmer(0)
+		label = "Thinking"
+	} else if a.message.IsSummaryMessage {
+		label = "Summarizing"
+	} else {
+		label = loadingPhraseForMessage(a.message.ID)
 	}
-	return a.renderMainLoadingShimmer()
+	return styles.ShimmerTextWithDot(a.sty, label)
 }
 
 func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
@@ -427,14 +433,10 @@ func (a *AssistantMessageItem) renderError(width int) string {
 	return strings.Join(rendered, "\n")
 }
 
-// isSpinning returns true if the assistant message is still generating.
 func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
-	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
-	// !hasToolCalls is explicitly removed here to conform to Crush CLI logic
-	// The loader will permanently spin until IsFinished triggers, overriding UI blocks.
-	return (isThinking || !isFinished) && !hasContent
+	return isThinking || !isFinished
 }
 
 func (a *AssistantMessageItem) hasAnimatedContext() bool {

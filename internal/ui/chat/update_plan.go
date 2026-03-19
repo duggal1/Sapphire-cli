@@ -7,6 +7,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
+	uistyles "github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // UpdatePlanToolMessageItem renders update_plan as a Codex-style todo list.
@@ -49,7 +50,8 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		return ""
 	}
 
-	lines := []string{sty.Muted.Render("• ") + sty.Base.Bold(true).Render("To-Do")}
+	title := uistyles.ApplyBoldForegroundGrad(sty, "To-Do", sty.GreenLight, sty.Tertiary)
+	lines := []string{sty.Base.Foreground(sty.GreenLight).Render("• ") + title}
 
 	indented := make([]string, 0, len(args.Plan)+1)
 	if expl := strings.TrimSpace(deref(args.Explanation)); expl != "" {
@@ -86,10 +88,10 @@ func renderPlanStepLines(sty *styles.Styles, item tools.PlanItem, width int) []s
 		render = func(s string) string { return sty.Base.Strikethrough(true).Faint(true).Render(s) }
 	case tools.StepStatusInProgress:
 		prefix = "□ "
-		render = func(s string) string { return sty.Base.Foreground(sty.Info).Bold(true).Render(s) }
+		render = func(s string) string { return sty.Base.Foreground(sty.GreenLight).Bold(true).Render(s) }
 	default:
 		prefix = "□ "
-		render = func(s string) string { return sty.Base.Faint(true).Render(s) }
+		render = func(s string) string { return sty.Base.Foreground(sty.FgHalfMuted).Render(s) }
 	}
 
 	lines := wrapPrefixedText(strings.TrimSpace(item.Step), max(1, width-4), prefix, "  ")

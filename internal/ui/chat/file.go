@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/fsext"
 	"github.com/duggal1/Sapphire-cli/internal/message"
@@ -55,10 +56,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
 	}
 
-	filePaths := params.FilePaths
-	if params.FilePath != "" {
-		filePaths = append(filePaths, params.FilePath)
-	}
+	filePaths := collectViewSummaryPaths(params)
 
 	var toolParams []string
 	if opts.ToolCall.Name == tools.AgenticViewToolName {
@@ -176,12 +174,17 @@ func renderViewSummary(
 	width int,
 	isSingleView bool,
 ) string {
-	normalizedPaths := make([]string, 0, len(filePaths))
-	for _, p := range filePaths {
-		if p == "" {
-			continue
+	normalizedPaths := normalizeViewSummaryPaths(filePaths)
+	if isSingleView {
+		entry, ok := buildSingleViewEntry(normalizedPaths, params, result)
+		if !ok {
+			return ""
 		}
-		normalizedPaths = append(normalizedPaths, formatRelativePath(p))
+		root := buildViewDetailsRoot(sty, toolTitle, []fileContextEntry{entry}, status, result, true)
+		if root == nil {
+			return ""
+		}
+		return strings.Join(renderTreeWithRoot(root, width), "\n")
 	}
 	if len(normalizedPaths) == 0 {
 		return ""
@@ -213,12 +216,6 @@ func renderViewSummary(
 				}
 			}
 		}
-	}
-
-	// Fallback for single-file reads when metadata is missing.
-	if len(lineRanges) == 0 && len(normalizedPaths) == 1 && params.Limit > 0 {
-		start := params.Offset + 1
-		lineRanges[normalizedPaths[0]] = lineRange{start: start, end: start + params.Limit - 1}
 	}
 
 	entries := make([]fileContextEntry, 0, len(normalizedPaths))
@@ -268,7 +265,7 @@ func buildViewDetailsRoot(
 			scopeNode.Children = append(scopeNode.Children, &TreeNode{Label: subAgentKVLabel("Error", errLine)})
 		}
 		return &TreeNode{
-			Label:    sty.Tool.ListRoot.Render(toolTitle),
+			Label:    viewRootLabel(sty, toolTitle),
 			Children: []*TreeNode{scopeNode},
 		}
 	}
@@ -292,9 +289,90 @@ func buildViewDetailsRoot(
 	}
 
 	return &TreeNode{
-		Label:    sty.Tool.ListRoot.Render(toolTitle),
+		Label:    viewRootLabel(sty, toolTitle),
 		Children: children,
 	}
+}
+
+func collectViewSummaryPaths(params tools.ViewParams) []string {
+	filePaths := make([]string, 0, len(params.FilePaths)+len(params.Paths)+len(params.Files)+2)
+	filePaths = append(filePaths, params.FilePaths...)
+	filePaths = append(filePaths, params.Paths...)
+	filePaths = append(filePaths, params.Files...)
+	if params.FilePath != "" {
+		filePaths = append(filePaths, params.FilePath)
+	}
+	if params.Path != "" {
+		filePaths = append(filePaths, params.Path)
+	}
+	return filePaths
+}
+
+func normalizeViewSummaryPaths(filePaths []string) []string {
+	normalizedPaths := make([]string, 0, len(filePaths))
+	seen := make(map[string]struct{}, len(filePaths))
+	for _, p := range filePaths {
+		if p == "" {
+			continue
+		}
+		path := formatRelativePath(p)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		normalizedPaths = append(normalizedPaths, path)
+	}
+	return normalizedPaths
+}
+
+func buildSingleViewEntry(normalizedPaths []string, params tools.ViewParams, result *message.ToolResult) (fileContextEntry, bool) {
+	if len(normalizedPaths) != 1 {
+		return fileContextEntry{}, false
+	}
+
+	entry := fileContextEntry{Path: normalizedPaths[0]}
+	if result != nil && result.Metadata != "" {
+		var meta tools.ViewResponseMetadata
+		if err := json.Unmarshal([]byte(result.Metadata), &meta); err == nil {
+			content := ""
+			switch {
+			case len(meta.Files) == 1 && formatRelativePath(meta.Files[0].FilePath) == entry.Path:
+				content = meta.Files[0].Content
+			case meta.FilePath != "" && formatRelativePath(meta.FilePath) == entry.Path:
+				content = meta.Content
+			}
+			if lines := countLines(content); lines > 0 {
+				start := resolveSingleViewLineStart(params)
+				entry.LineStart = start
+				entry.LineEnd = start + lines - 1
+				return entry, true
+			}
+		}
+	}
+
+	if params.Limit > 0 {
+		start := resolveSingleViewLineStart(params)
+		entry.LineStart = start
+		entry.LineEnd = start + params.Limit - 1
+	}
+	return entry, true
+}
+
+func resolveSingleViewLineStart(params tools.ViewParams) int {
+	if params.Offset <= 0 {
+		return 1
+	}
+	return params.Offset
+}
+
+func viewRootLabel(sty *styles.Styles, toolTitle string) string {
+	if toolTitle == "Agentic View" {
+		return sty.Base.Foreground(lipgloss.Color("#EFD9E7")).Bold(true).Render(toolTitle)
+	}
+	return sty.Tool.ListRoot.Render(toolTitle)
 }
 
 func renderViewFileLabel(entry fileContextEntry) string {

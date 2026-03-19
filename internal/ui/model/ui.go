@@ -240,6 +240,8 @@ type UI struct {
 
 	// Chat components
 	chat *Chat
+	// assistantFooter is the fixed footer rendered above the editor.
+	assistantFooter *chat.AssistantInfoItem
 
 	// onboarding state
 	onboarding struct {
@@ -868,10 +870,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		case message.Assistant:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
-			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-				items = append(items, infoItem)
-			}
+			m.updateAssistantFooter(msg)
 		default:
 			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
 		}
@@ -881,6 +880,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	m.loadNestedToolCalls(items)
 
 	items = dedupeMessageItems(items)
+	m.rebuildAssistantFooter(msgPtrs)
 
 	// If the user switches between sessions while the agent is working we want
 	// to make sure the animations are shown.
@@ -917,6 +917,41 @@ func dedupeMessageItems(items []chat.MessageItem) []chat.MessageItem {
 		out = append(out, item)
 	}
 	return out
+}
+
+func (m *UI) rebuildAssistantFooter(messages []*message.Message) {
+	m.assistantFooter = nil
+	for i := len(messages) - 1; i >= 0; i-- {
+		m.updateAssistantFooter(messages[i])
+		if m.assistantFooter != nil {
+			return
+		}
+	}
+}
+
+func (m *UI) updateAssistantFooter(msg *message.Message) {
+	if msg == nil || msg.Role != message.Assistant {
+		return
+	}
+
+	finish := msg.FinishPart()
+	if finish == nil || finish.Reason != message.FinishReasonEndTurn {
+		if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
+			m.assistantFooter.SetMessage(msg)
+		}
+		return
+	}
+
+	lastUserTime := time.Unix(m.lastUserMessageTime, 0)
+	if m.assistantFooter != nil && m.assistantFooter.MessageID() == msg.ID {
+		m.assistantFooter.SetMessage(msg)
+		m.assistantFooter.SetLastUserMessageTime(lastUserTime)
+		return
+	}
+
+	if infoItem, ok := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), lastUserTime).(*chat.AssistantInfoItem); ok {
+		m.assistantFooter = infoItem
+	}
 }
 
 func (m *UI) refreshModelStateDialogs() {
@@ -1030,15 +1065,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-			infoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(infoItem)
-			if m.chat.Follow() {
-				if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
-		}
+		m.updateAssistantFooter(&msg)
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -1103,12 +1130,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 
-	if shouldRenderAssistant && msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
-		if infoItem := m.chat.MessageItem(chat.AssistantInfoID(msg.ID)); infoItem == nil {
-			newInfoItem := chat.NewAssistantInfoItem(m.com.Styles, &msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
-			m.chat.AppendMessages(newInfoItem)
-		}
-	}
+	m.updateAssistantFooter(&msg)
 
 	var items []chat.MessageItem
 	for _, tc := range msg.ToolCalls() {
@@ -2183,6 +2205,12 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if layout.pills.Dy() > 0 && m.pillsView != "" {
 			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
+		if layout.footer.Dy() > 0 && m.assistantFooter != nil {
+			footer := m.assistantFooter.RawRender(layout.footer.Dx())
+			if footer != "" {
+				uv.NewStyledString(footer).Draw(scr, layout.footer)
+			}
+		}
 
 		editorWidth := scr.Bounds().Dx()
 		if !m.isCompact {
@@ -2617,6 +2645,10 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	helpHeight := 1
 	// The editor height
 	editorHeight := 5
+	footerHeight := 0
+	if m.assistantFooter != nil {
+		footerHeight = 2
+	}
 	// The sidebar width
 	sidebarWidth := 30
 	// The header height
@@ -2687,12 +2719,13 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 		// ------
 		// help
 		headerRect, mainRect := layout.SplitVertical(appRect, layout.Fixed(landingHeaderHeight))
-		mainRect, editorRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-editorHeight))
+		mainRect, footerRect, editorRect := splitChatBottom(mainRect, editorHeight, footerHeight)
 		// Remove extra padding from editor (but keep it for header and main)
 		editorRect.Min.X -= 1
 		editorRect.Max.X += 1
 		uiLayout.header = headerRect
 		uiLayout.main = mainRect
+		uiLayout.footer = footerRect
 		uiLayout.editor = editorRect
 
 	case uiChat:
@@ -2714,7 +2747,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			uiLayout.sessionDetails.Min.Y += compactHeaderHeight // adjust for header
 			// Add one line gap between header and main content
 			mainRect.Min.Y += 1
-			mainRect, editorRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-editorHeight))
+			mainRect, footerRect, editorRect := splitChatBottom(mainRect, editorHeight, footerHeight)
 			mainRect.Max.X -= 1 // Add padding right
 			uiLayout.header = headerRect
 			layoutChatPanels(mainRect)
@@ -2722,6 +2755,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			if uiLayout.main.Dy() > 1 {
 				uiLayout.main.Max.Y -= 1
 			}
+			uiLayout.footer = footerRect
 			uiLayout.editor = editorRect
 		} else {
 			// Layout
@@ -2736,7 +2770,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			mainRect, sideRect := layout.SplitHorizontal(appRect, layout.Fixed(appRect.Dx()-sidebarWidth))
 			// Add padding left
 			sideRect.Min.X += 1
-			mainRect, editorRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-editorHeight))
+			mainRect, footerRect, editorRect := splitChatBottom(mainRect, editorHeight, footerHeight)
 			mainRect.Max.X -= 1 // Add padding right
 			uiLayout.sidebar = sideRect
 			layoutChatPanels(mainRect)
@@ -2744,11 +2778,33 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 			if uiLayout.main.Dy() > 1 {
 				uiLayout.main.Max.Y -= 1
 			}
+			uiLayout.footer = footerRect
 			uiLayout.editor = editorRect
 		}
 	}
 
 	return uiLayout
+}
+
+func splitChatBottom(mainRect uv.Rectangle, editorHeight, footerHeight int) (uv.Rectangle, uv.Rectangle, uv.Rectangle) {
+	totalBottom := editorHeight + footerHeight
+	if totalBottom <= 0 || mainRect.Dy() <= 0 {
+		return mainRect, image.Rect(0, 0, 0, 0), image.Rect(0, 0, 0, 0)
+	}
+	if totalBottom > mainRect.Dy() {
+		totalBottom = mainRect.Dy()
+	}
+
+	contentRect, bottomRect := layout.SplitVertical(mainRect, layout.Fixed(mainRect.Dy()-totalBottom))
+	if footerHeight <= 0 {
+		return contentRect, image.Rect(0, 0, 0, 0), bottomRect
+	}
+
+	if footerHeight > bottomRect.Dy() {
+		footerHeight = bottomRect.Dy()
+	}
+	footerRect, editorRect := layout.SplitVertical(bottomRect, layout.Fixed(footerHeight))
+	return contentRect, footerRect, editorRect
 }
 
 // uiLayout defines the positioning of UI elements.
@@ -2767,6 +2823,9 @@ type uiLayout struct {
 
 	// pills is the area for the pills panel.
 	pills uv.Rectangle
+
+	// footer is the fixed assistant footer above the editor.
+	footer uv.Rectangle
 
 	// editor is the area for the editor pane.
 	editor uv.Rectangle

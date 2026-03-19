@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestAssistantThinkingRenderUsesThinkingBoxPresentation(t *testing.T) {
@@ -29,5 +29,23 @@ func TestAssistantThinkingRenderUsesThinkingBoxPresentation(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Analyzing") || !strings.Contains(rendered, "first") {
 		t.Fatalf("expected rendered thinking markdown, got %q", rendered)
+	}
+}
+
+func TestUserMessageUsesChevronPrefix(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewUserMessageItem(&sty, &message.Message{
+		ID:   "user-prefix",
+		Role: message.User,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "hello"},
+		},
+	}, nil)
+
+	rendered := ansi.Strip(item.Render(80))
+	if !strings.HasPrefix(rendered, "> hello") {
+		t.Fatalf("expected chevron prefix, got %q", rendered)
 	}
 }

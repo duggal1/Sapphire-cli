@@ -75,7 +75,27 @@ func TestSingleViewPendingStillRendersMetadataTree(t *testing.T) {
 	if !strings.Contains(rendered, "View") || !strings.Contains(rendered, "Scope: internal/agent") {
 		t.Fatalf("expected pending single view metadata, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L13-L89") || !strings.Contains(rendered, "Activity: active") {
+	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L12-L88") || !strings.Contains(rendered, "Activity: active") {
 		t.Fatalf("expected pending single view file metadata, got %q", rendered)
+	}
+}
+
+func TestSingleViewUsesAliasPathFields(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewViewToolMessageItem(&sty, message.ToolCall{
+		ID:       "view-alias",
+		Name:     "single_view",
+		Input:    `{"path":"internal/ui/chat/file.go","offset":9,"limit":53}`,
+		Finished: false,
+	}, nil, false)
+
+	rendered := ansi.Strip(item.Render(100))
+	if !strings.Contains(rendered, "View") || !strings.Contains(rendered, "Scope: internal/ui/chat") {
+		t.Fatalf("expected alias path single view metadata, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "File: file.go L9-L61") {
+		t.Fatalf("expected exact alias path line range, got %q", rendered)
 	}
 }

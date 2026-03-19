@@ -1323,10 +1323,10 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(tertiary)
 
 	// Todo styles
-	s.Tool.TodoRatio = base.Foreground(primary)
+	s.Tool.TodoRatio = base.Foreground(greenLight).Bold(true)
 	s.Tool.TodoCompletedIcon = base.Foreground(greenLight)
-	s.Tool.TodoInProgressIcon = base.Foreground(greenLight)
-	s.Tool.TodoPendingIcon = base.Foreground(fgMuted)
+	s.Tool.TodoInProgressIcon = base.Foreground(greenLight).Bold(true)
+	s.Tool.TodoPendingIcon = base.Foreground(tertiary)
 	s.Tool.TodoFailedIcon = base.Foreground(error)
 	s.Tool.TodoCanceledIcon = base.Foreground(secondary)
 
@@ -1428,8 +1428,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
-	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.Foreground(fgHalfMuted)
-	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.Foreground(primary)
+	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.Foreground(primary).Bold(true)
+	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.Foreground(primary).Bold(true)
 	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
 	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(greenDark).BorderStyle(messageFocussedBorder)

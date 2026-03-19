@@ -197,8 +197,8 @@ func (a *AssistantMessageItem) Render(width int) string {
 	// it's wrapping logic.
 	// We already know that the content is wrapped to the correct width in
 	// RawRender, so we can just apply the styles directly to each line.
-	focused := a.sty.Chat.Message.AssistantFocused.Render("·")
-	blurred := a.sty.Chat.Message.AssistantBlurred.Render("·")
+	focused := a.sty.Chat.Message.AssistantFocused.Render("•")
+	blurred := a.sty.Chat.Message.AssistantBlurred.Render("•")
 	rendered := a.RawRender(width)
 	prefix := blurred
 	if a.focused {
@@ -264,7 +264,7 @@ func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
 	}
 
 	label := fmt.Sprintf("Running %d terminal(s) in background", count)
-	return styles.ShimmerTextWithDot(a.sty, label)
+	return styles.ShimmerText(a.sty, label, 0)
 }
 
 // renderThinking renders the thinking/reasoning content with footer.
@@ -330,7 +330,7 @@ func (a *AssistantMessageItem) renderThinkingMarkdown(content string, width int)
 
 // renderThinkingShimmer renders a beautiful text shimmer for "Thinking..." with Codex-style dot.
 func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
-	return styles.ShimmerTextWithDot(a.sty, "Thinking")
+	return styles.ShimmerText(a.sty, "Thinking", 0)
 }
 
 // renderMarkdown renders content as markdown.
@@ -351,7 +351,7 @@ func (a *AssistantMessageItem) renderSpinning() string {
 
 func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
 	label := loadingPhraseForMessage(a.message.ID)
-	return styles.ShimmerTextWithDot(a.sty, label)
+	return styles.ShimmerText(a.sty, label, 0)
 }
 
 func loadingPhraseForMessage(messageID string) string {

@@ -846,6 +846,8 @@ func allToolNames() []string {
 		"report_agent_job_result",
 		"orchestrate_worktrees",
 		"bash",
+		"agent_mail_send",
+		"agent_mail_inbox",
 		"job_output",
 		"job_kill",
 		"download",

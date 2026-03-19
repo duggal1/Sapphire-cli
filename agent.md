@@ -1,6 +1,6 @@
 # Sapphire CLI - Agent.md (Source of Truth)
 
-**Repository:** https://github.com/duggal1/Sapphire-cli
+**Repository:** https://github.com/charmbracelet/sapphire
 **Language:** Go 1.26.1
 **Last Updated:** 2026-03-17
 

@@ -93,6 +93,12 @@ func toolNameAlias(name string) string {
 	case "job_kill", "kill_job", "stop_job", "cancel_job", "terminate_job":
 		return JobKillToolName
 
+	// Agent mail aliases
+	case "agent_mail_send", "mail_send", "send_mail", "send_agent_mail", "agent_send_mail":
+		return "agent_mail_send"
+	case "agent_mail_inbox", "mail_inbox", "check_mail", "read_mail", "inbox":
+		return "agent_mail_inbox"
+
 	// Todo aliases - COMMENTED OUT, replaced with update_plan
 	// case "todo", "to_do", "todo_list", "to_do_list",
 	// 	"task", "tasks", "task_list", "checklist":

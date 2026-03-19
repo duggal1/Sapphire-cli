@@ -486,7 +486,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "recall_memory", "save_memory", "sourcegraph", "python", "update_plan", "view", "single_view", "agentic_view", "apply_patch", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "agent_mail_send", "agent_mail_inbox", "job_output", "job_kill", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "recall_memory", "save_memory", "sourcegraph", "python", "update_plan", "request_user_input", "set_mode", "view", "single_view", "agentic_view", "apply_patch", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -509,7 +509,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	coderAgent, ok := cfg.Agents[AgentCoder]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "job_output", "job_kill", "download", "edit", "single_edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "recall_memory", "save_memory", "python", "update_plan", "agentic_view", "apply_patch", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent", "spawn_agents_on_csv", "report_agent_job_result", "orchestrate_worktrees", "bash", "agent_mail_send", "agent_mail_inbox", "job_output", "job_kill", "download", "edit", "single_edit", "agentic_edit", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "recall_memory", "save_memory", "python", "update_plan", "request_user_input", "set_mode", "agentic_view", "apply_patch", "write", "list_tools", "search_tools", "tool_suggest", "list_available_mcps", "connect_mcp", "call_mcp_tool", "list_mcp_tools", "list_mcp_resources", "read_mcp_resource", "load_skill", "list_skills"}, coderAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -528,6 +528,7 @@ func expectedTaskTools(allTools []string) []string {
 		"edit":           {},
 		"single_edit":    {},
 		"agentic_edit":   {},
+		"apply_patch":    {},
 		"write":          {},
 	}
 	filtered := make([]string, 0, len(allTools))

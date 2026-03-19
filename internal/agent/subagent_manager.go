@@ -446,6 +446,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
+	c.syncRunnerOrchestrationState(context.Background(), runner)
 
 	c.publishSubAgentEvent(SubAgentSpawnedEvent, runner, "", SubAgentStageSpawned, "")
 
@@ -453,6 +454,12 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 
 	submissionID := runner.enqueue(assignmentPrompt, opts.PromptItems)
 	if submissionID != "" {
+		c.recordOrchestrationActivity(context.Background(), runner.id, "spawned", map[string]any{
+			"submission_id": submissionID,
+			"workdir":       runner.workDir,
+			"branch":        runner.assignment.Branch,
+			"task":          runner.assignment.Task,
+		})
 		c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
 		c.startSubAgentCompletionWatcher(runner, submissionID)
 	}
@@ -488,6 +495,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		broker := runner.statusBroker
 		runner.mu.Unlock()
 		publishSubAgentStatus(broker, subAgentStatusRunning)
+		c.syncRunnerOrchestrationState(context.Background(), runner)
 
 		c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
 
@@ -496,7 +504,11 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		runner.cancel = cancel
 		runner.mu.Unlock()
 
-		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, input.prompt)
+		prompt := input.prompt
+		if mailboxSummary := c.drainRunnerInboxSummary(context.Background(), runner); mailboxSummary != "" {
+			prompt = mailboxSummary + "\n\n" + prompt
+		}
+		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt)
 		cancel()
 
 		// Run validation gate on the worktree if it exists
@@ -613,6 +625,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		broker = runner.statusBroker
 		payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
 		runner.mu.Unlock()
+		c.syncRunnerOrchestrationState(context.Background(), runner)
 		publishSubAgentStatus(broker, payload.Status)
 		publishSubAgentLifecycleEvent(eventType, payload)
 	}
@@ -754,6 +767,12 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
+	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.recordOrchestrationActivity(context.Background(), runner.id, "resumed", map[string]any{
+		"workdir": runner.workDir,
+		"branch":  runner.assignment.Branch,
+		"task":    runner.assignment.Task,
+	})
 
 	c.publishSubAgentEvent(SubAgentSpawnedEvent, runner, "", SubAgentStageSpawned, "")
 
@@ -787,6 +806,7 @@ func (c *coordinator) sendSubAgentInput(ctx context.Context, agentID, prompt str
 	if submissionID == "" {
 		return "", errors.New("agent is closed")
 	}
+	c.syncRunnerOrchestrationState(context.Background(), runner)
 	c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
 	c.startSubAgentCompletionWatcher(runner, submissionID)
 	return submissionID, nil
@@ -971,6 +991,12 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 	}
 
 	runner.close()
+	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.recordOrchestrationActivity(context.Background(), runner.id, "closed", map[string]any{
+		"workdir": workDir,
+		"task":    taskSlug,
+		"status":  status,
+	})
 	c.publishSubAgentEvent(SubAgentClosedEvent, runner, "", SubAgentStageClosed, "")
 	c.ensureSubAgentRegistry().delete(agentID)
 	return nil

@@ -609,6 +609,7 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 			name != tools.EditToolName &&
 			name != tools.SingleEditToolName &&
 			name != tools.AgenticEditToolName &&
+			name != tools.ApplyPatchToolName &&
 			name != tools.WriteToolName {
 			coderNamesWithoutAgent = append(coderNamesWithoutAgent, name)
 		}
@@ -663,12 +664,12 @@ func TestBuildSubAgentKeepsExplicitCollabLifecycleOnly(t *testing.T) {
 
 	names := toolNames(subAgent.tools.Copy())
 	require.NotContains(t, names, AgentToolName)
-	require.Contains(t, names, SpawnAgentToolName)
-	require.Contains(t, names, ResumeAgentToolName)
-	require.Contains(t, names, SendInputToolName)
-	require.Contains(t, names, WaitAgentsToolName)
-	require.Contains(t, names, CollectResultToolName)
-	require.Contains(t, names, CloseAgentToolName)
+	require.NotContains(t, names, SpawnAgentToolName)
+	require.NotContains(t, names, ResumeAgentToolName)
+	require.NotContains(t, names, SendInputToolName)
+	require.NotContains(t, names, WaitAgentsToolName)
+	require.NotContains(t, names, CollectResultToolName)
+	require.NotContains(t, names, CloseAgentToolName)
 	require.NotContains(t, names, SpawnAgentsOnCSVToolName)
 	require.NotContains(t, names, ReportAgentJobResultToolName)
 	require.NotContains(t, names, OrchestrateWorktreesToolName)

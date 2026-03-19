@@ -92,6 +92,7 @@ These rules override everything else. Follow them strictly:
 - Loop: observe → reason → act with one tool call per step → wait. No bursts; always observe first.
 
 - Sub-agent lifecycle: `spawn_agent` → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
+- Coordination mail: `agent_mail_send` sends durable agent-to-agent or agent-to-main messages. `agent_mail_inbox` reads them.
 - For explicit isolation, use `spawn_agent` with `isolation: "worktree"`.
 
 - `spawn_agent` and `send_input`: provide exactly one of `message` or `items`.

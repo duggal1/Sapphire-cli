@@ -23,6 +23,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
+	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -35,6 +36,7 @@ import (
 	pmem "github.com/duggal1/Sapphire-cli/internal/memory"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/oauth/copilot"
+	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/skills"
@@ -140,6 +142,8 @@ type coordinator struct {
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
 	subAgentRegistry          *subAgentRegistry
+	orchestrationStore        *orchestrationdb.Store
+	mailbox                   *agentmailbox.Service
 	mainWorktreeDir           string
 	mainWorktreeBranch        string
 	worktreeOpsMu             sync.Mutex
@@ -251,6 +255,12 @@ func NewCoordinator(
 	if err := c.memoryPipe.EnsureMemoryFolder(); err != nil {
 		slog.Warn("Failed to ensure memory folder", "error", err)
 	}
+	orchestrationStore, err := orchestrationdb.Open(ctx, cfg.Options.DataDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("open orchestration database: %w", err)
+	}
+	c.orchestrationStore = orchestrationStore
+	c.mailbox = agentmailbox.NewService(orchestrationStore, c.nudgeMailboxRecipient)
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
 		c.mainWorktreeDir = worktreeDir
@@ -1334,6 +1344,20 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.FastViewTool(tools.AgenticViewToolName, c.lspManager, c.editGuard, c.permissions, c.filetracker, workingDir, maxConcurrent, c.cfg.Options.SkillsPaths...),
 		tools.NewWriteTool(c.lspManager, c.editGuard, c.permissions, c.history, c.filetracker, workingDir),
 	)
+	if slices.Contains(agent.AllowedTools, AgentMailSendToolName) {
+		tool, err := c.agentMailSendTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, tool)
+	}
+	if slices.Contains(agent.AllowedTools, AgentMailInboxToolName) {
+		tool, err := c.agentMailInboxTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, tool)
+	}
 
 	listTools := func() []string {
 		if len(allTools) == 0 {

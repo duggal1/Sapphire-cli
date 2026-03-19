@@ -15,7 +15,6 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
-	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
 //go:embed tools/orchestrate_worktrees.md
@@ -66,8 +65,27 @@ type OrchestrateWorktreesResult struct {
 	BaseBranch               string                  `json:"base_branch,omitempty"`
 	CoordinatorMode          string                  `json:"coordinator_mode,omitempty"`
 	SignalDirectory          string                  `json:"signal_directory,omitempty"`
+	IntegrationPlanPath      string                  `json:"integration_plan_path,omitempty"`
 	ConflictReportPath       string                  `json:"conflict_report_path,omitempty"`
 	PRDraftPath              string                  `json:"pr_draft_path,omitempty"`
+	IntegrationWorktreePath  string                  `json:"integration_worktree_path,omitempty"`
+	CombinedValidationPath   string                  `json:"combined_validation_path,omitempty"`
+	RollbackArtifactPath     string                  `json:"rollback_artifact_path,omitempty"`
+}
+
+type integrationPlan struct {
+	BaseBranch string                `json:"base_branch"`
+	Mode       string                `json:"mode"`
+	Steps      []integrationPlanStep `json:"steps"`
+}
+
+type integrationPlanStep struct {
+	Order         int      `json:"order"`
+	Branch        string   `json:"branch"`
+	Title         string   `json:"title"`
+	Reason        string   `json:"reason"`
+	Dependencies  []string `json:"dependencies,omitempty"`
+	ConflictsWith []string `json:"conflicts_with,omitempty"`
 }
 
 func (c *coordinator) orchestrateWorktreesTool(ctx context.Context) (fantasy.AgentTool, error) {
@@ -239,6 +257,15 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		return OrchestrateWorktreesResult{}, err
 	}
 	result.ConflictReportPath = conflictReportPath
+	plan, err := buildDeterministicIntegrationPlan(ctx, root, baseRef, result.Tasks)
+	if err != nil {
+		return OrchestrateWorktreesResult{}, err
+	}
+	planPath, err := writeIntegrationPlan(root, plan)
+	if err != nil {
+		return OrchestrateWorktreesResult{}, err
+	}
+	result.IntegrationPlanPath = planPath
 
 	prDraftPath, err := writePRDraftMetadata(root, baseRef, result.Tasks)
 	if err != nil {
@@ -251,55 +278,36 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		result.IntegrationSkippedReason = "coordinator-only mode enforced; generated signals, conflict report, and draft PR metadata without integration"
 		return result, nil
 	}
+	allPassed := true
+	for _, task := range result.Tasks {
+		if task.Status != subAgentStatusCompleted || !task.ValidationPassed {
+			allPassed = false
+			break
+		}
+	}
+	if !allPassed {
+		result.IntegrationSkippedReason = "validation failed or task incomplete"
+		return result, nil
+	}
+	execResult, err := executeDeterministicIntegration(ctx, root, baseRef, params, plan)
+	if err != nil {
+		return OrchestrateWorktreesResult{}, err
+	}
+	result.IntegrationWorktreePath = execResult.WorktreePath
+	result.CombinedValidationPath = execResult.ValidationReportPath
+	result.RollbackArtifactPath = execResult.RollbackArtifactPath
+	result.CoordinatorMode = "planner_executor"
 	if integrationPrompt != "" {
-		allPassed := true
-		for _, task := range result.Tasks {
-			if task.Status != subAgentStatusCompleted || !task.ValidationPassed {
-				allPassed = false
-				break
-			}
-		}
-		if !allPassed {
-			result.IntegrationSkippedReason = "validation failed or task incomplete"
-			return result, nil
-		}
-		branch := strings.TrimSpace(params.IntegrationBranch)
-		if branch == "" {
-			branch = fmt.Sprintf("integration/%d", time.Now().Unix())
-		}
-		agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
-			Prompt:        integrationPrompt,
-			Title:         "Integration Agent",
-			Worktree:      true,
-			Branch:        branch,
-			WriteManifest: []string{},
-			AgentID:       config.AgentTask,
-		})
-		if err != nil {
-			return OrchestrateWorktreesResult{}, err
-		}
-		ref := &OrchestrationAgentRef{
-			AgentID:      agentID,
-			SubmissionID: submissionID,
-			Title:        "Integration Agent",
-		}
-		control := c.subAgentControl()
-		if runner, err := c.getSubAgent(agentID); err == nil {
-			ref.WorktreePath = runner.workDir
-			ref.Branch = runner.assignment.Branch
-		}
-		_, _ = control.wait(ctx, []string{agentID}, 0)
-		results := control.collectResult([]string{agentID})
-		_ = control.close(agentID)
-		if len(results) > 0 {
-			ref.Status = results[0].Status
-			ref.ValidationPassed = results[0].ValidationPassed
-			ref.ValidationErrors = results[0].ValidationErrors
-		}
-		result.IntegrationAgent = ref
+		result.IntegrationSkippedReason = "integration prompt ignored in deterministic executor mode"
 	}
 
 	return result, nil
+}
+
+type integrationExecutionResult struct {
+	WorktreePath         string
+	ValidationReportPath string
+	RollbackArtifactPath string
 }
 
 func writeOrchestrationSignal(root string, ref OrchestrationAgentRef) (string, error) {
@@ -414,6 +422,185 @@ func writePRDraftMetadata(root, baseRef string, tasks []OrchestrationAgentRef) (
 	return path, os.WriteFile(path, []byte(strings.Join(body, "\n")+"\n"), 0o644)
 }
 
+func buildDeterministicIntegrationPlan(ctx context.Context, root, baseRef string, tasks []OrchestrationAgentRef) (integrationPlan, error) {
+	type branchMeta struct {
+		ref       OrchestrationAgentRef
+		files     []string
+		conflicts []string
+	}
+	metas := make([]branchMeta, 0, len(tasks))
+	for _, task := range tasks {
+		files, err := changedFilesAgainst(ctx, root, baseRef, task.Branch)
+		if err != nil {
+			return integrationPlan{}, err
+		}
+		metas = append(metas, branchMeta{ref: task, files: files})
+	}
+	for i := range metas {
+		for j := range metas {
+			if i == j {
+				continue
+			}
+			if hasOverlap(metas[i].files, metas[j].files) {
+				metas[i].conflicts = append(metas[i].conflicts, metas[j].ref.Branch)
+			}
+		}
+		slices.Sort(metas[i].conflicts)
+	}
+	slices.SortFunc(metas, func(a, b branchMeta) int {
+		if len(a.conflicts) != len(b.conflicts) {
+			return len(a.conflicts) - len(b.conflicts)
+		}
+		if len(a.files) != len(b.files) {
+			return len(a.files) - len(b.files)
+		}
+		return strings.Compare(a.ref.Branch, b.ref.Branch)
+	})
+	steps := make([]integrationPlanStep, 0, len(metas))
+	for i, meta := range metas {
+		reason := "independent branch"
+		if len(meta.conflicts) > 0 {
+			reason = "higher-overlap branch scheduled later"
+		}
+		deps := make([]string, 0, i)
+		for j := 0; j < i; j++ {
+			if containsString(meta.conflicts, metas[j].ref.Branch) {
+				deps = append(deps, metas[j].ref.Branch)
+			}
+		}
+		steps = append(steps, integrationPlanStep{
+			Order:         i + 1,
+			Branch:        meta.ref.Branch,
+			Title:         meta.ref.Title,
+			Reason:        reason,
+			Dependencies:  deps,
+			ConflictsWith: meta.conflicts,
+		})
+	}
+	return integrationPlan{BaseBranch: baseRef, Mode: "deterministic", Steps: steps}, nil
+}
+
+func writeIntegrationPlan(root string, plan integrationPlan) (string, error) {
+	reportDir := filepath.Join(root, ".sapphire", "reports", "integration-plans")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(reportDir, fmt.Sprintf("integration-plan-%d.json", time.Now().Unix()))
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func executeDeterministicIntegration(ctx context.Context, root, baseRef string, params OrchestrateWorktreesParams, plan integrationPlan) (integrationExecutionResult, error) {
+	branch := strings.TrimSpace(params.IntegrationBranch)
+	if branch == "" {
+		branch = fmt.Sprintf("integration/%d", time.Now().Unix())
+	}
+	worktreePath := filepath.Join(root, ".sapphire", "worktrees", "integration", sanitizeWorktreeSlug(strings.TrimPrefix(branch, "integration/")))
+	execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		return integrationExecutionResult{}, err
+	}
+	if err := resetWorktreeState(execCtx, root, worktreePath); err != nil {
+		return integrationExecutionResult{}, err
+	}
+	if err := addWorktreeWithRecovery(execCtx, root, worktreePath, branch, baseRef); err != nil {
+		return integrationExecutionResult{}, err
+	}
+
+	var rollbackReason string
+	for _, step := range plan.Steps {
+		if strings.TrimSpace(step.Branch) == "" {
+			continue
+		}
+		if _, err := gitOutputAt(worktreePath, "merge", "--no-ff", "--no-edit", step.Branch); err != nil {
+			rollbackReason = fmt.Sprintf("merge failed for %s: %v", step.Branch, err)
+			break
+		}
+	}
+
+	validation := validateWorktreeResult(execCtx, worktreePath, baseRef, params.TestCommand)
+	validationPath, err := writeCombinedValidationReport(root, branch, validation)
+	if err != nil {
+		return integrationExecutionResult{}, err
+	}
+	result := integrationExecutionResult{
+		WorktreePath:         worktreePath,
+		ValidationReportPath: validationPath,
+	}
+	if rollbackReason == "" && validation.Passed {
+		return result, nil
+	}
+	if rollbackReason == "" && !validation.Passed {
+		rollbackReason = strings.TrimSpace(validation.Errors)
+		if rollbackReason == "" {
+			rollbackReason = "combined validation failed"
+		}
+	}
+	rollbackPath, err := writeRollbackArtifact(root, branch, worktreePath, rollbackReason, validation)
+	if err != nil {
+		return integrationExecutionResult{}, err
+	}
+	result.RollbackArtifactPath = rollbackPath
+	_ = quarantineIntegrationWorktree(root, worktreePath, branch)
+	return result, nil
+}
+
+func writeCombinedValidationReport(root, branch string, result validationResult) (string, error) {
+	reportDir := filepath.Join(root, ".sapphire", "reports", "validation")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(reportDir, fmt.Sprintf("combined-validation-%s-%d.md", sanitizeWorktreeSlug(branch), time.Now().Unix()))
+	body := formatValidationReport(result)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func writeRollbackArtifact(root, branch, worktreePath, reason string, validation validationResult) (string, error) {
+	reportDir := filepath.Join(root, ".sapphire", "reports", "rollback")
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(reportDir, fmt.Sprintf("rollback-%s-%d.md", sanitizeWorktreeSlug(branch), time.Now().Unix()))
+	var b strings.Builder
+	b.WriteString("# Rollback Artifact\n\n")
+	b.WriteString("Branch: " + branch + "\n")
+	b.WriteString("Worktree: " + worktreePath + "\n")
+	b.WriteString("Reason: " + reason + "\n\n")
+	b.WriteString(formatValidationReport(validation))
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func quarantineIntegrationWorktree(root, worktreePath, branch string) error {
+	if !isSubAgentWorktree(worktreePath) {
+		return nil
+	}
+	slug := sanitizeWorktreeSlug(branch)
+	if slug == "" {
+		slug = "integration"
+	}
+	target := filepath.Join(root, ".sapphire", "worktrees", "quarantine", "integration-"+slug)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(worktreePath, target); err != nil {
+		return nil
+	}
+	return nil
+}
+
 func overlappingChangedFiles(ctx context.Context, root, baseRef, branchA, branchB string) ([]string, error) {
 	filesA, err := changedFilesAgainst(ctx, root, baseRef, branchA)
 	if err != nil {
@@ -451,6 +638,31 @@ func changedFilesAgainst(ctx context.Context, root, baseRef, branch string) ([]s
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	slices.Sort(lines)
 	return lines, nil
+}
+
+func hasOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, item := range a {
+		set[item] = struct{}{}
+	}
+	for _, item := range b {
+		if _, ok := set[item]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func gitOutputAt(dir string, args ...string) (string, error) {

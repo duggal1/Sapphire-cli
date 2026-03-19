@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
@@ -13,6 +14,14 @@ func (c *coordinator) publishSubAgentEvent(eventType pubsub.EventType, runner *s
 	runner.mu.Lock()
 	payload := runner.lifecycleEventLocked(submissionID, stage, errMsg)
 	runner.mu.Unlock()
+	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
+		"submission_id": submissionID,
+		"status":        payload.Status,
+		"task_key":      payload.TaskKey,
+		"error":         payload.Error,
+		"pending":       payload.Pending,
+	})
 	publishSubAgentLifecycleEvent(eventType, payload)
 }
 

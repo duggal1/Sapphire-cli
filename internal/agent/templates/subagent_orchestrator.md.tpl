@@ -28,6 +28,7 @@ Each agent must:
 4. Validate, commit, and report.
 5. Exit cleanly.
 6. Snapshot commits are local safety points only. Trigger them after meaningful file writes; batched writes debounce briefly and must be flushed before task completion. Never push automatically.
+7. Use `agent_mail_send` and `agent_mail_inbox` for durable coordination. Report status to `main` when a dependency is satisfied or a blocker appears.
 
 ## Validation Gate (Mandatory)
 Run in this order:

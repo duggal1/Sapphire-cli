@@ -20,6 +20,9 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/charmbracelet/x/term"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -39,9 +42,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/duggal1/Sapphire-cli/internal/update"
 	"github.com/duggal1/Sapphire-cli/internal/version"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
-	"github.com/charmbracelet/x/term"
 )
 
 // UpdateAvailableMsg is sent when a new version of the application is available.
@@ -166,6 +166,11 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	}
 	if err := app.InitCoderAgent(ctx, conn); err != nil {
 		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
+	}
+	if closer, ok := app.AgentCoordinator.(interface{ Close() error }); ok {
+		app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+			return closer.Close()
+		})
 	}
 
 	// Set up callback for LSP state updates.

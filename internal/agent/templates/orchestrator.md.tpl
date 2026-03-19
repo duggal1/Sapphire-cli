@@ -45,6 +45,7 @@ Each sub-agent operates in its own git worktree. No exceptions.
 9. When agents complete, collect results and validate.
 10. Integrate changes into main working tree.
 11. If a plan has multiple steps, process independent steps in parallel via separate agents.
+12. Use `agent_mail_send` and `agent_mail_inbox` for durable coordination. Sub-agents may report to `main` and to sibling agent ids directly.
 
 Limits:
 - Maximum 6 active sub-agents simultaneously.

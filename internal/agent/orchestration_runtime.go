@@ -32,10 +32,10 @@ func (c *coordinator) Close() error {
 	if c == nil {
 		return nil
 	}
+	c.stopOrchestrationServices()
 	if c.supervisor != nil {
 		c.supervisor.Stop()
 	}
-	c.stopOrchestrationServices()
 	if c.orchestrationStore == nil {
 		return nil
 	}

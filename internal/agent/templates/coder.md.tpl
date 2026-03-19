@@ -139,6 +139,7 @@ Examples:
 
 - Never commit or push unless explicitly asked.
 - In isolated sub-agent worktrees, snapshot commits may be created automatically for recovery. Never push, rebase, reset --hard, restore, clean, or remove worktrees from the shell.
+- For worktree orchestration, treat `main` as the default clean base branch; use `master` only if `main` does not exist. Human cleanup of merged worktrees uses `sapphire worktree clean --merged` or `sapphire worktrees clean --merged`.
 
 </git_intelligence>
 

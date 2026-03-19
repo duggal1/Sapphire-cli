@@ -33,24 +33,26 @@ var sharedGitSnapshotManager = &gitSnapshotManager{
 }
 
 func QueueGitSnapshot(ctx context.Context, mutatedPath string) {
-	worktreeDir := resolveSnapshotWorktreeDir(ctx, mutatedPath)
-	if worktreeDir == "" {
+	gitDir := resolveSnapshotWorktreeDir(ctx, mutatedPath)
+	if gitDir == "" {
 		return
 	}
-	sharedGitSnapshotManager.notify(worktreeDir)
+	sharedGitSnapshotManager.notify(gitDir)
 }
 
 func FlushGitSnapshot(ctx context.Context, worktreeDir string) error {
 	worktreeDir = filepath.Clean(strings.TrimSpace(worktreeDir))
-	if !isSapphireWorktreeDir(worktreeDir) {
+	if !isManagedGitSnapshotDir(worktreeDir) {
 		return nil
 	}
 	return sharedGitSnapshotManager.flush(ctx, worktreeDir)
 }
 
 func resolveSnapshotWorktreeDir(ctx context.Context, mutatedPath string) string {
-	if workingDir := filepath.Clean(strings.TrimSpace(GetWorkingDirFromContext(ctx))); isSapphireWorktreeDir(workingDir) {
-		return workingDir
+	if workingDir := filepath.Clean(strings.TrimSpace(GetWorkingDirFromContext(ctx))); workingDir != "" {
+		if gitDir := findGitSnapshotDir(workingDir); gitDir != "" {
+			return gitDir
+		}
 	}
 
 	if mutatedPath == "" {
@@ -58,12 +60,8 @@ func resolveSnapshotWorktreeDir(ctx context.Context, mutatedPath string) string 
 	}
 
 	path := filepath.Clean(mutatedPath)
-	if isSapphireWorktreeDir(path) {
-		return path
-	}
-	parent := filepath.Dir(path)
-	if isSapphireWorktreeDir(parent) {
-		return parent
+	if gitDir := findGitSnapshotDir(path); gitDir != "" {
+		return gitDir
 	}
 	return ""
 }
@@ -81,6 +79,34 @@ func isSapphireWorktreeDir(path string) bool {
 		return false
 	}
 	return true
+}
+
+func isManagedGitSnapshotDir(path string) bool {
+	return findGitSnapshotDir(path) != ""
+}
+
+func findGitSnapshotDir(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if !info.IsDir() {
+		path = filepath.Dir(path)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return ""
+		}
+		path = parent
+	}
 }
 
 func (m *gitSnapshotManager) notify(worktreeDir string) {
@@ -191,7 +217,7 @@ func (j *gitSnapshotJob) run() {
 }
 
 func commitGitSnapshot(worktreeDir string) error {
-	if !isSapphireWorktreeDir(worktreeDir) {
+	if !isManagedGitSnapshotDir(worktreeDir) {
 		return nil
 	}
 
@@ -212,7 +238,7 @@ func commitGitSnapshot(worktreeDir string) error {
 		return nil
 	}
 
-	message := fmt.Sprintf("chore(snapshot): sapphire auto-snapshot %s", time.Now().UTC().Format(time.RFC3339))
+	message := fmt.Sprintf("snapshot: %s %s", gitSnapshotActorName(worktreeDir), time.Now().UTC().Format("20060102-150405"))
 	cmd := exec.CommandContext(
 		ctx,
 		"git",
@@ -232,6 +258,20 @@ func commitGitSnapshot(worktreeDir string) error {
 		return fmt.Errorf("git snapshot commit failed: %w: %s", err, text)
 	}
 	return nil
+}
+
+func gitSnapshotActorName(worktreeDir string) string {
+	if isSapphireWorktreeDir(worktreeDir) {
+		slashed := filepath.ToSlash(filepath.Clean(worktreeDir))
+		parts := strings.Split(slashed, "/")
+		for i := 0; i+4 < len(parts); i++ {
+			if parts[i] == ".sapphire" && parts[i+1] == "worktrees" && parts[i+2] == "agent" {
+				return parts[i+3] + "-" + parts[i+4]
+			}
+		}
+		return "sub-agent"
+	}
+	return "main-agent"
 }
 
 func runGitSnapshotCommand(ctx context.Context, worktreeDir string, args ...string) (string, error) {

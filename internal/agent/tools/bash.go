@@ -228,35 +228,7 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
-func isForbiddenGitMainCommand(command string) (bool, string) {
-	segments := splitCommandSegments(command)
-	for _, seg := range segments {
-		fields := strings.Fields(seg)
-		if len(fields) < 2 || fields[0] != "git" {
-			continue
-		}
-		sub := fields[1]
-		switch sub {
-		case "push":
-			if containsMainBranchToken(fields[2:]) {
-				return true, "git push to main/master is not allowed"
-			}
-			if !hasExplicitBranchTarget(fields[2:]) {
-				return true, "git push without explicit non-main branch is not allowed"
-			}
-		case "merge":
-			if containsMainBranchToken(fields[2:]) {
-				return true, "git merge involving main/master is not allowed"
-			}
-		}
-	}
-	return false, ""
-}
-
-func isForbiddenIsolatedGitCommand(command, workingDir string) (bool, string) {
-	if !isSapphireWorktreeDir(workingDir) {
-		return false, ""
-	}
+func isForbiddenGitAgentCommand(command string) (bool, string) {
 	segments := splitCommandSegments(command)
 	for _, seg := range segments {
 		fields := strings.Fields(seg)
@@ -265,22 +237,30 @@ func isForbiddenIsolatedGitCommand(command, workingDir string) (bool, string) {
 		}
 		switch fields[1] {
 		case "push":
-			return true, "git push is blocked in isolated sub-agent worktrees; push remains manual"
-		case "restore":
-			return true, "git restore is blocked in isolated sub-agent worktrees"
-		case "clean":
-			return true, "git clean is blocked in isolated sub-agent worktrees"
+			return true, "git push is blocked for agents; push remains human-controlled"
+		case "merge":
+			return true, "git merge is blocked for agents; integration remains human-controlled"
 		case "rebase":
-			return true, "git rebase is blocked in isolated sub-agent worktrees"
+			return true, "git rebase is blocked for agents"
+		case "restore":
+			return true, "git restore is blocked for agents"
+		case "clean":
+			return true, "git clean is blocked for agents"
 		case "reset":
 			for _, arg := range fields[2:] {
 				if strings.EqualFold(arg, "--hard") {
-					return true, "git reset --hard is blocked in isolated sub-agent worktrees"
+					return true, "git reset --hard is blocked for agents"
 				}
 			}
 		case "worktree":
 			if len(fields) >= 3 && fields[2] == "remove" {
-				return true, "git worktree remove is blocked in isolated sub-agent worktrees"
+				return true, "git worktree remove is blocked for agents"
+			}
+		case "branch":
+			for _, arg := range fields[2:] {
+				if arg == "-D" || arg == "-d" {
+					return true, "git branch deletion is blocked for agents"
+				}
 			}
 		}
 	}
@@ -304,38 +284,6 @@ func splitCommandSegments(command string) []string {
 		}
 	}
 	return segments
-}
-
-func containsMainBranchToken(tokens []string) bool {
-	for _, token := range tokens {
-		token = strings.ToLower(token)
-		if token == "main" || token == "master" {
-			return true
-		}
-		if strings.Contains(token, "origin/main") || strings.Contains(token, "origin/master") {
-			return true
-		}
-		if strings.HasSuffix(token, ":main") || strings.HasSuffix(token, ":master") {
-			return true
-		}
-		if strings.Contains(token, "refs/heads/main") || strings.Contains(token, "refs/heads/master") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasExplicitBranchTarget(tokens []string) bool {
-	for _, token := range tokens {
-		token = strings.ToLower(token)
-		if token == "main" || token == "master" {
-			return true
-		}
-		if strings.Contains(token, ":") || strings.Contains(token, "/") {
-			return true
-		}
-	}
-	return false
 }
 
 func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelName string) fantasy.AgentTool {
@@ -363,13 +311,9 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				params.Command = prefixStr + " " + params.Command
 			}
 
-			if blocked, reason := isForbiddenGitMainCommand(params.Command); blocked {
-				return fantasy.NewTextErrorResponse(reason), nil
-			}
-
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
-			if blocked, reason := isForbiddenIsolatedGitCommand(params.Command, execWorkingDir); blocked {
+			if blocked, reason := isForbiddenGitAgentCommand(params.Command); blocked {
 				return fantasy.NewTextErrorResponse(reason), nil
 			}
 

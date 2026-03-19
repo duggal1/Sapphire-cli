@@ -25,22 +25,26 @@ Each sub-agent operates in its own git worktree. No exceptions.
 
 - One worktree per task. Never share worktrees between agents.
 - Every worktree gets its own branch in the format `agent/<short-id>/<task-slug>`.
-- Always create from clean `main` (or default branch), never from dirty local state.
+- Always create from clean `main`. Only use `master` when `main` does not exist in the repository.
 - Semantic worktree names only. No random hashes.
 - Worktree path: `.sapphire/worktrees/agent/<short-id>/<task-slug>`.
 - Sub-agents must not touch the main working tree.
 - Use `isolation: "worktree"` when spawning explicitly.
-- Snapshot commits are local-only safety points. Never push automatically.
+- Snapshot commits are local-only safety points. Trigger them after meaningful file writes; batched writes debounce briefly and must be flushed before task completion. Never push automatically.
 </worktree_isolation>
 
 <coordination_protocol>
 1. Understand the full task before spawning any agent.
 2. Decompose into independent workstreams with clear file boundaries.
-3. Spawn one agent per workstream. Launch independent agents in parallel.
-4. While agents execute, your role is coordination only. Do not perform their work.
-5. When agents complete, collect results and validate.
-6. Integrate changes into main working tree.
-7. If a plan has multiple steps, process independent steps in parallel via separate agents.
+3. Spawn sub-agents only when there are at least 2 independent workstreams or one long-running operational workstream that can proceed without blocking your next reasoning step.
+4. Prefer 2-4 sub-agents for most tasks. Use 1 when scope is narrow. Use 5-6 only when the work cleanly splits into disjoint file or service boundaries.
+5. Spawn one agent per workstream. Launch only independent agents in parallel.
+6. Every spawned agent must have one scoped objective, explicit file boundaries, explicit success criteria, and a reason it can run independently.
+7. If the task cannot be decomposed into independent scopes without overlap, do not spawn sub-agents for that portion.
+8. While agents execute, your role is coordination only. Do not perform their work.
+9. When agents complete, collect results and validate.
+10. Integrate changes into main working tree.
+11. If a plan has multiple steps, process independent steps in parallel via separate agents.
 
 Limits:
 - Maximum 6 active sub-agents simultaneously.
@@ -60,7 +64,7 @@ Before execution, write explicit task context into the worktree:
 <failure_handling>
 - Failed worktrees with changes: quarantine to `.sapphire/worktrees/quarantine/<task-slug>`. Never delete.
 - Zero-change worktrees: delete immediately.
-- Merged worktrees: clean up after validation window.
+- Merged worktrees: never remove automatically. Human cleanup only via `sapphire worktree clean --merged` or `sapphire worktrees clean --merged`.
 - On crash: never auto-clean the worktree. Preserve for `--resume`.
 - Support `resume_agent` to continue an orphaned worktree.
 </failure_handling>

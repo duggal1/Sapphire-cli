@@ -469,14 +469,14 @@ func resolveWorktreeBaseRef(ctx context.Context, root string) string {
 	if root == "" {
 		return "HEAD"
 	}
-	if ref, err := runGitOutput(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && ref != "" {
-		return ref
-	}
 	if branchExists(root, "main") {
 		return "main"
 	}
 	if branchExists(root, "master") {
 		return "master"
+	}
+	if ref, err := runGitOutput(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && ref != "" {
+		return ref
 	}
 	return "HEAD"
 }

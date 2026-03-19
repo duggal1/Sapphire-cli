@@ -6,3 +6,5 @@ Optional parameters: `model` (provider:model or model), `reasoning_effort`, and 
 Isolation options: `isolation: "worktree"` for explicit isolated execution.
 Worktree options: `branch`, `worktree_path` (under `.sapphire/worktrees/...`), `write_manifest` (allowed write paths), and `definition_of_done`.
 Sub-agents may create local commits inside their own worktree. They must never push automatically; push remains manual.
+Base branch policy: isolated worktrees are created from clean `main` by default. Legacy repos may fall back to `master` only if `main` does not exist.
+Snapshot policy: snapshot commits are created after meaningful file writes with a short debounce, and pending snapshots are flushed before task completion.

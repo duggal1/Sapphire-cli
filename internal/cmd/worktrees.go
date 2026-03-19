@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -18,8 +20,9 @@ import (
 )
 
 var worktreesCmd = &cobra.Command{
-	Use:   "worktrees",
-	Short: "Worktree orchestration utilities",
+	Use:     "worktrees",
+	Aliases: []string{"worktree"},
+	Short:   "Worktree orchestration utilities",
 }
 
 var worktreesOrchestrateCmd = &cobra.Command{
@@ -86,6 +89,33 @@ var worktreesOrchestrateCmd = &cobra.Command{
 	},
 }
 
+var worktreesCleanCmd = &cobra.Command{
+	Use:   "clean",
+	Short: "Remove merged Sapphire worktrees from the local repository",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mergedOnly, _ := cmd.Flags().GetBool("merged")
+		if !mergedOnly {
+			return fmt.Errorf("--merged is required")
+		}
+
+		root, err := ResolveCwd(cmd)
+		if err != nil {
+			return err
+		}
+		removed, err := cleanMergedWorktrees(cmd.Context(), root)
+		if err != nil {
+			return err
+		}
+		for _, item := range removed {
+			fmt.Fprintln(cmd.OutOrStdout(), item)
+		}
+		if len(removed) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "no merged worktrees removed")
+		}
+		return nil
+	},
+}
+
 func init() {
 	worktreesOrchestrateCmd.Flags().StringP("spec", "s", "", "Path to JSON/YAML orchestration spec")
 	worktreesOrchestrateCmd.Flags().String("resume", "", "Resume an orphaned worktree by path")
@@ -94,7 +124,9 @@ func init() {
 	worktreesOrchestrateCmd.Flags().String("model", "", "Model override for resume")
 	worktreesOrchestrateCmd.Flags().String("reasoning-effort", "", "Reasoning effort override for resume (low, medium, high)")
 	worktreesOrchestrateCmd.Flags().String("session-title", "", "Parent session title")
+	worktreesCleanCmd.Flags().Bool("merged", false, "Remove only worktrees whose branches are already merged into main")
 	worktreesCmd.AddCommand(worktreesOrchestrateCmd)
+	worktreesCmd.AddCommand(worktreesCleanCmd)
 }
 
 func loadWorktreeSpec(path string) (agent.OrchestrateWorktreesParams, error) {
@@ -165,4 +197,91 @@ func renderWorktreeGrid(w io.Writer, result agent.OrchestrateWorktreesResult) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.role, r.title, r.agentID, r.submissionID, r.branch, r.worktree)
 	}
 	_ = tw.Flush()
+}
+
+func cleanMergedWorktrees(ctx context.Context, root string) ([]string, error) {
+	baseRef, err := worktreeCleanupBaseRef(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	worktreeRoot := filepath.Join(root, ".sapphire", "worktrees", "agent")
+	removed := make([]string, 0)
+	err = filepath.WalkDir(worktreeRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !d.IsDir() || path == worktreeRoot {
+			return nil
+		}
+		if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+			return nil
+		}
+
+		branch, err := gitOutput(ctx, path, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return nil
+		}
+		merged, err := isBranchMergedInto(ctx, root, strings.TrimSpace(branch), baseRef)
+		if err != nil || !merged {
+			return nil
+		}
+		if err := gitRun(ctx, root, "worktree", "remove", path); err != nil {
+			return err
+		}
+		removed = append(removed, fmt.Sprintf("%s\t%s", branch, path))
+		return filepath.SkipDir
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	slices.Sort(removed)
+	return removed, nil
+}
+
+func worktreeCleanupBaseRef(ctx context.Context, root string) (string, error) {
+	if ok, err := gitBranchExists(ctx, root, "main"); err == nil && ok {
+		return "main", nil
+	}
+	if ok, err := gitBranchExists(ctx, root, "master"); err == nil && ok {
+		return "master", nil
+	}
+	return "", fmt.Errorf("no cleanup base branch found; expected main or master")
+}
+
+func isBranchMergedInto(ctx context.Context, root, branch, baseRef string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "merge-base", "--is-ancestor", branch, baseRef)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("merge-base check failed: %s", strings.TrimSpace(string(out)))
+}
+
+func gitBranchExists(ctx context.Context, root, branch string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("branch lookup failed: %s", strings.TrimSpace(string(out)))
+}
+
+func gitRun(ctx context.Context, root string, args ...string) error {
+	_, err := gitOutput(ctx, root, args...)
+	return err
+}
+
+func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
 }

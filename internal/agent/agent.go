@@ -904,6 +904,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					}
 				}
 			}
+			if stepResult.FinishReason == fantasy.FinishReasonStop || stepResult.FinishReason == fantasy.FinishReasonLength {
+				flushCtx, flushCancel := context.WithTimeout(genCtx, 15*time.Second)
+				if err := tools.FlushGitSnapshot(flushCtx, a.workingDir.Get()); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					slog.Warn("Failed to flush git snapshots at turn end", "working_dir", a.workingDir.Get(), "error", err)
+				}
+				flushCancel()
+			}
 
 			// Capture Gemini-specific usage metadata if available
 			sessionLock.Lock()

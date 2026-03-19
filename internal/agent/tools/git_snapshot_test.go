@@ -36,6 +36,26 @@ func TestQueueGitSnapshotCreatesLocalCommitInWorktree(t *testing.T) {
 	runGitSnapshotTest(t, worktreeDir, "diff", "--cached", "--quiet")
 }
 
+func TestQueueGitSnapshotCreatesLocalCommitInMainWorkspace(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotGitRepo(t)
+	targetFile := filepath.Join(root, "main.txt")
+	require.NoError(t, os.WriteFile(targetFile, []byte("main snapshot\n"), 0o644))
+
+	ctx := context.WithValue(context.Background(), WorkingDirContextKey, root)
+	QueueGitSnapshot(ctx, targetFile)
+	require.NoError(t, FlushGitSnapshot(ctx, root))
+
+	count := strings.TrimSpace(runGitSnapshotOutput(t, root, "rev-list", "--count", "HEAD"))
+	require.Equal(t, "2", count)
+
+	subject := strings.TrimSpace(runGitSnapshotOutput(t, root, "log", "-1", "--pretty=%s"))
+	require.Contains(t, subject, "snapshot: main-agent ")
+	runGitSnapshotTest(t, root, "diff", "--quiet")
+	runGitSnapshotTest(t, root, "diff", "--cached", "--quiet")
+}
+
 func TestBashToolBlocksDestructiveGitCommandsInIsolatedWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -61,6 +81,30 @@ func TestBashToolBlocksDestructiveGitCommandsInIsolatedWorktree(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
 	require.Contains(t, resp.Content, "git push is blocked")
+}
+
+func TestBashToolBlocksMergeInMainWorkspace(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotGitRepo(t)
+	permissions := permission.NewPermissionService(root, true, nil)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "session-2")
+
+	tool := NewBashTool(permissions, root, &config.Attribution{}, "gemini-3-flash")
+	input, err := json.Marshal(BashParams{
+		Description: "attempt merge",
+		Command:     "git merge feature/example",
+	})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "bash-git-merge",
+		Name:  BashToolName,
+		Input: string(input),
+	})
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "git merge is blocked")
 }
 
 func initSnapshotGitRepo(t *testing.T) string {

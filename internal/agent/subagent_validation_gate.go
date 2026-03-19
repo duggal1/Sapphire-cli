@@ -333,7 +333,8 @@ func finalizeSnapshotTip(ctx context.Context, worktreeDir, message string) error
 	if err != nil {
 		return nil
 	}
-	if !strings.HasPrefix(strings.TrimSpace(lastSubject), "chore(snapshot): sapphire auto-snapshot ") {
+	lastSubject = strings.TrimSpace(lastSubject)
+	if !strings.HasPrefix(lastSubject, "chore(snapshot): sapphire auto-snapshot ") && !strings.HasPrefix(lastSubject, "snapshot: ") {
 		return nil
 	}
 	_, err = runWorktreeCommand(ctx, worktreeDir, "git", "commit", "--allow-empty", "-m", message)

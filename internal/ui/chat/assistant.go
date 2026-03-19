@@ -19,9 +19,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
-
 const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
-
 
 const maxCollapsedThinkingHeight = 10
 
@@ -223,6 +221,13 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 		messageParts = append(messageParts, a.renderModelOutput(content, width))
 	}
 
+	if loader := a.renderLiveLoader(width); loader != "" {
+		if len(messageParts) > 0 {
+			messageParts = append(messageParts, "")
+		}
+		messageParts = append(messageParts, loader)
+	}
+
 	// finally add any finish reason info
 	if a.message.IsFinished() {
 		switch a.message.FinishReason() {
@@ -234,6 +239,31 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 	}
 
 	return strings.Join(messageParts, "\n")
+}
+
+func (a *AssistantMessageItem) renderLiveLoader(width int) string {
+	if strings.TrimSpace(a.message.Content().Text) != "" {
+		return ""
+	}
+
+	label := assistantLiveStatusLabel(a.message)
+	if label == "" {
+		return ""
+	}
+
+	line := prefixRenderedBlock(
+		a.sty.Base.Foreground(a.sty.White).Render("•"),
+		styles.ShimmerText(a.sty, label, 0),
+	)
+
+	loader := lipgloss.NewStyle().
+		PaddingTop(1).
+		PaddingBottom(1)
+	if width > 0 {
+		loader = loader.Width(width)
+	}
+
+	return loader.Render(line)
 }
 
 func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
@@ -356,6 +386,30 @@ func loadingPhraseForMessage(messageID string) string {
 		idx = -idx
 	}
 	return mainLoaderPhrases[idx]
+}
+
+func assistantLiveStatusLabel(msg *message.Message) string {
+	if msg == nil || msg.IsFinished() {
+		return ""
+	}
+	if msg.IsThinking() {
+		return "Thinking"
+	}
+	activeTools := make([]string, 0, len(msg.ToolCalls()))
+	for _, tc := range msg.ToolCalls() {
+		if tc.Finished {
+			continue
+		}
+		activeTools = append(activeTools, genericPrettyName(tc.Name))
+	}
+	switch len(activeTools) {
+	case 0:
+		return loadingPhraseForMessage(msg.ID)
+	case 1:
+		return activeTools[0]
+	default:
+		return fmt.Sprintf("%s + %d more", activeTools[0], len(activeTools)-1)
+	}
 }
 
 // renderError renders an error message.

@@ -76,4 +76,33 @@ func TestAssistantInfoItemRendersLiveFooterBeforeFinish(t *testing.T) {
 	if !strings.Contains(rendered, "gpt-test") {
 		t.Fatalf("expected model name in footer, got %q", rendered)
 	}
+	if strings.Contains(rendered, "Thinking") {
+		t.Fatalf("expected live shimmer label to render in the assistant message, got %q", rendered)
+	}
+}
+
+func TestAssistantMessageItemRendersInlineLoaderWithVerticalSpacing(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:   "assistant-inline-loader",
+		Role: message.Assistant,
+		Parts: []message.ContentPart{
+			message.ReasoningContent{Thinking: ""},
+		},
+	})
+
+	rendered := ansi.Strip(item.Render(80))
+	label := loadingPhraseForMessage("assistant-inline-loader")
+	if !strings.Contains(rendered, label) {
+		t.Fatalf("expected inline loader label, got %q", rendered)
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "" || strings.TrimSpace(lines[len(lines)-1]) != "" {
+		t.Fatalf("expected top and bottom padding around inline loader, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "• "+label) {
+		t.Fatalf("expected vertical padding around inline loader, got %q", rendered)
+	}
 }

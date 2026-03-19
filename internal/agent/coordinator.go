@@ -22,11 +22,13 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
+	agentdaemon "github.com/duggal1/Sapphire-cli/internal/agent/daemon"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	agentscheduler "github.com/duggal1/Sapphire-cli/internal/agent/scheduler"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	agentsupervisor "github.com/duggal1/Sapphire-cli/internal/agent/supervisor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -150,6 +152,8 @@ type coordinator struct {
 	stateService              *agentstate.Service
 	activityService           *agentactivity.Service
 	supervisor                *agentsupervisor.Service
+	dispatcher                *agentscheduler.Dispatcher
+	daemon                    *agentdaemon.Service
 	orchestrationSvcCancel    context.CancelFunc
 	orchestrationSvcWG        sync.WaitGroup
 	mainWorktreeDir           string

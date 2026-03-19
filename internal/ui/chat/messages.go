@@ -242,9 +242,6 @@ func (a *AssistantInfoItem) Height() int {
 	if a == nil {
 		return 0
 	}
-	if a.shouldAnimate() && a.renderLiveStatusLabel() != "" {
-		return 3
-	}
 	return 2
 }
 
@@ -364,11 +361,7 @@ func (a *AssistantInfoItem) renderFooter(width int, stats, model string) string 
 		return borderLine
 	}
 
-	lines := []string{borderLine, row}
-	if statusLine := a.renderLiveStatusLine(width); statusLine != "" {
-		lines = append(lines, statusLine)
-	}
-	return strings.Join(lines, "\n")
+	return strings.Join([]string{borderLine, row}, "\n")
 }
 
 func (a *AssistantInfoItem) renderFooterRow(width int, left, right string) string {
@@ -478,27 +471,7 @@ func (a *AssistantInfoItem) renderLiveStatusLine(width int) string {
 }
 
 func (a *AssistantInfoItem) renderLiveStatusLabel() string {
-	if !a.shouldAnimate() || a.message == nil {
-		return ""
-	}
-	if a.message.IsThinking() {
-		return "Thinking"
-	}
-	activeTools := make([]string, 0, len(a.message.ToolCalls()))
-	for _, tc := range a.message.ToolCalls() {
-		if tc.Finished {
-			continue
-		}
-		activeTools = append(activeTools, genericPrettyName(tc.Name))
-	}
-	switch len(activeTools) {
-	case 0:
-		return loadingPhraseForMessage(a.message.ID)
-	case 1:
-		return activeTools[0]
-	default:
-		return fmt.Sprintf("%s + %d more", activeTools[0], len(activeTools)-1)
-	}
+	return assistantLiveStatusLabel(a.message)
 }
 
 func (a *AssistantInfoItem) shouldAnimate() bool {

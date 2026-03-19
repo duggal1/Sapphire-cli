@@ -19,6 +19,9 @@ third_party/fantasy/
 go.work
 go.work.sum
 
+# Gastown clone (for reference only)
+gastown/
+
 # IDE specific files
 .idea/
 .vscode/
@@ -107,3 +110,6 @@ CODEX_CODEBASE.md
 # Embedded git repositories (separate repos)
 worktrees/
 crush-cli/
+
+# Gastown clone (for reference only)
+gastown/

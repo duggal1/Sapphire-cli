@@ -585,6 +585,9 @@ func DefaultStyles(yellowMode bool) Styles {
 		fgHalfMuted = charmtone.Smoke
 		fgSubtle    = charmtone.Oyster
 
+		// Tree text - off-white with subtle pink tint for warmth
+		fgTree      = lipgloss.Color("#E8D8E0")
+
 		// Borders
 		border      = lipgloss.Color("#33294A")
 		borderFocus = lipgloss.Color("#9327ffff")
@@ -1332,13 +1335,13 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.MCPToolName = base.Foreground(fgHalfMuted)
 	s.Tool.MCPArrow = base.Foreground(tertiary).SetString(ArrowRightIcon)
 
-	s.Tool.ListRoot = base.Foreground(fgHalfMuted)
+	s.Tool.ListRoot = base.Foreground(fgTree)
 	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.ListFile = base.Foreground(fgBase)
+	s.Tool.ListFile = base.Foreground(fgTree)
 	s.Tool.ListMeta = base.Foreground(fgMuted)
 	s.Tool.ListHint = base.Foreground(warning)
 	s.Tool.GrepFile = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.GrepLine = base.Foreground(warning)
+	s.Tool.GrepLine = base.Foreground(fgTree)
 	s.Tool.GrepMatch = base.Foreground(primary).Bold(true)
 	s.Tool.GrepContext = base.Foreground(fgMuted)
 

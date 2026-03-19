@@ -113,3 +113,9 @@ crush-cli/
 
 # Gastown clone (for reference only)
 gastown/
+
+# Gastown analysis documents (reference only)
+GASTOWN_*.md
+
+# Subagent architecture reference
+SUBAGENT_ARCHITECTURE_REFERENCE.md

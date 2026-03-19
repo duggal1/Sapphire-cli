@@ -145,7 +145,7 @@ func (c *coordinator) dispatchQueuedItem(ctx context.Context, item orchestration
 	}
 
 	agentID, submissionID, err := c.spawnSubAgent(ctx, item.SessionID, spawnAgentOptions{
-		WorkItemID:        item.WorkItemID,
+		WorkItemID:       item.WorkItemID,
 		Prompt:           payload.Prompt,
 		Title:            payload.Title,
 		Worktree:         payload.Worktree,

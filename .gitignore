@@ -58,6 +58,7 @@ completions/crush.*sh
 .prettierignore
 .task
 .go-cache/
+.gocache/
 .sapphire/
 
 # Pasted files and folders

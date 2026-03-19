@@ -44,9 +44,9 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 	lower := strings.ToLower(resultContent(opts))
 	if strings.Contains(lower, "launch rejected") || strings.Contains(lower, "too small for delegation") {
 		root := &TreeNode{
-			Label: sty.Tool.ListRoot.Render("Sub-Agent"),
+			Label: renderSubAgentRootLabel(sty, "Sub-Agent"),
 			Children: []*TreeNode{
-				{Label: subAgentKVLabel("Status", "handled locally")},
+				{Label: renderSubAgentField(sty, "State", "Handled locally")},
 			},
 		}
 		body := strings.Join(renderTreeWithRoot(root, cappedWidth-toolBodyLeftPaddingTotal), "\n")
@@ -66,17 +66,17 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		}
 		children := []*TreeNode{}
 		if payload.Title != "" {
-			children = append(children, &TreeNode{Label: subAgentKVLabel("Title", payload.Title)})
+			children = append(children, &TreeNode{Label: renderSubAgentField(sty, "Task", payload.Title)})
 		}
 		if payload.Agent != "" {
-			children = append(children, &TreeNode{Label: subAgentKVLabel("Profile", payload.Agent)})
+			children = append(children, &TreeNode{Label: renderSubAgentField(sty, "Profile", payload.Agent)})
 		}
 		children = append(children,
-			&TreeNode{Label: subAgentKVLabel("Status", "error")},
-			&TreeNode{Label: subAgentKVLabel("Error", oneLine(errorText))},
+			&TreeNode{Label: renderSubAgentField(sty, "State", "Error")},
+			&TreeNode{Label: renderSubAgentField(sty, "Issue", oneLine(errorText))},
 		)
 		root := &TreeNode{
-			Label:    sty.Tool.ListRoot.Render("Sub-Agent"),
+			Label:    renderSubAgentRootLabel(sty, "Sub-Agent"),
 			Children: children,
 		}
 		body := strings.Join(renderTreeWithRoot(root, cappedWidth-toolBodyLeftPaddingTotal), "\n")

@@ -405,8 +405,11 @@ type subAgentSnapshot struct {
 }
 
 type subAgentStatusEntry struct {
-	ID     string         `json:"id"`
-	Status subAgentStatus `json:"status"`
+	ID           string         `json:"id"`
+	Status       subAgentStatus `json:"status"`
+	SubmissionID string         `json:"submission_id,omitempty"`
+	WorkDir      string         `json:"work_dir,omitempty"`
+	StartedAt    time.Time      `json:"started_at,omitempty"`
 }
 
 type subAgentCollectedResult struct {
@@ -418,6 +421,7 @@ type subAgentCollectedResult struct {
 	Progress             string         `json:"progress,omitempty"`
 	WorkDir              string         `json:"work_dir,omitempty"`
 	Branch               string         `json:"branch,omitempty"`
+	StartedAt            time.Time      `json:"started_at,omitempty"`
 	ValidationPassed     bool           `json:"validation_passed,omitempty"`
 	ValidationErrors     string         `json:"validation_errors,omitempty"`
 	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
@@ -1129,6 +1133,7 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 		Progress:             r.lastProgress,
 		WorkDir:              r.workDir,
 		Branch:               r.assignment.Branch,
+		StartedAt:            r.assignment.CreatedAt,
 		ValidationPassed:     r.validationPassed,
 		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
@@ -1154,8 +1159,11 @@ func (c *coordinator) waitSubAgentStatuses(ctx context.Context, ids []string, ti
 	statuses := make([]subAgentStatusEntry, 0, len(snapshots))
 	for _, snap := range snapshots {
 		statuses = append(statuses, subAgentStatusEntry{
-			ID:     snap.ID,
-			Status: snap.Status,
+			ID:           snap.ID,
+			Status:       snap.Status,
+			SubmissionID: snap.LastSubmission,
+			WorkDir:      snap.WorkDir,
+			StartedAt:    snap.StartedAt,
 		})
 	}
 	return statuses, timedOut

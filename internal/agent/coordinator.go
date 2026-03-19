@@ -287,6 +287,9 @@ func NewCoordinator(
 		CountActive:  c.activeSubAgentCountAll,
 		MaxActive:    c.dispatchActiveLimit,
 	})
+	if err := c.dispatcher.Validate(); err != nil {
+		return nil, fmt.Errorf("initialize dispatcher: %w", err)
+	}
 	c.daemon = agentdaemon.NewService(c.dispatcher, c.supervisor)
 	c.startOrchestrationServices()
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)

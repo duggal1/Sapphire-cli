@@ -51,7 +51,7 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 
 	if spec.Reuse {
 		if !isParseableWorktreePath(root, worktreeDir) {
-			return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected worktrees/agent/<id>/<task-slug>", worktreeDir)
+			return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected .sapphire/worktrees/agent/<id>/<task-slug>", worktreeDir)
 		}
 		if !isSubAgentWorktree(worktreeDir) {
 			return "", "", func() {}, fmt.Errorf("worktree %s does not exist for reuse", worktreeDir)
@@ -72,7 +72,7 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 		return "", "", func() {}, fmt.Errorf("branch %s is not allowed; expected format agent/<id>/<task-slug>", branch)
 	}
 	if !isParseableWorktreePath(root, worktreeDir) {
-		return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected worktrees/agent/<id>/<task-slug>", worktreeDir)
+		return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected .sapphire/worktrees/agent/<id>/<task-slug>", worktreeDir)
 	}
 
 	if owner := c.activeSubAgentUsingWorktree(worktreeDir, agentID); owner != "" {
@@ -81,6 +81,8 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 	if owner := c.activeSubAgentUsingBranch(branch, worktreeDir, agentID); owner != "" {
 		return "", "", func() {}, fmt.Errorf("branch %s is already owned by active sub-agent %s", branch, owner)
 	}
+
+	ensureSapphireWorktreesGitignored(root)
 
 	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
 		return "", "", func() {}, fmt.Errorf("create worktree parent failed: %w", err)
@@ -102,7 +104,7 @@ func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, ag
 }
 
 func (c *coordinator) subAgentWorktreeRoot(root string) string {
-	return filepath.Join(root, "worktrees")
+	return filepath.Join(root, ".sapphire", "worktrees")
 }
 
 func (c *coordinator) defaultSubAgentWorktreePath(root, taskKey, assignmentID string) string {
@@ -301,13 +303,14 @@ func isParseableWorktreePath(root, worktreeDir string) bool {
 	}
 	rel = filepath.ToSlash(rel)
 	parts := strings.Split(rel, "/")
-	if len(parts) != 4 {
+	// .sapphire/worktrees/agent/<id>/<slug> = 5 segments
+	if len(parts) != 5 {
 		return false
 	}
-	if parts[0] != "worktrees" || parts[1] != "agent" {
+	if parts[0] != ".sapphire" || parts[1] != "worktrees" || parts[2] != "agent" {
 		return false
 	}
-	return parts[2] != "" && parts[3] != ""
+	return parts[3] != "" && parts[4] != ""
 }
 
 func sanitizeBranchName(branch string) string {
@@ -512,3 +515,42 @@ func archiveWorktreeToReviewBranch(ctx context.Context, worktreeDir, currentBran
 	slog.Info("Archived worktree to review branch", "branch", reviewBranch, "workdir", worktreeDir)
 }
 
+var gitignoreOnce sync.Once
+
+// ensureSapphireWorktreesGitignored adds .sapphire/worktrees/ to .gitignore if
+// not already present. This prevents worktree files from polluting git status
+// and causing repository corruption.
+func ensureSapphireWorktreesGitignored(root string) {
+	gitignoreOnce.Do(func() {
+		if root == "" {
+			return
+		}
+		gitignorePath := filepath.Join(root, ".gitignore")
+		entry := ".sapphire/worktrees/"
+
+		// Check if already present
+		if data, err := os.ReadFile(gitignorePath); err == nil {
+			content := string(data)
+			for _, line := range strings.Split(content, "\n") {
+				if strings.TrimSpace(line) == entry {
+					return // already gitignored
+				}
+			}
+		}
+
+		// Append entry
+		f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			slog.Debug("Failed to open .gitignore for worktree exclusion", "error", err)
+			return
+		}
+		defer f.Close()
+
+		// Add newline before entry if file doesn't end with one
+		if data, err := os.ReadFile(gitignorePath); err == nil && len(data) > 0 && data[len(data)-1] != '\n' {
+			_, _ = f.WriteString("\n")
+		}
+		_, _ = f.WriteString(entry + "\n")
+		slog.Info("Added .sapphire/worktrees/ to .gitignore")
+	})
+}

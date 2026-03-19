@@ -281,7 +281,13 @@ func NewCoordinator(
 		ResolveMainMailboxID:      mainAgentMailboxID,
 		EnsureDispatchForWorkItem: c.ensureDispatchForWorkItem,
 	})
-	c.supervisor.Start(ctx)
+	c.dispatcher = agentscheduler.NewDispatcher(agentscheduler.Hooks{
+		ProcessQueue: c.processDispatchQueue,
+		Reconcile:    c.reconcileDispatchQueue,
+		CountActive:  c.activeSubAgentCountAll,
+		MaxActive:    c.dispatchActiveLimit,
+	})
+	c.daemon = agentdaemon.NewService(c.dispatcher, c.supervisor)
 	c.startOrchestrationServices()
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {

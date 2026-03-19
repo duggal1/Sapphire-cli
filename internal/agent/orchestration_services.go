@@ -13,8 +13,6 @@ import (
 )
 
 const (
-	dispatchPollInterval         = 2 * time.Second
-	dispatchPatrolInterval       = 10 * time.Second
 	dispatchLeaseTimeout         = 2 * time.Minute
 	dispatchRetryLimit           = 3
 	defaultDispatchQueueCapacity = 50
@@ -43,15 +41,15 @@ func (c *coordinator) startOrchestrationServices() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.orchestrationSvcCancel = cancel
-
-	c.orchestrationSvcWG.Add(2)
+	if c.daemon == nil {
+		return
+	}
+	c.orchestrationSvcWG.Add(1)
 	go func() {
 		defer c.orchestrationSvcWG.Done()
-		c.runDispatchLoop(ctx)
-	}()
-	go func() {
-		defer c.orchestrationSvcWG.Done()
-		c.runDispatchPatrolLoop(ctx)
+		c.daemon.Start(ctx)
+		<-ctx.Done()
+		c.daemon.Stop()
 	}()
 }
 
@@ -108,38 +106,6 @@ func (c *coordinator) enqueueSubAgentDispatch(ctx context.Context, sessionID, wo
 		"target":      item.TargetScope,
 	})
 	return item.ID, nil
-}
-
-func (c *coordinator) runDispatchLoop(ctx context.Context) {
-	ticker := time.NewTicker(dispatchPollInterval)
-	defer ticker.Stop()
-
-	for {
-		if err := c.processDispatchQueue(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Warn("Dispatch loop iteration failed", "error", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-func (c *coordinator) runDispatchPatrolLoop(ctx context.Context) {
-	ticker := time.NewTicker(dispatchPatrolInterval)
-	defer ticker.Stop()
-
-	for {
-		if err := c.reconcileDispatchQueue(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Warn("Dispatch patrol iteration failed", "error", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 func (c *coordinator) processDispatchQueue(ctx context.Context) error {

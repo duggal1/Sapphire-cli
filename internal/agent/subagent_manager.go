@@ -524,6 +524,14 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				result += validationReport
 			}
 
+			// Zero-change auto-delete: worktrees with no changes are dead weight
+			if !vResult.HasChanges {
+				slog.Info("Worktree has zero changes, auto-deleting immediately", "workdir", workDir)
+				if root := c.cfg.WorkingDir(); root != "" {
+					_ = removeWorktree(root, workDir)
+				}
+			}
+
 			// Auto-commit on success with changes
 			if err == nil && vResult.Passed && vResult.HasChanges {
 				commitCtx, commitCancel := context.WithTimeout(context.Background(), validationGateTimeout)
@@ -534,11 +542,22 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				}
 			}
 
-			// Quarantine on failure with changes
-			if err != nil && vResult.HasChanges {
+			// Failed-test archival: archive to review/ branch namespace, then quarantine
+			if !vResult.Passed && vResult.HasChanges {
 				if root := c.cfg.WorkingDir(); root != "" {
+					archiveCtx, archiveCancel := context.WithTimeout(context.Background(), validationGateTimeout)
+					archiveWorktreeToReviewBranch(archiveCtx, workDir, branch, taskSlug)
+					archiveCancel()
 					_ = c.quarantineWorktree(root, workDir, taskSlug)
 				}
+			}
+
+			// Crash preservation: on error with changes, keep worktree alive as crash dump
+			if err != nil && vResult.HasChanges {
+				slog.Warn("Agent errored — preserving worktree as crash dump", "workdir", workDir, "error", err)
+				runner.mu.Lock()
+				runner.cleanup = func() {} // noop: never auto-clean on crash
+				runner.mu.Unlock()
 			}
 		}
 

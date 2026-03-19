@@ -477,3 +477,38 @@ func resolveWorktreeBaseRef(ctx context.Context, root string) string {
 	}
 	return "HEAD"
 }
+
+// archiveWorktreeToReviewBranch commits all worktree changes and pushes them to
+// a review/<task-slug> branch namespace. This preserves failed-test state in the
+// git history for later inspection without keeping the physical worktree alive.
+func archiveWorktreeToReviewBranch(ctx context.Context, worktreeDir, currentBranch, taskSlug string) {
+	if worktreeDir == "" || !isSubAgentWorktree(worktreeDir) {
+		return
+	}
+	slug := sanitizeWorktreeSlug(taskSlug)
+	if slug == "" {
+		slug = "unknown"
+	}
+	reviewBranch := fmt.Sprintf("review/%s", slug)
+
+	// Stage all changes
+	if err := runGit(ctx, worktreeDir, "add", "-A"); err != nil {
+		slog.Warn("Failed to stage changes for review archive", "workdir", worktreeDir, "error", err)
+		return
+	}
+
+	// Commit with a descriptive message
+	commitMsg := fmt.Sprintf("review: failed validation for %s (archived from %s)", slug, currentBranch)
+	if err := runGit(ctx, worktreeDir, "commit", "--allow-empty", "-m", commitMsg); err != nil {
+		slog.Debug("Review archive commit skipped (possibly nothing to commit)", "workdir", worktreeDir, "error", err)
+	}
+
+	// Create or update the review branch pointing to current HEAD
+	if err := runGit(ctx, worktreeDir, "branch", "-f", reviewBranch, "HEAD"); err != nil {
+		slog.Warn("Failed to create review branch", "branch", reviewBranch, "workdir", worktreeDir, "error", err)
+		return
+	}
+
+	slog.Info("Archived worktree to review branch", "branch", reviewBranch, "workdir", worktreeDir)
+}
+

@@ -34,7 +34,7 @@ type ViewParams struct {
 	Path      string   `json:"path,omitempty" description:"Alias for file_path"`
 	// Codex-compatible: 1-indexed offset (user-friendly)
 	Offset int `json:"offset,omitempty" description:"The line number to start reading from (1-based, defaults to 1)"`
-	Limit  int `json:"limit,omitempty" description:"The number of lines to read (defaults to 2000)"`
+	Limit  int `json:"limit,omitempty" description:"The number of lines to read (defaults to 5000)"`
 	// Codex-compatible: Reading modes
 	Mode        string           `json:"mode,omitempty" description:"Reading mode: 'slice' (default) or 'indentation' (Codex-compatible)"`
 	Indentation *IndentationMode `json:"indentation,omitempty" description:"Indentation-aware reading options (Codex-compatible)"`

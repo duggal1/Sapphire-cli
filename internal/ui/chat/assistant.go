@@ -239,7 +239,8 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = append([]string{hint}, lines...)
 	}
 
-	result := a.sty.Chat.Message.Thinking.Render(strings.Join(lines, "\n"))
+	// Use ThinkingBox for background and padding (Crush CLI style)
+	result := a.sty.Chat.Message.ThinkingBox.Render(strings.Join(lines, "\n"))
 	a.thinkingBoxHeight = lipgloss.Height(result)
 
 	var footer string

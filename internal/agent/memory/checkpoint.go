@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -29,17 +28,17 @@ type MessageSource interface {
 }
 
 type CheckpointParams struct {
-	SessionID    string
-	AgentID      string
-	WorkItemID   string
-	AuditTail    string
-	Phase        string
-	Prompt       string
-	Result       string
-	Status       string
-	Summary      map[string]any
-	Force        bool
-	MailCursor   int64
+	SessionID      string
+	AgentID        string
+	WorkItemID     string
+	AuditTail      string
+	Phase          string
+	Prompt         string
+	Result         string
+	Status         string
+	Summary        map[string]any
+	Force          bool
+	MailCursor     int64
 	ActivityCursor int64
 }
 
@@ -54,11 +53,11 @@ type ResumeSnapshot struct {
 }
 
 type CheckpointService struct {
-	store    *orchestrationdb.Store
-	messages MessageSource
-	memory   MemoryService
+	store     *orchestrationdb.Store
+	messages  MessageSource
+	memory    MemoryService
 	retrieval *pmem.System
-	now      func() time.Time
+	now       func() time.Time
 }
 
 func NewCheckpointService(store *orchestrationdb.Store, messages MessageSource, memory MemoryService, retrieval *pmem.System) *CheckpointService {

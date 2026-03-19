@@ -36,6 +36,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
@@ -48,7 +49,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/stringext"
-	"github.com/charmbracelet/x/exp/charmtone"
 )
 
 const (

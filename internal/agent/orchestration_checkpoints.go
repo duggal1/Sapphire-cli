@@ -26,18 +26,18 @@ func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, age
 	prompt := firstSummaryString(summary, "prompt")
 	result := firstSummaryString(summary, "result")
 	_, _, _ = c.checkpointService.Record(ctx, agentmemory.CheckpointParams{
-		SessionID:       sessionID,
-		AgentID:         agentID,
-		WorkItemID:      strings.TrimSpace(workItemID),
-		AuditTail:       auditTail,
-		Phase:           phase,
-		Prompt:          prompt,
-		Result:          result,
-		Status:          status,
-		Summary:         summary,
-		Force:           true,
-		MailCursor:      time.Now().UTC().Unix(),
-		ActivityCursor:  time.Now().UTC().Unix(),
+		SessionID:      sessionID,
+		AgentID:        agentID,
+		WorkItemID:     strings.TrimSpace(workItemID),
+		AuditTail:      auditTail,
+		Phase:          phase,
+		Prompt:         prompt,
+		Result:         result,
+		Status:         status,
+		Summary:        summary,
+		Force:          true,
+		MailCursor:     time.Now().UTC().Unix(),
+		ActivityCursor: time.Now().UTC().Unix(),
 	})
 }
 

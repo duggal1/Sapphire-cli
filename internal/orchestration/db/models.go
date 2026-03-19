@@ -22,8 +22,10 @@ type AgentState struct {
 	SessionID     string    `json:"session_id"`
 	WorktreePath  string    `json:"worktree_path"`
 	Branch        string    `json:"branch"`
+	HookBeadID    string    `json:"hook_bead_id"`
 	ParentAgentID string    `json:"parent_agent_id"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
@@ -33,4 +35,17 @@ type AgentActivity struct {
 	EventType   string    `json:"event_type"`
 	DetailsJSON string    `json:"details_json"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type WorkItem struct {
+	ID           string    `json:"id"`
+	Type         string    `json:"type"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Status       string    `json:"status"`
+	Assignee     string    `json:"assignee"`
+	ParentID     string    `json:"parent_id"`
+	Dependencies string    `json:"dependencies"`
+	CreatedAt    time.Time `json:"created_at"`
+	ClosedAt     time.Time `json:"closed_at,omitempty"`
 }

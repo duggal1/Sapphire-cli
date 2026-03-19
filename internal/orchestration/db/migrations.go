@@ -41,6 +41,19 @@ var schemaStatements = []string{
 		created_at INTEGER NOT NULL
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_agent_activity_agent_created_at ON agent_activity(agent_id, created_at DESC);`,
+	`CREATE TABLE IF NOT EXISTS work_items (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL,
+		assignee TEXT NOT NULL DEFAULT '',
+		parent_id TEXT NOT NULL DEFAULT '',
+		dependencies TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL,
+		closed_at INTEGER NOT NULL DEFAULT 0
+	);`,
+	`CREATE INDEX IF NOT EXISTS idx_work_items_assignee_status ON work_items(assignee, status, created_at DESC);`,
 }
 
 func ensureSchema(ctx context.Context, conn *sql.DB) error {
@@ -48,6 +61,46 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply orchestration schema: %w", err)
 		}
+	}
+	if err := ensureColumn(ctx, conn, "agent_state", "hook_bead_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_state", "created_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureColumn(ctx context.Context, conn *sql.DB, tableName, columnName, columnDef string) error {
+	rows, err := conn.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return fmt.Errorf("inspect columns for %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			valueType string
+			notNull   int
+			defaultV  sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &valueType, &notNull, &defaultV, &pk); err != nil {
+			return fmt.Errorf("scan column metadata for %s: %w", tableName, err)
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate column metadata for %s: %w", tableName, err)
+	}
+
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, columnName, columnDef)
+	if _, err := conn.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", tableName, columnName, err)
 	}
 	return nil
 }

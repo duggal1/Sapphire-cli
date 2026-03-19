@@ -12,8 +12,8 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
-	"github.com/duggal1/Sapphire-cli/internal/ui/diffview"
 	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/duggal1/Sapphire-cli/internal/ui/diffview"
 )
 
 const (
@@ -43,7 +43,7 @@ const (
 	ImageIcon string = "■"
 	TextIcon  string = "≡"
 
-	ScrollbarThumb string = ">"
+	ScrollbarThumb string = "│"
 	ScrollbarTrack string = " "
 
 	LSPErrorIcon   string = "E"
@@ -586,7 +586,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		fgSubtle    = charmtone.Oyster
 
 		// Tree text - off-white with subtle pink tint for warmth
-		fgTree      = lipgloss.Color("#E8D8E0")
+		fgTree = lipgloss.Color("#E8D8E0")
 
 		// Borders
 		border      = lipgloss.Color("#33294A")
@@ -828,7 +828,7 @@ func DefaultStyles(yellowMode bool) Styles {
 			Color:       stringPtr(primaryHex),
 		},
 		Enumeration: ansi.StylePrimitive{
-			BlockPrefix: ". ",
+			BlockPrefix: "",
 			Color:       stringPtr(primaryHex),
 		},
 		Task: ansi.StyleTask{
@@ -1074,7 +1074,7 @@ func DefaultStyles(yellowMode bool) Styles {
 			BackgroundColor: plainBg,
 		},
 		Enumeration: ansi.StylePrimitive{
-			BlockPrefix:     ". ",
+			BlockPrefix:     "",
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
@@ -1428,10 +1428,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	s.Chat.Message.NoContent = lipgloss.NewStyle().Foreground(fgBase)
-	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(lipgloss.NormalBorder())
-	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(primary).BorderStyle(messageFocussedBorder)
+	s.Chat.Message.UserBlurred = s.Chat.Message.NoContent.Foreground(fgHalfMuted)
+	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.Foreground(primary)
 	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
 	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
 		BorderForeground(greenDark).BorderStyle(messageFocussedBorder)

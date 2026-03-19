@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestUpdatePlanRendersTodoTree(t *testing.T) {
@@ -27,10 +27,10 @@ func TestUpdatePlanRendersTodoTree(t *testing.T) {
 	}, false)
 
 	rendered := ansi.Strip(item.Render(100))
-	if !strings.Contains(rendered, "To-Do") || !strings.Contains(rendered, "Inspect renderer path") {
+	if !strings.Contains(rendered, "To-Do") || !strings.Contains(rendered, "Inspect renderer path") || strings.Contains(rendered, "╭") {
 		t.Fatalf("expected todo tree, got %q", rendered)
 	}
-	if strings.Contains(rendered, "Update Plan") || strings.Contains(rendered, `"plan"`) {
+	if strings.Contains(rendered, `"plan"`) {
 		t.Fatalf("expected raw update_plan payload to stay hidden, got %q", rendered)
 	}
 }

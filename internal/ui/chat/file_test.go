@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestAgenticViewHidesFileContents(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSingleViewHidesFileContents(t *testing.T) {
 	if strings.Contains(rendered, "func main()") {
 		t.Fatalf("expected single view to hide file content, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Single View") || !strings.Contains(rendered, "Scope: tmp") || !strings.Contains(rendered, "File: a.go L1-L3") || !strings.Contains(rendered, "Status: read") {
+	if !strings.Contains(rendered, "View") || !strings.Contains(rendered, "Scope: tmp") || !strings.Contains(rendered, "File: a.go L1-L3") || !strings.Contains(rendered, "Status: read") || !strings.Contains(rendered, "Purpose: inspect single-file context") {
 		t.Fatalf("expected single view metadata tree, got %q", rendered)
 	}
 }
@@ -72,10 +72,10 @@ func TestSingleViewPendingStillRendersMetadataTree(t *testing.T) {
 	}, nil, false)
 
 	rendered := ansi.Strip(item.Render(100))
-	if !strings.Contains(rendered, "Single View") || !strings.Contains(rendered, "Scope: internal/agent") {
+	if !strings.Contains(rendered, "View") || !strings.Contains(rendered, "Scope: internal/agent") {
 		t.Fatalf("expected pending single view metadata, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L13-L89") {
+	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L13-L89") || !strings.Contains(rendered, "Activity: active") {
 		t.Fatalf("expected pending single view file metadata, got %q", rendered)
 	}
 }

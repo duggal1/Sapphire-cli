@@ -72,9 +72,9 @@ func (m *UserMessageItem) RawRender(width int) string {
 func (m *UserMessageItem) Render(width int) string {
 	var prefix string
 	if m.focused {
-		prefix = m.sty.Chat.Message.UserFocused.Render()
+		prefix = m.sty.Chat.Message.UserFocused.Render("·") + " "
 	} else {
-		prefix = m.sty.Chat.Message.UserBlurred.Render()
+		prefix = m.sty.Chat.Message.UserBlurred.Render("·") + " "
 	}
 	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	lines := strings.Split(m.RawRender(width), "\n")

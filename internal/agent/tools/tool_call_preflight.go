@@ -108,6 +108,8 @@ func repairToolCall(
 	// ── File operations ──────────────────────────────────────────────
 	case ViewToolName, SingleViewToolName, AgenticViewToolName:
 		return repairViewCall(call, tool, input, tools)
+	case UpdatePlanToolName:
+		return call, tool, repairUpdatePlanInput(input), nil
 	case EditToolName, SingleEditToolName, AgenticEditToolName:
 		return repairEditCall(ctx, call, tool, input, tools)
 	case WriteToolName:
@@ -301,6 +303,43 @@ func repairToolCall(
 		repairFromSchema(tool, input)
 	}
 	return call, tool, input, nil
+}
+
+func repairUpdatePlanInput(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+
+	if explanation, ok := input["explanation"].(string); ok {
+		input["explanation"] = strings.TrimSpace(explanation)
+	}
+
+	rawPlan, ok := input["plan"]
+	if !ok {
+		return input
+	}
+
+	items, err := coerceObjectSlice(rawPlan)
+	if err != nil {
+		return input
+	}
+
+	normalized := make([]any, 0, len(items))
+	for _, item := range items {
+		step, _ := item["step"].(string)
+		status, _ := item["status"].(string)
+		next := make(map[string]any)
+		if trimmed := strings.TrimSpace(step); trimmed != "" {
+			next["step"] = trimmed
+		}
+		if normalizedStatus := string(normalizeStepStatus(status)); normalizedStatus != "" {
+			next["status"] = normalizedStatus
+		}
+		normalized = append(normalized, next)
+	}
+
+	input["plan"] = normalized
+	return input
 }
 
 func repairViewCall(

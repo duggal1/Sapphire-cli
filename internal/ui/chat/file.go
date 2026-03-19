@@ -254,27 +254,38 @@ func buildViewDetailsRoot(
 		entries = entries[:1]
 	}
 
+	if isSingleView {
+		scopeNode := &TreeNode{Label: subAgentKVLabel("Scope", viewScope(entries))}
+		scopeNode.Children = append(scopeNode.Children,
+			&TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(entries[0]))},
+			&TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))},
+			&TreeNode{Label: subAgentKVLabel("Purpose", "inspect single-file context")},
+		)
+		if activity := viewActivityLabel(status, result); activity != "" {
+			scopeNode.Children = append(scopeNode.Children, &TreeNode{Label: subAgentKVLabel("Activity", activity)})
+		}
+		if errLine := viewErrorLine(status, result); errLine != "" {
+			scopeNode.Children = append(scopeNode.Children, &TreeNode{Label: subAgentKVLabel("Error", errLine)})
+		}
+		return &TreeNode{
+			Label:    sty.Tool.ListRoot.Render(toolTitle),
+			Children: []*TreeNode{scopeNode},
+		}
+	}
+
 	children := make([]*TreeNode, 0, 6)
 	if scope := viewScope(entries); scope != "" {
 		children = append(children, &TreeNode{Label: subAgentKVLabel("Scope", scope)})
 	}
-
-	if isSingleView {
-		children = append(children, &TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(entries[0]))})
-	} else {
-		children = append(children, &TreeNode{Label: subAgentKVLabel("Files", fmt.Sprintf("%d", len(entries)))})
-		if filesTree := buildFileContextRoot(sty, "Files Read", entries); filesTree != nil {
-			children = append(children, filesTree)
-		}
+	children = append(children, &TreeNode{Label: subAgentKVLabel("Files", fmt.Sprintf("%d", len(entries)))})
+	if filesTree := buildFileContextRoot(sty, "Files Read", entries); filesTree != nil {
+		children = append(children, filesTree)
 	}
-
 	children = append(children, &TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))})
-
-	purpose := "inspect file context"
-	if !isSingleView && len(entries) > 1 {
-		purpose = "inspect multi-file context"
+	children = append(children, &TreeNode{Label: subAgentKVLabel("Purpose", "inspect multi-file context")})
+	if activity := viewActivityLabel(status, result); activity != "" {
+		children = append(children, &TreeNode{Label: subAgentKVLabel("Activity", activity)})
 	}
-	children = append(children, &TreeNode{Label: subAgentKVLabel("Purpose", purpose)})
 
 	if errLine := viewErrorLine(status, result); errLine != "" {
 		children = append(children, &TreeNode{Label: subAgentKVLabel("Error", errLine)})
@@ -379,23 +390,22 @@ func viewStatusLabel(status ToolStatus, result *message.ToolResult) string {
 	return "read"
 }
 
-func viewPurpose(toolTitle string, fileCount int) string {
-	switch {
-	case toolTitle == "Single View":
-		return "inspect file context"
-	case fileCount > 1:
-		return "inspect multi-file context"
-	default:
-		return "inspect file context"
-	}
-}
-
 func viewErrorLine(status ToolStatus, result *message.ToolResult) string {
 	if status != ToolStatusError || result == nil {
 		return ""
 	}
 	text := oneLine(result.Content)
 	return strings.TrimSpace(text)
+}
+
+func viewActivityLabel(status ToolStatus, result *message.ToolResult) string {
+	if status == ToolStatusRunning {
+		return "active"
+	}
+	if result == nil {
+		return ""
+	}
+	return "complete"
 }
 
 func resolveLineStart(path string, normalizedPaths []string, params tools.ViewParams) int {

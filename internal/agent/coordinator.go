@@ -21,11 +21,13 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
+	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
@@ -144,6 +146,8 @@ type coordinator struct {
 	subAgentRegistry          *subAgentRegistry
 	orchestrationStore        *orchestrationdb.Store
 	mailbox                   *agentmailbox.Service
+	stateService              *agentstate.Service
+	activityService           *agentactivity.Service
 	mainWorktreeDir           string
 	mainWorktreeBranch        string
 	worktreeOpsMu             sync.Mutex
@@ -261,6 +265,8 @@ func NewCoordinator(
 	}
 	c.orchestrationStore = orchestrationStore
 	c.mailbox = agentmailbox.NewService(orchestrationStore, c.nudgeMailboxRecipient)
+	c.stateService = agentstate.NewService(orchestrationStore)
+	c.activityService = agentactivity.NewService(orchestrationStore)
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
 		c.mainWorktreeDir = worktreeDir
@@ -548,6 +554,13 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 
 	cachedTools, _ := c.getToolCache()
 	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
+	c.syncMainAgentOrchestrationState(ctx, env.sessionID)
+	if orchestrationContext := c.buildMainOrchestrationMemoryContext(ctx, env.sessionID); strings.TrimSpace(orchestrationContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += orchestrationContext
+	}
 	call := SessionAgentCall{
 		SessionID:        env.sessionID,
 		Prompt:           env.userPrompt,
@@ -567,7 +580,23 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		call.PrecreatedUser = &env.userMessage
 		call.SkipUserMessage = true
 	}
-	return c.currentAgent.Run(ctx, call)
+	mainAgentID := mainAgentMailboxID(env.sessionID)
+	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_started", map[string]any{
+		"session_id": env.sessionID,
+		"message_id": env.userMessage.ID,
+	})
+	result, err := c.currentAgent.Run(ctx, call)
+	if err != nil {
+		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
+			"session_id": env.sessionID,
+			"error":      err.Error(),
+		})
+		return nil, err
+	}
+	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
+		"session_id": env.sessionID,
+	})
+	return result, nil
 }
 
 // initEmbeddingService resolves the Gemini API key from configured providers

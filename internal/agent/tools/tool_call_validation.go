@@ -19,6 +19,8 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 		if len(extractViewPaths(input)) == 0 {
 			return errors.New("file_path is required")
 		}
+	case UpdatePlanToolName:
+		return validateUpdatePlanInputMap(input)
 	case EditToolName, SingleEditToolName:
 		// Validate using the normalized input map to honor parameter aliasing
 		// (e.g. "path" → "file_path") already applied by the middleware.
@@ -30,6 +32,34 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 	}
 
 	return nil
+}
+
+func validateUpdatePlanInputMap(input map[string]any) error {
+	if input == nil {
+		return errors.New("update_plan input must be a JSON object")
+	}
+
+	rawPlan, ok := input["plan"]
+	if !ok {
+		return errors.New("plan is required")
+	}
+
+	items, err := coerceObjectSlice(rawPlan)
+	if err != nil {
+		return errors.New("plan must be an array of step objects")
+	}
+
+	plan := make([]PlanItem, 0, len(items))
+	for _, item := range items {
+		step, _ := item["step"].(string)
+		status, _ := item["status"].(string)
+		plan = append(plan, PlanItem{
+			Step:   step,
+			Status: StepStatus(status),
+		})
+	}
+
+	return ValidatePlanItems(plan)
 }
 
 func extractViewPaths(input map[string]any) []string {

@@ -14,6 +14,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
@@ -55,6 +56,43 @@ type PlanResponseMetadata struct {
 	IsNew           bool `json:"is_new"`
 }
 
+func normalizeStepStatus(status string) StepStatus {
+	normalized := strings.TrimSpace(strings.ToLower(status))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	return StepStatus(normalized)
+}
+
+// ValidatePlanItems normalizes and validates update_plan items.
+func ValidatePlanItems(plan []PlanItem) error {
+	if len(plan) == 0 {
+		return fmt.Errorf("plan cannot be empty")
+	}
+
+	inProgressCount := 0
+	for i := range plan {
+		plan[i].Step = strings.TrimSpace(plan[i].Step)
+		plan[i].Status = normalizeStepStatus(string(plan[i].Status))
+		if plan[i].Step == "" {
+			return fmt.Errorf("step %d is missing step text", i+1)
+		}
+		switch plan[i].Status {
+		case StepStatusPending, StepStatusInProgress, StepStatusCompleted:
+			if plan[i].Status == StepStatusInProgress {
+				inProgressCount++
+			}
+		default:
+			return fmt.Errorf("invalid status %q for step %q", plan[i].Status, plan[i].Step)
+		}
+	}
+
+	if inProgressCount > 1 {
+		return fmt.Errorf("at most one step can be in_progress at a time")
+	}
+
+	return nil
+}
+
 // NewUpdatePlanTool creates the Codex-style update_plan tool
 func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -79,26 +117,15 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 				wasEmpty = len(currentSession.Todos) == 0
 			}
 
-			// Validate plan is not empty (Codex constraint)
-			if len(args.Plan) == 0 {
-				return fantasy.ToolResponse{}, fmt.Errorf("plan cannot be empty")
+			if err := ValidatePlanItems(args.Plan); err != nil {
+				return fantasy.ToolResponse{}, err
 			}
 
-			// Validate plan has at most one in_progress step (Codex constraint)
 			inProgressCount := 0
 			for _, item := range args.Plan {
-				switch item.Status {
-				case StepStatusPending, StepStatusInProgress, StepStatusCompleted:
-					if item.Status == StepStatusInProgress {
-						inProgressCount++
-					}
-				default:
-					return fantasy.ToolResponse{}, fmt.Errorf("invalid status %q for step %q", item.Status, item.Step)
+				if item.Status == StepStatusInProgress {
+					inProgressCount++
 				}
-			}
-
-			if inProgressCount > 1 {
-				return fantasy.ToolResponse{}, fmt.Errorf("at most one step can be in_progress at a time")
 			}
 
 			// CODEX LOGIC: Tool response becomes the event

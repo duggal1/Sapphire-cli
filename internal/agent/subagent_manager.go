@@ -508,7 +508,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 		if mailboxSummary := c.drainRunnerInboxSummary(context.Background(), runner); mailboxSummary != "" {
 			prompt = mailboxSummary + "\n\n" + prompt
 		}
-		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt)
+		skillContext := c.buildSubAgentPersistentMemoryContext(context.Background(), runner)
+		result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt, skillContext)
 		cancel()
 
 		// Run validation gate on the worktree if it exists
@@ -631,7 +632,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 	}
 }
 
-func (c *coordinator) runSubAgentTurn(ctx context.Context, agent SessionAgent, sessionID, parentSessionID, prompt string) (string, error) {
+func (c *coordinator) runSubAgentTurn(ctx context.Context, agent SessionAgent, sessionID, parentSessionID, prompt, skillContext string) (string, error) {
 	model := agent.Model()
 	maxTokens := model.CatwalkCfg.DefaultMaxTokens
 	if model.ModelCfg.MaxTokens != 0 {
@@ -646,6 +647,7 @@ func (c *coordinator) runSubAgentTurn(ctx context.Context, agent SessionAgent, s
 	result, err := agent.Run(ctx, SessionAgentCall{
 		SessionID:        sessionID,
 		Prompt:           prompt,
+		SkillContext:     skillContext,
 		MaxOutputTokens:  maxTokens,
 		ProviderOptions:  c.getProviderOptions(model, providerCfg, c.cfg.Options.GoogleGrounding),
 		Temperature:      model.ModelCfg.Temperature,

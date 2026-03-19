@@ -11,12 +11,11 @@ includes:
 metadata:
   mod_timestamp: "{{ .CommitTimestamp }}"
   license: "FSL-1.1-MIT"
-  homepage: "https://charm.sh/crush"
+  homepage: "https://github.com/duggal1/Sapphire-cli"
   description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
   full_description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
   maintainers:
-    - "kujtimiihoxha <kujtim@charm.sh>"
-    - "caarlos0 <carlos@charm.sh>" # for aur
+    - "Harshit Duggal <harshit.duggal@gmail.com>"
 
 nightly:
   publish_release: true

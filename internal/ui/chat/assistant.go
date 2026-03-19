@@ -6,7 +6,6 @@ package chat
 import (
 	"fmt"
 	"hash/fnv"
-	"image/color"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/shell"
 	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -135,8 +135,6 @@ type AssistantMessageItem struct {
 
 	message           *message.Message
 	sty               *styles.Styles
-	anim              *anim.Anim
-	skillFrame        int
 	thinkingExpanded  bool
 	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
 	lastClick         time.Time
@@ -151,32 +149,21 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 		message:                  message,
 		sty:                      sty,
 	}
-
-	a.anim = anim.New(anim.Settings{
-		ID:          a.ID(),
-		Size:        18, // Longer scrambled rune block
-		GradColors:  []color.Color{sty.Primary, sty.Secondary, sty.Tertiary},
-		LabelColor:  sty.FgBase,
-		CycleColors: true,
-	})
 	return a
 }
 
 // StartAnimation starts the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
-	if !a.isSpinning() {
+	if !a.isSpinning() && !a.hasAnimatedContext() {
 		return nil
 	}
-	return a.anim.Start()
+	return shimmer.ShimmerTickCmd()
 }
 
 // Animate progresses the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if !a.isSpinning() {
-		return nil
-	}
-	a.skillFrame++
-	return a.anim.Animate(msg)
+	_ = msg
+	return nil
 }
 
 // ID implements MessageItem.
@@ -290,13 +277,8 @@ func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
 		return ""
 	}
 
-	dotsCount := (a.skillFrame / 6) % 4
-	dots := strings.Repeat(".", dotsCount)
-	label := fmt.Sprintf("Running %d terminal(s) in background%s", count, dots)
-	// Use Codex-style shimmer with dot indicator
-	label = styles.ShimmerTextWithDot(a.sty, label)
-
-	return label
+	label := fmt.Sprintf("Running %d terminal(s) in background", count)
+	return styles.ShimmerTextWithDot(a.sty, label)
 }
 
 // renderThinking renders the thinking/reasoning content with footer.
@@ -311,8 +293,9 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = lines[totalLines-maxCollapsedThinkingHeight:]
 	}
 
+	label := a.renderThinkingShimmer(width)
 	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
-	var boxParts []string
+	boxParts := []string{label}
 	if isTruncated {
 		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
@@ -361,11 +344,7 @@ func (a *AssistantMessageItem) renderThinkingMarkdown(content string, width int)
 
 // renderThinkingShimmer renders a beautiful text shimmer for "Thinking..." with Codex-style dot.
 func (a *AssistantMessageItem) renderThinkingShimmer(width int) string {
-	dotsCount := (a.skillFrame / 6) % 4
-	dots := strings.Repeat(".", dotsCount)
-	label := "Thinking" + dots
-	// Use Codex-style shimmer with dot indicator
-	return styles.ShimmerTextWithDot(a.sty, label)
+	return styles.ShimmerTextWithDot(a.sty, "Thinking")
 }
 
 // renderMarkdown renders content as markdown.
@@ -377,22 +356,15 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 	}
 	return strings.TrimSuffix(result, "\n")
 }
-
 func (a *AssistantMessageItem) renderSpinning() string {
-	var label string
 	if a.message.IsThinking() {
-		label = "Thinking"
-	} else if a.message.IsSummaryMessage {
-		label = "Summarizing"
-	} else {
-		label = loadingPhraseForMessage(a.message.ID)
+		return a.renderThinkingShimmer(0)
 	}
-	return styles.ShimmerTextWithDot(a.sty, label)
+	return a.renderMainLoadingShimmer()
 }
 
 func (a *AssistantMessageItem) renderMainLoadingShimmer() string {
 	label := loadingPhraseForMessage(a.message.ID)
-	// Use Codex-style shimmer with dot indicator
 	return styles.ShimmerTextWithDot(a.sty, label)
 }
 
@@ -433,10 +405,14 @@ func (a *AssistantMessageItem) renderError(width int) string {
 	return strings.Join(rendered, "\n")
 }
 
+// isSpinning returns true if the assistant message is still generating.
 func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
-	return isThinking || !isFinished
+	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
+	// !hasToolCalls is explicitly removed here to conform to Crush CLI logic
+	// The loader will permanently spin until IsFinished triggers, overriding UI blocks.
+	return (isThinking || !isFinished) && !hasContent
 }
 
 func (a *AssistantMessageItem) hasAnimatedContext() bool {
@@ -459,13 +435,20 @@ func (a *AssistantMessageItem) SetMessage(message *message.Message) tea.Cmd {
 	a.clearCache()
 	nowAnimating := a.isSpinning() || a.hasAnimatedContext()
 	if !nowAnimating {
-		a.skillFrame = 0
 	}
 	if !wasAnimating && nowAnimating {
-		a.skillFrame = 0
 		return a.StartAnimation()
 	}
 	return nil
+}
+
+// OnShimmerTick invalidates the cached render while the assistant is active.
+func (a *AssistantMessageItem) OnShimmerTick() bool {
+	if !a.isSpinning() && !a.hasAnimatedContext() {
+		return false
+	}
+	a.clearCache()
+	return true
 }
 
 // ToggleExpanded toggles the expanded state of the thinking box.

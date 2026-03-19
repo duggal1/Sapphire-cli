@@ -3,7 +3,6 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
-	"image/color"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/stringext"
 	"github.com/duggal1/Sapphire-cli/internal/ui/anim"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -186,14 +186,6 @@ func newBaseToolMessageItem(
 		status:                   status,
 		hasCappedWidth:           hasCappedWidth,
 	}
-	t.anim = anim.New(anim.Settings{
-		ID:          toolCall.ID,
-		Size:        15,
-		GradColors:  []color.Color{sty.Primary, sty.Secondary, sty.Tertiary},
-		LabelColor:  sty.FgBase,
-		CycleColors: true,
-	})
-
 	return t
 }
 
@@ -304,18 +296,13 @@ func (t *baseToolMessageItem) StartAnimation() tea.Cmd {
 	if !t.isSpinning() {
 		return nil
 	}
-	return t.anim.Start()
+	return shimmer.ShimmerTickCmd()
 }
 
 // Animate progresses the assistant message animation if it should be spinning.
 func (t *baseToolMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
-	if !t.isSpinning() {
-		return nil
-	}
-	if msg.ID == t.ID() {
-		t.clearCache()
-	}
-	return t.anim.Animate(msg)
+	_ = msg
+	return nil
 }
 
 // RawRender implements [MessageItem].
@@ -448,13 +435,20 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 
 // pendingTool renders a tool that is still in progress with an animation.
 func pendingTool(sty *styles.Styles, name string, anim *anim.Anim) string {
+	_ = anim
 	icon := sty.Tool.IconPending.Render()
-	toolName := sty.Tool.NameNormal.Render(name)
-	if anim != nil {
-		toolName = styles.ShimmerText(sty, name, anim.Frame())
-	}
+	toolName := styles.ShimmerText(sty, name, 0)
 
 	return fmt.Sprintf("%s %s", icon, toolName)
+}
+
+// OnShimmerTick invalidates the cached render while the tool is pending.
+func (t *baseToolMessageItem) OnShimmerTick() bool {
+	if !t.isSpinning() {
+		return false
+	}
+	t.clearCache()
+	return true
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

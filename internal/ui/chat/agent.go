@@ -166,18 +166,16 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 }
 
 func pendingAgentTool(sty *styles.Styles, anim *anim.Anim) string {
+	_ = anim
 	icon := sty.Tool.IconPending.Render()
-	label := sty.Tool.NameNormal.Render("Agent")
-	if anim != nil {
-		label = styles.ShimmerTextWarm(sty, "Agent", anim.Frame())
-	}
+	label := styles.ShimmerTextWarm(sty, "Agent", 0)
 	return fmt.Sprintf("%s %s", icon, label)
 }
 
 func renderBackgroundAgentIndicator(sty *styles.Styles, opts *ToolRenderOpts) string {
 	label := "Agent running in background"
-	if opts.Anim != nil {
-		return styles.ShimmerTextNeutral(sty, label, opts.Anim.Frame())
+	if opts.IsSpinning {
+		return styles.ShimmerTextNeutral(sty, label, 0)
 	}
 	return label
 }
@@ -226,11 +224,7 @@ func (r *BackgroundSubAgentsToolRenderContext) RenderTool(sty *styles.Styles, wi
 	if !opts.IsSpinning {
 		return label
 	}
-	shift := 0
-	if opts.Anim != nil {
-		shift = opts.Anim.Frame()
-	}
-	return styles.ShimmerTextNeutral(sty, label, shift)
+	return styles.ShimmerTextNeutral(sty, label, 0)
 }
 
 // -----------------------------------------------------------------------------

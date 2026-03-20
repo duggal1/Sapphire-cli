@@ -18,6 +18,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/duggal1/Sapphire-cli/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 )
 
 type subAgentStatus string
@@ -485,6 +486,7 @@ type spawnAgentOptions struct {
 	PromptItems      []string
 	Title            string
 	Worktree         bool
+	WorktreeSet      bool
 	ReuseWorktree    bool
 	AllowReuse       bool
 	WorktreePath     string
@@ -522,8 +524,9 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	workDir := c.cfg.WorkingDir()
 	cleanup := func() {}
 	branch := strings.TrimSpace(opts.Branch)
+	worktreePolicy := c.resolveSpawnWorktreePolicy(ctx, parentSessionID, opts)
 
-	if opts.Worktree {
+	if worktreePolicy == worktreepolicy.Isolated {
 		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, parentSessionID, agentID, subAgentWorktreeSpec{
 			WorktreePath: opts.WorktreePath,
 			Branch:       branch,
@@ -538,7 +541,6 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		workDir = wtDir
 		branch = wtBranch
 		cleanup = wtCleanup
-
 	}
 
 	writeManifest := opts.WriteManifest
@@ -548,7 +550,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	normalizedManifest := normalizeWriteManifest(c.cfg.WorkingDir(), workDir, writeManifest)
 	assignment, assignmentPrompt := buildSubAgentAssignment(assignmentID, parentSessionID, opts.Title, promptText, workDir, decision, normalizedManifest, branch, opts.DefinitionOfDone, opts.TestCommand, c.GetLongHorizonState(parentSessionID))
 
-	if opts.Worktree {
+	if worktreePolicy == worktreepolicy.Isolated {
 		// Write TASK.md into the worktree
 		if err := writeSubAgentTaskContext(workDir, assignment); err != nil {
 			slog.Warn("Failed to write sub-agent task context", "workdir", workDir, "error", err)

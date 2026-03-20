@@ -110,6 +110,27 @@ type SessionCheckpoint struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+type WorktreeRun struct {
+	ID            string    `json:"id"`
+	SessionID     string    `json:"session_id"`
+	AgentID       string    `json:"agent_id"`
+	ParentAgentID string    `json:"parent_agent_id"`
+	Kind          string    `json:"kind"`
+	Policy        string    `json:"policy"`
+	Status        string    `json:"status"`
+	RepoRoot      string    `json:"repo_root"`
+	WorktreePath  string    `json:"worktree_path"`
+	Branch        string    `json:"branch"`
+	BaseRef       string    `json:"base_ref"`
+	TaskKey       string    `json:"task_key"`
+	Title         string    `json:"title"`
+	MetadataJSON  string    `json:"metadata_json"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	LandedAt      time.Time `json:"landed_at,omitempty"`
+	RemovedAt     time.Time `json:"removed_at,omitempty"`
+}
+
 type DecisionRecord struct {
 	ID                 string    `json:"id"`
 	SessionID          string    `json:"session_id"`

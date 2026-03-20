@@ -21,6 +21,7 @@ INSERT INTO sessions (
     cost,
     summary_message_id,
     mode,
+    worktree_policy,
     updated_at,
     created_at
 ) VALUES (
@@ -33,9 +34,10 @@ INSERT INTO sessions (
     ?,
     null,
     ?,
+    ?,
     strftime('%s', 'now'),
     strftime('%s', 'now')
-) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode
+) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode, worktree_policy
 `
 
 type CreateSessionParams struct {
@@ -47,6 +49,7 @@ type CreateSessionParams struct {
 	CompletionTokens int64          `json:"completion_tokens"`
 	Cost             float64        `json:"cost"`
 	Mode             sql.NullString `json:"mode"`
+	WorktreePolicy   sql.NullString `json:"worktree_policy"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -59,6 +62,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.CompletionTokens,
 		arg.Cost,
 		arg.Mode,
+		arg.WorktreePolicy,
 	)
 	var i Session
 	err := row.Scan(
@@ -74,6 +78,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.SummaryMessageID,
 		&i.Todos,
 		&i.Mode,
+		&i.WorktreePolicy,
 	)
 	return i, err
 }
@@ -89,7 +94,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode, worktree_policy
 FROM sessions
 WHERE id = ? LIMIT 1
 `
@@ -110,12 +115,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id string) (Session, error
 		&i.SummaryMessageID,
 		&i.Todos,
 		&i.Mode,
+		&i.WorktreePolicy,
 	)
 	return i, err
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode, worktree_policy
 FROM sessions
 WHERE parent_session_id is NULL
 ORDER BY updated_at DESC
@@ -143,6 +149,7 @@ func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {
 			&i.SummaryMessageID,
 			&i.Todos,
 			&i.Mode,
+			&i.WorktreePolicy,
 		); err != nil {
 			return nil, err
 		}
@@ -166,9 +173,10 @@ SET
     summary_message_id = ?,
     cost = ?,
     todos = ?,
-    mode = ?
+    mode = ?,
+    worktree_policy = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode
+RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, mode, worktree_policy
 `
 
 type UpdateSessionParams struct {
@@ -179,6 +187,7 @@ type UpdateSessionParams struct {
 	Cost             float64        `json:"cost"`
 	Todos            sql.NullString `json:"todos"`
 	Mode             sql.NullString `json:"mode"`
+	WorktreePolicy   sql.NullString `json:"worktree_policy"`
 	ID               string         `json:"id"`
 }
 
@@ -191,6 +200,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		arg.Cost,
 		arg.Todos,
 		arg.Mode,
+		arg.WorktreePolicy,
 		arg.ID,
 	)
 	var i Session
@@ -207,6 +217,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.SummaryMessageID,
 		&i.Todos,
 		&i.Mode,
+		&i.WorktreePolicy,
 	)
 	return i, err
 }

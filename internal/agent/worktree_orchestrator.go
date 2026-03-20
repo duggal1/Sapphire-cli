@@ -169,6 +169,7 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 				Prompt:           prompt,
 				Title:            task.Name,
 				Worktree:         true,
+				WorktreeSet:      true,
 				WorktreePath:     task.WorktreePath,
 				Branch:           task.Branch,
 				WriteManifest:    task.WriteManifest,
@@ -290,7 +291,7 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 		result.IntegrationSkippedReason = "validation failed or task incomplete"
 		return result, nil
 	}
-	execResult, err := executeDeterministicIntegration(ctx, root, baseRef, params, plan)
+	execResult, err := executeDeterministicIntegration(c, ctx, sessionID, root, baseRef, params, plan)
 	if err != nil {
 		return OrchestrateWorktreesResult{}, err
 	}
@@ -497,7 +498,7 @@ func writeIntegrationPlan(root string, plan integrationPlan) (string, error) {
 	return path, nil
 }
 
-func executeDeterministicIntegration(ctx context.Context, root, baseRef string, params OrchestrateWorktreesParams, plan integrationPlan) (integrationExecutionResult, error) {
+func executeDeterministicIntegration(c *coordinator, ctx context.Context, sessionID, root, baseRef string, params OrchestrateWorktreesParams, plan integrationPlan) (integrationExecutionResult, error) {
 	branch := strings.TrimSpace(params.IntegrationBranch)
 	if branch == "" {
 		branch = fmt.Sprintf("integration/%d", time.Now().Unix())
@@ -505,15 +506,11 @@ func executeDeterministicIntegration(ctx context.Context, root, baseRef string, 
 	worktreePath := filepath.Join(root, ".sapphire", "worktrees", "integration", sanitizeWorktreeSlug(strings.TrimPrefix(branch, "integration/")))
 	execCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	handle, err := c.worktreeManager.PrepareIntegration(execCtx, sessionID, "Integration", worktreePath, branch, baseRef)
+	if err != nil {
 		return integrationExecutionResult{}, err
 	}
-	if err := resetWorktreeState(execCtx, root, worktreePath); err != nil {
-		return integrationExecutionResult{}, err
-	}
-	if err := addWorktreeWithRecovery(execCtx, root, worktreePath, branch, baseRef); err != nil {
-		return integrationExecutionResult{}, err
-	}
+	worktreePath = handle.Run.WorktreePath
 
 	var rollbackReason string
 	for _, step := range plan.Steps {
@@ -549,7 +546,9 @@ func executeDeterministicIntegration(ctx context.Context, root, baseRef string, 
 		return integrationExecutionResult{}, err
 	}
 	result.RollbackArtifactPath = rollbackPath
-	_ = quarantineIntegrationWorktree(root, worktreePath, branch)
+	if _, quarantineErr := c.worktreeManager.Quarantine(ctx, handle.Run.ID, branch); quarantineErr != nil {
+		_ = quarantineIntegrationWorktree(root, worktreePath, branch)
+	}
 	return result, nil
 }
 
@@ -760,6 +759,7 @@ func (c *coordinator) ResumeWorktree(ctx context.Context, sessionID, worktreePat
 		Prompt:          taskPrompt,
 		Title:           "Resume Worktree",
 		Worktree:        true,
+		WorktreeSet:     true,
 		ReuseWorktree:   true,
 		AllowReuse:      true,
 		WorktreePath:    worktreePath,

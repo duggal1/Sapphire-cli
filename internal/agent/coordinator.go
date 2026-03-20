@@ -87,6 +87,10 @@ type Coordinator interface {
 	GetBackgroundStatus(agentID string) (agentbackground.SubAgent, bool)
 	ListBackgroundAgents() []agentbackground.SubAgent
 	WaitForCompletion(ctx context.Context, agentIDs []string) ([]agentbackground.SubAgent, error)
+	ListWorktrees(ctx context.Context, sessionID string, statuses []string, limit int) ([]orchestrationdb.WorktreeRun, error)
+	LandWorktree(ctx context.Context, idOrPath, strategy string) (orchestrationdb.WorktreeRun, error)
+	RepairWorktree(ctx context.Context, idOrPath string) (orchestrationdb.WorktreeRun, error)
+	RemoveManagedWorktree(ctx context.Context, idOrPath string, force bool) (orchestrationdb.WorktreeRun, error)
 	GetLongHorizonState(sessionID string) string
 	GetLongHorizonAuditTail(sessionID string, maxBytes int) string
 	RunPlanMode(ctx context.Context, sessionID, task, taskContext string) (*agentformula.ExecutionState, error)
@@ -137,6 +141,8 @@ type coordinator struct {
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
+	mainAgentsMu sync.RWMutex
+	mainAgents   map[string]SessionAgent
 
 	readyWg   errgroup.Group
 	readyOnce sync.Once
@@ -157,6 +163,7 @@ type coordinator struct {
 	backgroundRegistry        *agentbackground.Registry
 	backgroundDispatcher      *agentbackground.Dispatcher
 	backgroundMonitor         *agentbackground.Monitor
+	worktreeManager           *worktreeManager
 	toolRegistry              *tools.Registry
 	formulaExecutor           *agentformula.Executor
 	subAgentsMu               sync.Mutex
@@ -272,6 +279,7 @@ func NewCoordinator(
 		lspManager:                lspManager,
 		memory:                    memory.NewMemoryService(db.New(conn), conn),
 		agents:                    make(map[string]SessionAgent),
+		mainAgents:                make(map[string]SessionAgent),
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 		backgroundIndicators:      make(map[string]*backgroundIndicatorState),
 		backgroundRegistry:        agentbackground.NewRegistry(),
@@ -316,6 +324,7 @@ func NewCoordinator(
 	}
 	c.daemon = agentdaemon.NewService(c.dispatcher, c.supervisor)
 	c.startOrchestrationServices()
+	c.worktreeManager = newWorktreeManager(c)
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
 		c.mainWorktreeDir = worktreeDir
@@ -326,10 +335,17 @@ func NewCoordinator(
 	if !isNonInteractiveMode() {
 		mainDir := c.mainWorkingDir()
 		c.indexer = NewIndexer(mainDir, lspManager, c.memory, func() bool {
-			if c.currentAgent == nil {
-				return false
+			if c.currentAgent != nil && c.currentAgent.IsBusy() {
+				return true
 			}
-			return c.currentAgent.IsBusy()
+			c.mainAgentsMu.RLock()
+			defer c.mainAgentsMu.RUnlock()
+			for _, agent := range c.mainAgents {
+				if agent != nil && agent.IsBusy() {
+					return true
+				}
+			}
+			return false
 		})
 		go c.indexer.Start(ctx)
 		c.longHorizon = longhorizon.NewManager(mainDir)
@@ -447,7 +463,11 @@ func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, 
 		return SubmissionResult{}, err
 	}
 
-	if c.currentAgent.IsSessionBusy(sessionID) {
+	agent, err := c.mainAgentForSession(ctx, sessionID)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
+	if agent.IsSessionBusy(sessionID) {
 		call := SessionAgentCall{
 			SessionID:       env.sessionID,
 			Prompt:          env.userPrompt,
@@ -455,7 +475,7 @@ func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, 
 			PrecreatedUser:  &env.userMessage,
 			SkipUserMessage: true,
 		}
-		if err := c.currentAgent.Enqueue(call); err != nil {
+		if err := agent.Enqueue(call); err != nil {
 			return SubmissionResult{}, err
 		}
 		return SubmissionResult{
@@ -491,7 +511,11 @@ func (c *coordinator) prepareSubmission(
 		return submissionEnvelope{}, ErrEmptyPrompt
 	}
 
-	model := c.currentAgent.Model()
+	agent, err := c.mainAgentForSession(ctx, sessionID)
+	if err != nil {
+		return submissionEnvelope{}, err
+	}
+	model := agent.Model()
 	maxTokens := model.CatwalkCfg.DefaultMaxTokens
 	if model.ModelCfg.MaxTokens != 0 {
 		maxTokens = model.ModelCfg.MaxTokens
@@ -562,6 +586,14 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
 		return nil, err
 	}
+	agent, err := c.mainAgentForSession(ctx, env.sessionID)
+	if err != nil {
+		return nil, err
+	}
+	workingDir, branch, err := c.prepareCurrentAgentForSession(ctx, env.sessionID, agent)
+	if err != nil {
+		return nil, err
+	}
 
 	var skillContext string
 	var activeSkillNames []string
@@ -623,6 +655,9 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		}
 	}
 	c.syncMainAgentOrchestrationState(ctx, env.sessionID)
+	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+		c.worktreeManager.MarkStatusByPath(ctx, workingDir, "running")
+	}
 	if orchestrationContext := c.buildMainOrchestrationMemoryContext(ctx, env.sessionID); strings.TrimSpace(orchestrationContext) != "" {
 		if skillContext != "" {
 			skillContext += "\n\n"
@@ -656,7 +691,14 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
 		"message_id": env.userMessage.ID,
 	}))
-	result, err := c.currentAgent.Run(ctx, call)
+	result, err := agent.Run(ctx, call)
+	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+		if err != nil {
+			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "broken")
+		} else {
+			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "ready")
+		}
+	}
 	if err != nil {
 		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
 			"session_id": env.sessionID,
@@ -665,6 +707,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, err.Error(), "error", nil))
 		return nil, err
 	}
+	c.mainWorktreeBranch = branch
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
 		"session_id": env.sessionID,
 	})
@@ -1227,7 +1270,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 	var wg interface {
 		Go(func() error)
 	}
-	if isSubAgent {
+	if isSubAgent || c.readyDone != nil {
 		innerWg := &errgroup.Group{}
 		wg = innerWg
 		defer func() {
@@ -2099,22 +2142,59 @@ func isExactoSupported(modelID string) bool {
 }
 
 func (c *coordinator) Cancel(sessionID string) {
-	c.currentAgent.Cancel(sessionID)
+	if agent := c.lookupMainAgent(sessionID); agent != nil {
+		agent.Cancel(sessionID)
+		return
+	}
+	if c.currentAgent != nil {
+		c.currentAgent.Cancel(sessionID)
+	}
 }
 
 func (c *coordinator) CancelAll() {
-	c.currentAgent.CancelAll()
+	if c.currentAgent != nil {
+		c.currentAgent.CancelAll()
+	}
+	c.mainAgentsMu.RLock()
+	defer c.mainAgentsMu.RUnlock()
+	for _, agent := range c.mainAgents {
+		if agent != nil {
+			agent.CancelAll()
+		}
+	}
 }
 
 func (c *coordinator) ClearQueue(sessionID string) {
-	c.currentAgent.ClearQueue(sessionID)
+	if agent := c.lookupMainAgent(sessionID); agent != nil {
+		agent.ClearQueue(sessionID)
+		return
+	}
+	if c.currentAgent != nil {
+		c.currentAgent.ClearQueue(sessionID)
+	}
 }
 
 func (c *coordinator) IsBusy() bool {
-	return c.currentAgent.IsBusy()
+	if c.currentAgent != nil && c.currentAgent.IsBusy() {
+		return true
+	}
+	c.mainAgentsMu.RLock()
+	defer c.mainAgentsMu.RUnlock()
+	for _, agent := range c.mainAgents {
+		if agent != nil && agent.IsBusy() {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
+	if agent := c.lookupMainAgent(sessionID); agent != nil {
+		return agent.IsSessionBusy(sessionID)
+	}
+	if c.currentAgent == nil {
+		return false
+	}
 	return c.currentAgent.IsSessionBusy(sessionID)
 }
 
@@ -2129,6 +2209,13 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetModels(large, small)
+	c.mainAgentsMu.RLock()
+	for _, agent := range c.mainAgents {
+		if agent != nil {
+			agent.SetModels(large, small)
+		}
+	}
+	c.mainAgentsMu.RUnlock()
 
 	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
 	if !ok {
@@ -2163,19 +2250,38 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 }
 
 func (c *coordinator) QueuedPrompts(sessionID string) int {
+	if agent := c.lookupMainAgent(sessionID); agent != nil {
+		return agent.QueuedPrompts(sessionID)
+	}
+	if c.currentAgent == nil {
+		return 0
+	}
 	return c.currentAgent.QueuedPrompts(sessionID)
 }
 
 func (c *coordinator) QueuedPromptsList(sessionID string) []string {
+	if agent := c.lookupMainAgent(sessionID); agent != nil {
+		return agent.QueuedPromptsList(sessionID)
+	}
+	if c.currentAgent == nil {
+		return nil
+	}
 	return c.currentAgent.QueuedPromptsList(sessionID)
 }
 
 func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
-	providerCfg, ok := c.cfg.Providers.Get(c.currentAgent.Model().ModelCfg.Provider)
+	agent := c.lookupMainAgent(sessionID)
+	if agent == nil {
+		agent = c.currentAgent
+	}
+	if agent == nil {
+		return errors.New("main agent not initialized")
+	}
+	providerCfg, ok := c.cfg.Providers.Get(agent.Model().ModelCfg.Provider)
 	if !ok {
 		return errors.New("model provider not configured")
 	}
-	return c.currentAgent.Summarize(ctx, sessionID, c.getProviderOptions(c.currentAgent.Model(), providerCfg, c.cfg.Options.GoogleGrounding))
+	return agent.Summarize(ctx, sessionID, c.getProviderOptions(agent.Model(), providerCfg, c.cfg.Options.GoogleGrounding))
 }
 
 func (c *coordinator) isUnauthorized(err error) bool {

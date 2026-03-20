@@ -1,6 +1,7 @@
 package dialog
 
 import (
+	"context"
 	"os"
 	"strings"
 
@@ -9,12 +10,13 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/duggal1/Sapphire-cli/internal/commands"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/list"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 )
 
 // CommandsID is the identifier for the commands dialog.
@@ -402,6 +404,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	// Only show compact command if there's an active session
 	if c.hasSession {
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
+		policyLabel := "Worktree Execution: " + worktreepolicy.Default().Title()
+		if c.com != nil && c.com.App != nil && c.com.App.Sessions != nil && strings.TrimSpace(c.sessionID) != "" {
+			if sess, err := c.com.App.Sessions.Get(context.Background(), c.sessionID); err == nil {
+				policyLabel = "Worktree Execution: " + worktreepolicy.Normalize(sess.WorktreePolicy).Title()
+			}
+		}
+		commands = append(commands, NewCommandItem(c.com.Styles, "cycle_worktree_policy", policyLabel, "", ActionCycleWorktreePolicy{}))
 	}
 
 	// Add reasoning toggle for models that support it

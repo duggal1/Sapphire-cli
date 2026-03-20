@@ -116,6 +116,108 @@ var worktreesCleanCmd = &cobra.Command{
 	},
 }
 
+var worktreesListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List tracked Sapphire worktrees",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		app, err := setupApp(cmd)
+		if err != nil {
+			return err
+		}
+		defer app.Shutdown()
+
+		sessionID, _ := cmd.Flags().GetString("session")
+		statusValues, _ := cmd.Flags().GetStringSlice("status")
+		limit, _ := cmd.Flags().GetInt("limit")
+		items, err := app.AgentCoordinator.ListWorktrees(ctx, sessionID, statusValues, limit)
+		if err != nil {
+			return err
+		}
+
+		tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tSESSION\tKIND\tPOLICY\tSTATUS\tBRANCH\tWORKTREE")
+		for _, item := range items {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, item.SessionID, item.Kind, item.Policy, item.Status, item.Branch, item.WorktreePath)
+		}
+		_ = tw.Flush()
+		return nil
+	},
+}
+
+var worktreesLandCmd = &cobra.Command{
+	Use:   "land <worktree-id-or-path>",
+	Short: "Land a tracked worktree back into the base branch",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		app, err := setupApp(cmd)
+		if err != nil {
+			return err
+		}
+		defer app.Shutdown()
+
+		strategy, _ := cmd.Flags().GetString("strategy")
+		run, err := app.AgentCoordinator.LandWorktree(ctx, args[0], strategy)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "landed\t%s\t%s\t%s\n", run.ID, run.Branch, run.WorktreePath)
+		return nil
+	},
+}
+
+var worktreesRepairCmd = &cobra.Command{
+	Use:   "repair <worktree-id-or-path>",
+	Short: "Repair a tracked worktree in place",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		app, err := setupApp(cmd)
+		if err != nil {
+			return err
+		}
+		defer app.Shutdown()
+
+		run, err := app.AgentCoordinator.RepairWorktree(ctx, args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "ready\t%s\t%s\t%s\n", run.ID, run.Branch, run.WorktreePath)
+		return nil
+	},
+}
+
+var worktreesRemoveCmd = &cobra.Command{
+	Use:   "remove <worktree-id-or-path>",
+	Short: "Remove a tracked worktree",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		app, err := setupApp(cmd)
+		if err != nil {
+			return err
+		}
+		defer app.Shutdown()
+
+		force, _ := cmd.Flags().GetBool("force")
+		run, err := app.AgentCoordinator.RemoveManagedWorktree(ctx, args[0], force)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "removed\t%s\t%s\n", run.ID, run.WorktreePath)
+		return nil
+	},
+}
+
 func init() {
 	worktreesOrchestrateCmd.Flags().StringP("spec", "s", "", "Path to JSON/YAML orchestration spec")
 	worktreesOrchestrateCmd.Flags().String("resume", "", "Resume an orphaned worktree by path")
@@ -125,8 +227,17 @@ func init() {
 	worktreesOrchestrateCmd.Flags().String("reasoning-effort", "", "Reasoning effort override for resume (low, medium, high)")
 	worktreesOrchestrateCmd.Flags().String("session-title", "", "Parent session title")
 	worktreesCleanCmd.Flags().Bool("merged", false, "Remove only worktrees whose branches are already merged into main")
+	worktreesListCmd.Flags().String("session", "", "Filter by session ID")
+	worktreesListCmd.Flags().StringSlice("status", nil, "Filter by worktree status")
+	worktreesListCmd.Flags().Int("limit", 50, "Maximum rows to return")
+	worktreesLandCmd.Flags().String("strategy", "merge", "Landing strategy: merge, squash, cherry_pick, manual_review")
+	worktreesRemoveCmd.Flags().Bool("force", false, "Force removal even if git reports stale state")
 	worktreesCmd.AddCommand(worktreesOrchestrateCmd)
 	worktreesCmd.AddCommand(worktreesCleanCmd)
+	worktreesCmd.AddCommand(worktreesListCmd)
+	worktreesCmd.AddCommand(worktreesLandCmd)
+	worktreesCmd.AddCommand(worktreesRepairCmd)
+	worktreesCmd.AddCommand(worktreesRemoveCmd)
 }
 
 func loadWorktreeSpec(path string) (agent.OrchestrateWorktreesParams, error) {

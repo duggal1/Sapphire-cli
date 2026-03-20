@@ -412,22 +412,28 @@ func assistantLiveStatusLabel(msg *message.Message) string {
 // renderError renders an error message.
 func (a *AssistantMessageItem) renderError(width int) string {
 	finishPart := a.message.FinishPart()
-	titleLines := wrapPrefixedText(finishPart.Message, width, "■ ", "  ")
-	rendered := make([]string, 0, len(titleLines)+1)
-	for i, line := range titleLines {
-		if i == 0 && strings.HasPrefix(line, "■ ") {
-			rendered = append(rendered, a.sty.Chat.Message.ErrorTag.Render("■ ")+a.sty.Chat.Message.ErrorTitle.Render(strings.TrimPrefix(line, "■ ")))
-			continue
-		}
+	contentWidth := max(0, width-3)
+	titleLines := wrapPrefixedText(finishPart.Message, contentWidth, "", "")
+	rendered := make([]string, 0, len(titleLines)+2)
+	rendered = append(rendered, a.sty.Chat.Message.ErrorTag.Render("Error"))
+	for _, line := range titleLines {
 		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render(line))
 	}
 	if strings.TrimSpace(finishPart.Details) == "" {
-		return strings.Join(rendered, "\n")
+		return lipgloss.NewStyle().
+			BorderLeft(true).
+			BorderForeground(a.sty.Error).
+			PaddingLeft(1).
+			Render(strings.Join(rendered, "\n"))
 	}
-	for _, line := range wrapPrefixedText(finishPart.Details, width, "  ", "  ") {
+	for _, line := range wrapPrefixedText(finishPart.Details, contentWidth, "", "") {
 		rendered = append(rendered, a.sty.Chat.Message.ErrorDetails.Render(line))
 	}
-	return strings.Join(rendered, "\n")
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(a.sty.Error).
+		PaddingLeft(1).
+		Render(strings.Join(rendered, "\n"))
 }
 
 // isSpinning returns true if the assistant message is still generating.

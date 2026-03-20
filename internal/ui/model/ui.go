@@ -109,6 +109,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 	"github.com/duggal1/Sapphire-cli/internal/version"
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 )
 
 // MouseScrollThreshold defines how many lines to scroll the chat when a mouse
@@ -1331,6 +1332,22 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportWarn("YOLO mode disabled. Manual permission approval is required."))
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionCycleWorktreePolicy:
+		if m.session == nil {
+			cmds = append(cmds, util.ReportError(errors.New("no active session")))
+			break
+		}
+		next := worktreepolicy.Normalize(m.session.WorktreePolicy).Cycle()
+		ctx := context.Background()
+		if err := m.com.App.Sessions.SetWorktreePolicy(ctx, m.session.ID, next); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.session.WorktreePolicy = next
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, func() tea.Msg {
+			return util.NewInfoMsg("Worktree execution set to " + next.Title())
+		})
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -2896,22 +2913,32 @@ func (m *UI) renderModeFooter(width int) string {
 		return ""
 	}
 	mode := planmode.NormalizeMode(m.session.Mode)
-	if mode != planmode.PlanMode {
+	policy := worktreepolicy.Normalize(m.session.WorktreePolicy)
+	badges := make([]string, 0, 2)
+	t := m.com.Styles
+	if mode == planmode.PlanMode {
+		badges = append(badges, lipgloss.NewStyle().
+			Foreground(t.White).
+			Background(lipgloss.Color("#EA580C")).
+			Padding(0, 1).
+			Bold(true).
+			Render("PLAN"))
+	}
+	if label := policy.FooterLabel(); label != "" {
+		badges = append(badges, lipgloss.NewStyle().
+			Foreground(t.White).
+			Background(lipgloss.Color("#EC4899")).
+			Padding(0, 1).
+			Bold(true).
+			Render(label))
+	}
+	if len(badges) == 0 {
 		return ""
 	}
-
-	t := m.com.Styles
 	return lipgloss.NewStyle().
 		Align(lipgloss.Right).
 		Width(width).
-		Render(
-			lipgloss.NewStyle().
-				Foreground(t.White).
-				Background(lipgloss.Color("#EA580C")).
-				Padding(0, 1).
-				Bold(true).
-				Render("PLAN"),
-		)
+		Render(strings.Join(badges, " "))
 }
 
 // uiLayout defines the positioning of UI elements.

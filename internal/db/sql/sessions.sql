@@ -9,6 +9,7 @@ INSERT INTO sessions (
     cost,
     summary_message_id,
     mode,
+    worktree_policy,
     updated_at,
     created_at
 ) VALUES (
@@ -20,6 +21,7 @@ INSERT INTO sessions (
     ?,
     ?,
     null,
+    ?,
     ?,
     strftime('%s', 'now'),
     strftime('%s', 'now')
@@ -45,7 +47,8 @@ SET
     summary_message_id = ?,
     cost = ?,
     todos = ?,
-    mode = ?
+    mode = ?,
+    worktree_policy = ?
 WHERE id = ?
 RETURNING *;
 

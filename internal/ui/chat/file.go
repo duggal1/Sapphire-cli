@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/fsext"
 	"github.com/duggal1/Sapphire-cli/internal/message"
@@ -369,14 +368,11 @@ func resolveSingleViewLineStart(params tools.ViewParams) int {
 }
 
 func viewRootLabel(sty *styles.Styles, toolTitle string) string {
-	if toolTitle == "Agentic View" {
-		return sty.Base.Foreground(lipgloss.Color("#EFD9E7")).Bold(true).Render(toolTitle)
-	}
 	return sty.Tool.ListRoot.Render(toolTitle)
 }
 
 func renderViewFileLabel(sty *styles.Styles, entry fileContextEntry) string {
-	label := sty.Tool.ListFile.Bold(true).Render(filepath.Base(entry.Path))
+	label := sty.Tool.ListFile.Render(filepath.Base(entry.Path))
 	if entry.LineStart > 0 && entry.LineEnd >= entry.LineStart {
 		label += sty.Tool.ListMeta.Render(fmt.Sprintf(" L%d-L%d", entry.LineStart, entry.LineEnd))
 	}

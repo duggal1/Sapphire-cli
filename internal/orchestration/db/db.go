@@ -1151,6 +1151,147 @@ func (s *Store) ListDispatchesByWorkItem(ctx context.Context, workItemID string,
 	return scanDispatchRows(rows)
 }
 
+func (s *Store) UpsertWorktreeRun(ctx context.Context, item WorktreeRun) error {
+	if s == nil || s.conn == nil {
+		return fmt.Errorf("orchestration store is not initialized")
+	}
+	now := time.Now().UTC()
+	if stringsTrim(item.ID) == "" {
+		item.ID = uuid.NewString()
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	if stringsTrim(item.Policy) == "" {
+		item.Policy = "shared_repo"
+	}
+	if stringsTrim(item.MetadataJSON) == "" {
+		item.MetadataJSON = "{}"
+	}
+	_, err := s.conn.ExecContext(
+		ctx,
+		`INSERT INTO worktree_runs (
+			id, session_id, agent_id, parent_agent_id, kind, policy, status, repo_root, worktree_path, branch, base_ref,
+			task_key, title, metadata_json, created_at, updated_at, landed_at, removed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			session_id = excluded.session_id,
+			agent_id = excluded.agent_id,
+			parent_agent_id = excluded.parent_agent_id,
+			kind = excluded.kind,
+			policy = excluded.policy,
+			status = excluded.status,
+			repo_root = excluded.repo_root,
+			worktree_path = excluded.worktree_path,
+			branch = excluded.branch,
+			base_ref = excluded.base_ref,
+			task_key = excluded.task_key,
+			title = excluded.title,
+			metadata_json = excluded.metadata_json,
+			updated_at = excluded.updated_at,
+			landed_at = excluded.landed_at,
+			removed_at = excluded.removed_at`,
+		stringsTrim(item.ID),
+		stringsTrim(item.SessionID),
+		stringsTrim(item.AgentID),
+		stringsTrim(item.ParentAgentID),
+		stringsTrim(item.Kind),
+		stringsTrim(item.Policy),
+		stringsTrim(item.Status),
+		stringsTrim(item.RepoRoot),
+		stringsTrim(item.WorktreePath),
+		stringsTrim(item.Branch),
+		stringsTrim(item.BaseRef),
+		stringsTrim(item.TaskKey),
+		stringsTrim(item.Title),
+		item.MetadataJSON,
+		item.CreatedAt.UTC().Unix(),
+		item.UpdatedAt.UTC().Unix(),
+		timeToUnix(item.LandedAt),
+		timeToUnix(item.RemovedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert worktree run: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetWorktreeRun(ctx context.Context, id string) (WorktreeRun, error) {
+	if s == nil || s.conn == nil {
+		return WorktreeRun{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT id, session_id, agent_id, parent_agent_id, kind, policy, status, repo_root, worktree_path, branch, base_ref,
+		        task_key, title, metadata_json, created_at, updated_at, landed_at, removed_at
+		   FROM worktree_runs
+		  WHERE id = ?`,
+		stringsTrim(id),
+	)
+	item, err := scanWorktreeRun(row)
+	if err != nil {
+		return WorktreeRun{}, fmt.Errorf("get worktree run: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) GetWorktreeRunByPath(ctx context.Context, worktreePath string) (WorktreeRun, error) {
+	if s == nil || s.conn == nil {
+		return WorktreeRun{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT id, session_id, agent_id, parent_agent_id, kind, policy, status, repo_root, worktree_path, branch, base_ref,
+		        task_key, title, metadata_json, created_at, updated_at, landed_at, removed_at
+		   FROM worktree_runs
+		  WHERE worktree_path = ?
+		  ORDER BY updated_at DESC
+		  LIMIT 1`,
+		stringsTrim(worktreePath),
+	)
+	item, err := scanWorktreeRun(row)
+	if err != nil {
+		return WorktreeRun{}, fmt.Errorf("get worktree run by path: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) ListWorktreeRuns(ctx context.Context, sessionID string, statuses []string, limit int) ([]WorktreeRun, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, session_id, agent_id, parent_agent_id, kind, policy, status, repo_root, worktree_path, branch, base_ref,
+	                 task_key, title, metadata_json, created_at, updated_at, landed_at, removed_at
+	            FROM worktree_runs
+	           WHERE 1=1`
+	args := make([]any, 0, 1+len(statuses))
+	if sessionID = stringsTrim(sessionID); sessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, sessionID)
+	}
+	statuses = normalizeStringArgs(statuses)
+	if len(statuses) > 0 {
+		query += ` AND status IN (` + strings.TrimRight(strings.Repeat("?,", len(statuses)), ",") + `)`
+		for _, status := range statuses {
+			args = append(args, status)
+		}
+	}
+	query += ` ORDER BY updated_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list worktree runs: %w", err)
+	}
+	defer rows.Close()
+	return scanWorktreeRunRows(rows)
+}
+
 func (s *Store) SaveCheckpoint(ctx context.Context, checkpoint SessionCheckpoint) (SessionCheckpoint, error) {
 	if s == nil || s.conn == nil {
 		return SessionCheckpoint{}, fmt.Errorf("orchestration store is not initialized")
@@ -1740,6 +1881,66 @@ func scanCheckpoint(row scanner) (SessionCheckpoint, error) {
 		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
 	}
 	return item, nil
+}
+
+func scanWorktreeRun(row scanner) (WorktreeRun, error) {
+	var (
+		item          WorktreeRun
+		createdAtUnix int64
+		updatedAtUnix int64
+		landedAtUnix  int64
+		removedAtUnix int64
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.SessionID,
+		&item.AgentID,
+		&item.ParentAgentID,
+		&item.Kind,
+		&item.Policy,
+		&item.Status,
+		&item.RepoRoot,
+		&item.WorktreePath,
+		&item.Branch,
+		&item.BaseRef,
+		&item.TaskKey,
+		&item.Title,
+		&item.MetadataJSON,
+		&createdAtUnix,
+		&updatedAtUnix,
+		&landedAtUnix,
+		&removedAtUnix,
+	); err != nil {
+		return WorktreeRun{}, err
+	}
+	if createdAtUnix > 0 {
+		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	if updatedAtUnix > 0 {
+		item.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	}
+	if landedAtUnix > 0 {
+		item.LandedAt = time.Unix(landedAtUnix, 0).UTC()
+	}
+	if removedAtUnix > 0 {
+		item.RemovedAt = time.Unix(removedAtUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanWorktreeRunRows(rows *sql.Rows) ([]WorktreeRun, error) {
+	var items []WorktreeRun
+	for rows.Next() {
+		item, err := scanWorktreeRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan worktree run: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate worktree runs: %w", err)
+	}
+	return items, nil
 }
 
 func scanDecisionRecord(row scanner) (DecisionRecord, error) {

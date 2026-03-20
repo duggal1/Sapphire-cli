@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 )
 
 const subAgentWorktreeTimeout = 20 * time.Second
@@ -24,83 +26,11 @@ type subAgentWorktreeSpec struct {
 }
 
 func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, agentID string, spec subAgentWorktreeSpec) (string, string, func(), error) {
-	root := c.cfg.WorkingDir()
-	if root == "" {
-		return "", "", func() {}, fmt.Errorf("working directory not configured")
-	}
-
-	worktreeDir := spec.WorktreePath
-	if strings.TrimSpace(worktreeDir) == "" {
-		worktreeDir = c.defaultSubAgentWorktreePath(root, spec.TaskKey, spec.AssignmentID)
-	}
-	if !filepath.IsAbs(worktreeDir) {
-		worktreeDir = filepath.Join(root, worktreeDir)
-	}
-	worktreeDir = filepath.Clean(worktreeDir)
-	release := c.lockWorktreePath(worktreeDir)
-	defer release()
-
-	branch := sanitizeBranchName(spec.Branch)
-	if branch == "" {
-		branch = defaultSubAgentBranch(spec.TaskKey, spec.AssignmentID)
-	}
-
-	if spec.Reuse && !spec.AllowReuse {
-		return "", "", func() {}, fmt.Errorf("worktree reuse is forbidden; use resume_agent to continue an existing worktree")
-	}
-
-	if spec.Reuse {
-		if !isParseableWorktreePath(root, worktreeDir) {
-			return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected .sapphire/worktrees/agent/<id>/<task-slug>", worktreeDir)
-		}
-		if !isSubAgentWorktree(worktreeDir) {
-			return "", "", func() {}, fmt.Errorf("worktree %s does not exist for reuse", worktreeDir)
-		}
-		if current, err := currentWorktreeBranch(ctx, worktreeDir); err == nil && current != "" {
-			branch = current
-		}
-		if !isParseableAgentBranch(branch) {
-			return "", "", func() {}, fmt.Errorf("branch %s is not allowed; expected format agent/<id>/<task-slug>", branch)
-		}
-		return worktreeDir, branch, func() {}, nil
-	}
-
-	if err := ensureCleanBaseWorktree(ctx, root); err != nil {
+	handle, cleanup, err := c.worktreeManager.PrepareSubAgent(ctx, sessionID, agentID, mainAgentMailboxID(sessionID), spec, spec.TaskKey, worktreepolicy.Isolated)
+	if err != nil {
 		return "", "", func() {}, err
 	}
-	if !isParseableAgentBranch(branch) {
-		return "", "", func() {}, fmt.Errorf("branch %s is not allowed; expected format agent/<id>/<task-slug>", branch)
-	}
-	if !isParseableWorktreePath(root, worktreeDir) {
-		return "", "", func() {}, fmt.Errorf("worktree path %s is not allowed; expected .sapphire/worktrees/agent/<id>/<task-slug>", worktreeDir)
-	}
-
-	if owner := c.activeSubAgentUsingWorktree(worktreeDir, agentID); owner != "" {
-		return "", "", func() {}, fmt.Errorf("worktree %s is already owned by active sub-agent %s", worktreeDir, owner)
-	}
-	if owner := c.activeSubAgentUsingBranch(branch, worktreeDir, agentID); owner != "" {
-		return "", "", func() {}, fmt.Errorf("branch %s is already owned by active sub-agent %s", branch, owner)
-	}
-
-	ensureSapphireWorktreesGitignored(root)
-
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
-		return "", "", func() {}, fmt.Errorf("create worktree parent failed: %w", err)
-	}
-
-	wtCtx, cancel := context.WithTimeout(ctx, subAgentWorktreeTimeout)
-	defer cancel()
-	if err := resetWorktreeState(wtCtx, root, worktreeDir); err != nil {
-		return "", "", func() {}, err
-	}
-
-	baseRef := resolveWorktreeBaseRef(ctx, root)
-	if err := addWorktreeWithRecovery(wtCtx, root, worktreeDir, branch, baseRef); err != nil {
-		return "", "", func() {}, err
-	}
-
-	cleanup := c.subAgentWorktreeCleanup(root, worktreeDir)
-	return worktreeDir, branch, cleanup, nil
+	return handle.Run.WorktreePath, handle.Run.Branch, cleanup, nil
 }
 
 func (c *coordinator) subAgentWorktreeRoot(root string) string {

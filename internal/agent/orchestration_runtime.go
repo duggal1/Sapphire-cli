@@ -152,6 +152,26 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 			slog.Warn("Failed to persist orchestration work item", "agent_id", state.AgentID, "work_item_id", workItem.ID, "error", err)
 		}
 	}
+	if c.worktreeManager != nil && strings.TrimSpace(state.WorktreePath) != "" {
+		c.worktreeManager.MarkStatusByPath(ctx, state.WorktreePath, worktreeLifecycleStatusForRunner(state.Status))
+	}
+}
+
+func worktreeLifecycleStatusForRunner(status string) string {
+	switch strings.TrimSpace(status) {
+	case string(subAgentStatusQueued):
+		return "queued"
+	case string(subAgentStatusRunning):
+		return "running"
+	case string(subAgentStatusCompleted), string(subAgentStatusClosed):
+		return "completed"
+	case string(subAgentStatusStuck):
+		return "stuck"
+	case string(subAgentStatusError):
+		return "failed"
+	default:
+		return "ready"
+	}
 }
 
 func buildRunnerWorkItemDescription(runner *subAgentRunner) string {
@@ -185,13 +205,18 @@ func (c *coordinator) syncMainAgentOrchestrationState(ctx context.Context, sessi
 	if c == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	worktreePath, branch, err := c.resolveMainExecutionRoot(ctx, sessionID)
+	if err != nil {
+		worktreePath = c.mainWorkingDir()
+		branch = c.mainWorktreeBranch
+	}
 	state := orchestrationdb.AgentState{
 		AgentID:       mainAgentMailboxID(sessionID),
 		Role:          "main-agent",
 		Status:        "running",
 		SessionID:     sessionID,
-		WorktreePath:  c.mainWorkingDir(),
-		Branch:        c.mainWorktreeBranch,
+		WorktreePath:  worktreePath,
+		Branch:        branch,
 		ParentAgentID: "",
 		LastHeartbeat: time.Now().UTC(),
 		CreatedAt:     time.Now().UTC(),

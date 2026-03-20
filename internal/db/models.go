@@ -69,6 +69,7 @@ type Session struct {
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
 	Mode             sql.NullString `json:"mode"`
+	WorktreePolicy   sql.NullString `json:"worktree_policy"`
 }
 
 type StructuredSummary struct {

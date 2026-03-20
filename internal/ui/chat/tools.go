@@ -462,17 +462,22 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 	if result == nil {
 		return ""
 	}
-	errContent := strings.ReplaceAll(result.Content, "\n", " ")
-	lines := wrapPrefixedText(errContent, width, "■ ", "  ")
-	rendered := make([]string, 0, len(lines))
-	for i, line := range lines {
-		if i == 0 && strings.HasPrefix(line, "■ ") {
-			rendered = append(rendered, sty.Tool.ErrorTag.Render("■ ")+sty.Tool.ErrorMessage.Render(strings.TrimPrefix(line, "■ ")))
-			continue
-		}
+	contentWidth := max(0, width-3)
+	errContent := strings.TrimSpace(result.Content)
+	if errContent == "" {
+		errContent = "tool execution failed"
+	}
+	lines := wrapPrefixedText(strings.ReplaceAll(errContent, "\n", " "), contentWidth, "", "")
+	rendered := make([]string, 0, len(lines)+1)
+	rendered = append(rendered, sty.Tool.ErrorTag.Render("Error"))
+	for _, line := range lines {
 		rendered = append(rendered, sty.Tool.ErrorMessage.Render(line))
 	}
-	return strings.Join(rendered, "\n")
+	block := lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(sty.Error).
+		PaddingLeft(1)
+	return block.Render(strings.Join(rendered, "\n"))
 }
 
 // toolIcon returns the status icon for a tool call.

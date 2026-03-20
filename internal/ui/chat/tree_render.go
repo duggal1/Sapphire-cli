@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -44,7 +45,7 @@ func renderTreeLines(nodes []*TreeNode, prefix string, width int) []string {
 			continue
 		}
 
-		line := prefix + branch + labelLines[0]
+		line := styleTreeGlyphs(prefix+branch) + labelLines[0]
 		line = ansi.Truncate(line, max(0, width), "…")
 		lines = append(lines, line)
 
@@ -54,7 +55,7 @@ func renderTreeLines(nodes []*TreeNode, prefix string, width int) []string {
 		}
 
 		if len(labelLines) > 1 {
-			indent := continuationPrefix + "    "
+			indent := styleTreeGlyphs(continuationPrefix) + "    "
 			for _, extra := range labelLines[1:] {
 				extraLine := indent + extra
 				extraLine = ansi.Truncate(extraLine, max(0, width), "…")
@@ -67,4 +68,18 @@ func renderTreeLines(nodes []*TreeNode, prefix string, width int) []string {
 		}
 	}
 	return lines
+}
+
+func styleTreeGlyphs(text string) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#877A92"))
+	var out strings.Builder
+	for _, r := range text {
+		switch r {
+		case '│', '├', '└', '─':
+			out.WriteString(style.Render(string(r)))
+		default:
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
 }

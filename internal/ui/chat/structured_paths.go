@@ -95,7 +95,7 @@ func findFileContextChild(parent *fileContextNode, name string, isLeaf bool) *fi
 func fileContextNodeToRenderNode(sty *styles.Styles, node *fileContextNode) *TreeNode {
 	label := sty.Tool.ListDirectory.Render(node.name)
 	if node.isFile {
-		label = sty.Tool.ListFile.Bold(true).Render(node.name)
+		label = sty.Tool.ListFile.Render(node.name)
 		if node.lineStart > 0 && node.lineEnd >= node.lineStart {
 			label += sty.Tool.ListMeta.Render(fmt.Sprintf(" L%d-L%d", node.lineStart, node.lineEnd))
 		}

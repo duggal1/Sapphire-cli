@@ -575,21 +575,21 @@ func renderSubAgentRootLabel(sty *styles.Styles, label string) string {
 	if sty == nil {
 		return label
 	}
-	return sty.Base.Foreground(lipgloss.Color("#F472B6")).Bold(true).Render(label)
+	return sty.Base.Foreground(sty.Primary).Bold(true).Render(label)
 }
 
 func renderSubAgentSectionLabel(sty *styles.Styles, label string) string {
 	if sty == nil {
 		return label
 	}
-	return sty.Base.Foreground(lipgloss.Color("#7DD3FC")).Bold(true).Render(label)
+	return sty.Base.Foreground(sty.Tertiary).Bold(true).Render(label)
 }
 
 func renderSubAgentAgentTitle(sty *styles.Styles, id string) string {
 	if sty == nil {
 		return shortenSubAgentID(id)
 	}
-	return sty.Base.Foreground(lipgloss.Color("#F8B4D9")).Bold(true).Render(shortenSubAgentID(id))
+	return sty.Base.Foreground(sty.FgBase).Bold(true).Render(shortenSubAgentID(id))
 }
 
 func renderSubAgentField(sty *styles.Styles, key, value string) string {
@@ -598,7 +598,7 @@ func renderSubAgentField(sty *styles.Styles, key, value string) string {
 	if sty == nil {
 		return subAgentKVLabel(key, value)
 	}
-	keyText := sty.Base.Foreground(lipgloss.Color("#7DD3FC")).Render(key + ":")
+	keyText := sty.Base.Foreground(sty.FgHalfMuted).Render(key + ":")
 	return keyText + " " + renderSubAgentFieldValueForKey(sty, key, value)
 }
 
@@ -606,18 +606,18 @@ func renderSubAgentFieldValue(sty *styles.Styles, value string) string {
 	if sty == nil {
 		return value
 	}
-	return sty.Base.Foreground(lipgloss.Color("#F2E9F7")).Render(value)
+	return sty.Base.Foreground(sty.FgBase).Render(value)
 }
 
 func renderSubAgentFieldValueForKey(sty *styles.Styles, key, value string) string {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "agent", "run":
-		return sty.Base.Foreground(lipgloss.Color("#F8B4D9")).Bold(true).Render(value)
+		return sty.Base.Foreground(sty.FgBase).Bold(true).Render(value)
 	case "state":
 		return sty.Base.Foreground(subAgentStatusColor(value)).Bold(true).Render(strings.ToLower(value))
 	case "wait result":
 		if strings.EqualFold(strings.TrimSpace(value), "timed out") {
-			return sty.Base.Foreground(lipgloss.Color("#F5B97A")).Bold(true).Render(strings.ToLower(value))
+			return sty.Base.Foreground(sty.Warning).Bold(true).Render(strings.ToLower(value))
 		}
 	}
 	return renderSubAgentFieldValue(sty, value)
@@ -643,8 +643,8 @@ func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) stri
 	}
 
 	iconText := sty.Base.Foreground(subAgentStatusColor(status)).Render(icon)
-	idText := sty.Base.Foreground(lipgloss.Color("#F8B4D9")).Bold(true).Render(id)
-	worktreeText := sty.Base.Foreground(lipgloss.Color("#7DD3FC")).Render(worktree)
+	idText := sty.Base.Foreground(sty.FgBase).Bold(true).Render(id)
+	worktreeText := sty.Base.Foreground(sty.FgMuted).Render(worktree)
 	statusText := sty.Base.Foreground(subAgentStatusColor(status)).Bold(true).Render(status)
 
 	parts := []string{iconText, idText, worktreeText}
@@ -652,7 +652,7 @@ func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) stri
 		parts = append(parts, statusText)
 	}
 	if timer := formatSubAgentElapsedAt(entry.StartedAt, time.Now()); timer != "" {
-		parts = append(parts, sty.Base.Foreground(lipgloss.Color("#B8AFBF")).Render("["+timer+"]"))
+		parts = append(parts, sty.Base.Foreground(sty.FgHalfMuted).Render("["+timer+"]"))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -720,18 +720,16 @@ func subAgentStatusIcon(status string) string {
 
 func subAgentStatusColor(status string) color.Color {
 	switch normalizeSubAgentStatus(status) {
-	case "completed":
-		return lipgloss.Color("#F472B6")
-	case "stuck":
-		return lipgloss.Color("#E7A1B0")
-	case "error":
-		return lipgloss.Color("#F38BA8")
+	case "completed", "running":
+		return lipgloss.Color("#9FE3C1")
+	case "stuck", "error":
+		return lipgloss.Color("#E48AA7")
 	case "closed":
 		return lipgloss.Color("#B8AFBF")
 	case "queued":
-		return lipgloss.Color("#7DD3FC")
+		return lipgloss.Color("#B9A3E8")
 	default:
-		return lipgloss.Color("#9FE3C1")
+		return lipgloss.Color("#B9A3E8")
 	}
 }
 

@@ -58,13 +58,16 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				return fantasy.NewTextResponse("running in background"), nil
 			}
 			useWorktree := false
+			worktreeSet := false
 			if params.Worktree != nil {
 				useWorktree = *params.Worktree
+				worktreeSet = true
 			}
 			agentID, _, err := control.spawn(ctx, sessionID, spawnAgentOptions{
 				Prompt:           params.Prompt,
 				Title:            "New Agent Session",
 				Worktree:         useWorktree,
+				WorktreeSet:      worktreeSet,
 				WorktreePath:     params.WorktreePath,
 				Branch:           params.Branch,
 				WriteManifest:    params.WriteManifest,

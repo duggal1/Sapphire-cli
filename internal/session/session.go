@@ -12,6 +12,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/duggal1/Sapphire-cli/internal/event"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 	"github.com/google/uuid"
 )
 
@@ -81,6 +82,7 @@ type Session struct {
 	Cost             float64
 	Todos            []Todo
 	Mode             planmode.SessionMode // Codex plan mode architecture
+	WorktreePolicy   worktreepolicy.Policy
 	CreatedAt        int64
 	UpdatedAt        int64
 }
@@ -104,6 +106,8 @@ type Service interface {
 	// Plan mode management (Codex-inspired)
 	SetMode(ctx context.Context, sessionID string, mode planmode.SessionMode) error
 	GetMode(ctx context.Context, sessionID string) (planmode.SessionMode, error)
+	SetWorktreePolicy(ctx context.Context, sessionID string, policy worktreepolicy.Policy) error
+	GetWorktreePolicy(ctx context.Context, sessionID string) (worktreepolicy.Policy, error)
 }
 
 type service struct {
@@ -114,9 +118,10 @@ type service struct {
 
 func (s *service) Create(ctx context.Context, title string) (Session, error) {
 	dbSession, err := s.q.CreateSession(ctx, db.CreateSessionParams{
-		ID:    uuid.New().String(),
-		Title: title,
-		Mode:  sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
+		ID:             uuid.New().String(),
+		Title:          title,
+		Mode:           sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
+		WorktreePolicy: sql.NullString{String: string(worktreepolicy.Default()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -133,6 +138,7 @@ func (s *service) CreateTaskSession(ctx context.Context, toolCallID, parentSessi
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           title,
 		Mode:            sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
+		WorktreePolicy:  sql.NullString{String: string(worktreepolicy.Default()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -148,6 +154,7 @@ func (s *service) CreateTitleSession(ctx context.Context, parentSessionID string
 		ParentSessionID: sql.NullString{String: parentSessionID, Valid: true},
 		Title:           "Generate a title",
 		Mode:            sql.NullString{String: string(planmode.DefaultMode()), Valid: true},
+		WorktreePolicy:  sql.NullString{String: string(worktreepolicy.Default()), Valid: true},
 	})
 	if err != nil {
 		return Session{}, err
@@ -221,6 +228,10 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 			String: string(session.Mode),
 			Valid:  session.Mode != "",
 		},
+		WorktreePolicy: sql.NullString{
+			String: string(worktreepolicy.Normalize(session.WorktreePolicy)),
+			Valid:  session.WorktreePolicy != "",
+		},
 	})
 	if err != nil {
 		return Session{}, err
@@ -264,6 +275,10 @@ func (s service) fromDBItem(item db.Session) Session {
 	if item.Mode.Valid && item.Mode.String != "" {
 		mode = planmode.NormalizeMode(planmode.SessionMode(item.Mode.String))
 	}
+	policy := worktreepolicy.Default()
+	if item.WorktreePolicy.Valid && item.WorktreePolicy.String != "" {
+		policy = worktreepolicy.Normalize(worktreepolicy.Policy(item.WorktreePolicy.String))
+	}
 
 	return Session{
 		ID:               item.ID,
@@ -276,6 +291,7 @@ func (s service) fromDBItem(item db.Session) Session {
 		Cost:             item.Cost,
 		Todos:            todos,
 		Mode:             mode,
+		WorktreePolicy:   policy,
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
@@ -356,4 +372,28 @@ func (s *service) GetMode(ctx context.Context, sessionID string) (planmode.Sessi
 		return planmode.DefaultMode(), err
 	}
 	return planmode.NormalizeMode(session.Mode), nil
+}
+
+func (s *service) SetWorktreePolicy(ctx context.Context, sessionID string, policy worktreepolicy.Policy) error {
+	policy = worktreepolicy.Normalize(policy)
+	if !policy.IsValid() {
+		return fmt.Errorf("invalid worktree policy: %s", policy)
+	}
+
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	session.WorktreePolicy = policy
+	_, err = s.Save(ctx, session)
+	return err
+}
+
+func (s *service) GetWorktreePolicy(ctx context.Context, sessionID string) (worktreepolicy.Policy, error) {
+	session, err := s.Get(ctx, sessionID)
+	if err != nil {
+		return worktreepolicy.Default(), err
+	}
+	return worktreepolicy.Normalize(session.WorktreePolicy), nil
 }

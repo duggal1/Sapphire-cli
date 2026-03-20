@@ -1,6 +1,7 @@
 package styles
 
 import (
+	"fmt"
 	"image/color"
 	"strings"
 
@@ -554,13 +555,13 @@ func DefaultStyles(yellowMode bool) Styles {
 		// Semantic Theme Colors - purple-led palette with a calmer pink accent.
 		primaryHex   = "#A34DFF"
 		primary      = lipgloss.Color(primaryHex)
-		secondaryHex = "#EA8EED"
+		secondaryHex = "#E0A7E8"
 		secondary    = lipgloss.Color(secondaryHex)
 		highlightHex = "#C7B8FF"
 		highlight    = lipgloss.Color(highlightHex)
-		tertiaryHex  = "#C58BFF"
+		tertiaryHex  = "#B9A3E8"
 		tertiary     = lipgloss.Color(tertiaryHex)
-		logoPinkHex  = "#FF8FE7"
+		logoPinkHex  = "#E6A8E4"
 		logoPink     = lipgloss.Color(logoPinkHex)
 		// Markdown accent pair (Purple + Pink)
 		markdownSecondaryHex = secondaryHex
@@ -569,51 +570,50 @@ func DefaultStyles(yellowMode bool) Styles {
 		// Backgrounds - anchored to the agentic terminal base while keeping
 		// overlays lighter than the canvas.
 		bgBaseHex        = "#15141B"
-		bgBaseLighterHex = "#1B1924"
-		bgSubtleHex      = "#191722"
-		bgOverlayHex     = "#211E2E"
+		bgBaseLighterHex = "#1C1A27"
+		bgSubtleHex      = "#1A1823"
+		bgOverlayHex     = "#231F31"
 		bgBase           = lipgloss.Color(bgBaseHex)
 		bgBaseLighter    = lipgloss.Color(bgBaseLighterHex)
 		bgSubtle         = lipgloss.Color(bgSubtleHex)
 		bgOverlay        = lipgloss.Color(bgOverlayHex)
-
-		thinkingBorder = lipgloss.Color("#44336A")
+		thinkingBorder   = lipgloss.Color("#5A487B")
 
 		// Foregrounds
-		fgBase      = charmtone.Ash
-		fgMuted     = charmtone.Squid
-		fgHalfMuted = charmtone.Smoke
-		fgSubtle    = charmtone.Oyster
+		fgBase      = lipgloss.Color("#F1EAF2")
+		fgMuted     = lipgloss.Color("#C5B8CD")
+		fgHalfMuted = lipgloss.Color("#A89AB1")
+		fgSubtle    = lipgloss.Color("#877A92")
 
-		// Tree text - brighter pink for clearer structure without going neon.
-		fgTree = lipgloss.Color("#F3A0C8")
+		// Tree text stays calm; structure is carried by purple, not hot pink.
+		fgTree = lipgloss.Color("#E9DDEB")
 
 		// Borders
-		border      = lipgloss.Color("#33294A")
+		border      = lipgloss.Color("#3A314D")
 		borderFocus = lipgloss.Color("#9327ffff")
 
 		// Status palette
-		error   = lipgloss.Color("#FF7AA8")
-		warning = secondary
+		error   = lipgloss.Color("#E48AA7")
+		warning = lipgloss.Color("#D2A46D")
 		info    = tertiary
 
 		// Toast backgrounds (status bar)
-		toastSuccessBg     = lipgloss.Color("#00aa44ff")
-		toastSuccessBorder = lipgloss.Color("#166534")
-		toastInfoBg        = lipgloss.Color("#2B2244")
-		toastInfoBorder    = lipgloss.Color(primaryHex)
-		toastUpdateBg      = lipgloss.Color("#2B2244")
-		toastUpdateBorder  = lipgloss.Color(primaryHex)
-		toastWarnBg        = lipgloss.Color("#173945")
-		toastWarnBorder    = lipgloss.Color(tertiaryHex)
-		toastErrorBg       = lipgloss.Color("#991B1B")
-		toastErrorBorder   = lipgloss.Color("#B91C1C")
+		toastSuccessBg     = lipgloss.Color("#253227")
+		toastSuccessBorder = lipgloss.Color("#527A5D")
+		toastInfoBg        = lipgloss.Color("#241F33")
+		toastInfoBorder    = lipgloss.Color("#6C5A92")
+		toastUpdateBg      = lipgloss.Color("#241F33")
+		toastUpdateBorder  = lipgloss.Color("#6C5A92")
+		toastWarnBg        = lipgloss.Color("#31281F")
+		toastWarnBorder    = lipgloss.Color("#8F7352")
+		toastErrorBg       = lipgloss.Color("#331F29")
+		toastErrorBorder   = lipgloss.Color("#8C5567")
 
 		// Toast overlay colors
 		toastSuccessColor = charmtone.Guac
-		toastWarnColor    = warning
-		toastErrorColor   = error
-		toastInfoColor    = primary
+		toastWarnColor    = toastWarnBg
+		toastErrorColor   = toastErrorBg
+		toastInfoColor    = toastInfoBg
 		toastTextColor    = charmtone.Butter
 
 		// Colors
@@ -734,19 +734,19 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 	}
 
-	syntaxOffWhite := "#E6E6E6"  // Plain text / foreground
+	syntaxOffWhite := "#EEE7F0"  // Plain text / foreground
 	syntaxPurple := "#A34DFF"    // Keywords / Operators
-	syntaxPink := "#EA8EED"      // Functions / Methods
-	syntaxOrange := "#FF944D"    // Strings
-	syntaxLavender := "#D4B3FF"  // Types / Classes
-	syntaxLightBlue := "#7FD4FF" // Variables / Properties
-	syntaxLightRose := "#FFB4C2" // Errors
-	syntaxNeonCyan := "#00FFD9"  // Comments
+	syntaxPink := "#E0A7E8"      // Functions / Methods
+	syntaxOrange := "#F4A261"    // Strings
+	syntaxLavender := "#CCB8EC"  // Types / Classes
+	syntaxGray := "#A89AB1"      // Comments / neutral symbols
+	syntaxGreen := "#8FD19E"     // Insertions / positive semantic tokens
+	syntaxLightRose := "#E8A8BC" // Errors
 
 	s.Markdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr(fgBase.Hex()),
+				Color: stringPtr(colorHex(fgBase)),
 			},
 		},
 		BlockQuote: ansi.StyleBlock{
@@ -761,8 +761,9 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
+				BlockPrefix: "\n",
 				BlockSuffix: "\n",
-				Color:       stringPtr(fgBase.Hex()),
+				Color:       stringPtr(colorHex(fgBase)),
 				Bold:        boolPtr(true),
 			},
 		},
@@ -797,14 +798,14 @@ func DefaultStyles(yellowMode bool) Styles {
 		H5: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "##### ",
-				Color:  stringPtr(fgHalfMuted.Hex()),
+				Color:  stringPtr(colorHex(fgHalfMuted)),
 				Bold:   boolPtr(false),
 			},
 		},
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "###### ",
-				Color:  stringPtr(fgSubtle.Hex()),
+				Color:  stringPtr(colorHex(fgSubtle)),
 				Bold:   boolPtr(false),
 			},
 		},
@@ -828,7 +829,7 @@ func DefaultStyles(yellowMode bool) Styles {
 			Color:       stringPtr(primaryHex),
 		},
 		Enumeration: ansi.StylePrimitive{
-			BlockPrefix: "",
+			BlockPrefix: ". ",
 			Color:       stringPtr(primaryHex),
 		},
 		Task: ansi.StyleTask{
@@ -845,11 +846,11 @@ func DefaultStyles(yellowMode bool) Styles {
 			Bold:  boolPtr(false),
 		},
 		Image: ansi.StylePrimitive{
-			Color:     stringPtr(fgHalfMuted.Hex()),
+			Color:     stringPtr(colorHex(fgHalfMuted)),
 			Underline: boolPtr(true),
 		},
 		ImageText: ansi.StylePrimitive{
-			Color:  stringPtr(fgHalfMuted.Hex()),
+			Color:  stringPtr(colorHex(fgHalfMuted)),
 			Format: "Image: {{.text}} →",
 		},
 		Code: ansi.StyleBlock{
@@ -877,7 +878,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					BackgroundColor: stringPtr("#1A1624"),
 				},
 				Comment: ansi.StylePrimitive{
-					Color: stringPtr(syntaxNeonCyan),
+					Color: stringPtr(syntaxGray),
 				},
 				CommentPreproc: ansi.StylePrimitive{
 					Color: stringPtr(syntaxPurple),
@@ -902,23 +903,23 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(syntaxOffWhite),
 				},
 				Name: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxOffWhite),
 				},
 				NameBuiltin: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxLavender),
 				},
 				NameTag: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxPink),
 				},
 				NameAttribute: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxOffWhite),
 				},
 				NameClass: ansi.StylePrimitive{
 					Color: stringPtr(syntaxLavender),
 					Bold:  boolPtr(true),
 				},
 				NameConstant: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxLavender),
 				},
 				NameDecorator: ansi.StylePrimitive{
 					Color: stringPtr(syntaxPink),
@@ -931,7 +932,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(syntaxLavender),
 				},
 				NameOther: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxOffWhite),
 				},
 				LiteralNumber: ansi.StylePrimitive{
 					Color: stringPtr(syntaxOrange),
@@ -952,7 +953,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Italic: boolPtr(true),
 				},
 				GenericInserted: ansi.StylePrimitive{
-					Color: stringPtr(syntaxLightBlue),
+					Color: stringPtr(syntaxGreen),
 				},
 				GenericStrong: ansi.StylePrimitive{
 					Bold: boolPtr(true),
@@ -977,7 +978,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// PlainMarkdown style - neutral thinking body with purple/pink accents.
 	var plainBg *string
-	plainFg := stringPtr(fgSubtle.Hex())
+	plainFg := stringPtr(colorHex(fgSubtle))
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -998,6 +999,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
+				BlockPrefix:     "\n",
 				BlockSuffix:     "\n",
 				Bold:            boolPtr(false),
 				Color:           plainFg,
@@ -1074,7 +1076,7 @@ func DefaultStyles(yellowMode bool) Styles {
 			BackgroundColor: plainBg,
 		},
 		Enumeration: ansi.StylePrimitive{
-			BlockPrefix:     "",
+			BlockPrefix:     ". ",
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
@@ -1206,7 +1208,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		DisabledCursor:   base.Foreground(fgMuted),
 		Cursor:           base.Foreground(fgBase),
 		Symlink:          base.Foreground(fgSubtle),
-		Directory:        base.Foreground(blueLight),
+		Directory:        base.Foreground(primary),
 		File:             base.Foreground(fgBase),
 		DisabledFile:     base.Foreground(fgMuted),
 		DisabledSelected: base.Background(bgBaseLighter).Foreground(fgMuted),
@@ -1233,16 +1235,16 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.TagInfo = s.TagBase.Background(primary)
 
 	// Compact header styles
-	s.Header.Charm = base.Foreground(primary)
-	s.Header.Diagonals = base.Foreground(primary)
+	s.Header.Charm = base.Foreground(tertiary)
+	s.Header.Diagonals = base.Foreground(border)
 	s.Header.Percentage = s.Muted
 	s.Header.Keystroke = s.Muted
 	s.Header.KeystrokeTip = s.Subtle
-	s.Header.WorkingDir = s.Muted
+	s.Header.WorkingDir = s.Subtle
 	s.Header.Separator = s.Subtle
 
 	s.CompactDetails.Title = s.Base.Foreground(primary).Bold(true)
-	s.CompactDetails.View = s.Base.Padding(0, 1).Background(bgBase).Border(lipgloss.NormalBorder()).BorderForeground(thinkingBorder)
+	s.CompactDetails.View = s.Base.Padding(0, 1).Background(bgSubtle).Border(lipgloss.NormalBorder()).BorderForeground(border)
 	s.CompactDetails.Version = s.Muted
 
 	// panels
@@ -1271,8 +1273,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	// Tool names: warm accent emphasis
 	s.Tool.NameNormal = base.Foreground(primary)
 	s.Tool.NameNested = base.Foreground(fgHalfMuted)
-	s.Tool.NameSuccess = base.Foreground(lipgloss.Color("#A9D7B0"))
-	s.Tool.NameSuccessNested = base.Foreground(lipgloss.Color("#8FBC96"))
+	s.Tool.NameSuccess = base.Foreground(primary)
+	s.Tool.NameSuccessNested = base.Foreground(tertiary)
 
 	s.Tool.ParamMain = s.Muted
 	s.Tool.ParamKey = s.Subtle
@@ -1296,7 +1298,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.StateCancelled = base.Foreground(fgSubtle)
 
 	s.Tool.ErrorTag = base.Foreground(error).Bold(true)
-	s.Tool.ErrorMessage = base.Foreground(lipgloss.Color("#F8D4DD"))
+	s.Tool.ErrorMessage = base.Foreground(fgBase)
 
 	// Diff and multi-edit styles
 	s.Tool.DiffTruncation = s.Muted.Background(bgBaseLighter).PaddingLeft(2)
@@ -1311,16 +1313,16 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.JobAction = base.Foreground(fgHalfMuted)
 	s.Tool.JobPID = s.Muted
 	s.Tool.JobDescription = s.Subtle
-	s.Tool.BashLabel = base.Foreground(tertiary).Background(bgSubtle).Padding(0, 1).Bold(true)
+	s.Tool.BashLabel = base.Foreground(primary).Background(bgSubtle).Padding(0, 1).Bold(true)
 	s.Tool.BashCommand = base.Foreground(fgBase).Background(bgSubtle).Padding(0, 1)
-	s.Tool.BashOutputLabel = base.Foreground(greenLight).Bold(true)
+	s.Tool.BashOutputLabel = base.Foreground(primary).Bold(true)
 
 	// Agent task styles - vibrant purple accent
 	s.Tool.AgentTaskTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(primary)
 	s.Tool.AgentPrompt = s.Muted
 
 	// Agentic fetch styles - purple accent
-	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(logoPink)
+	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(primary)
 
 	// Todo styles
 	s.Tool.TodoRatio = base.Foreground(greenLight).Bold(true)
@@ -1335,13 +1337,13 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.MCPToolName = base.Foreground(fgHalfMuted)
 	s.Tool.MCPArrow = base.Foreground(tertiary).SetString(ArrowRightIcon)
 
-	s.Tool.ListRoot = base.Foreground(fgTree)
-	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#F4BAD8")).Bold(true)
-	s.Tool.ListFile = base.Foreground(lipgloss.Color("#F472B6")).Bold(true)
+	s.Tool.ListRoot = base.Foreground(primary).Bold(true)
+	s.Tool.ListDirectory = base.Foreground(fgBase)
+	s.Tool.ListFile = base.Foreground(fgTree)
 	s.Tool.ListMeta = base.Foreground(fgMuted)
-	s.Tool.ListHint = base.Foreground(warning)
-	s.Tool.GrepFile = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.GrepLine = base.Foreground(fgTree)
+	s.Tool.ListHint = base.Foreground(fgHalfMuted)
+	s.Tool.GrepFile = base.Foreground(fgBase)
+	s.Tool.GrepLine = base.Foreground(tertiary)
 	s.Tool.GrepMatch = base.Foreground(primary).Bold(true)
 	s.Tool.GrepContext = base.Foreground(fgMuted)
 
@@ -1391,7 +1393,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Section - use primary purple for stronger headers
 	s.Section.Title = s.Base.Foreground(primary)
-	s.Section.Line = s.Base.Foreground(charmtone.Charcoal)
+	s.Section.Line = s.Base.Foreground(border)
 
 	// Initialize - use warm amber for accent
 	s.Initialize.Header = s.Base
@@ -1418,7 +1420,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.LSP.InfoDiagnostic = s.Base.Foreground(info)
 
 	// Files - use warm amber for additions
-	s.Files.Path = s.Muted
+	s.Files.Path = s.Subtle
 	s.Files.Additions = s.Base.Foreground(greenLight).Bold(true)
 	s.Files.Deletions = s.Base.Foreground(red).Bold(true)
 
@@ -1432,37 +1434,43 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Chat.Message.UserFocused = s.Chat.Message.NoContent.Foreground(primary).Bold(true)
 	s.Chat.Message.AssistantBlurred = s.Chat.Message.NoContent.PaddingLeft(2)
 	s.Chat.Message.AssistantFocused = s.Chat.Message.NoContent.PaddingLeft(1).BorderLeft(true).
-		BorderForeground(greenDark).BorderStyle(messageFocussedBorder)
+		BorderForeground(primary).BorderStyle(messageFocussedBorder)
 	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Chat.Message.ErrorTag = lipgloss.NewStyle().
 		Foreground(error).
 		Bold(true)
 	s.Chat.Message.ErrorTitle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFD2E5"))
+		Foreground(fgBase).
+		Bold(true)
 	s.Chat.Message.ErrorDetails = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#D7C2CE")).
+		Foreground(fgMuted).
 		PaddingLeft(2)
 
 	// Message item styles
 	s.Chat.Message.ToolCallFocused = s.Muted.PaddingLeft(1).
 		BorderStyle(messageFocussedBorder).
 		BorderLeft(true).
-		BorderForeground(greenDark)
+		BorderForeground(primary)
 	s.Chat.Message.ToolCallBlurred = s.Muted.PaddingLeft(2)
 	// No padding or border for compact tool calls within messages
 	s.Chat.Message.ToolCallCompact = s.Muted
-	s.Chat.Message.SectionHeader = s.Base.PaddingLeft(2)
+	s.Chat.Message.SectionHeader = s.Base.Foreground(primary).PaddingLeft(2)
 	s.Chat.Message.AssistantInfoIcon = s.Subtle
 	s.Chat.Message.AssistantInfoModel = s.Muted
 	s.Chat.Message.AssistantInfoProvider = s.Subtle
 	s.Chat.Message.AssistantInfoDuration = s.Base
 
-	s.Chat.Message.ThinkingBox = s.Base.Foreground(lipgloss.Color("#F7EEF9")).Background(lipgloss.Color("#201B2C")).Padding(1, 2)
+	s.Chat.Message.ThinkingBox = s.Base.
+		Foreground(fgMuted).
+		Background(bgOverlay).
+		BorderLeft(true).
+		BorderForeground(thinkingBorder).
+		Padding(1, 2)
 
 	// Thinking section styles
-	s.Chat.Message.ThinkingTruncationHint = base.Foreground(lipgloss.Color("#B8A7FF"))
-	s.Chat.Message.ThinkingFooterTitle = base.Foreground(logoPink)
-	s.Chat.Message.ThinkingFooterDuration = base.Foreground(lipgloss.Color("#F7D4E8"))
+	s.Chat.Message.ThinkingTruncationHint = base.Foreground(fgBase).Background(bgBaseLighter).Padding(0, 1)
+	s.Chat.Message.ThinkingFooterTitle = base.Foreground(primary)
+	s.Chat.Message.ThinkingFooterDuration = base.Foreground(fgHalfMuted)
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(tertiary)
@@ -1581,6 +1589,10 @@ func DefaultStyles(yellowMode bool) Styles {
 func boolPtr(b bool) *bool       { return &b }
 func stringPtr(s string) *string { return &s }
 func uintPtr(u uint) *uint       { return &u }
+
+func colorHex(c color.Color) string {
+	return fmt.Sprint(c)
+}
 func chromaStyle(style ansi.StylePrimitive) string {
 	var s strings.Builder
 

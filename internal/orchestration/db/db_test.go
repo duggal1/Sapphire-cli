@@ -230,3 +230,48 @@ func TestOpenMigratesLegacyWorkItemsSchema(t *testing.T) {
 	require.Equal(t, "convoy-1", item.ConvoyID)
 	require.Equal(t, `["dep-1"]`, item.Dependencies)
 }
+
+func TestWorktreeRunLifecycle(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	run := WorktreeRun{
+		ID:           "wt-1",
+		SessionID:    "session-1",
+		AgentID:      "main:session-1",
+		Kind:         "main",
+		Policy:       "isolated_worktree",
+		Status:       "ready",
+		RepoRoot:     "/repo",
+		WorktreePath: "/repo/.sapphire/worktrees/main/session-1/main",
+		Branch:       "session/session-1/main",
+		BaseRef:      "main",
+		Title:        "Main Worktree",
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	require.NoError(t, store.UpsertWorktreeRun(ctx, run))
+
+	loaded, err := store.GetWorktreeRun(ctx, run.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.WorktreePath, loaded.WorktreePath)
+	require.Equal(t, run.Policy, loaded.Policy)
+
+	byPath, err := store.GetWorktreeRunByPath(ctx, run.WorktreePath)
+	require.NoError(t, err)
+	require.Equal(t, run.ID, byPath.ID)
+
+	run.Status = "landed"
+	run.LandedAt = time.Now().UTC()
+	run.UpdatedAt = time.Now().UTC()
+	require.NoError(t, store.UpsertWorktreeRun(ctx, run))
+
+	items, err := store.ListWorktreeRuns(ctx, "session-1", []string{"landed"}, 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "landed", items[0].Status)
+}

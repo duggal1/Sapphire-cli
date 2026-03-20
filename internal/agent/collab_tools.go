@@ -337,6 +337,7 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
+			worktreeSet := params.Worktree != nil || strings.TrimSpace(params.Isolation) != ""
 			forkContext := false
 			if params.ForkContext != nil {
 				forkContext = *params.ForkContext
@@ -346,6 +347,7 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 				PromptItems:      params.Items,
 				Title:            params.Title,
 				Worktree:         useWorktree,
+				WorktreeSet:      worktreeSet,
 				WorktreePath:     params.WorktreePath,
 				Branch:           params.Branch,
 				WriteManifest:    params.WriteManifest,

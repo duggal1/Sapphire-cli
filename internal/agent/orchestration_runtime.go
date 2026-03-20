@@ -125,6 +125,29 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 		}
 	}
 	if c.orchestrationStore != nil && strings.TrimSpace(workItem.ID) != "" {
+		if existing, err := c.orchestrationStore.GetWorkItem(ctx, workItem.ID); err == nil {
+			if existing.Type != "" {
+				workItem.Type = existing.Type
+			}
+			if existing.Title != "" {
+				workItem.Title = existing.Title
+			}
+			if existing.Description != "" {
+				workItem.Description = existing.Description
+			}
+			if existing.ParentID != "" {
+				workItem.ParentID = existing.ParentID
+			}
+			if existing.ConvoyID != "" {
+				workItem.ConvoyID = existing.ConvoyID
+			}
+			if strings.TrimSpace(existing.Dependencies) != "" && existing.Dependencies != "[]" {
+				workItem.Dependencies = existing.Dependencies
+			}
+			if !existing.CreatedAt.IsZero() {
+				workItem.CreatedAt = existing.CreatedAt
+			}
+		}
 		if err := c.orchestrationStore.UpsertWorkItem(ctx, workItem); err != nil {
 			slog.Warn("Failed to persist orchestration work item", "agent_id", state.AgentID, "work_item_id", workItem.ID, "error", err)
 		}

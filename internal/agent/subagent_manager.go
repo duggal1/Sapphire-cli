@@ -80,6 +80,7 @@ type subAgentRunner struct {
 	lastHeartbeat        time.Time
 	heartbeatContext     string
 	assignment           subAgentAssignment
+	hookEnabled          bool
 	statusBroker         *pubsub.Broker[subAgentStatus]
 	mu                   sync.Mutex
 }
@@ -134,6 +135,54 @@ func (r *subAgentRegistry) list() []*subAgentRunner {
 		runners = append(runners, runner)
 	}
 	return runners
+}
+
+func (c *coordinator) assignRunnerHook(ctx context.Context, runner *subAgentRunner) {
+	if c == nil || c.hookService == nil || c.orchestrationStore == nil || runner == nil {
+		return
+	}
+	runner.mu.Lock()
+	agentID := runner.id
+	hookEnabled := runner.hookEnabled
+	workItemID := strings.TrimSpace(runner.assignment.ID)
+	runner.mu.Unlock()
+	if !hookEnabled || workItemID == "" {
+		return
+	}
+	if _, err := c.orchestrationStore.GetWorkItem(ctx, workItemID); err != nil {
+		return
+	}
+	_ = c.hookService.AssignHook(ctx, agentID, workItemID)
+}
+
+func (c *coordinator) markRunnerHookInProgress(ctx context.Context, runner *subAgentRunner) {
+	if c == nil || c.hookService == nil || runner == nil {
+		return
+	}
+	runner.mu.Lock()
+	agentID := runner.id
+	hookEnabled := runner.hookEnabled
+	workItemID := strings.TrimSpace(runner.assignment.ID)
+	runner.mu.Unlock()
+	if !hookEnabled || workItemID == "" {
+		return
+	}
+	_ = c.hookService.MarkInProgress(ctx, agentID, workItemID)
+}
+
+func (c *coordinator) clearRunnerHook(ctx context.Context, runner *subAgentRunner) {
+	if c == nil || c.hookService == nil || runner == nil {
+		return
+	}
+	runner.mu.Lock()
+	agentID := runner.id
+	hookEnabled := runner.hookEnabled
+	workItemID := strings.TrimSpace(runner.assignment.ID)
+	runner.mu.Unlock()
+	if !hookEnabled || workItemID == "" {
+		return
+	}
+	_ = c.hookService.ClearHook(ctx, agentID, workItemID)
 }
 
 func (c *coordinator) ensureSubAgentRegistry() *subAgentRegistry {
@@ -575,10 +624,12 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		inputCh:       make(chan subAgentInput, 16),
 		assignment:    assignment,
 		statusBroker:  pubsub.NewBroker[subAgentStatus](),
+		hookEnabled:   strings.TrimSpace(opts.WorkItemID) != "",
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
 	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.assignRunnerHook(context.Background(), runner)
 	if c.supervisor != nil {
 		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
 			c.supervisor.TrackAgent(snapshot)
@@ -644,6 +695,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.mu.Unlock()
 			publishSubAgentStatus(broker, subAgentStatusRunning)
 			c.syncRunnerOrchestrationState(context.Background(), runner)
+			c.markRunnerHookInProgress(context.Background(), runner)
 			c.writeSessionCheckpoint(context.Background(), runner.sessionID, runner.id, runner.assignment.ID, runner.parentSession, buildCheckpointSummary("subagent_turn_started", input.prompt, "", "running", map[string]any{
 				"submission_id": input.submissionID,
 				"branch":        runner.assignment.Branch,
@@ -798,6 +850,9 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
 			runner.mu.Unlock()
 			c.syncRunnerOrchestrationState(context.Background(), runner)
+			if payload.Status == subAgentStatusCompleted || payload.Status == subAgentStatusClosed {
+				c.clearRunnerHook(context.Background(), runner)
+			}
 			c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
 				"submission_id": input.submissionID,
 				"status":        payload.Status,
@@ -942,6 +997,12 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	}
 	decision := evaluateSubAgentLaunch(task)
 	assignment, _ := buildSubAgentAssignment(assignmentID, effectiveParent, sess.Title, task, workDir, decision, normalizedManifest, branch, meta.DefinitionOfDone, meta.TestCommand, c.GetLongHorizonState(effectiveParent))
+	hookEnabled := false
+	if c.orchestrationStore != nil {
+		if _, err := c.orchestrationStore.GetWorkItem(ctx, assignmentID); err == nil {
+			hookEnabled = true
+		}
+	}
 
 	runner = &subAgentRunner{
 		id:            agentID,
@@ -955,10 +1016,12 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		inputCh:       make(chan subAgentInput, 16),
 		assignment:    assignment,
 		statusBroker:  pubsub.NewBroker[subAgentStatus](),
+		hookEnabled:   hookEnabled,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
 	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.assignRunnerHook(context.Background(), runner)
 	if c.supervisor != nil {
 		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
 			c.supervisor.TrackAgent(snapshot)
@@ -1216,6 +1279,9 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 
 	runner.close()
 	c.syncRunnerOrchestrationState(context.Background(), runner)
+	if status == subAgentStatusCompleted || status == subAgentStatusClosed {
+		c.clearRunnerHook(context.Background(), runner)
+	}
 	c.recordOrchestrationActivity(context.Background(), runner.id, "closed", map[string]any{
 		"workdir": workDir,
 		"task":    taskSlug,

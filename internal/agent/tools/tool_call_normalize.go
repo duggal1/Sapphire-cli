@@ -98,6 +98,8 @@ func toolNameAlias(name string) string {
 		return "agent_mail_send"
 	case "agent_mail_inbox", "mail_inbox", "check_mail", "read_mail", "inbox":
 		return "agent_mail_inbox"
+	case "check_hook", "hook_status", "hook_show", "current_hook", "work_hook":
+		return "check_hook"
 
 	// Todo aliases - COMMENTED OUT, replaced with update_plan
 	// case "todo", "to_do", "todo_list", "to_do_list",

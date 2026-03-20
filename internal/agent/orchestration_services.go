@@ -261,6 +261,9 @@ func (c *coordinator) completeDispatchItem(ctx context.Context, item orchestrati
 		"status":      status,
 		"error":       item.LastError,
 	})
+	if status == "completed" && strings.TrimSpace(item.AssignedAgentID) != "" && strings.TrimSpace(item.WorkItemID) != "" && c.hookService != nil {
+		_ = c.hookService.ClearHook(ctx, item.AssignedAgentID, item.WorkItemID)
+	}
 	if strings.TrimSpace(item.WorkItemID) != "" {
 		workStatus := "closed"
 		if status != "completed" {
@@ -330,7 +333,14 @@ func (c *coordinator) syncDispatchWorkItem(ctx context.Context, workItemID, stat
 	if status == "closed" {
 		item.ClosedAt = time.Now().UTC()
 	}
-	return c.orchestrationStore.UpsertWorkItem(ctx, item)
+	if err := c.orchestrationStore.UpsertWorkItem(ctx, item); err != nil {
+		return err
+	}
+	if status == "closed" && strings.TrimSpace(item.ConvoyID) != "" && c.convoyService != nil {
+		_, err := c.convoyService.CheckConvoyCompletion(ctx, item.ConvoyID)
+		return err
+	}
+	return nil
 }
 
 func (c *coordinator) dispatchActiveLimit() int {

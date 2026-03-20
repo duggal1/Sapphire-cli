@@ -1584,6 +1584,7 @@ func scanWorkItem(row scanner) (WorkItem, error) {
 		&item.Status,
 		&item.Assignee,
 		&item.ParentID,
+		&item.ConvoyID,
 		&item.Dependencies,
 		&createdAtUnix,
 		&closedAtUnix,
@@ -1612,6 +1613,47 @@ func scanWorkItemRows(rows *sql.Rows) ([]WorkItem, error) {
 		return nil, fmt.Errorf("iterate work items: %w", err)
 	}
 	return items, nil
+}
+
+func scanConvoy(row scanner) (Convoy, error) {
+	var (
+		item          Convoy
+		createdAtUnix int64
+		closedAtUnix  int64
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Owner,
+		&item.Notify,
+		&item.MergeStrategy,
+		&item.Status,
+		&createdAtUnix,
+		&closedAtUnix,
+	); err != nil {
+		return Convoy{}, err
+	}
+	if createdAtUnix > 0 {
+		item.CreatedAt = time.Unix(createdAtUnix, 0).UTC()
+	}
+	if closedAtUnix > 0 {
+		item.ClosedAt = time.Unix(closedAtUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanAgentHook(row scanner) (AgentHook, error) {
+	var (
+		item       AgentHook
+		hookedUnix int64
+	)
+	if err := row.Scan(&item.AgentID, &item.HookBeadID, &hookedUnix, &item.Status); err != nil {
+		return AgentHook{}, err
+	}
+	if hookedUnix > 0 {
+		item.HookedAt = time.Unix(hookedUnix, 0).UTC()
+	}
+	return item, nil
 }
 
 func scanDispatch(row scanner) (DispatchQueueItem, error) {

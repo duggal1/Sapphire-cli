@@ -848,6 +848,7 @@ func allToolNames() []string {
 		"bash",
 		"agent_mail_send",
 		"agent_mail_inbox",
+		"check_hook",
 		"job_output",
 		"job_kill",
 		"download",

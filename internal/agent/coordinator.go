@@ -22,7 +22,9 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
+	agentconvoy "github.com/duggal1/Sapphire-cli/internal/agent/convoy"
 	agentdaemon "github.com/duggal1/Sapphire-cli/internal/agent/daemon"
+	agenthook "github.com/duggal1/Sapphire-cli/internal/agent/hook"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
@@ -151,6 +153,8 @@ type coordinator struct {
 	mailbox                   *agentmailbox.Service
 	stateService              *agentstate.Service
 	activityService           *agentactivity.Service
+	hookService               *agenthook.Service
+	convoyService             *agentconvoy.Service
 	supervisor                *agentsupervisor.Service
 	dispatcher                *agentscheduler.Dispatcher
 	daemon                    *agentdaemon.Service
@@ -276,6 +280,10 @@ func NewCoordinator(
 	c.mailbox = agentmailbox.NewService(orchestrationStore, c.nudgeMailboxRecipient)
 	c.stateService = agentstate.NewService(orchestrationStore)
 	c.activityService = agentactivity.NewService(orchestrationStore)
+	c.hookService = agenthook.NewService(orchestrationStore, c.stateService)
+	c.convoyService = agentconvoy.NewService(orchestrationStore, agentconvoy.Hooks{
+		EnsureDispatchForWorkItem: c.ensureDispatchForWorkItem,
+	})
 	c.supervisor = agentsupervisor.NewService(orchestrationStore, c.stateService, c.activityService, c.mailbox, agentsupervisor.Hooks{
 		GetRuntimeSnapshot:        c.supervisorRuntimeSnapshot,
 		ResolveMainMailboxID:      mainAgentMailboxID,
@@ -1418,6 +1426,13 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	}
 	if slices.Contains(agent.AllowedTools, AgentMailInboxToolName) {
 		tool, err := c.agentMailInboxTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, tool)
+	}
+	if slices.Contains(agent.AllowedTools, CheckHookToolName) {
+		tool, err := c.checkHookTool(ctx)
 		if err != nil {
 			return nil, err
 		}

@@ -80,7 +80,7 @@ type Session struct {
 	SummaryMessageID string
 	Cost             float64
 	Todos            []Todo
-	Mode             planmode.SessionMode  // Codex plan mode architecture
+	Mode             planmode.SessionMode // Codex plan mode architecture
 	CreatedAt        int64
 	UpdatedAt        int64
 }
@@ -259,12 +259,12 @@ func (s service) fromDBItem(item db.Session) Session {
 	if err != nil {
 		slog.Error("Failed to unmarshal todos", "session_id", item.ID, "error", err)
 	}
-	
+
 	mode := planmode.DefaultMode()
 	if item.Mode.Valid && item.Mode.String != "" {
-		mode = planmode.SessionMode(item.Mode.String)
+		mode = planmode.NormalizeMode(planmode.SessionMode(item.Mode.String))
 	}
-	
+
 	return Session{
 		ID:               item.ID,
 		ParentSessionID:  item.ParentSessionID.String,
@@ -334,6 +334,7 @@ func (s *service) IsAgentToolSession(sessionID string) bool {
 
 // SetMode sets the session mode (Codex plan mode architecture)
 func (s *service) SetMode(ctx context.Context, sessionID string, mode planmode.SessionMode) error {
+	mode = planmode.NormalizeMode(mode)
 	if !mode.IsValid() {
 		return fmt.Errorf("invalid session mode: %s", mode)
 	}
@@ -354,5 +355,5 @@ func (s *service) GetMode(ctx context.Context, sessionID string) (planmode.Sessi
 	if err != nil {
 		return planmode.DefaultMode(), err
 	}
-	return session.Mode, nil
+	return planmode.NormalizeMode(session.Mode), nil
 }

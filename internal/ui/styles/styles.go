@@ -585,8 +585,8 @@ func DefaultStyles(yellowMode bool) Styles {
 		fgHalfMuted = charmtone.Smoke
 		fgSubtle    = charmtone.Oyster
 
-		// Tree text - off-white with subtle pink tint for warmth
-		fgTree = lipgloss.Color("#E8D8E0")
+		// Tree text - brighter pink for clearer structure without going neon.
+		fgTree = lipgloss.Color("#F3A0C8")
 
 		// Borders
 		border      = lipgloss.Color("#33294A")
@@ -976,7 +976,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	}
 
 	// PlainMarkdown style - neutral thinking body with purple/pink accents.
-	plainBg := stringPtr(bgBaseLighterHex)
+	var plainBg *string
 	plainFg := stringPtr(fgSubtle.Hex())
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
@@ -1320,7 +1320,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.AgentPrompt = s.Muted
 
 	// Agentic fetch styles - purple accent
-	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(tertiary)
+	s.Tool.AgenticFetchPromptTag = base.Bold(true).Padding(0, 1).MarginLeft(2).Background(bgOverlay).Foreground(logoPink)
 
 	// Todo styles
 	s.Tool.TodoRatio = base.Foreground(greenLight).Bold(true)
@@ -1336,8 +1336,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.MCPArrow = base.Foreground(tertiary).SetString(ArrowRightIcon)
 
 	s.Tool.ListRoot = base.Foreground(fgTree)
-	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
-	s.Tool.ListFile = base.Foreground(lipgloss.Color("#FFD7F2")).Bold(true)
+	s.Tool.ListDirectory = base.Foreground(lipgloss.Color("#F4BAD8")).Bold(true)
+	s.Tool.ListFile = base.Foreground(lipgloss.Color("#F472B6")).Bold(true)
 	s.Tool.ListMeta = base.Foreground(fgMuted)
 	s.Tool.ListHint = base.Foreground(warning)
 	s.Tool.GrepFile = base.Foreground(lipgloss.Color("#D4D0CB")).Bold(true)
@@ -1457,12 +1457,12 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Chat.Message.AssistantInfoProvider = s.Subtle
 	s.Chat.Message.AssistantInfoDuration = s.Base
 
-	s.Chat.Message.ThinkingBox = s.Base.Foreground(lipgloss.Color("#F6EEFF")).Background(lipgloss.Color("#171428")).Padding(1, 2)
+	s.Chat.Message.ThinkingBox = s.Base.Foreground(lipgloss.Color("#F7EEF9")).Background(lipgloss.Color("#201B2C")).Padding(1, 2)
 
 	// Thinking section styles
 	s.Chat.Message.ThinkingTruncationHint = base.Foreground(lipgloss.Color("#B8A7FF"))
-	s.Chat.Message.ThinkingFooterTitle = base.Foreground(lipgloss.Color("#72F1FF"))
-	s.Chat.Message.ThinkingFooterDuration = base.Foreground(lipgloss.Color("#F1D7E8"))
+	s.Chat.Message.ThinkingFooterTitle = base.Foreground(logoPink)
+	s.Chat.Message.ThinkingFooterDuration = base.Foreground(lipgloss.Color("#F7D4E8"))
 
 	// Text selection.
 	s.TextSelection = lipgloss.NewStyle().Foreground(charmtone.Salt).Background(tertiary)

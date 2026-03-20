@@ -81,7 +81,7 @@ func (p *PlanApprovalDialog) HandleMsg(msg tea.Msg) Action {
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, p.keyMap.Close):
-			return ActionClose{}
+			return ActionRefinePlan{}
 		case key.Matches(msg, p.keyMap.Previous):
 			if p.selected > 0 {
 				p.selected--
@@ -95,8 +95,7 @@ func (p *PlanApprovalDialog) HandleMsg(msg tea.Msg) Action {
 			case 0:
 				return ActionImplementPlan{}
 			case 1:
-				// Stay in Plan Mode - just close dialog
-				return ActionClose{}
+				return ActionRefinePlan{}
 			}
 		}
 	}
@@ -202,8 +201,8 @@ func (p *PlanApprovalDialog) renderPlan(width int) string {
 
 func (p *PlanApprovalDialog) renderButtons() string {
 	buttons := []string{
-		"Yes, Implement",
-		"No, Refine More",
+		"Implement This Plan",
+		"Suggest Changes",
 	}
 
 	var b strings.Builder

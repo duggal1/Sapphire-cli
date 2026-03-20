@@ -118,6 +118,9 @@ func (e *Executor) Execute(ctx context.Context, variables map[string]string) (*E
 
 		output, err := e.executeStep(ctx, step, state)
 		if err != nil {
+			if errors.Is(err, ErrApprovalDenied) {
+				_ = e.pushProgress(ctx, order, state, "")
+			}
 			return state, err
 		}
 		if ok, err := e.checkAcceptance(step, state, output); err != nil {

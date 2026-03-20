@@ -71,7 +71,7 @@ func renderBackgroundSubAgentRootLabel(sty *styles.Styles, label string) string 
 	if strings.Contains(strings.ToLower(label), "launch") || strings.Contains(strings.ToLower(label), "running") {
 		return styles.ShimmerText(sty, label, 0)
 	}
-	return sty.Base.Foreground(lipgloss.Color("#F3A6D6")).Bold(true).Render(label)
+	return sty.Base.Foreground(lipgloss.Color("#F472B6")).Bold(true).Render(label)
 }
 
 func backgroundSubAgentsStatusLabel(payload agent.BackgroundSubAgentsToolPayload, spinning bool) string {

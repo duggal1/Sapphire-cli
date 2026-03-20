@@ -24,8 +24,8 @@ func (g ApprovalGate) Render() string {
 		builder.WriteString(g.PlanSummary)
 	}
 	builder.WriteString("\n\n")
-	builder.WriteString(button.Render("Yes, Implement"))
+	builder.WriteString(button.Render("Implement This Plan"))
 	builder.WriteString("  ")
-	builder.WriteString(button.Render("No, Refine More"))
+	builder.WriteString(button.Render("Suggest Changes"))
 	return builder.String()
 }

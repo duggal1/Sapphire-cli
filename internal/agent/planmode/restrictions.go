@@ -36,20 +36,20 @@ var planModeForbiddenTools = []string{
 	"single_edit",
 	"agentic_edit",
 	"multiedit",
-	
+
 	// File writing tools - FORBIDDEN (mutating operations)
 	"write",
-	
+
 	// Shell/terminal tools - FORBIDDEN (side-effectful commands)
 	"bash",
 	"job_output",
 	"job_kill",
 	"python",
-	
+
 	// Background execution tools - FORBIDDEN (doing the work)
 	"orchestrate_worktrees",
 	"report_agent_job_result",
-	
+
 	// Planning tool - FORBIDDEN in Plan Mode (Codex behavior)
 	// Plan Mode uses conversation-based planning with <plan> blocks
 	// update_plan is a checklist/progress tool, separate from Plan Mode
@@ -71,41 +71,41 @@ var planModeAllowedTools = []string{
 	"grep",
 	"rg",
 	"search_tools",
-	
+
 	// Reference tools - ALLOWED (gathering information)
 	"references",
 	"sourcegraph",
 	"fetch",
 	"agentic_fetch",
 	"download",
-	
+
 	// Memory tools - ALLOWED (retrieving context)
 	"recall_memory",
 	"save_memory",
-	
+
 	// Tool management - ALLOWED
 	"list_tools",
 	"tool_suggest",
-	
+
 	// MCP tools - ALLOWED (for research)
 	"list_available_mcps",
 	"connect_mcp",
 	"list_mcp_tools",
 	"list_mcp_resources",
 	"read_mcp_resource",
-	
+
 	// Skill tools - ALLOWED
 	"list_skills",
 	"load_skill",
-	
+
 	// LSP tools - ALLOWED (static analysis, non-mutating)
 	"lsp_diagnostics",
 	"lsp_references",
 	"lsp_restart",
-	
+
 	// Mode switching - ALLOWED (to exit plan mode)
 	"set_mode",
-	
+
 	// Structured questions - ALLOWED (Codex request_user_input tool)
 	"request_user_input",
 }
@@ -156,7 +156,7 @@ func (e *PlanModeError) Error() string {
 
 // NewPlanModeError creates a new plan mode error (Codex-style error message)
 func NewPlanModeError(toolName string) *PlanModeError {
-	message := "plan mode is for thinking and planning only - switch to pair_programming or execute mode to use this tool"
+	message := "plan mode is for thinking and planning only - switch to default mode to use this tool"
 	return &PlanModeError{
 		ToolName: toolName,
 		Message:  message,

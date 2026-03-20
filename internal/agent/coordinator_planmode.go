@@ -3,10 +3,10 @@ package agent
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"charm.land/fantasy"
 	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
@@ -55,13 +55,51 @@ func (c *coordinator) RunPlanMode(ctx context.Context, sessionID, task, taskCont
 	if c == nil || c.formulaExecutor == nil {
 		return nil, fmt.Errorf("plan mode executor is not initialized")
 	}
+	task = strings.TrimSpace(task)
+	taskContext = strings.TrimSpace(taskContext)
+	if task == "" {
+		return nil, fmt.Errorf("plan mode task is required")
+	}
+	parts := []message.ContentPart{message.TextContent{Text: task}}
+	if taskContext != "" {
+		parts = append(parts, message.TextContent{Text: "Context:\n" + taskContext})
+	}
+	if _, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: parts,
+	}); err != nil && !errors.Is(err, context.Canceled) {
+		return nil, err
+	}
 	variables := map[string]string{
 		"session_id": sessionID,
-		"task":       strings.TrimSpace(task),
-		"context":    strings.TrimSpace(taskContext),
+		"task":       task,
+		"context":    taskContext,
 		"task_slug":  slugifyTask(task),
 	}
 	return c.formulaExecutor.Execute(ctx, variables)
+}
+
+func (c *coordinator) ResolvePlanApproval(ctx context.Context, sessionID string, approved bool) error {
+	if c == nil {
+		return fmt.Errorf("coordinator is nil")
+	}
+	c.planApprovalMu.Lock()
+	ch, ok := c.planApprovalWaiters[sessionID]
+	if ok {
+		delete(c.planApprovalWaiters, sessionID)
+	}
+	c.planApprovalMu.Unlock()
+	if !ok {
+		return fmt.Errorf("no pending plan approval for session %s", sessionID)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case ch <- approved:
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (c *coordinator) LaunchExplorationAgent(ctx context.Context, workItemID string) (string, error) {
@@ -184,20 +222,26 @@ func (c *coordinator) awaitPlanModeApproval(ctx context.Context, state *agentfor
 	if err := c.sessions.SetMode(ctx, state.SessionID, planmode.PlanMode); err != nil {
 		return false, err
 	}
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
+	waitCh := make(chan bool, 1)
+	c.planApprovalMu.Lock()
+	if c.planApprovalWaiters == nil {
+		c.planApprovalWaiters = make(map[string]chan bool)
+	}
+	c.planApprovalWaiters[state.SessionID] = waitCh
+	c.planApprovalMu.Unlock()
+	defer func() {
+		c.planApprovalMu.Lock()
+		if current, ok := c.planApprovalWaiters[state.SessionID]; ok && current == waitCh {
+			delete(c.planApprovalWaiters, state.SessionID)
+		}
+		c.planApprovalMu.Unlock()
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-ticker.C:
-			mode, err := c.sessions.GetMode(ctx, state.SessionID)
-			if err != nil {
-				return false, err
-			}
-			if mode.IsExecutionMode() {
-				return true, nil
-			}
+		case approved := <-waitCh:
+			return approved, nil
 		}
 	}
 }
@@ -236,8 +280,9 @@ func (c planModeLLMClient) ExecuteStep(ctx context.Context, req agentformula.LLM
 	}
 
 	result, err := agent.Run(ctx, SessionAgentCall{
-		SessionID: req.SessionID,
-		Prompt:    req.Prompt,
+		SessionID:       req.SessionID,
+		Prompt:          req.Prompt,
+		SkipUserMessage: true,
 	})
 	if err != nil {
 		return agentformula.LLMResult{}, err

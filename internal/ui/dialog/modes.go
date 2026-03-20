@@ -247,7 +247,7 @@ func (m *Modes) setModeItems() error {
 }
 
 func (m *Modes) dialogTitle() string {
-	return "Collaboration Mode"
+	return "Mode"
 }
 
 // Filter returns the filter value for the mode option.
@@ -277,6 +277,9 @@ func (m *ModeOption) Match() fuzzy.Match {
 
 // SetFocused implements ListItem.
 func (m *ModeOption) SetFocused(focused bool) {
+	if m.focused != focused {
+		m.cache = nil
+	}
 	m.focused = focused
 }
 
@@ -318,15 +321,8 @@ func (m *ModeOption) Render(width int) string {
 	}
 
 	title := icon + titleStyle.Render(m.title)
-	desc := t.Muted.Render(m.description)
-
-	line := title
-	if desc != "" {
-		line += "  " + desc
-	}
-
-	m.cache[width] = line
-	return line
+	m.cache[width] = title
+	return title
 }
 
 // ActionSelectMode is sent when a mode is selected.

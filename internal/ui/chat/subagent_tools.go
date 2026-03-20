@@ -575,7 +575,7 @@ func renderSubAgentRootLabel(sty *styles.Styles, label string) string {
 	if sty == nil {
 		return label
 	}
-	return sty.Base.Foreground(lipgloss.Color("#F3A6D6")).Bold(true).Render(label)
+	return sty.Base.Foreground(lipgloss.Color("#F472B6")).Bold(true).Render(label)
 }
 
 func renderSubAgentSectionLabel(sty *styles.Styles, label string) string {
@@ -721,7 +721,7 @@ func subAgentStatusIcon(status string) string {
 func subAgentStatusColor(status string) color.Color {
 	switch normalizeSubAgentStatus(status) {
 	case "completed":
-		return lipgloss.Color("#F3A6D6")
+		return lipgloss.Color("#F472B6")
 	case "stuck":
 		return lipgloss.Color("#E7A1B0")
 	case "error":

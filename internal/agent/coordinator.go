@@ -90,6 +90,7 @@ type Coordinator interface {
 	GetLongHorizonState(sessionID string) string
 	GetLongHorizonAuditTail(sessionID string, maxBytes int) string
 	RunPlanMode(ctx context.Context, sessionID, task, taskContext string) (*agentformula.ExecutionState, error)
+	ResolvePlanApproval(ctx context.Context, sessionID string, approved bool) error
 }
 
 func (c *coordinator) MemoryPipe() interface{} {
@@ -192,6 +193,8 @@ type coordinator struct {
 	mcpSelectionMu            sync.Mutex
 	mcpSelectionCache         map[string]mcpSelectionSnapshot
 	mcpSelectionInFlight      map[string]bool
+	planApprovalMu            sync.Mutex
+	planApprovalWaiters       map[string]chan bool
 }
 
 type autonomousSubAgentTask struct {

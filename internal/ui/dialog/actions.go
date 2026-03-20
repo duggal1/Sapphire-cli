@@ -44,14 +44,14 @@ type ActionSelectModel struct {
 
 // Messages for commands
 type (
-	ActionNewSession        struct{}
-	ActionToggleHelp        struct{}
-	ActionToggleCompactMode struct{}
-	ActionTogglePasteBlocks struct{}
-	ActionToggleThinking    struct{}
-	ActionTogglePills       struct{}
-	ActionExternalEditor    struct{}
-	ActionToggleYoloMode    struct{}
+	ActionNewSession            struct{}
+	ActionToggleHelp            struct{}
+	ActionToggleCompactMode     struct{}
+	ActionTogglePasteBlocks     struct{}
+	ActionToggleThinking        struct{}
+	ActionTogglePills           struct{}
+	ActionExternalEditor        struct{}
+	ActionToggleYoloMode        struct{}
 	ActionToggleGoogleGrounding struct{}
 	// ActionInitializeProject is a message to initialize a project.
 	ActionInitializeProject struct{}
@@ -146,6 +146,9 @@ type (
 type ActionCmd struct {
 	Cmd tea.Cmd
 }
+
+// ActionRefinePlan is sent when the user wants to keep refining the plan.
+type ActionRefinePlan struct{}
 
 // ActionFilePickerSelected is a message indicating a file has been selected in
 // the file picker dialog.

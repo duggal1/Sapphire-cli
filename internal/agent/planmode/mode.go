@@ -19,6 +19,9 @@ type ModeDescriptor struct {
 type SessionMode string
 
 const (
+	// DefaultSessionMode - standard coding mode.
+	DefaultSessionMode SessionMode = "default"
+
 	// PlanMode - Design-focused mode
 	// Organizes requirements, proposes policies, creates detailed plans
 	// Tool calls for editing/execution are FORBIDDEN in this mode
@@ -62,7 +65,18 @@ const (
 
 // DefaultMode returns the default session mode (Codex: pair_programming is default)
 func DefaultMode() SessionMode {
-	return PairProgrammingMode
+	return DefaultSessionMode
+}
+
+func NormalizeMode(mode SessionMode) SessionMode {
+	switch mode {
+	case "", DefaultSessionMode, PairProgrammingMode, ExecuteMode:
+		return DefaultSessionMode
+	case PlanMode:
+		return PlanMode
+	default:
+		return mode
+	}
 }
 
 // String returns the string representation of SessionMode
@@ -73,7 +87,7 @@ func (m SessionMode) String() string {
 // IsValid returns true if the session mode is valid
 func (m SessionMode) IsValid() bool {
 	switch m {
-	case PlanMode, PairProgrammingMode, ExecuteMode, ArchitectureMode, SecurityMode, DebugMode, OrchestratorMode:
+	case DefaultSessionMode, PlanMode, PairProgrammingMode, ExecuteMode, ArchitectureMode, SecurityMode, DebugMode, OrchestratorMode:
 		return true
 	default:
 		return false
@@ -87,61 +101,28 @@ func (m SessionMode) IsPlanMode() bool {
 
 // IsExecutionMode returns true if the mode allows execution (not plan mode)
 func (m SessionMode) IsExecutionMode() bool {
-	return m == PairProgrammingMode || m == ExecuteMode || m == DebugMode || m == OrchestratorMode
+	mode := NormalizeMode(m)
+	return mode == DefaultSessionMode || mode == ExecuteMode || mode == DebugMode || mode == OrchestratorMode
 }
 
 func AvailableModes() []ModeDescriptor {
 	return []ModeDescriptor{
 		{
+			Mode:        DefaultSessionMode,
+			Title:       "Default",
+			Description: "",
+		},
+		{
 			Mode:          PlanMode,
 			Title:         "Plan",
-			Description:   "Formula-driven planning with approval before implementation",
-			FooterSummary: "Formula workflow, read-only analysis, human gate before execute.",
-		},
-		{
-			Mode:          PairProgrammingMode,
-			Title:         "Pair Programming",
-			Description:   "Collaborative coding with incremental execution",
-			FooterSummary: "Interactive coding with steady tool access.",
-		},
-		{
-			Mode:          ExecuteMode,
-			Title:         "Execute",
-			Description:   "Autonomous execution with minimal questions",
-			FooterSummary: "Execution-first workflow with minimal interruptions.",
-		},
-		{
-			Mode:          ArchitectureMode,
-			Title:         "Architecture",
-			Description:   "Static mockup for architecture-first workflow",
-			FooterSummary: "Architecture workflow mockup active.",
-			Mock:          true,
-		},
-		{
-			Mode:          SecurityMode,
-			Title:         "Security",
-			Description:   "Static mockup for security review workflow",
-			FooterSummary: "Security workflow mockup active.",
-			Mock:          true,
-		},
-		{
-			Mode:          DebugMode,
-			Title:         "Debug",
-			Description:   "Static mockup for debugging workflow",
-			FooterSummary: "Debug workflow mockup active.",
-			Mock:          true,
-		},
-		{
-			Mode:          OrchestratorMode,
-			Title:         "Orchestrator",
-			Description:   "Static mockup for orchestration workflow",
-			FooterSummary: "Orchestrator workflow mockup active.",
-			Mock:          true,
+			Description:   "",
+			FooterSummary: "",
 		},
 	}
 }
 
 func LookupMode(mode SessionMode) ModeDescriptor {
+	mode = NormalizeMode(mode)
 	for _, item := range AvailableModes() {
 		if item.Mode == mode {
 			return item

@@ -111,7 +111,7 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 			currentSession, err := sessions.Get(ctx, sessionID)
 			wasEmpty := false
 			if err == nil && currentSession.Mode == planmode.PlanMode {
-				return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode - Plan Mode uses conversation-based planning with <plan> blocks, not the update_plan tool. Switch to pair_programming or execute mode to use update_plan")
+				return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode - Plan Mode uses conversation-based planning with <plan> blocks, not the update_plan tool. Switch to default mode to use update_plan")
 			}
 			if err == nil {
 				wasEmpty = len(currentSession.Todos) == 0

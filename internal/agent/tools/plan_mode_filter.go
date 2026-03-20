@@ -20,7 +20,7 @@ func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID
 	// Get session mode
 	mode, err := sessions.GetMode(ctx, sessionID)
 	if err != nil {
-		// If we can't get the mode, default to pair programming (no restrictions)
+		// If we can't get the mode, default to standard coding mode (no restrictions)
 		mode = planmode.DefaultMode()
 	}
 
@@ -56,7 +56,7 @@ In Plan Mode, the following tools are FORBIDDEN:
 
 Plan Mode is for THINKING AND PLANNING ONLY.
 
-To use these tools, switch to pair_programming or execute mode using the set_mode tool.`
+To use these tools, switch to default mode using the set_mode tool.`
 }
 
 // ValidatePlanModeToolCall validates a tool call against plan mode restrictions
@@ -79,6 +79,6 @@ func ValidatePlanModeToolCall(ctx context.Context, sessions session.Service, ses
 
 // CreatePlanModeViolationError creates a descriptive error for plan mode violations
 func CreatePlanModeViolationError(toolName string) error {
-	return fmt.Errorf("%w: tool %q is forbidden in plan mode - switch to pair_programming or execute mode to use this tool",
+	return fmt.Errorf("%w: tool %q is forbidden in plan mode - switch to default mode to use this tool",
 		planmode.NewPlanModeError(toolName), toolName)
 }

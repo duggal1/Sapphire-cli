@@ -83,8 +83,8 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/editor"
+	agentformula "github.com/duggal1/Sapphire-cli/internal/agent/formula"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
@@ -1658,14 +1658,17 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Mode switched to " + msg.Mode.Title())
 		})
 	case dialog.ActionImplementPlan:
-		// User chose to implement the plan - switch to execute mode.
 		if m.session == nil {
 			cmds = append(cmds, util.ReportError(errors.New("no active session")))
 			break
 		}
 
 		ctx := context.Background()
-		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, planmode.ExecuteMode); err != nil {
+		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, planmode.DefaultMode()); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if err := m.com.App.AgentCoordinator.ResolvePlanApproval(ctx, m.session.ID, true); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
@@ -1678,6 +1681,23 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 		cmds = append(cmds, func() tea.Msg {
 			return util.NewInfoMsg("Implementing plan...")
+		})
+	case dialog.ActionRefinePlan:
+		if m.session == nil {
+			m.dialog.CloseDialog(dialog.PlanApprovalID)
+			break
+		}
+
+		ctx := context.Background()
+		if err := m.com.App.AgentCoordinator.ResolvePlanApproval(ctx, m.session.ID, false); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+
+		cmds = append(cmds, func() tea.Msg {
+			return util.NewInfoMsg("Plan kept in plan mode for refinement")
 		})
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
@@ -2875,50 +2895,23 @@ func (m *UI) renderModeFooter(width int) string {
 	if m == nil || m.session == nil || width <= 0 {
 		return ""
 	}
-	mode := m.session.Mode
-	if mode == "" {
-		mode = planmode.DefaultMode()
-	}
-	desc := strings.TrimSpace(mode.FooterSummary())
-	if desc == "" {
+	mode := planmode.NormalizeMode(m.session.Mode)
+	if mode != planmode.PlanMode {
 		return ""
 	}
 
 	t := m.com.Styles
-	label := strings.ToUpper(mode.Title())
-	badgeBg := t.Primary
-	if mode == planmode.PlanMode {
-		badgeBg = t.Warning
-	}
-
-	left := t.Base.Foreground(t.White).Render(desc)
-	right := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		t.Muted.Render("mode "),
-		lipgloss.NewStyle().
-			Foreground(t.White).
-			Background(badgeBg).
-			Padding(0, 1).
-			Bold(true).
-			Render(label),
-	)
-
-	leftWidth := lipgloss.Width(left)
-	rightWidth := lipgloss.Width(right)
-	if leftWidth+1+rightWidth <= width {
-		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
-	}
-
-	maxLeft := max(0, width-rightWidth-1)
-	if maxLeft <= 0 {
-		return right
-	}
-	left = ansi.Truncate(left, maxLeft, "…")
-	leftWidth = lipgloss.Width(left)
-	if leftWidth+1+rightWidth <= width {
-		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
-	}
-	return left + " " + right
+	return lipgloss.NewStyle().
+		Align(lipgloss.Right).
+		Width(width).
+		Render(
+			lipgloss.NewStyle().
+				Foreground(t.White).
+				Background(lipgloss.Color("#EA580C")).
+				Padding(0, 1).
+				Bold(true).
+				Render("PLAN"),
+		)
 }
 
 // uiLayout defines the positioning of UI elements.
@@ -3287,12 +3280,20 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
+	sessionMode := planmode.NormalizeMode(m.session.Mode)
+	planContext := buildPlanModeContext(attachments)
 	cmds = append(cmds, func() tea.Msg {
-		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
+		var err error
+		if sessionMode == planmode.PlanMode {
+			_, err = m.com.App.AgentCoordinator.RunPlanMode(context.Background(), sessionID, content, planContext)
+		} else {
+			_, err = m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
+		}
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
-			if isCancelErr || isPermissionErr {
+			isApprovalDenied := errors.Is(err, agentformula.ErrApprovalDenied)
+			if isCancelErr || isPermissionErr || isApprovalDenied {
 				return nil
 			}
 			return util.InfoMsg{
@@ -3303,6 +3304,28 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return nil
 	})
 	return tea.Batch(cmds...)
+}
+
+func buildPlanModeContext(attachments []message.Attachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(attachments)+1)
+	lines = append(lines, "User-provided attachments:")
+	for _, attachment := range attachments {
+		label := strings.TrimSpace(attachment.FilePath)
+		if label == "" {
+			label = strings.TrimSpace(attachment.FileName)
+		}
+		if label == "" {
+			continue
+		}
+		lines = append(lines, "- "+label)
+	}
+	if len(lines) == 1 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
 }
 
 // openDialog opens a dialog by its ID.

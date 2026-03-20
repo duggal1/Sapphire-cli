@@ -251,10 +251,7 @@ func (a *AssistantMessageItem) renderLiveLoader(width int) string {
 		return ""
 	}
 
-	line := prefixRenderedBlock(
-		a.sty.Base.Foreground(a.sty.White).Render("•"),
-		styles.ShimmerText(a.sty, label, 0),
-	)
+	line := styles.ShimmerText(a.sty, label, 0)
 
 	loader := lipgloss.NewStyle().
 		PaddingTop(1).

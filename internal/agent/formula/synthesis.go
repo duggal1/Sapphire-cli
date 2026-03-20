@@ -46,6 +46,44 @@ type SynthesisResult struct {
 	Summary      string
 }
 
+func ParseSynthesisResponse(raw string, baseline SynthesisResult) (SynthesisResult, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return SynthesisResult{}, fmt.Errorf("empty synthesis response")
+	}
+
+	verdict := parseSynthesisVerdict(parseTaggedBlock(raw, "overall_verdict"))
+	if verdict == "" {
+		return SynthesisResult{}, fmt.Errorf("missing or invalid <overall_verdict>")
+	}
+
+	summary := strings.TrimSpace(parseTaggedBlock(raw, "summary"))
+	if summary == "" {
+		summary = strings.TrimSpace(baseline.Summary)
+	}
+
+	result := SynthesisResult{
+		Verdict:      verdict,
+		LegReports:   append([]LegReport(nil), baseline.LegReports...),
+		MustFix:      alignSynthesisFindings(parseTaggedItems(raw, "must_fix"), baseline.MustFix, SeverityMustFix),
+		ShouldFix:    alignSynthesisFindings(parseTaggedItems(raw, "should_fix"), baseline.ShouldFix, SeverityShouldFix),
+		Observations: alignSynthesisFindings(parseTaggedItems(raw, "observations"), baseline.Observations, SeverityObservation),
+		Summary:      summary,
+	}
+
+	if err := validateTaggedCount(raw, "must_fix_count", len(result.MustFix)); err != nil {
+		return SynthesisResult{}, err
+	}
+	if err := validateTaggedCount(raw, "should_fix_count", len(result.ShouldFix)); err != nil {
+		return SynthesisResult{}, err
+	}
+	if err := validateTaggedCount(raw, "observation_count", len(result.Observations)); err != nil {
+		return SynthesisResult{}, err
+	}
+
+	return result, nil
+}
+
 func SynthesizeFindings(results []ExplorationResult) (SynthesisResult, error) {
 	synthesis := SynthesisResult{
 		Verdict:    VerdictGo,
@@ -200,10 +238,78 @@ func parseTaggedItems(raw, tag string) []string {
 	items := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if item := trimListItem(line); item != "" {
+			if strings.EqualFold(item, "none") || strings.EqualFold(item, "none.") {
+				continue
+			}
 			items = append(items, item)
 		}
 	}
 	return items
+}
+
+func alignSynthesisFindings(items []string, baseline []Finding, severity FindingSeverity) []Finding {
+	if len(items) == 0 {
+		return nil
+	}
+	index := make(map[string]Finding, len(baseline))
+	for _, item := range baseline {
+		index[normalizeFindingKey(item.Text)] = item
+	}
+	aligned := make([]Finding, 0, len(items))
+	for _, item := range items {
+		key := normalizeFindingKey(item)
+		if matched, ok := index[key]; ok {
+			matched.Text = item
+			matched.Severity = severity
+			aligned = append(aligned, matched)
+			continue
+		}
+		aligned = append(aligned, Finding{
+			Text:     item,
+			Severity: severity,
+		})
+	}
+	return aligned
+}
+
+func parseSynthesisVerdict(raw string) SynthesisVerdict {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case string(VerdictGo):
+		return VerdictGo
+	case string(VerdictGoWithFixes):
+		return VerdictGoWithFixes
+	case string(VerdictNoGo):
+		return VerdictNoGo
+	default:
+		return ""
+	}
+}
+
+func validateTaggedCount(raw, tag string, actual int) error {
+	value := strings.TrimSpace(parseTaggedBlock(raw, tag))
+	if value == "" {
+		return nil
+	}
+	expected, err := parseTaggedCount(value)
+	if err != nil {
+		return fmt.Errorf("invalid <%s>: %w", tag, err)
+	}
+	if expected != actual {
+		return fmt.Errorf("%s mismatch: expected %d, got %d", tag, expected, actual)
+	}
+	return nil
+}
+
+func parseTaggedCount(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	count := 0
+	for _, ch := range raw {
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf("not a number")
+		}
+		count = count*10 + int(ch-'0')
+	}
+	return count, nil
 }
 
 func mergeFindingMap(target map[string]*Finding, source string, entries []string, severity FindingSeverity) {
@@ -282,6 +388,9 @@ func RenderSynthesisMarkdown(task string, result SynthesisResult) string {
 	builder.WriteString("<overall_verdict>")
 	builder.WriteString(string(result.Verdict))
 	builder.WriteString("</overall_verdict>\n")
+	builder.WriteString("<summary>")
+	builder.WriteString(strings.TrimSpace(result.Summary))
+	builder.WriteString("</summary>\n")
 	builder.WriteString(fmt.Sprintf("<must_fix_count>%d</must_fix_count>\n", len(result.MustFix)))
 	builder.WriteString(fmt.Sprintf("<should_fix_count>%d</should_fix_count>\n", len(result.ShouldFix)))
 	builder.WriteString(fmt.Sprintf("<observation_count>%d</observation_count>\n", len(result.Observations)))

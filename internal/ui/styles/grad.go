@@ -10,7 +10,6 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-
 func ForegroundGrad(t *Styles, input string, bold bool, color1, color2 color.Color) []string {
 	if input == "" {
 		return []string{""}
@@ -150,17 +149,17 @@ func ShimmerTextWithDot(t *Styles, input string) string {
 
 func ShimmerText(t *Styles, input string, shift int) string {
 	_ = shift
-	return ShimmerTextCodex(t, input)
+	return ShimmerTextWithDot(t, input)
 }
 
 func ShimmerTextNeutral(t *Styles, input string, shift int) string {
 	_ = shift
-	return ShimmerTextCodex(t, input)
+	return ShimmerTextWithDot(t, input)
 }
 
 func ShimmerTextWarm(t *Styles, input string, shift int) string {
 	_ = shift
-	return ShimmerTextCodex(t, input)
+	return ShimmerTextWithDot(t, input)
 }
 
 // ── internal helpers ──────────────────────────────────────────────────────────

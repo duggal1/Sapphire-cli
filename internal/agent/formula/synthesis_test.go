@@ -116,3 +116,71 @@ func TestSynthesizeFindingsParsesTaggedLegReport(t *testing.T) {
 		t.Fatalf("unexpected must-fix findings: %#v", synthesis.MustFix)
 	}
 }
+
+func TestParseSynthesisResponseUsesTaggedMainAgentOutput(t *testing.T) {
+	t.Parallel()
+
+	baseline := SynthesisResult{
+		Verdict: VerdictGoWithFixes,
+		LegReports: []LegReport{
+			{LegType: "requirements", Verdict: "PASS_WITH_NOTES"},
+		},
+		MustFix: []Finding{
+			{Text: "Clarify rollout validation.", Severity: SeverityMustFix, Sources: []string{"requirements", "scope"}},
+		},
+		ShouldFix: []Finding{
+			{Text: "Add smoke test coverage.", Severity: SeverityShouldFix, Sources: []string{"requirements"}},
+		},
+		Observations: []Finding{
+			{Text: "Logging is already in place.", Severity: SeverityObservation, Sources: []string{"feasibility"}},
+		},
+		Summary: "Baseline summary.",
+	}
+
+	raw := `<synthesis>
+<overall_verdict>GO_WITH_FIXES</overall_verdict>
+<summary>Main agent consolidated the findings.</summary>
+<must_fix_count>1</must_fix_count>
+<should_fix_count>1</should_fix_count>
+<observation_count>1</observation_count>
+</synthesis>
+<must_fix>
+- Clarify rollout validation.
+</must_fix>
+<should_fix>
+- Add smoke test coverage.
+</should_fix>
+<observations>
+- Logging is already in place.
+</observations>`
+
+	result, err := ParseSynthesisResponse(raw, baseline)
+	if err != nil {
+		t.Fatalf("ParseSynthesisResponse() error = %v", err)
+	}
+	if result.Verdict != VerdictGoWithFixes {
+		t.Fatalf("expected verdict %q, got %q", VerdictGoWithFixes, result.Verdict)
+	}
+	if result.Summary != "Main agent consolidated the findings." {
+		t.Fatalf("unexpected summary %q", result.Summary)
+	}
+	if len(result.MustFix) != 1 || len(result.MustFix[0].Sources) != 2 {
+		t.Fatalf("expected baseline sources to be preserved, got %#v", result.MustFix)
+	}
+}
+
+func TestParseSynthesisResponseRejectsCountMismatch(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseSynthesisResponse(`<synthesis>
+<overall_verdict>GO</overall_verdict>
+<summary>Ready.</summary>
+<must_fix_count>2</must_fix_count>
+</synthesis>
+<must_fix>
+- One item.
+</must_fix>`, SynthesisResult{})
+	if err == nil {
+		t.Fatal("expected count mismatch error")
+	}
+}

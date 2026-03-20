@@ -160,7 +160,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, state *ExecutionS
 		state.ExplorationResults = results
 		return summarizeExploration(results), nil
 	case "synthesize-findings":
-		return e.runSynthesisStep(ctx, state)
+		return e.runSynthesisStep(ctx, step, rendered, state)
 	case "gate-approval":
 		if e.Approve == nil {
 			return "", fmt.Errorf("approval gate requested but no approval callback configured")
@@ -210,24 +210,11 @@ func (e *Executor) executeStep(ctx context.Context, step Step, state *ExecutionS
 	return output, nil
 }
 
-func (e *Executor) runSynthesisStep(ctx context.Context, state *ExecutionState) (string, error) {
-	synthesis, err := SynthesizeFindings(state.ExplorationResults)
+func (e *Executor) runSynthesisStep(ctx context.Context, step Step, rendered string, state *ExecutionState) (string, error) {
+	synthesis, synthesisMarkdown, err := e.materializeSynthesis(ctx, step, rendered, state)
 	if err != nil {
 		return "", err
 	}
-	state.Synthesis = synthesis
-	state.Variables["synthesis_verdict"] = string(synthesis.Verdict)
-	state.Variables["synthesis_summary"] = synthesis.Summary
-
-	synthesisMarkdown := RenderSynthesisMarkdown(getVar(state.Variables, "task"), synthesis)
-	synthesisPath, err := e.writeSynthesisFile(state, synthesisMarkdown)
-	if err != nil {
-		return "", err
-	}
-	state.SynthesisPath = synthesisPath
-	state.Variables["synthesis_path"] = toFormulaPath(e.WorkingDir, synthesisPath)
-	state.Variables["synthesis_report"] = synthesisMarkdown
-
 	if synthesis.Verdict == VerdictNoGo {
 		if state.RefinementPasses >= 1 {
 			return synthesisMarkdown, ErrSynthesisNoGo
@@ -236,7 +223,7 @@ func (e *Executor) runSynthesisStep(ctx context.Context, state *ExecutionState) 
 		if err := e.retryExplorationCycle(ctx, state); err != nil {
 			return synthesisMarkdown, err
 		}
-		return RenderSynthesisMarkdown(getVar(state.Variables, "task"), state.Synthesis), nil
+		return strings.TrimSpace(state.Variables["synthesis_report"]), nil
 	}
 	return synthesisMarkdown, nil
 }
@@ -260,25 +247,61 @@ func (e *Executor) retryExplorationCycle(ctx context.Context, state *ExecutionSt
 		}
 		state.Variables[step.ID+"_output"] = output
 	}
-	synthesis, err := SynthesizeFindings(state.ExplorationResults)
+	step, ok := e.Formula.StepByID("synthesize-findings")
+	if !ok {
+		return fmt.Errorf("retry step %q not found in formula", "synthesize-findings")
+	}
+	rendered, err := renderTemplate(step.Description, state.Variables)
 	if err != nil {
 		return err
 	}
-	state.Synthesis = synthesis
-	state.Variables["synthesis_verdict"] = string(synthesis.Verdict)
-	state.Variables["synthesis_summary"] = synthesis.Summary
-	synthesisMarkdown := RenderSynthesisMarkdown(getVar(state.Variables, "task"), synthesis)
-	synthesisPath, err := e.writeSynthesisFile(state, synthesisMarkdown)
+	synthesis, _, err := e.materializeSynthesis(ctx, step, rendered, state)
 	if err != nil {
 		return err
 	}
-	state.SynthesisPath = synthesisPath
-	state.Variables["synthesis_path"] = toFormulaPath(e.WorkingDir, synthesisPath)
-	state.Variables["synthesis_report"] = synthesisMarkdown
 	if synthesis.Verdict == VerdictNoGo {
 		return ErrSynthesisNoGo
 	}
 	return nil
+}
+
+func (e *Executor) materializeSynthesis(ctx context.Context, step Step, rendered string, state *ExecutionState) (SynthesisResult, string, error) {
+	baseline, err := SynthesizeFindings(state.ExplorationResults)
+	if err != nil {
+		return SynthesisResult{}, "", err
+	}
+
+	synthesis := baseline
+	if e.LLM != nil {
+		req := LLMRequest{
+			SessionID:       state.SessionID,
+			Step:            step,
+			Prompt:          e.stepPrompt(step, rendered, state.withSynthesisBaseline(baseline)),
+			ReasoningEffort: stepReasoningEffort(step.ID),
+			ToolNames:       e.stepToolNames(step.ID),
+			UseDefaultTools: false,
+		}
+		result, err := e.LLM.ExecuteStep(ctx, req)
+		if err == nil {
+			if parsed, parseErr := ParseSynthesisResponse(result.Output, baseline); parseErr == nil {
+				synthesis = parsed
+			}
+		}
+	}
+
+	state.Synthesis = synthesis
+	state.Variables["synthesis_verdict"] = string(synthesis.Verdict)
+	state.Variables["synthesis_summary"] = synthesis.Summary
+
+	synthesisMarkdown := RenderSynthesisMarkdown(getVar(state.Variables, "task"), synthesis)
+	synthesisPath, err := e.writeSynthesisFile(state, synthesisMarkdown)
+	if err != nil {
+		return SynthesisResult{}, "", err
+	}
+	state.SynthesisPath = synthesisPath
+	state.Variables["synthesis_path"] = toFormulaPath(e.WorkingDir, synthesisPath)
+	state.Variables["synthesis_report"] = synthesisMarkdown
+	return synthesis, synthesisMarkdown, nil
 }
 
 func (e *Executor) checkAcceptance(step Step, state *ExecutionState, output string) (bool, error) {
@@ -317,6 +340,16 @@ func (e *Executor) stepPrompt(step Step, rendered string, state *ExecutionState)
 		builder.WriteString(summarizeExploration(state.ExplorationResults))
 		builder.WriteString("\n\n")
 	}
+	if strings.TrimSpace(state.Variables["exploration_reports"]) != "" {
+		builder.WriteString("Exploration reports:\n")
+		builder.WriteString(strings.TrimSpace(state.Variables["exploration_reports"]))
+		builder.WriteString("\n\n")
+	}
+	if strings.TrimSpace(state.Variables["synthesis_baseline"]) != "" {
+		builder.WriteString("Baseline aggregate:\n")
+		builder.WriteString(strings.TrimSpace(state.Variables["synthesis_baseline"]))
+		builder.WriteString("\n\n")
+	}
 	if strings.TrimSpace(state.Variables["synthesis_report"]) != "" {
 		builder.WriteString("Synthesis report:\n")
 		builder.WriteString(strings.TrimSpace(state.Variables["synthesis_report"]))
@@ -334,6 +367,20 @@ func (e *Executor) stepPrompt(step Step, rendered string, state *ExecutionState)
 		builder.WriteString("feasibility=<id>\n")
 		builder.WriteString("scope=<id>\n")
 		builder.WriteString("</exploration_agents>\n")
+	case "synthesize-findings":
+		builder.WriteString("You are the main planning agent. Consolidate the exploration reports into the single synthesis that will drive design.\n")
+		builder.WriteString("Use the baseline aggregate to avoid dropping cross-leg issues, but return the final synthesis in your own judgment.\n")
+		builder.WriteString("Return only this exact structure:\n")
+		builder.WriteString("<synthesis>\n")
+		builder.WriteString("<overall_verdict>GO|GO_WITH_FIXES|NO_GO</overall_verdict>\n")
+		builder.WriteString("<summary>one short paragraph</summary>\n")
+		builder.WriteString("<must_fix_count>N</must_fix_count>\n")
+		builder.WriteString("<should_fix_count>N</should_fix_count>\n")
+		builder.WriteString("<observation_count>N</observation_count>\n")
+		builder.WriteString("</synthesis>\n")
+		builder.WriteString("<must_fix>\n- item\n</must_fix>\n")
+		builder.WriteString("<should_fix>\n- item\n</should_fix>\n")
+		builder.WriteString("<observations>\n- item\n</observations>\n")
 	case "plan":
 		builder.WriteString("Write the final plan inside <proposed_plan>...</proposed_plan>.\n")
 	}
@@ -348,7 +395,7 @@ func (e *Executor) stepToolNames(stepID string) []string {
 		return nil
 	}
 	switch stepID {
-	case "wait-exploration", "gate-approval":
+	case "wait-exploration", "gate-approval", "synthesize-findings":
 		return nil
 	default:
 		return e.ToolRegistry.Names()
@@ -357,7 +404,7 @@ func (e *Executor) stepToolNames(stepID string) []string {
 
 func stepReasoningEffort(stepID string) string {
 	switch stepID {
-	case "understand", "analyze", "launch-exploration", "wait-exploration", "design", "plan", "gate-approval":
+	case "understand", "analyze", "launch-exploration", "wait-exploration", "synthesize-findings", "design", "plan", "gate-approval":
 		return "high"
 	default:
 		return ""
@@ -539,6 +586,55 @@ func summarizeExploration(results []ExplorationResult) string {
 		builder.WriteString("\n")
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+func (s *ExecutionState) withSynthesisBaseline(baseline SynthesisResult) *ExecutionState {
+	if s == nil {
+		return nil
+	}
+	copyState := *s
+	copyState.Variables = make(map[string]string, len(s.Variables)+2)
+	for key, value := range s.Variables {
+		copyState.Variables[key] = value
+	}
+	copyState.Variables["synthesis_baseline"] = strings.TrimSpace(RenderSynthesisMarkdown(getVar(copyState.Variables, "task"), baseline))
+	copyState.Variables["exploration_reports"] = renderDetailedExplorationReports(s.ExplorationResults)
+	return &copyState
+}
+
+func renderDetailedExplorationReports(results []ExplorationResult) string {
+	if len(results) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, result := range results {
+		builder.WriteString("## ")
+		builder.WriteString(firstNonEmpty(result.LegType, result.AgentID))
+		builder.WriteString("\n")
+		builder.WriteString("- status: ")
+		builder.WriteString(strings.TrimSpace(result.Status))
+		builder.WriteString("\n")
+		if strings.TrimSpace(result.Error) != "" {
+			builder.WriteString("- error: ")
+			builder.WriteString(strings.TrimSpace(result.Error))
+			builder.WriteString("\n")
+		}
+		if strings.TrimSpace(result.Result) != "" {
+			builder.WriteString(strings.TrimSpace(result.Result))
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\n")
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func toFormulaPath(root, path string) string {

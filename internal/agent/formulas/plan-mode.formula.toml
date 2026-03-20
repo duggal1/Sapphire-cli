@@ -70,16 +70,17 @@ id = "synthesize-findings"
 title = "Synthesize Findings"
 needs = ["wait-exploration"]
 description = """
-Read all 5 exploration reports, consolidate must-fix items, determine the overall verdict, and write the synthesis report to `.plans/{{task_slug}}/05-synthesis.md`.
+Main planning agent reads all 5 exploration reports, consolidates the findings into one final synthesis, determines the overall verdict, and writes `.plans/{{task_slug}}/05-synthesis.md`.
 
 Report structure:
 - `<synthesis>`
 - `<overall_verdict>GO|GO_WITH_FIXES|NO_GO</overall_verdict>`
+- `<summary>...</summary>`
 - `<must_fix_count>N</must_fix_count>`
 - `<should_fix_count>N</should_fix_count>`
 - `<observation_count>N</observation_count>`
 - `</synthesis>`
-- then markdown sections: Overall Verdict, Must Fix, Should Fix, Observations
+- then categorized sections: `<must_fix>`, `<should_fix>`, `<observations>`
 
 If the verdict is NO_GO, revisit understanding and analysis based on the must-fix findings before plan design can continue.
 """

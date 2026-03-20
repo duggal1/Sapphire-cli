@@ -191,17 +191,7 @@ type BackgroundSubAgentsToolRenderContext struct{}
 
 // RenderTool implements the [ToolRenderer] interface.
 func (r *BackgroundSubAgentsToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	label := "Running agents in the background"
-	var payload struct {
-		Count int `json:"count"`
-	}
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &payload); err == nil && payload.Count > 0 {
-		label = fmt.Sprintf("Running %d agents in the background", payload.Count)
-	}
-	if !opts.IsSpinning {
-		return label
-	}
-	return styles.ShimmerTextNeutral(sty, label, 0)
+	return renderBackgroundSubAgentsTool(sty, width, opts)
 }
 
 // -----------------------------------------------------------------------------

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
+	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/google/uuid"
@@ -19,9 +22,13 @@ const backgroundSubAgentTimeout = 10 * time.Minute
 
 type backgroundIndicatorState struct {
 	count               int
+	total               int
 	toolCallMessageID   string
 	toolResultMessageID string
 	done                chan struct{}
+	title               string
+	agents              map[string]BackgroundSubAgentView
+	order               []string
 }
 
 func (c *coordinator) acquireBackgroundSubAgentSlot() {
@@ -85,12 +92,19 @@ func (c *coordinator) addBackgroundTasks(ctx context.Context, sessionID string, 
 	state, ok := c.backgroundIndicators[sessionID]
 	if ok {
 		state.count += taskCount
+		state.total += taskCount
+		if err := c.updateBackgroundIndicatorMessagesLocked(ctx, sessionID, state, false); err != nil {
+			slog.Error("Failed to update background sub-agent indicator", "error", err)
+		}
 		c.backgroundIndicatorMu.Unlock()
 		return nil
 	}
 	c.backgroundIndicatorMu.Unlock()
 
-	input, _ := json.Marshal(map[string]int{"count": taskCount})
+	input, _ := json.Marshal(BackgroundSubAgentsToolInput{
+		Count: taskCount,
+		Title: "Background Sub-Agents",
+	})
 	toolCallID := "background-indicator-" + uuid.New().String()
 
 	toolCallMsg, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
@@ -100,7 +114,7 @@ func (c *coordinator) addBackgroundTasks(ctx context.Context, sessionID string, 
 				ID:       toolCallID,
 				Name:     BackgroundSubAgentsToolName,
 				Input:    string(input),
-				Finished: true,
+				Finished: false,
 			},
 		},
 	})
@@ -108,13 +122,19 @@ func (c *coordinator) addBackgroundTasks(ctx context.Context, sessionID string, 
 		return err
 	}
 
+	initialPayload, _ := json.Marshal(BackgroundSubAgentsToolPayload{
+		Status: "launching",
+		Title:  "Background Sub-Agents",
+		Count:  taskCount,
+		Active: taskCount,
+	})
 	toolResultMsg, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role: message.Tool,
 		Parts: []message.ContentPart{
 			message.ToolResult{
 				ToolCallID: toolCallID,
 				Name:       BackgroundSubAgentsToolName,
-				Content:    "running agents in the background",
+				Content:    string(initialPayload),
 				IsError:    false,
 			},
 		},
@@ -134,9 +154,12 @@ func (c *coordinator) addBackgroundTasks(ctx context.Context, sessionID string, 
 	}
 	c.backgroundIndicators[sessionID] = &backgroundIndicatorState{
 		count:               taskCount,
+		total:               taskCount,
 		toolCallMessageID:   toolCallMsg.ID,
 		toolResultMessageID: toolResultMsg.ID,
 		done:                make(chan struct{}),
+		title:               "Background Sub-Agents",
+		agents:              make(map[string]BackgroundSubAgentView),
 	}
 	c.backgroundIndicatorMu.Unlock()
 	return nil
@@ -147,10 +170,6 @@ func (c *coordinator) completeBackgroundTasks(ctx context.Context, sessionID str
 		return
 	}
 
-	var (
-		toDelete []string
-		done     chan struct{}
-	)
 	c.backgroundIndicatorMu.Lock()
 	state, ok := c.backgroundIndicators[sessionID]
 	if !ok {
@@ -158,25 +177,19 @@ func (c *coordinator) completeBackgroundTasks(ctx context.Context, sessionID str
 		return
 	}
 	state.count -= taskCount
-	if state.count > 0 {
-		c.backgroundIndicatorMu.Unlock()
-		return
+	finished := state.count <= 0
+	if finished {
+		state.count = 0
+		delete(c.backgroundIndicators, sessionID)
 	}
-	delete(c.backgroundIndicators, sessionID)
-	done = state.done
-	toDelete = []string{state.toolCallMessageID, state.toolResultMessageID}
+	if err := c.updateBackgroundIndicatorMessagesLocked(ctx, sessionID, state, finished); err != nil {
+		slog.Error("Failed to finalize background sub-agent indicator", "error", err)
+	}
+	done := state.done
 	c.backgroundIndicatorMu.Unlock()
 
-	if done != nil {
+	if finished && done != nil {
 		close(done)
-	}
-	for _, id := range toDelete {
-		if id == "" {
-			continue
-		}
-		if err := c.messages.Delete(ctx, id); err != nil {
-			slog.Error("Failed to delete background sub-agent indicator", "error", err)
-		}
 	}
 }
 
@@ -217,25 +230,230 @@ func (c *coordinator) pollBackgroundSubAgents(sessionID string) {
 }
 
 func (c *coordinator) publishBackgroundSubAgentResult(ctx context.Context, sessionID, taskName, content string, runErr error) {
-	isError := false
-	if runErr != nil {
-		content = runErr.Error()
-		isError = true
-	}
-	if taskName != "" {
-		content = fmt.Sprintf("Background sub-agent (%s):\n\n%s", taskName, content)
-	}
-	if isError {
-		content = fmt.Sprintf("Background sub-agent error:\n\n%s", content)
+	c.backgroundIndicatorMu.Lock()
+	defer c.backgroundIndicatorMu.Unlock()
+
+	state, ok := c.backgroundIndicators[sessionID]
+	if !ok {
+		return
 	}
 
-	_, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role: message.Assistant,
-		Parts: []message.ContentPart{
-			message.TextContent{Text: content},
-		},
-	})
-	if err != nil {
-		slog.Error("Failed to publish background sub-agent result", "error", err)
+	entryID := taskName
+	if entryID == "" {
+		entryID = fmt.Sprintf("background-%d", len(state.order)+1)
 	}
+	entry, exists := state.agents[entryID]
+	if !exists {
+		entry = BackgroundSubAgentView{
+			ID:     entryID,
+			Name:   taskName,
+			Title:  taskName,
+			Status: "failed",
+		}
+		state.order = append(state.order, entryID)
+	}
+	entry.Name = firstNonEmptyBackgroundValue(taskName, entry.Name)
+	entry.Title = firstNonEmptyBackgroundValue(taskName, entry.Title)
+	entry.Result = strings.TrimSpace(content)
+	entry.Preview = strings.TrimSpace(content)
+	entry.Status = "completed"
+	if runErr != nil {
+		entry.Error = runErr.Error()
+		entry.Status = "failed"
+	}
+	state.agents[entryID] = entry
+	if err := c.updateBackgroundIndicatorMessagesLocked(ctx, sessionID, state, false); err != nil {
+		slog.Error("Failed to update background sub-agent result", "error", err)
+	}
+}
+
+func (c *coordinator) recordBackgroundTaskLaunched(ctx context.Context, sessionID string, spec agentbackground.TaskSpec, agentID string) {
+	c.backgroundIndicatorMu.Lock()
+	defer c.backgroundIndicatorMu.Unlock()
+
+	state, ok := c.backgroundIndicators[sessionID]
+	if !ok {
+		return
+	}
+	entry, exists := state.agents[agentID]
+	if !exists {
+		state.order = append(state.order, agentID)
+	}
+	entry.ID = agentID
+	entry.Name = firstNonEmptyBackgroundValue(spec.Name, entry.Name)
+	entry.Title = firstNonEmptyBackgroundValue(spec.Title, entry.Title, spec.Name)
+	entry.LegType = firstNonEmptyBackgroundValue(string(spec.LegType), entry.LegType)
+	entry.WorkDir = firstNonEmptyBackgroundValue(spec.WorktreePath, entry.WorkDir)
+	entry.Branch = firstNonEmptyBackgroundValue(spec.Branch, entry.Branch)
+	if entry.StartedAt.IsZero() {
+		entry.StartedAt = time.Now().UTC()
+	}
+	entry.Status = "queued"
+	state.agents[agentID] = entry
+	if err := c.updateBackgroundIndicatorMessagesLocked(ctx, sessionID, state, false); err != nil {
+		slog.Error("Failed to record background sub-agent launch", "error", err)
+	}
+}
+
+func (c *coordinator) recordBackgroundTaskCompleted(ctx context.Context, sessionID string, agent agentbackground.SubAgent) {
+	c.backgroundIndicatorMu.Lock()
+	defer c.backgroundIndicatorMu.Unlock()
+
+	state, ok := c.backgroundIndicators[sessionID]
+	if !ok {
+		return
+	}
+
+	entry, exists := state.agents[agent.ID]
+	if !exists {
+		state.order = append(state.order, agent.ID)
+	}
+	entry.ID = agent.ID
+	entry.Name = firstNonEmptyBackgroundValue(agent.Name, agent.Task.Name, entry.Name)
+	entry.Title = firstNonEmptyBackgroundValue(agent.Task.Title, agent.Name, entry.Title)
+	entry.LegType = firstNonEmptyBackgroundValue(string(agent.Task.LegType), entry.LegType)
+	entry.WorkDir = firstNonEmptyBackgroundValue(agent.Task.WorktreePath, entry.WorkDir)
+	entry.Branch = firstNonEmptyBackgroundValue(agent.Task.Branch, entry.Branch)
+	entry.StartedAt = firstNonZeroTime(agent.StartedAt, entry.StartedAt)
+	entry.Status = strings.TrimSpace(string(agent.Status))
+	entry.Result = strings.TrimSpace(agent.Result)
+	entry.Preview = strings.TrimSpace(agent.Result)
+	entry.Error = strings.TrimSpace(agent.Error)
+	state.agents[agent.ID] = entry
+	if err := c.updateBackgroundIndicatorMessagesLocked(ctx, sessionID, state, false); err != nil {
+		slog.Error("Failed to record background sub-agent completion", "error", err)
+	}
+}
+
+func (c *coordinator) updateBackgroundIndicatorMessagesLocked(ctx context.Context, sessionID string, state *backgroundIndicatorState, finished bool) error {
+	if c == nil || c.messages == nil || state == nil {
+		return nil
+	}
+	payload := c.buildBackgroundIndicatorPayloadLocked(state, finished)
+	resultJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	if state.toolResultMessageID != "" {
+		resultMsg, err := c.messages.Get(ctx, state.toolResultMessageID)
+		if err == nil {
+			for i, part := range resultMsg.Parts {
+				res, ok := part.(message.ToolResult)
+				if !ok || res.Name != BackgroundSubAgentsToolName {
+					continue
+				}
+				res.Content = string(resultJSON)
+				res.IsError = payload.Failed > 0 && finished
+				resultMsg.Parts[i] = res
+				break
+			}
+			if err := c.messages.Update(ctx, resultMsg); err != nil {
+				return err
+			}
+		}
+	}
+
+	if state.toolCallMessageID != "" {
+		callMsg, err := c.messages.Get(ctx, state.toolCallMessageID)
+		if err == nil {
+			inputJSON, _ := json.Marshal(BackgroundSubAgentsToolInput{
+				Count: state.total,
+				Title: firstNonEmptyBackgroundValue(state.title, payload.Title),
+			})
+			for i, part := range callMsg.Parts {
+				call, ok := part.(message.ToolCall)
+				if !ok || call.Name != BackgroundSubAgentsToolName {
+					continue
+				}
+				call.Input = string(inputJSON)
+				call.Finished = finished
+				callMsg.Parts[i] = call
+				break
+			}
+			if err := c.messages.Update(ctx, callMsg); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *coordinator) buildBackgroundIndicatorPayloadLocked(state *backgroundIndicatorState, finished bool) BackgroundSubAgentsToolPayload {
+	payload := BackgroundSubAgentsToolPayload{
+		Status: "running",
+		Title:  firstNonEmptyBackgroundValue(state.title, "Background Sub-Agents"),
+		Count:  state.total,
+		Active: state.count,
+	}
+	if state.total == 0 {
+		payload.Count = len(state.agents)
+	}
+	ordered := make([]BackgroundSubAgentView, 0, len(state.agents))
+	for _, id := range state.order {
+		entry, ok := state.agents[id]
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(entry.Status)) {
+		case "completed":
+			payload.Completed++
+		case "failed", "error":
+			payload.Completed++
+			payload.Failed++
+		}
+		ordered = append(ordered, entry)
+	}
+	if len(ordered) < len(state.agents) {
+		keys := make([]string, 0, len(state.agents))
+		for id := range state.agents {
+			if !containsBackgroundID(state.order, id) {
+				keys = append(keys, id)
+			}
+		}
+		sort.Strings(keys)
+		for _, id := range keys {
+			ordered = append(ordered, state.agents[id])
+		}
+	}
+	payload.Agents = ordered
+	switch {
+	case finished && payload.Failed > 0:
+		payload.Status = "failed"
+	case finished:
+		payload.Status = "completed"
+	case payload.Completed > 0:
+		payload.Status = "running"
+	default:
+		payload.Status = "launching"
+	}
+	return payload
+}
+
+func containsBackgroundID(ids []string, target string) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmptyBackgroundValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
 }

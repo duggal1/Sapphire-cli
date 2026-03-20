@@ -37,6 +37,7 @@ func (c *coordinator) DispatchBackground(ctx context.Context, spec agentbackgrou
 		c.completeBackgroundTasks(context.Background(), spec.SessionID, 1)
 		return "", err
 	}
+	c.recordBackgroundTaskLaunched(context.Background(), spec.SessionID, spec, agentID)
 	return agentID, nil
 }
 
@@ -137,11 +138,7 @@ func (c *coordinator) handleBackgroundCompletion(ctx context.Context, agent agen
 	if c == nil {
 		return
 	}
-	var runErr error
-	if strings.TrimSpace(agent.Error) != "" {
-		runErr = fmt.Errorf("%s", agent.Error)
-	}
-	c.publishBackgroundSubAgentResult(ctx, agent.SessionID, agent.Name, agent.Result, runErr)
+	c.recordBackgroundTaskCompleted(ctx, agent.SessionID, agent)
 	c.completeBackgroundTasks(context.Background(), agent.SessionID, 1)
 }
 

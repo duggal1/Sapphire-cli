@@ -208,11 +208,16 @@ func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) (int64, error
 
 // QueryRecords retrieves top-K records by retrieval score with temporal decay.
 func (s *Store) QueryRecords(ctx context.Context, filter string, limit int) ([]MemoryRecord, error) {
+	return s.QueryRecordsBySession(ctx, s.sessionID, filter, limit)
+}
+
+// QueryRecordsBySession retrieves top-K records for a specific session ID.
+func (s *Store) QueryRecordsBySession(ctx context.Context, sessionID, filter string, limit int) ([]MemoryRecord, error) {
 	query := `SELECT id, session_id, event_type, timestamp, turn_index, salience,
 		content_json, raw_source, is_negative_constraint, is_architectural_decision,
 		is_failure_mode
 		FROM memory_records WHERE session_id = ? AND project_scope = ?`
-	args := []any{s.sessionID, s.project}
+	args := []any{sessionID, s.project}
 
 	switch filter {
 	case "negative_constraints":
@@ -269,6 +274,11 @@ func (s *Store) QueryRecords(ctx context.Context, filter string, limit int) ([]M
 
 // SearchFTS performs full-text search over memory content.
 func (s *Store) SearchFTS(ctx context.Context, query string, limit int) ([]MemoryRecord, error) {
+	return s.SearchFTSBySession(ctx, s.sessionID, query, limit)
+}
+
+// SearchFTSBySession performs full-text search over memory content for one session.
+func (s *Store) SearchFTSBySession(ctx context.Context, sessionID, query string, limit int) ([]MemoryRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, m.session_id, m.event_type, m.timestamp, m.turn_index, m.salience,
 			m.content_json, m.raw_source, m.is_negative_constraint,
@@ -277,7 +287,7 @@ func (s *Store) SearchFTS(ctx context.Context, query string, limit int) ([]Memor
 		JOIN memory_records m ON f.rowid = m.id
 		WHERE memory_fts MATCH ? AND m.session_id = ? AND m.project_scope = ?
 		ORDER BY rank LIMIT ?`,
-		query, s.sessionID, s.project, limit,
+		query, sessionID, s.project, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -304,6 +314,11 @@ func (s *Store) SearchFTS(ctx context.Context, query string, limit int) ([]Memor
 // GetNegativeConstraints returns all negative constraint records (zero decay, always included).
 func (s *Store) GetNegativeConstraints(ctx context.Context) ([]MemoryRecord, error) {
 	return s.QueryRecords(ctx, "negative_constraints", 100)
+}
+
+// GetNegativeConstraintsBySession returns all negative constraint records for a session.
+func (s *Store) GetNegativeConstraintsBySession(ctx context.Context, sessionID string) ([]MemoryRecord, error) {
+	return s.QueryRecordsBySession(ctx, sessionID, "negative_constraints", 100)
 }
 
 // GetConstitution retrieves the project constitution.
@@ -348,12 +363,17 @@ func (s *Store) WriteCheckpoint(ctx context.Context, checkpointJSON string) erro
 
 // GetLatestCheckpoint returns the most recent compaction checkpoint.
 func (s *Store) GetLatestCheckpoint(ctx context.Context) (string, error) {
+	return s.GetLatestCheckpointBySession(ctx, s.sessionID)
+}
+
+// GetLatestCheckpointBySession returns the most recent compaction checkpoint for a session.
+func (s *Store) GetLatestCheckpointBySession(ctx context.Context, sessionID string) (string, error) {
 	var checkpoint string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT checkpoint_json FROM compaction_checkpoints
 		WHERE session_id = ? AND project_scope = ?
 		ORDER BY created_at DESC LIMIT 1`,
-		s.sessionID, s.project,
+		sessionID, s.project,
 	).Scan(&checkpoint)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -377,26 +397,41 @@ func (s *Store) WriteDeadLetter(ctx context.Context, event ExtractionEvent, reas
 
 // DeadLetterCount returns the number of dead-lettered events for the session.
 func (s *Store) DeadLetterCount(ctx context.Context) (int64, error) {
+	return s.DeadLetterCountBySession(ctx, s.sessionID)
+}
+
+// DeadLetterCountBySession returns the number of dead-lettered events for a session.
+func (s *Store) DeadLetterCountBySession(ctx context.Context, sessionID string) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM memory_dead_letter WHERE session_id = ? AND project_scope = ?`,
-		s.sessionID, s.project,
+		sessionID, s.project,
 	).Scan(&count)
 	return count, err
 }
 
 // CountRecords returns the total number of records for the session.
 func (s *Store) CountRecords(ctx context.Context) (int64, error) {
+	return s.CountRecordsBySession(ctx, s.sessionID)
+}
+
+// CountRecordsBySession returns the total number of records for a session.
+func (s *Store) CountRecordsBySession(ctx context.Context, sessionID string) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM memory_records WHERE session_id = ? AND project_scope = ?`,
-		s.sessionID, s.project,
+		sessionID, s.project,
 	).Scan(&count)
 	return count, err
 }
 
 // TopSalience returns the top-K salience scores.
 func (s *Store) TopSalience(ctx context.Context, limit int) ([]float64, error) {
+	return s.TopSalienceBySession(ctx, s.sessionID, limit)
+}
+
+// TopSalienceBySession returns the top-K salience scores for a session.
+func (s *Store) TopSalienceBySession(ctx context.Context, sessionID string, limit int) ([]float64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -404,7 +439,7 @@ func (s *Store) TopSalience(ctx context.Context, limit int) ([]float64, error) {
 		`SELECT salience FROM memory_records
 		WHERE session_id = ? AND project_scope = ?
 		ORDER BY salience DESC LIMIT ?`,
-		s.sessionID, s.project, limit,
+		sessionID, s.project, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -424,12 +459,17 @@ func (s *Store) TopSalience(ctx context.Context, limit int) ([]float64, error) {
 
 // LatestCheckpointAgeSeconds returns age seconds and timestamp of the latest checkpoint.
 func (s *Store) LatestCheckpointAgeSeconds(ctx context.Context) (int64, int64, error) {
+	return s.LatestCheckpointAgeSecondsBySession(ctx, s.sessionID)
+}
+
+// LatestCheckpointAgeSecondsBySession returns age seconds and timestamp of the latest checkpoint for a session.
+func (s *Store) LatestCheckpointAgeSecondsBySession(ctx context.Context, sessionID string) (int64, int64, error) {
 	var createdAt int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT created_at FROM compaction_checkpoints
 		WHERE session_id = ? AND project_scope = ?
 		ORDER BY created_at DESC LIMIT 1`,
-		s.sessionID, s.project,
+		sessionID, s.project,
 	).Scan(&createdAt)
 	if err == sql.ErrNoRows {
 		return 0, 0, nil
@@ -466,6 +506,11 @@ type embeddedRecord struct {
 
 // LoadEmbeddingCandidates fetches recent/high-salience records with embeddings.
 func (s *Store) LoadEmbeddingCandidates(ctx context.Context, limit int) ([]embeddedRecord, error) {
+	return s.LoadEmbeddingCandidatesBySession(ctx, s.sessionID, limit)
+}
+
+// LoadEmbeddingCandidatesBySession fetches recent/high-salience records with embeddings for a session.
+func (s *Store) LoadEmbeddingCandidatesBySession(ctx context.Context, sessionID string, limit int) ([]embeddedRecord, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -477,7 +522,7 @@ func (s *Store) LoadEmbeddingCandidates(ctx context.Context, limit int) ([]embed
 		JOIN memory_records m ON e.record_id = m.id
 		WHERE m.session_id = ? AND m.project_scope = ?
 		ORDER BY m.salience DESC, m.timestamp DESC LIMIT ?`,
-		s.sessionID, s.project, limit,
+		sessionID, s.project, limit,
 	)
 	if err != nil {
 		return nil, err
@@ -509,16 +554,21 @@ func (s *Store) LoadEmbeddingCandidates(ctx context.Context, limit int) ([]embed
 
 // SearchHybrid merges FTS and semantic retrieval results.
 func (s *Store) SearchHybrid(ctx context.Context, query string, limit int, embedder Embedder) ([]MemoryRecord, error) {
+	return s.SearchHybridBySession(ctx, s.sessionID, query, limit, embedder)
+}
+
+// SearchHybridBySession merges FTS and semantic retrieval results for one session.
+func (s *Store) SearchHybridBySession(ctx context.Context, sessionID, query string, limit int, embedder Embedder) ([]MemoryRecord, error) {
 	if query == "" {
-		return s.QueryRecords(ctx, "all", limit)
+		return s.QueryRecordsBySession(ctx, sessionID, "all", limit)
 	}
 
-	ftsRecords, ftsErr := s.SearchFTS(ctx, query, limit)
+	ftsRecords, ftsErr := s.SearchFTSBySession(ctx, sessionID, query, limit)
 	if embedder == nil {
 		if ftsErr == nil && len(ftsRecords) > 0 {
 			return ftsRecords, nil
 		}
-		return s.QueryRecords(ctx, "all", limit)
+		return s.QueryRecordsBySession(ctx, sessionID, "all", limit)
 	}
 
 	queryVec, err := embedder.EmbedQuery(ctx, query)
@@ -527,7 +577,7 @@ func (s *Store) SearchHybrid(ctx context.Context, query string, limit int, embed
 		if ftsErr == nil && len(ftsRecords) > 0 {
 			return ftsRecords, nil
 		}
-		return s.QueryRecords(ctx, "all", limit)
+		return s.QueryRecordsBySession(ctx, sessionID, "all", limit)
 	}
 
 	candidateLimit := limit * 20
@@ -537,13 +587,13 @@ func (s *Store) SearchHybrid(ctx context.Context, query string, limit int, embed
 	if candidateLimit > 300 {
 		candidateLimit = 300
 	}
-	embedded, err := s.LoadEmbeddingCandidates(ctx, candidateLimit)
+	embedded, err := s.LoadEmbeddingCandidatesBySession(ctx, sessionID, candidateLimit)
 	if err != nil {
 		slog.Debug("memory: semantic candidates failed, falling back to FTS", "error", err)
 		if ftsErr == nil && len(ftsRecords) > 0 {
 			return ftsRecords, nil
 		}
-		return s.QueryRecords(ctx, "all", limit)
+		return s.QueryRecordsBySession(ctx, sessionID, "all", limit)
 	}
 
 	var semanticScored []scoredRecord

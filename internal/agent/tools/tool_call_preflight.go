@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -142,6 +144,11 @@ func repairToolCall(
 		}
 		if cmd, ok := input["command"].(string); ok {
 			if toolName, toolInput, ok := simpleBashToTool(cmd); ok {
+				if toolName == SingleViewToolName {
+					if _, exists := tools[toolName]; !exists {
+						toolName = ViewToolName
+					}
+				}
 				if next, ok := tools[toolName]; ok {
 					call.Name = toolName
 					tool = next
@@ -204,6 +211,15 @@ func repairToolCall(
 	// ── Memory tools ─────────────────────────────────────────────────
 	case MemoryQueryToolName:
 		normalizeKey(input, "query", "q", "search", "term")
+	case "view_memory":
+		normalizeKey(input, "mode", "type", "scope")
+		normalizeKey(input, "session_id", "session", "id")
+		normalizeKey(input, "limit", "count", "max_results")
+		normalizeKey(input, "query", "q", "search", "term")
+		normalizeKey(input, "since", "timestamp", "after")
+	case "refresh_memory":
+		normalizeKey(input, "session_id", "session", "id")
+		normalizeKey(input, "reason", "note", "why")
 	case "recall_memory":
 		normalizeKey(input, "query", "q", "search", "term")
 		normalizeKey(input, "filter", "type", "scope")
@@ -725,6 +741,9 @@ func simpleBashToTool(command string) (string, map[string]any, bool) {
 	if cmd == "" {
 		return "", nil, false
 	}
+	if toolName, toolInput, ok := rewriteSimpleBashReadCommand(cmd); ok {
+		return toolName, toolInput, true
+	}
 	if strings.ContainsAny(cmd, "|&;><") || strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.Contains(cmd, "$(") {
 		return "", nil, false
 	}
@@ -746,10 +765,116 @@ func simpleBashToTool(command string) (string, map[string]any, bool) {
 		if len(parts) < 2 || strings.HasPrefix(parts[1], "-") {
 			return "", nil, false
 		}
-		return ViewToolName, map[string]any{"file_path": parts[1]}, true
+		return SingleViewToolName, map[string]any{"file_path": parts[1]}, true
 	default:
 		return "", nil, false
 	}
+}
+
+var (
+	headCommandPattern     = regexp.MustCompile(`^\s*head\s+-n\s+(\d+)\s+(.+?)\s*$`)
+	catHeadCommandPattern  = regexp.MustCompile(`^\s*cat\s+(.+?)\s*\|\s*head\s+-n\s+(\d+)\s*$`)
+	findNameCommandPattern = regexp.MustCompile(`^\s*find\s+(\S+)\s+-name\s+['"]?([^'"]+)['"]?\s*$`)
+	findDirsCommandPattern = regexp.MustCompile(`^\s*find\s+(\S+)\s+-maxdepth\s+(\d+)\s+-type\s+d\s*$`)
+)
+
+func rewriteSimpleBashReadCommand(command string) (string, map[string]any, bool) {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return "", nil, false
+	}
+
+	if matches := catHeadCommandPattern.FindStringSubmatch(cmd); len(matches) == 3 {
+		filePath := strings.TrimSpace(trimShellQuotes(matches[1]))
+		limit, err := strconv.Atoi(matches[2])
+		if filePath == "" || err != nil || limit <= 0 {
+			return "", nil, false
+		}
+		return SingleViewToolName, map[string]any{
+			"file_path": filePath,
+			"limit":     limit,
+		}, true
+	}
+
+	if matches := headCommandPattern.FindStringSubmatch(cmd); len(matches) == 3 {
+		limit, err := strconv.Atoi(matches[1])
+		filePath := strings.TrimSpace(trimShellQuotes(matches[2]))
+		if filePath == "" || err != nil || limit <= 0 {
+			return "", nil, false
+		}
+		return SingleViewToolName, map[string]any{
+			"file_path": filePath,
+			"limit":     limit,
+		}, true
+	}
+
+	if matches := findNameCommandPattern.FindStringSubmatch(cmd); len(matches) == 3 {
+		searchPath := strings.TrimSpace(trimShellQuotes(matches[1]))
+		pattern := strings.TrimSpace(matches[2])
+		if searchPath == "" || pattern == "" {
+			return "", nil, false
+		}
+		if !strings.Contains(pattern, "/") {
+			pattern = "**/" + pattern
+		}
+		return GlobToolName, map[string]any{
+			"path":    searchPath,
+			"pattern": pattern,
+		}, true
+	}
+
+	if matches := findDirsCommandPattern.FindStringSubmatch(cmd); len(matches) == 3 {
+		searchPath := strings.TrimSpace(trimShellQuotes(matches[1]))
+		depth, err := strconv.Atoi(matches[2])
+		if searchPath == "" || err != nil || depth < 0 {
+			return "", nil, false
+		}
+		return LSToolName, map[string]any{
+			"path":  searchPath,
+			"depth": depth,
+		}, true
+	}
+
+	return "", nil, false
+}
+
+func trimShellQuotes(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		if (value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
+}
+
+func shouldRejectBashForStructuredRepoOps(command string) bool {
+	cmd := strings.ToLower(strings.TrimSpace(command))
+	if cmd == "" {
+		return false
+	}
+	if _, _, ok := rewriteSimpleBashReadCommand(command); ok {
+		return false
+	}
+	if strings.Contains(cmd, "cat <<") && (strings.Contains(cmd, ".csv") || strings.Contains(cmd, ".txt")) {
+		return true
+	}
+	if strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.ContainsAny(cmd, "|;") {
+		for _, token := range []string{"find ", "cat ", "head ", "tail ", "ls ", "tree", "grep ", "rg ", "sed -n", "wc "} {
+			if strings.Contains(cmd, token) {
+				return true
+			}
+		}
+	}
+	for _, prefix := range []string{"find ", "cat ", "head ", "tail ", "tree", "grep ", "rg ", "sed -n", "awk ", "wc "} {
+		if strings.HasPrefix(cmd, prefix) {
+			return true
+		}
+	}
+	if strings.HasPrefix(cmd, "ls ") && !strings.Contains(cmd, "git ") {
+		return true
+	}
+	return false
 }
 
 func coerceInt(v any) (int, bool) {

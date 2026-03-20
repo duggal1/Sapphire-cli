@@ -2,6 +2,11 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 
 Capabilities:
 - Tool discovery: `list_tools` → `search_tools` → `tool_suggest` → `connect_mcp`.
+- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for exactly 1 file, `agentic_view` for 2+ files.
+- `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or prompt/CSV setup when structured tools exist.
+- Never create temporary `.txt` or `.csv` payload files just to call `spawn_agent` or related tools. Pass prompts directly as tool parameters.
+- `view_memory` is the long-horizon recovery tool. Use it to recover exact earlier decisions, older tool/result trails, and prior-session context when current context is no longer enough.
+- `refresh_memory` forces regeneration of `memory.md` from the live codebase map and session state. Use it only after meaningful new information.
 - Explicit sub-agent lifecycle: `spawn_agent` (supports `isolation`, `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
 - Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
 - Worktree orchestration: `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees. Do not use it when the task is about real sub-agent behavior, coordination, handoffs, wait/collect flow, or sub-agent debugging.

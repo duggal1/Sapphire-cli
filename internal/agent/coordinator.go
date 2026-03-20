@@ -350,21 +350,20 @@ func NewCoordinator(
 		go c.indexer.Start(ctx)
 		c.longHorizon = longhorizon.NewManager(mainDir)
 
-		// Initialize persistent memory system (optional, requires Gemini API key).
+		// Initialize persistent memory system. Session history and memory.md stay
+		// available even when model-based extraction is disabled.
 		apiKey := c.resolveGeminiAPIKey()
-		if apiKey != "" {
-			pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
-				ExtractionModel: c.resolveGeminiExtractionModel(),
-				APIKey:          apiKey,
-				EmbeddingModel:  pmem.DefaultEmbeddingModel,
-				EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
-				DataDir:         cfg.Options.DataDirectory,
-				ProjectRoot:     mainDir,
-			})
-			if pmemErr == nil && pmemSys != nil {
-				c.pmem = pmemSys
-				slog.Debug("Persistent memory system initialized")
-			}
+		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
+			ExtractionModel: c.resolveGeminiExtractionModel(),
+			APIKey:          apiKey,
+			EmbeddingModel:  pmem.DefaultEmbeddingModel,
+			EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
+			DataDir:         cfg.Options.DataDirectory,
+			ProjectRoot:     mainDir,
+		})
+		if pmemErr == nil && pmemSys != nil {
+			c.pmem = pmemSys
+			slog.Debug("Persistent memory system initialized")
 		}
 		// Initialize embedding-based skill retrieval.
 		c.initEmbeddingService()
@@ -688,6 +687,9 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		"session_id": env.sessionID,
 		"message_id": env.userMessage.ID,
 	})
+	if c.pmem != nil {
+		c.pmem.RecordUserTurn(ctx, env.sessionID, env.userPrompt)
+	}
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
 		"message_id": env.userMessage.ID,
 	}))
@@ -711,6 +713,9 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
 		"session_id": env.sessionID,
 	})
+	if c.pmem != nil {
+		c.pmem.RecordAssistantTurn(ctx, env.sessionID, extractAgentResultText(result))
+	}
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, extractAgentResultText(result), "completed", nil))
 	return result, nil
 }
@@ -1245,6 +1250,10 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 	}
 
 	largeProviderCfg, _ := c.cfg.Providers.Get(large.ModelCfg.Provider)
+	isYolo := true
+	if c.permissions != nil {
+		isYolo = c.permissions.SkipRequests()
+	}
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
@@ -1252,7 +1261,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		SystemPrompt:         "",
 		IsSubAgent:           isSubAgent,
 		DisableAutoSummarize: c.cfg.Options.DisableAutoSummarize,
-		IsYolo:               c.permissions.SkipRequests(),
+		IsYolo:               isYolo,
 		Sessions:             c.sessions,
 		Messages:             c.messages,
 		Tools:                nil,
@@ -1283,15 +1292,6 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 	}
 
 	wg.Go(func() error {
-		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), *c.cfg)
-		if err != nil {
-			return err
-		}
-		result.SetSystemPrompt(systemPrompt)
-		return nil
-	})
-
-	wg.Go(func() error {
 		agentTools, err := c.buildToolsForWorkingDir(ctx, agent, workingDir)
 		if err != nil {
 			return err
@@ -1319,6 +1319,11 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		if !isSubAgent {
 			c.setToolCache(agentTools)
 		}
+		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), *c.cfg)
+		if err != nil {
+			return err
+		}
+		result.SetSystemPrompt(appendToolCatalogToPrompt(systemPrompt, agentTools))
 		return nil
 	})
 
@@ -1566,11 +1571,13 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		))
 	}
 
-	// Add persistent memory tools (recall_memory, save_memory).
+	// Add persistent memory tools.
 	if c.pmem != nil {
 		allTools = append(allTools,
-			pmem.NewRecallTool(c.pmem),
-			pmem.NewSaveTool(c.pmem),
+			pmem.NewViewMemoryTool(c.pmem, tools.GetSessionFromContext),
+			pmem.NewRefreshTool(c.pmem, tools.GetSessionFromContext),
+			pmem.NewRecallTool(c.pmem, tools.GetSessionFromContext),
+			pmem.NewSaveTool(c.pmem, tools.GetSessionFromContext),
 			pmem.NewHealthTool(c.pmem),
 		)
 	}

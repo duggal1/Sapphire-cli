@@ -100,6 +100,9 @@ func (c *coordinator) mainAgentForSession(ctx context.Context, sessionID string)
 	}
 	c.mainAgentsMu.Lock()
 	defer c.mainAgentsMu.Unlock()
+	if c.mainAgents == nil {
+		c.mainAgents = make(map[string]SessionAgent)
+	}
 	if existing := c.mainAgents[sessionID]; existing != nil {
 		return existing, nil
 	}

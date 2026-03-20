@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,52 +32,69 @@ type System struct {
 	Extractor       MemoryExtractor
 	Embedder        Embedder
 	SessionID       string
+	History         *sessionHistoryManager
+	MemoryFile      *memoryFileManager
+	repoScanSeen    sync.Map
 	checkpointDone  bool
 	maxRecallTokens int
 }
 
 // NewSystem initializes the full memory system for a session.
-// Returns nil system (not error) if API key is missing — memory is optional.
 func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, error) {
-	if cfg.APIKey == "" {
-		slog.Debug("memory: no API key, persistent memory disabled")
-		return nil, nil
-	}
-
-	model := cfg.ExtractionModel
-	if model == "" {
-		model = "gemini-3-flash-preview"
-	}
-
 	store, err := NewStore(cfg.DataDir, sessionID, cfg.ProjectRoot)
 	if err != nil {
-		slog.Warn("memory: failed to create store, continuing without memory", "error", err)
+		slog.Warn("memory: failed to create structured store", "error", err)
 		return nil, nil
 	}
 
-	extractor, err := NewExtractor(cfg.APIKey, model, cfg.ProjectRoot)
+	history, err := newSessionHistoryManager(cfg.DataDir, cfg.ProjectRoot)
 	if err != nil {
-		slog.Warn("memory: failed to create extractor, continuing with fallback", "error", err)
+		store.Close()
+		return nil, fmt.Errorf("memory: create session history: %w", err)
 	}
 
 	fallback := NewFallbackExtractor()
+	var extractor MemoryExtractor
+	if cfg.APIKey != "" {
+		model := cfg.ExtractionModel
+		if model == "" {
+			model = "gemini-3-flash-preview"
+		}
+		extractor, err = NewExtractor(cfg.APIKey, model, cfg.ProjectRoot)
+		if err != nil {
+			slog.Warn("memory: failed to create extractor, continuing with fallback", "error", err)
+		}
+	} else {
+		slog.Debug("memory: no API key, model extraction disabled; local history memory remains enabled")
+	}
 
-	embedModel := cfg.EmbeddingModel
-	if embedModel == "" {
-		embedModel = DefaultEmbeddingModel
-	}
-	embedDims := cfg.EmbeddingDims
-	if embedDims <= 0 {
-		embedDims = DefaultEmbeddingDimensions
-	}
-	embedder, err := NewGeminiEmbedder(cfg.APIKey, embedModel, embedDims)
-	if err != nil {
-		slog.Warn("memory: failed to create embedder, semantic retrieval disabled", "error", err)
-		embedder = nil
+	var embedder Embedder
+	if cfg.APIKey != "" {
+		embedModel := cfg.EmbeddingModel
+		if embedModel == "" {
+			embedModel = DefaultEmbeddingModel
+		}
+		embedDims := cfg.EmbeddingDims
+		if embedDims <= 0 {
+			embedDims = DefaultEmbeddingDimensions
+		}
+		embedder, err = NewGeminiEmbedder(cfg.APIKey, embedModel, embedDims)
+		if err != nil {
+			slog.Warn("memory: failed to create embedder, semantic retrieval disabled", "error", err)
+			embedder = nil
+		}
 	}
 
 	pipeline := NewPipeline(store, extractor, fallback, embedder)
 	pipeline.Start(ctx)
+
+	memoryFile, err := newMemoryFileManager(cfg.DataDir, cfg.ProjectRoot)
+	if err != nil {
+		pipeline.Stop()
+		store.Close()
+		history.Close()
+		return nil, fmt.Errorf("memory: create memory file manager: %w", err)
+	}
 
 	return &System{
 		Store:           store,
@@ -84,6 +102,8 @@ func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, erro
 		Extractor:       extractor,
 		Embedder:        embedder,
 		SessionID:       sessionID,
+		History:         history,
+		MemoryFile:      memoryFile,
 		maxRecallTokens: cfg.MaxRecallTokens,
 	}, nil
 }
@@ -96,24 +116,29 @@ func (s *System) Close() {
 	if s.Pipeline != nil {
 		s.Pipeline.Stop()
 	}
+	if s.History != nil {
+		_ = s.History.Close()
+	}
 	if s.Store != nil {
-		s.Store.Close()
+		_ = s.Store.Close()
 	}
 }
 
 // PushToolResult pushes a tool result event to the extraction pipeline.
 func (s *System) PushToolResult(sessionID string, turnIndex int, toolName, rawInput, rawOutput string) {
-	if s == nil || s.Pipeline == nil {
+	if s == nil {
 		return
 	}
-	// Combine input and output for extraction context
-	raw := fmt.Sprintf("Tool: %s\nInput: %s\nOutput: %.2000s", toolName, rawInput, rawOutput)
-	s.Pipeline.Push(ExtractionEvent{
-		SessionID: sessionID,
-		TurnIndex: turnIndex,
-		EventType: toolName,
-		RawSource: raw,
-	})
+	if s.Pipeline != nil {
+		// Combine input and output for extraction context
+		raw := fmt.Sprintf("Tool: %s\nInput: %s\nOutput: %.2000s", toolName, rawInput, rawOutput)
+		s.Pipeline.Push(ExtractionEvent{
+			SessionID: sessionID,
+			TurnIndex: turnIndex,
+			EventType: toolName,
+			RawSource: raw,
+		})
+	}
 }
 
 // ShouldRunCheckpoint returns true if a checkpoint hasn't been run yet in the current cycle.
@@ -162,8 +187,24 @@ func (s *System) RunPreCompactionCheckpoint(ctx context.Context, sessionID strin
 // BuildContextInjection assembles the memory block for context injection.
 // Returns the injection string in the priority order specified by the spec.
 func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int) string {
+	return s.BuildContextInjectionForSession(ctx, s.SessionID, maxContextTokens)
+}
+
+// BuildContextInjectionForSession assembles the memory block for one session.
+func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID string, maxContextTokens int) string {
 	if s == nil || s.Store == nil {
 		return ""
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(s.SessionID)
+	}
+	if sessionID == "" {
+		return ""
+	}
+	if s.MemoryFile != nil {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
 	}
 
 	budget := s.resolveMemoryBudget(maxContextTokens)
@@ -175,6 +216,17 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 	var sb strings.Builder
 
 	// 1. Project Constitution — core + recent decisions
+	if s.MemoryFile != nil && remaining > 0 {
+		if memoryFileContent, err := s.MemoryFile.Read(); err == nil && memoryFileContent != "" {
+			block, used := fitBlockToBudget("persistent_memory_map", memoryFileContent, remaining)
+			if used > 0 {
+				sb.WriteString(block)
+				remaining -= used
+			}
+		}
+	}
+
+	// 2. Project Constitution — core + recent decisions
 	core, err := s.Store.GetConstitution(ctx)
 	if err != nil {
 		core = ""
@@ -183,7 +235,7 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 		core = core[:1024]
 	}
 
-	recentDecisions, err := s.Store.QueryRecords(ctx, "architectural", 20)
+	recentDecisions, err := s.Store.QueryRecordsBySession(ctx, sessionID, "architectural", 20)
 	if err != nil {
 		recentDecisions = nil
 	}
@@ -207,9 +259,9 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 		}
 	}
 
-	// 2. Negative Constraints — high priority
+	// 3. Negative Constraints — high priority
 	if remaining > 0 {
-		constraints, err := s.Store.GetNegativeConstraints(ctx)
+		constraints, err := s.Store.GetNegativeConstraintsBySession(ctx, sessionID)
 		if err == nil && len(constraints) > 0 {
 			block, used := buildRecordBlock("persistent_memory_constraints",
 				"## Active Negative Constraints (NEVER violate these)\n",
@@ -223,9 +275,9 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 		}
 	}
 
-	// 3. Top-K Relevant Records by retrieval score
+	// 4. Top-K Relevant Records by retrieval score
 	if remaining > 0 {
-		records, err := s.Store.QueryRecords(ctx, "all", 15)
+		records, err := s.Store.QueryRecordsBySession(ctx, sessionID, "all", 15)
 		if err == nil && len(records) > 0 {
 			block, used := buildRecordBlock("persistent_memory_records",
 				"## Recent Memory (ranked by salience)\n",
@@ -239,9 +291,9 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 		}
 	}
 
-	// 4. Latest Compaction Checkpoint
+	// 5. Latest Compaction Checkpoint
 	if remaining > 0 {
-		checkpoint, err := s.Store.GetLatestCheckpoint(ctx)
+		checkpoint, err := s.Store.GetLatestCheckpointBySession(ctx, sessionID)
 		if err == nil && checkpoint != "" {
 			if len(checkpoint) > 1500 {
 				checkpoint = checkpoint[:1500] + "..."
@@ -398,7 +450,15 @@ func (s *System) SearchHybrid(ctx context.Context, query string, limit int) ([]M
 	if s == nil || s.Store == nil {
 		return nil, nil
 	}
-	return s.Store.SearchHybrid(ctx, query, limit, s.Embedder)
+	return s.Store.SearchHybridBySession(ctx, s.SessionID, query, limit, s.Embedder)
+}
+
+// SearchHybridForSession performs hybrid retrieval scoped to one session.
+func (s *System) SearchHybridForSession(ctx context.Context, sessionID, query string, limit int) ([]MemoryRecord, error) {
+	if s == nil || s.Store == nil {
+		return nil, nil
+	}
+	return s.Store.SearchHybridBySession(ctx, sessionID, query, limit, s.Embedder)
 }
 
 // WriteRecord writes a record and stores its embedding if enabled.
@@ -432,10 +492,10 @@ func (s *System) HealthSnapshot(ctx context.Context) (map[string]any, error) {
 	if s.Pipeline != nil {
 		stats = s.Pipeline.StatsSnapshot()
 	}
-	recordCount, _ := s.Store.CountRecords(ctx)
-	topSalience, _ := s.Store.TopSalience(ctx, 5)
-	checkpointAge, checkpointUnix, _ := s.Store.LatestCheckpointAgeSeconds(ctx)
-	deadLetterCount, _ := s.Store.DeadLetterCount(ctx)
+	recordCount, _ := s.Store.CountRecordsBySession(ctx, s.SessionID)
+	topSalience, _ := s.Store.TopSalienceBySession(ctx, s.SessionID, 5)
+	checkpointAge, checkpointUnix, _ := s.Store.LatestCheckpointAgeSecondsBySession(ctx, s.SessionID)
+	deadLetterCount, _ := s.Store.DeadLetterCountBySession(ctx, s.SessionID)
 
 	report := map[string]any{
 		"enabled":           true,
@@ -448,4 +508,87 @@ func (s *System) HealthSnapshot(ctx context.Context) (map[string]any, error) {
 		"dead_letter_count": deadLetterCount,
 	}
 	return report, nil
+}
+
+func (s *System) RecordUserTurn(ctx context.Context, sessionID, prompt string) {
+	if s == nil || s.History == nil {
+		return
+	}
+	_ = s.History.RecordUserPrompt(ctx, sessionID, prompt)
+	if s.MemoryFile != nil {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
+	}
+}
+
+func (s *System) RecordAssistantTurn(ctx context.Context, sessionID, content string) {
+	if s == nil || s.History == nil || strings.TrimSpace(content) == "" {
+		return
+	}
+	_ = s.History.RecordAssistantResponse(ctx, sessionID, content)
+	if s.MemoryFile != nil {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
+	}
+}
+
+func (s *System) RecordToolCall(ctx context.Context, sessionID, toolName, input string) {
+	if s == nil || s.History == nil || strings.TrimSpace(toolName) == "" {
+		return
+	}
+	_ = s.History.RecordToolCall(ctx, sessionID, toolName, input)
+}
+
+func (s *System) RecordToolResult(ctx context.Context, sessionID, toolName, output string, isError bool) {
+	if s == nil || s.History == nil || strings.TrimSpace(toolName) == "" || strings.TrimSpace(output) == "" {
+		return
+	}
+	_ = s.History.RecordToolResult(ctx, sessionID, toolName, output, isError)
+	if s.MemoryFile != nil && s.shouldRefreshAfterRepoScan(sessionID, toolName) {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, true)
+	}
+}
+
+func (s *System) RecordSavedMemory(ctx context.Context, sessionID, label, content string) {
+	if s == nil || s.History == nil || strings.TrimSpace(content) == "" {
+		return
+	}
+	_ = s.History.RecordDecision(ctx, sessionID, label, content)
+	if s.MemoryFile != nil {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, true)
+	}
+}
+
+func (s *System) MarkSessionComplete(ctx context.Context, sessionID string) {
+	if s == nil {
+		return
+	}
+	if s.History != nil {
+		_ = s.History.MarkSessionComplete(ctx, sessionID)
+	}
+	if s.MemoryFile != nil && s.History != nil {
+		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, true)
+	}
+}
+
+func (s *System) RefreshMemory(ctx context.Context, sessionID string, force bool) error {
+	if s == nil || s.MemoryFile == nil || s.History == nil {
+		return nil
+	}
+	return s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, force)
+}
+
+func (s *System) shouldRefreshAfterRepoScan(sessionID, toolName string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	toolName = strings.TrimSpace(toolName)
+	if sessionID == "" || toolName == "" {
+		return false
+	}
+	switch toolName {
+	case "ls", "glob", "grep", "view", "single_view", "agentic_view":
+	default:
+		return false
+	}
+	if _, loaded := s.repoScanSeen.LoadOrStore(sessionID, true); loaded {
+		return false
+	}
+	return true
 }

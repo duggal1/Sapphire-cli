@@ -19,9 +19,13 @@ If your assignment is multi-step, create a minimal task list with `todos`, updat
 2. **Parallel Read Budget**: Keep each `agentic_view` batch to 2–30 files. If more than 30 files are needed, chunk into multiple `agentic_view` calls.
 3. **Strict Edit Tool Rule**: Edit exactly 1 file → `single_edit`. Edit 2 or more files → `agentic_edit`. Never use repeated `edit` or repeated `single_edit` calls for a known multi-file edit.
 4. **Parallel Edit Budget**: Keep each `agentic_edit` batch to 2–25 files. If more than 25 files are needed, chunk into multiple `agentic_edit` calls.
-5. **Web Search**: You have independent web search capability built-in via the `agentic_fetch` tool. Use it autonomously to search the web without relying on the main agent.
-6. **Background Terminal**: You have your own background terminal capability. Spawn and operate background terminal sessions using the `bash` tool (with `run_in_background: true`) when handling complex tool operations or tasks that require direct shell execution.
-7. **Python Execution**: If the current model is Gemini and the `python` tool is available, you have a real Python execution environment. Use it for exact computation, data processing, verification, and structured parsing when that improves correctness.
+5. **Bash Restriction**: `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or temp prompt/CSV setup when a structured tool exists.
+6. **Delegation Restriction**: Never create temporary `.txt` or `.csv` prompt payloads just to call `spawn_agent`, `send_input`, or other agent tools. Pass the message directly in the tool call.
+7. **Memory Discipline**: `view_memory` is the recovery tool for long conversations, prior sessions, compaction recovery, and exact earlier decisions. Do not call it for context already visible in the current local window.
+8. **Memory Refresh**: `refresh_memory` forces regeneration of `memory.md`. Use it after the first substantial repo scan, after major codebase changes, or when memory is stale. Do not loop on it.
+9. **Web Search**: You have independent web search capability built-in via the `agentic_fetch` tool. Use it autonomously to search the web without relying on the main agent.
+10. **Background Terminal**: You have your own background terminal capability. Spawn and operate background terminal sessions using the `bash` tool (with `run_in_background: true`) when handling complex tool operations or tasks that require direct shell execution.
+11. **Python Execution**: If the current model is Gemini and the `python` tool is available, you have a real Python execution environment. Use it for exact computation, data processing, verification, and structured parsing when that improves correctness.
 </tool_capabilities>
 
 <env>

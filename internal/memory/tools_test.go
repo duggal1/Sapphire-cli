@@ -12,10 +12,16 @@ import (
 func TestMemoryToolsHandleUninitializedSystem(t *testing.T) {
 	t.Parallel()
 
-	recallResp := runMemoryTool(t, NewRecallTool(nil), RecallToolName, RecallParams{Query: "auth"})
+	viewResp := runMemoryTool(t, NewViewMemoryTool(nil, nil), ViewToolName, ViewMemoryParams{Mode: "recent"})
+	require.Contains(t, viewResp.Content, "Memory system not initialized")
+
+	refreshResp := runMemoryTool(t, NewRefreshTool(nil, nil), RefreshToolName, RefreshParams{})
+	require.Contains(t, refreshResp.Content, "Memory system not initialized")
+
+	recallResp := runMemoryTool(t, NewRecallTool(nil, nil), RecallToolName, RecallParams{Query: "auth"})
 	require.Contains(t, recallResp.Content, "Memory system not initialized")
 
-	saveResp := runMemoryTool(t, NewSaveTool(nil), SaveToolName, SaveParams{
+	saveResp := runMemoryTool(t, NewSaveTool(nil, nil), SaveToolName, SaveParams{
 		EventType: "architectural_decision",
 		Content:   json.RawMessage(`{"decision":"keep sqlite"}`),
 	})

@@ -811,6 +811,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				Finished:         true,
 			}
 			currentAssistant.AddToolCall(toolCall)
+			if a.pmem != nil {
+				a.pmem.RecordToolCall(genCtx, currentAssistant.SessionID, tc.ToolName, tc.Input)
+			}
 			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, true)
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
@@ -855,6 +858,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					outStr = "ERROR: " + outStr
 				}
 				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), result.ToolName, rawInput, outStr)
+				a.pmem.RecordToolResult(genCtx, currentAssistant.SessionID, result.ToolName, outStr, toolResult.IsError)
 			}
 
 			_, createMsgErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
@@ -1561,6 +1565,8 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 - Keep the plan tracker synchronized after every state change.
 - Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
 - Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
+- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
+- Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - Use agentic_fetch for current external docs instead of guessing.</system_reminder>`,
 			))
 		} else {
@@ -1576,6 +1582,8 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 Execute your assigned chunk of the tasks autonomously and efficiently.
 - Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
 - Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
+- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
+- Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
 - Code Execution: Use "python" tool for complex computations, data processing, or verification.
 - Shell: Use "bash" for terminal commands and background jobs.
@@ -1692,9 +1700,9 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 		pmemInjection := ""
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			if charBudget > 0 {
-				pmemInjection = a.pmem.BuildContextInjection(memCtx, charBudget/postCompactionContextCharsPerTok)
+				pmemInjection = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, charBudget/postCompactionContextCharsPerTok)
 			} else {
-				pmemInjection = a.pmem.BuildContextInjection(memCtx, contextWindow)
+				pmemInjection = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, contextWindow)
 			}
 			cancel()
 		}

@@ -1,0 +1,7 @@
+task,isolation,write_manifest
+Analyze Core Application & Lifecycle domain: main.go internal/app internal/cmd internal/config internal/db internal/session internal/message internal/history internal/home internal/oauth internal/update internal/version internal/env internal/permission internal/filetracker,worktree,[]
+Analyze Agent Orchestration & Sub-agents domain: internal/agent internal/orchestration/db,worktree,[]
+Analyze Background Operations & Supervisor domain: internal/agent/background internal/agent/daemon internal/agent/supervisor internal/agent/scheduler,worktree,[]
+Analyze UI & TUI Components domain: internal/ui,worktree,[]
+Analyze Tooling MCP & LSP domain: internal/agent/tools internal/lsp,worktree,[]
+Analyze Memory & Skills domain: internal/memory internal/skills skills,worktree,[]

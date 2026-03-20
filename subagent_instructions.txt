@@ -1,0 +1,12 @@
+Analyze the assigned domain and return synthesized findings:
+- Essential commands: build, test, run, lint, deploy — only what exists
+- Project structure and code organization
+- Naming conventions and style patterns
+- Testing approach and patterns
+- Gotchas and non-obvious behaviors
+- Environment and setup requirements
+- Context extracted from existing rule files
+
+Read exactly 1 assigned file with `single_view`. Read 2 or more assigned files with `agentic_view`, capped at 2–30 files per batch. If more than 30 files are needed, split them into multiple `agentic_view` calls.
+Return only synthesized, actionable findings — no raw file dumps.
+Report only what is explicitly observed — never infer or fabricate.

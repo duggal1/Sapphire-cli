@@ -195,7 +195,7 @@ func (s *CheckpointService) Resume(ctx context.Context, sessionID, agentID strin
 
 	retrievalContext := ""
 	if s.retrieval != nil {
-		retrievalContext = strings.TrimSpace(s.retrieval.BuildContextInjection(ctx, resumeRetrievalTokens))
+		retrievalContext = strings.TrimSpace(s.retrieval.BuildContextInjectionForSession(ctx, sessionID, resumeRetrievalTokens))
 	}
 
 	return ResumeSnapshot{

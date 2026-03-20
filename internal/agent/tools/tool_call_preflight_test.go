@@ -141,6 +141,101 @@ func TestPrepareToolCallDoesNotRewriteSingleAgenticViewToView(t *testing.T) {
 	require.Equal(t, AgenticViewToolName, prepared.Name)
 }
 
+func TestPrepareToolCallRewritesHeadBashToSingleView(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName:       bashTool,
+		SingleViewToolName: singleViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-head-1",
+		Name:  BashToolName,
+		Input: `{"command":"head -n 80 AGENTS.md","description":"read file"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "AGENTS.md", input["file_path"])
+	require.Equal(t, float64(80), input["limit"])
+}
+
+func TestPrepareToolCallRewritesFindNameBashToGlob(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	globTool := fantasy.NewAgentTool(
+		GlobToolName,
+		"",
+		func(ctx context.Context, params GlobParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName: bashTool,
+		GlobToolName: globTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-find-1",
+		Name:  BashToolName,
+		Input: `{"command":"find internal -name \"*mcp*\"","description":"discover files"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, GlobToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "internal", input["path"])
+	require.Equal(t, "**/*mcp*", input["pattern"])
+}
+
+func TestPrepareToolCallRejectsBashRepoReadCompoundCommand(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName: bashTool,
+	}
+
+	_, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-reject-1",
+		Name:  BashToolName,
+		Input: `{"command":"find internal -name \"*mcp*\" && find internal -maxdepth 1 -type d","description":"inspect repo"}`,
+	}, registry)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "do not use bash for repository discovery")
+}
+
 func TestPrepareToolCallDoesNotRewriteMultiPathViewToAgenticView(t *testing.T) {
 	t.Parallel()
 

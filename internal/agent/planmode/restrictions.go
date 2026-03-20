@@ -80,6 +80,8 @@ var planModeAllowedTools = []string{
 	"download",
 
 	// Memory tools - ALLOWED (retrieving context)
+	"view_memory",
+	"refresh_memory",
 	"recall_memory",
 	"save_memory",
 

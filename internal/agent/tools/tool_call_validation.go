@@ -19,6 +19,8 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 		if len(extractViewPaths(input)) == 0 {
 			return errors.New("file_path is required")
 		}
+	case BashToolName:
+		return validateBashInputMap(input)
 	case UpdatePlanToolName:
 		return validateUpdatePlanInputMap(input)
 	case EditToolName, SingleEditToolName:
@@ -31,6 +33,21 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 		return nil
 	}
 
+	return nil
+}
+
+func validateBashInputMap(input map[string]any) error {
+	if input == nil {
+		return errors.New("bash input must be a JSON object")
+	}
+	command, _ := input["command"].(string)
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("command is required")
+	}
+	if shouldRejectBashForStructuredRepoOps(command) {
+		return errors.New("do not use bash for repository discovery, file reads, or delegation payload setup when structured tools exist. Use ls/glob/grep for discovery, single_view for exactly one file, agentic_view for 2+ files, and pass spawn_agent/send_input messages directly instead of writing temporary .txt/.csv files")
+	}
 	return nil
 }
 

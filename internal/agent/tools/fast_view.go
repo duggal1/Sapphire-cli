@@ -46,9 +46,13 @@ func FastViewTool(
 	maxConcurrent int,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
+	description := string(viewDescription)
+	if name == AgenticViewToolName {
+		description += "\n\nagentic_view is the primary repo exploration tool. Use it for any multi-file or codebase-scale read. Batch aggressively; it can inspect up to 250 files in parallel."
+	}
 	return fantasy.NewParallelAgentTool(
 		name,
-		string(viewDescription),
+		description,
 		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			filePaths := collectViewPaths(params)
 

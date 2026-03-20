@@ -17,7 +17,7 @@ var agentToolDescription []byte
 type AgentParams struct {
 	Prompt           string   `json:"prompt" description:"The task for the agent to perform"`
 	Background       bool     `json:"background,omitempty" description:"Run in the background and return immediately"`
-	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default true)"`
+	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default false)"`
 	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/worktrees/<task>)"`
 	Branch           string   `json:"branch,omitempty" description:"Optional branch name for the worktree"`
 	WriteManifest    []string `json:"write_manifest,omitempty" description:"Allowed write paths (relative to repo root). Empty list = read-only."`
@@ -57,7 +57,7 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				}
 				return fantasy.NewTextResponse("running in background"), nil
 			}
-			useWorktree := true
+			useWorktree := false
 			if params.Worktree != nil {
 				useWorktree = *params.Worktree
 			}

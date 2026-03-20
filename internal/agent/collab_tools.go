@@ -45,8 +45,8 @@ type SpawnAgentParams struct {
 	Message          string   `json:"message,omitempty" description:"Initial task or prompt for the sub-agent"`
 	Items            []string `json:"items,omitempty" description:"Optional structured input items; text items are flattened into the initial prompt"`
 	Title            string   `json:"title,omitempty" description:"Optional session title for the sub-agent"`
-	Isolation        string   `json:"isolation,omitempty" description:"Execution isolation mode. Use 'worktree' for isolated git worktree execution."`
-	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default true)"`
+	Isolation        string   `json:"isolation,omitempty" description:"Execution isolation mode. Use 'worktree' only when explicit git worktree isolation is required."`
+	Worktree         *bool    `json:"worktree,omitempty" description:"Run in an isolated git worktree (default false)"`
 	WorktreePath     string   `json:"worktree_path,omitempty" description:"Optional worktree path (defaults to repo-root/.sapphire/worktrees/agent/<id>/<task>)"`
 	Branch           string   `json:"branch,omitempty" description:"Optional branch name for the worktree"`
 	WriteManifest    []string `json:"write_manifest,omitempty" description:"Allowed write paths (relative to repo root). Empty list = read-only."`
@@ -302,7 +302,7 @@ func resolveSpawnIsolation(worktree *bool, isolation string) (bool, error) {
 		if worktree != nil {
 			return *worktree, nil
 		}
-		return true, nil
+		return false, nil
 	case "worktree":
 		if worktree != nil && !*worktree {
 			return false, errors.New("isolation=worktree conflicts with worktree=false")

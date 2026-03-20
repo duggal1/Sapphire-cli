@@ -156,7 +156,7 @@ func backgroundCollectedResultContent(taskName string, result subAgentCollectedR
 }
 
 func backgroundTaskSpecFromAgentParams(sessionID string, params AgentParams) agentbackground.TaskSpec {
-	useWorktree := true
+	useWorktree := false
 	if params.Worktree != nil {
 		useWorktree = *params.Worktree
 	}
@@ -182,7 +182,7 @@ func backgroundTaskSpecFromAutonomousTask(sessionID string, task autonomousSubAg
 		Name:            task.Name,
 		Prompt:          task.Prompt,
 		Title:           task.SessionTitle,
-		Worktree:        true,
+		Worktree:        false,
 		AgentID:         config.AgentTask,
 	}
 }

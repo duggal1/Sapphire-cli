@@ -1184,9 +1184,6 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *promptpkg.Prompt, 
 }
 
 func (c *coordinator) mainWorkingDir() string {
-	if strings.TrimSpace(c.mainWorktreeDir) != "" {
-		return c.mainWorktreeDir
-	}
 	return c.cfg.WorkingDir()
 }
 

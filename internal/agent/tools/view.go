@@ -112,9 +112,13 @@ func NewViewTool(
 	maxConcurrent int,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
+	description := string(viewDescription)
+	if name == SingleViewToolName {
+		description += "\n\nUse single_view only for exactly one verified repository file. If the task expands beyond one file, switch immediately to agentic_view."
+	}
 	return fantasy.NewParallelAgentTool(
 		name,
-		string(viewDescription),
+		description,
 		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if ctx.Err() != nil {
 				return fantasy.ToolResponse{}, ctx.Err()

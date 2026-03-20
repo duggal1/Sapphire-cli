@@ -1,7 +1,7 @@
 Reads and displays file contents with line numbers for examining code, logs, or text data. Supports reading multiple files in parallel.
 
 <usage>
-- **CRITICAL ROUTING RULE**: Read exactly 1 repository file → use `single_view`. Read 2 or more repository files → use `agentic_view`. NEVER use repeated `single_view` calls for multi-file reads.
+- **CRITICAL ROUTING RULE**: Read exactly 1 repository file → use `single_view`. Read 2 or more repository files, or any broad repo slice / subsystem / codebase request, → use `agentic_view`. NEVER use repeated `single_view` calls for multi-file reads.
 - Provide "file_paths" (array of strings) to read multiple files concurrently
 - Provide "file_path" (string) to read a single file (legacy)
 - Optional offset: start reading from specific line (1-based index, defaults to 1)
@@ -13,7 +13,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 </usage>
 
 <features>
-- Parallel reading: Read up to 250 files simultaneously
+- Parallel reading: `agentic_view` can read up to 250 files simultaneously
 - Displays contents with line numbers
 - Can read from any file position using 1-indexed offset
 - Indentation-aware context gathering using two-pointer expansion
@@ -41,7 +41,8 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 <tips>
 - Use `ls` or `tree` to discover file names before reading
 - Use with Glob to find files after a directory listing
-- For code exploration: Grep to find relevant files, then View to examine
+- For code exploration: Grep to find relevant files, then use `agentic_view` to inspect them in parallel
+- For “read the repo” or “inspect this subsystem” requests, default to large `agentic_view` batches instead of serial `single_view`
 - For large files: read segmented ranges with `offset`/`limit`; issue multiple parallel View calls for different ranges
 - View tool automatically detects and renders image files
 </tips>

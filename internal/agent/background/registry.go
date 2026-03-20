@@ -34,6 +34,7 @@ type TaskSpec struct {
 	ReasoningEffort  string
 	ForkContext      bool
 	ReadOnly         bool
+	LegType          LegType
 	AllowedTools     []string
 }
 

@@ -14,6 +14,7 @@ import (
 )
 
 var ErrApprovalDenied = errors.New("plan approval denied")
+var ErrSynthesisNoGo = errors.New("synthesis verdict is NO_GO")
 
 type ProgressStatus string
 
@@ -47,6 +48,7 @@ type LLMClient interface {
 
 type ExplorationResult struct {
 	AgentID string
+	LegType string
 	Status  string
 	Result  string
 	Error   string
@@ -67,7 +69,10 @@ type ExecutionState struct {
 	ExplorationAgentIDs []string
 	ExplorationResults  []ExplorationResult
 	PlanPath            string
+	SynthesisPath       string
+	Synthesis           SynthesisResult
 	Approved            bool
+	RefinementPasses    int
 }
 
 type Executor struct {
@@ -154,6 +159,8 @@ func (e *Executor) executeStep(ctx context.Context, step Step, state *ExecutionS
 		}
 		state.ExplorationResults = results
 		return summarizeExploration(results), nil
+	case "synthesize-findings":
+		return e.runSynthesisStep(ctx, state)
 	case "gate-approval":
 		if e.Approve == nil {
 			return "", fmt.Errorf("approval gate requested but no approval callback configured")
@@ -189,7 +196,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, state *ExecutionS
 	output := strings.TrimSpace(result.Output)
 	switch step.ID {
 	case "launch-exploration":
-		state.ExplorationAgentIDs = parseTaggedList(output, "exploration_agents")
+		state.ExplorationAgentIDs = parseExplorationLaunchOutput(output)
 	case "plan":
 		planMarkdown := extractPlanMarkdown(output)
 		planPath, err := e.writePlanFile(state, planMarkdown)
@@ -203,12 +210,89 @@ func (e *Executor) executeStep(ctx context.Context, step Step, state *ExecutionS
 	return output, nil
 }
 
+func (e *Executor) runSynthesisStep(ctx context.Context, state *ExecutionState) (string, error) {
+	synthesis, err := SynthesizeFindings(state.ExplorationResults)
+	if err != nil {
+		return "", err
+	}
+	state.Synthesis = synthesis
+	state.Variables["synthesis_verdict"] = string(synthesis.Verdict)
+	state.Variables["synthesis_summary"] = synthesis.Summary
+
+	synthesisMarkdown := RenderSynthesisMarkdown(getVar(state.Variables, "task"), synthesis)
+	synthesisPath, err := e.writeSynthesisFile(state, synthesisMarkdown)
+	if err != nil {
+		return "", err
+	}
+	state.SynthesisPath = synthesisPath
+	state.Variables["synthesis_path"] = toFormulaPath(e.WorkingDir, synthesisPath)
+	state.Variables["synthesis_report"] = synthesisMarkdown
+
+	if synthesis.Verdict == VerdictNoGo {
+		if state.RefinementPasses >= 1 {
+			return synthesisMarkdown, ErrSynthesisNoGo
+		}
+		state.RefinementPasses++
+		if err := e.retryExplorationCycle(ctx, state); err != nil {
+			return synthesisMarkdown, err
+		}
+		return RenderSynthesisMarkdown(getVar(state.Variables, "task"), state.Synthesis), nil
+	}
+	return synthesisMarkdown, nil
+}
+
+func (e *Executor) retryExplorationCycle(ctx context.Context, state *ExecutionState) error {
+	retrySteps := []string{"understand", "analyze", "launch-exploration", "wait-exploration"}
+	for _, stepID := range retrySteps {
+		step, ok := e.Formula.StepByID(stepID)
+		if !ok {
+			return fmt.Errorf("retry step %q not found in formula", stepID)
+		}
+		output, err := e.executeStep(ctx, step, state)
+		if err != nil {
+			return err
+		}
+		state.Results[step.ID] = StepResult{
+			StepID:      step.ID,
+			Output:      output,
+			StartedAt:   time.Now().UTC(),
+			CompletedAt: time.Now().UTC(),
+		}
+		state.Variables[step.ID+"_output"] = output
+	}
+	synthesis, err := SynthesizeFindings(state.ExplorationResults)
+	if err != nil {
+		return err
+	}
+	state.Synthesis = synthesis
+	state.Variables["synthesis_verdict"] = string(synthesis.Verdict)
+	state.Variables["synthesis_summary"] = synthesis.Summary
+	synthesisMarkdown := RenderSynthesisMarkdown(getVar(state.Variables, "task"), synthesis)
+	synthesisPath, err := e.writeSynthesisFile(state, synthesisMarkdown)
+	if err != nil {
+		return err
+	}
+	state.SynthesisPath = synthesisPath
+	state.Variables["synthesis_path"] = toFormulaPath(e.WorkingDir, synthesisPath)
+	state.Variables["synthesis_report"] = synthesisMarkdown
+	if synthesis.Verdict == VerdictNoGo {
+		return ErrSynthesisNoGo
+	}
+	return nil
+}
+
 func (e *Executor) checkAcceptance(step Step, state *ExecutionState, output string) (bool, error) {
 	switch step.ID {
 	case "launch-exploration":
-		return len(state.ExplorationAgentIDs) > 0, nil
+		return len(state.ExplorationAgentIDs) == 5, nil
 	case "wait-exploration":
 		return len(state.ExplorationResults) == len(state.ExplorationAgentIDs), nil
+	case "synthesize-findings":
+		if state.SynthesisPath == "" {
+			return false, nil
+		}
+		_, err := os.Stat(state.SynthesisPath)
+		return err == nil, err
 	case "plan":
 		if state.PlanPath == "" {
 			return false, nil
@@ -233,9 +317,23 @@ func (e *Executor) stepPrompt(step Step, rendered string, state *ExecutionState)
 		builder.WriteString(summarizeExploration(state.ExplorationResults))
 		builder.WriteString("\n\n")
 	}
+	if strings.TrimSpace(state.Variables["synthesis_report"]) != "" {
+		builder.WriteString("Synthesis report:\n")
+		builder.WriteString(strings.TrimSpace(state.Variables["synthesis_report"]))
+		builder.WriteString("\n\n")
+	}
 	switch step.ID {
 	case "launch-exploration":
-		builder.WriteString("Use launch_exploration_agent up to 5 times. End with <exploration_agents>id1,id2</exploration_agents>.\n")
+		builder.WriteString("Use launch_exploration_agent exactly 5 times for: requirements, gaps, ambiguity, feasibility, scope.\n")
+		builder.WriteString("For each tool call prompt, start with `LEG_TYPE=<type>`, then add the task and repo context.\n")
+		builder.WriteString("Return only this block:\n")
+		builder.WriteString("<exploration_agents>\n")
+		builder.WriteString("requirements=<id>\n")
+		builder.WriteString("gaps=<id>\n")
+		builder.WriteString("ambiguity=<id>\n")
+		builder.WriteString("feasibility=<id>\n")
+		builder.WriteString("scope=<id>\n")
+		builder.WriteString("</exploration_agents>\n")
 	case "plan":
 		builder.WriteString("Write the final plan inside <proposed_plan>...</proposed_plan>.\n")
 	}
@@ -303,6 +401,22 @@ func (e *Executor) writePlanFile(state *ExecutionState, planMarkdown string) (st
 	return planPath, nil
 }
 
+func (e *Executor) writeSynthesisFile(state *ExecutionState, synthesisMarkdown string) (string, error) {
+	slug := strings.TrimSpace(state.Variables["task_slug"])
+	if slug == "" {
+		return "", fmt.Errorf("task_slug is required to write synthesis file")
+	}
+	planDir := filepath.Join(e.WorkingDir, ".plans", slug)
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		return "", fmt.Errorf("create synthesis directory: %w", err)
+	}
+	synthesisPath := filepath.Join(planDir, "05-synthesis.md")
+	if err := os.WriteFile(synthesisPath, []byte(strings.TrimSpace(synthesisMarkdown)+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write synthesis file: %w", err)
+	}
+	return synthesisPath, nil
+}
+
 func cloneVariables(variables map[string]string, formula *Formula) map[string]string {
 	cloned := make(map[string]string, len(variables)+len(formula.Vars))
 	for key, value := range variables {
@@ -348,6 +462,44 @@ func parseTaggedList(raw, tag string) []string {
 	return ids
 }
 
+func parseExplorationLaunchOutput(raw string) []string {
+	block := parseTaggedBlock(raw, "exploration_agents")
+	if block == "" {
+		return nil
+	}
+	lines := strings.Split(block, "\n")
+	ids := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			continue
+		}
+		_, value, _ := strings.Cut(line, "=")
+		value = strings.TrimSpace(value)
+		if value != "" {
+			ids = append(ids, value)
+		}
+	}
+	if len(ids) > 0 {
+		return ids
+	}
+	return parseTaggedList(raw, "exploration_agents")
+}
+
+func parseTaggedBlock(raw, tag string) string {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+	start := strings.Index(raw, openTag)
+	end := strings.Index(raw, closeTag)
+	if start == -1 || end == -1 || end <= start {
+		return ""
+	}
+	return strings.TrimSpace(raw[start+len(openTag) : end])
+}
+
 func extractPlanMarkdown(raw string) string {
 	openTag := "<proposed_plan>"
 	closeTag := "</proposed_plan>"
@@ -367,6 +519,11 @@ func summarizeExploration(results []ExplorationResult) string {
 	for _, result := range results {
 		builder.WriteString("- ")
 		builder.WriteString(result.AgentID)
+		if strings.TrimSpace(result.LegType) != "" {
+			builder.WriteString(" <")
+			builder.WriteString(strings.TrimSpace(result.LegType))
+			builder.WriteString(">")
+		}
 		builder.WriteString(" [")
 		builder.WriteString(result.Status)
 		builder.WriteString("]")

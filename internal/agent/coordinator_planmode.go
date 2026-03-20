@@ -80,19 +80,21 @@ func (c *coordinator) launchExplorationAgentForPrompt(ctx context.Context, req t
 	if sessionID == "" {
 		return "", fmt.Errorf("session ID is required")
 	}
+	legType, prompt := agentbackground.ExtractLegRequest(req.Prompt)
 	restrictor := agentbackground.DefaultPlanModeRestrictor()
 	spec := agentbackground.TaskSpec{
 		SessionID:       sessionID,
 		ParentSessionID: sessionID,
 		WorkItemID:      req.WorkItemID,
 		Name:            "exploration",
-		Prompt:          req.Prompt,
+		Prompt:          prompt,
 		Title:           firstNonEmptyString(req.Title, "Plan Mode Exploration"),
 		Worktree:        false,
 		AgentID:         config.AgentTask,
 		Model:           req.Model,
 		ReasoningEffort: req.ReasoningEffort,
 		ReadOnly:        true,
+		LegType:         legType,
 		AllowedTools:    append([]string{}, restrictor.AllowedTools...),
 	}
 	return c.DispatchBackground(ctx, spec)
@@ -107,6 +109,7 @@ func (c *coordinator) WaitForExploration(ctx context.Context, agentIDs []string)
 	for _, agent := range agents {
 		results = append(results, agentformula.ExplorationResult{
 			AgentID: agent.ID,
+			LegType: string(agent.Task.LegType),
 			Status:  string(agent.Status),
 			Result:  agent.Result,
 			Error:   agent.Error,

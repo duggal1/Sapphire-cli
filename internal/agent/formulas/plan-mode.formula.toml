@@ -22,7 +22,7 @@ required = true
 id = "understand"
 title = "Understand"
 description = """
-Restate the task `{{task}}`, identify hard requirements, and list the ambiguities that still matter.
+Restate the task `{{task}}`, identify hard requirements, and capture the constraints, acceptance bar, and major unknowns that matter.
 """
 acceptance = "Task is restated with requirements and ambiguities."
 
@@ -41,9 +41,20 @@ id = "launch-exploration"
 title = "Launch Exploration"
 needs = ["analyze"]
 description = """
-Launch up to 5 read-only exploration agents in parallel. Each agent should explore a distinct slice of the codebase and return structured findings.
+Launch 5 read-only exploration checks in parallel using these exact dimensions:
+- requirements
+- gaps
+- ambiguity
+- feasibility
+- scope
+
+Each check must return a short structured report with:
+- `<verdict>PASS|PASS_WITH_NOTES|FAIL</verdict>`
+- `<must_fix>...</must_fix>`
+- `<should_fix>...</should_fix>`
+- `<observations>...</observations>`
 """
-acceptance = "At least one exploration agent has been launched."
+acceptance = "Five specialized exploration checks have been launched."
 
 [[steps]]
 id = "wait-exploration"
@@ -55,11 +66,31 @@ Wait for the exploration agents to finish and gather their results.
 acceptance = "All launched exploration agents have completed."
 
 [[steps]]
-id = "design"
-title = "Design"
+id = "synthesize-findings"
+title = "Synthesize Findings"
 needs = ["wait-exploration"]
 description = """
-Describe the implementation approach, phases, major files, dependencies, and risks for `{{task}}` using the exploration findings.
+Read all 5 exploration reports, consolidate must-fix items, determine the overall verdict, and write the synthesis report to `.plans/{{task_slug}}/05-synthesis.md`.
+
+Report structure:
+- `<synthesis>`
+- `<overall_verdict>GO|GO_WITH_FIXES|NO_GO</overall_verdict>`
+- `<must_fix_count>N</must_fix_count>`
+- `<should_fix_count>N</should_fix_count>`
+- `<observation_count>N</observation_count>`
+- `</synthesis>`
+- then markdown sections: Overall Verdict, Must Fix, Should Fix, Observations
+
+If the verdict is NO_GO, revisit understanding and analysis based on the must-fix findings before plan design can continue.
+"""
+acceptance = "Synthesis file exists at .plans/{{task_slug}}/05-synthesis.md."
+
+[[steps]]
+id = "design"
+title = "Design"
+needs = ["synthesize-findings"]
+description = """
+Describe the implementation approach, phases, major files, dependencies, and risks for `{{task}}`, incorporating the synthesis findings and resolving every must-fix item.
 """
 acceptance = "Implementation design is complete."
 

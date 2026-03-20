@@ -3,6 +3,7 @@ package background
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +86,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, spec TaskSpec) (string, error
 	agentID := spec.ID
 	if agentID == "" {
 		agentID = "bg-" + uuid.NewString()
+	}
+	if spec.LegType != "" {
+		if _, ok := ParseLegType(string(spec.LegType)); !ok {
+			return "", fmt.Errorf("invalid leg type %q", spec.LegType)
+		}
+		spec.Prompt = BuildLegPrompt(spec.LegType, spec.Prompt)
+		if strings.TrimSpace(spec.Name) == "" || strings.EqualFold(spec.Name, "exploration") {
+			spec.Name = string(spec.LegType)
+		}
 	}
 	spec.ID = agentID
 	d.registry.Register(SubAgent{

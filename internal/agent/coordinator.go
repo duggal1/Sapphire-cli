@@ -22,6 +22,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
+	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
 	agentconvoy "github.com/duggal1/Sapphire-cli/internal/agent/convoy"
 	agentdaemon "github.com/duggal1/Sapphire-cli/internal/agent/daemon"
 	agenthook "github.com/duggal1/Sapphire-cli/internal/agent/hook"
@@ -81,6 +82,10 @@ type Coordinator interface {
 	UpdateModels(ctx context.Context) error
 	MemoryPipe() interface{}
 	ConsolidateMemory(ctx context.Context, sessionID string) error
+	DispatchBackground(ctx context.Context, spec agentbackground.TaskSpec) (string, error)
+	GetBackgroundStatus(agentID string) (agentbackground.SubAgent, bool)
+	ListBackgroundAgents() []agentbackground.SubAgent
+	WaitForCompletion(ctx context.Context, agentIDs []string) ([]agentbackground.SubAgent, error)
 	GetLongHorizonState(sessionID string) string
 	GetLongHorizonAuditTail(sessionID string, maxBytes int) string
 }
@@ -146,6 +151,9 @@ type coordinator struct {
 	backgroundSubAgentLimiter chan struct{}
 	backgroundIndicatorMu     sync.Mutex
 	backgroundIndicators      map[string]*backgroundIndicatorState
+	backgroundRegistry        *agentbackground.Registry
+	backgroundDispatcher      *agentbackground.Dispatcher
+	backgroundMonitor         *agentbackground.Monitor
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
 	subAgentRegistry          *subAgentRegistry
@@ -259,6 +267,7 @@ func NewCoordinator(
 		agents:                    make(map[string]SessionAgent),
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 		backgroundIndicators:      make(map[string]*backgroundIndicatorState),
+		backgroundRegistry:        agentbackground.NewRegistry(),
 		subAgents:                 make(map[string]*subAgentRunner),
 		subAgentRegistry:          newSubAgentRegistry(),
 		worktreeOps:               make(map[string]*sync.Mutex),
@@ -351,6 +360,17 @@ func NewCoordinator(
 		}
 	}
 	c.checkpointService = memory.NewCheckpointService(c.orchestrationStore, c.messages, c.memory, c.pmem)
+	c.backgroundDispatcher = agentbackground.NewDispatcher(c.backgroundRegistry, agentbackground.Hooks{
+		Execute:       c.executeBackgroundSubAgent,
+		DefaultCtx:    context.Background,
+		MaxConcurrent: c.backgroundConcurrencyLimit,
+	})
+	c.backgroundMonitor = agentbackground.NewMonitor(c.backgroundRegistry, agentbackground.MonitorHooks{
+		Notify: c.handleBackgroundCompletion,
+	})
+	if ctx != nil && c.backgroundMonitor != nil {
+		go c.backgroundMonitor.Start(ctx)
+	}
 
 	agentCfg, ok := cfg.Agents[config.AgentCoder]
 	if !ok {

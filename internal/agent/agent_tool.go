@@ -37,7 +37,6 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 		AgentToolName,
 		string(agentToolDescription),
 		func(ctx context.Context, params AgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			// Military-grade safeguard: immediate exit if context cancelled
 			if ctx.Err() != nil {
 				return fantasy.ToolResponse{}, ctx.Err()
 			}
@@ -50,32 +49,17 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 			if sessionID == "" {
 				return fantasy.ToolResponse{}, errors.New("session id missing from context")
 			}
-			useWorktree := true
-			if params.Worktree != nil {
-				useWorktree = *params.Worktree
-			}
 			control := c.subAgentControl()
 
 			if params.Background {
-				if err := c.addBackgroundTasks(context.Background(), sessionID, 1); err != nil {
-					return fantasy.ToolResponse{}, err
-				}
-				agentID, _, err := control.spawn(ctx, sessionID, spawnAgentOptions{
-					Prompt:           params.Prompt,
-					Title:            "Background Agent Session",
-					Worktree:         useWorktree,
-					WorktreePath:     params.WorktreePath,
-					Branch:           params.Branch,
-					WriteManifest:    params.WriteManifest,
-					DefinitionOfDone: params.DefinitionOfDone,
-					AgentID:          config.AgentTask,
-				})
-				if err != nil {
-					c.completeBackgroundTasks(context.Background(), sessionID, 1)
+				if _, err := c.DispatchBackground(context.Background(), backgroundTaskSpecFromAgentParams(sessionID, params)); err != nil {
 					return fantasy.NewTextErrorResponse(err.Error()), nil
 				}
-				go c.monitorBackgroundSubAgent(context.Background(), sessionID, "agent", agentID)
 				return fantasy.NewTextResponse("running in background"), nil
+			}
+			useWorktree := true
+			if params.Worktree != nil {
+				useWorktree = *params.Worktree
 			}
 			agentID, _, err := control.spawn(ctx, sessionID, spawnAgentOptions{
 				Prompt:           params.Prompt,

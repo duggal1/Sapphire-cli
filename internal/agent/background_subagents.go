@@ -15,7 +15,6 @@ import (
 const BackgroundSubAgentsToolName = "background_subagents"
 const maxBackgroundSubAgents = 100
 
-// Maximum time a single background sub-agent can run before being cancelled.
 const backgroundSubAgentTimeout = 10 * time.Minute
 
 type backgroundIndicatorState struct {
@@ -33,11 +32,6 @@ func (c *coordinator) releaseBackgroundSubAgentSlot() {
 	<-c.backgroundSubAgentLimiter
 }
 
-// autonomousSubAgentContextMaybeBackground launches sub-agents entirely in the
-// background. Nothing in this function blocks coordinator.Run(). The agent
-// build, system prompt construction, and sub-agent execution all happen in a
-// detached goroutine. Results are delivered asynchronously as tool-call/result
-// message pairs into the session.
 func (c *coordinator) autonomousSubAgentContextMaybeBackground(ctx context.Context, sessionID, userPrompt string) (string, error) {
 	tasks := buildAutonomousSubAgentTasks(userPrompt)
 	if len(tasks) == 0 {
@@ -55,7 +49,6 @@ func (c *coordinator) launchBackgroundAutonomousSubAgents(ctx context.Context, s
 		return fmt.Errorf("task agent not configured")
 	}
 
-	// Run detached so coordinator.Run() is not blocked.
 	go func() {
 		bgCtx := context.Background()
 
@@ -66,19 +59,16 @@ func (c *coordinator) launchBackgroundAutonomousSubAgents(ctx context.Context, s
 		for _, task := range tasks {
 			task := task
 			go func() {
-				agentID, _, err := c.spawnSubAgent(bgCtx, sessionID, spawnAgentOptions{
-					Prompt:   task.Prompt,
-					Title:    task.SessionTitle,
-					Worktree: true,
-					AgentID:  config.AgentTask,
-				})
-				if err != nil {
-					slog.Error("Failed to spawn background sub-agent", "error", err)
-					c.publishBackgroundSubAgentResult(bgCtx, sessionID, task.Name, "", err)
+				if c.backgroundDispatcher == nil {
+					c.publishBackgroundSubAgentResult(bgCtx, sessionID, task.Name, "", fmt.Errorf("background dispatcher is not initialized"))
 					c.completeBackgroundTasks(bgCtx, sessionID, 1)
 					return
 				}
-				c.monitorBackgroundSubAgent(bgCtx, sessionID, task.Name, agentID)
+				if _, err := c.backgroundDispatcher.Dispatch(bgCtx, backgroundTaskSpecFromAutonomousTask(sessionID, task)); err != nil {
+					slog.Error("Failed to dispatch background sub-agent", "error", err)
+					c.publishBackgroundSubAgentResult(bgCtx, sessionID, task.Name, "", err)
+					c.completeBackgroundTasks(bgCtx, sessionID, 1)
+				}
 			}()
 		}
 	}()
@@ -224,37 +214,6 @@ func (c *coordinator) pollBackgroundSubAgents(sessionID string) {
 	case <-done:
 	default:
 	}
-}
-
-func (c *coordinator) monitorBackgroundSubAgent(ctx context.Context, sessionID, taskName, agentID string) {
-	control := c.subAgentControl()
-	waitCtx, cancel := context.WithTimeout(ctx, backgroundSubAgentTimeout)
-	defer cancel()
-	statuses, timedOut := control.wait(waitCtx, []string{agentID}, backgroundSubAgentTimeout)
-	results := control.collectResult([]string{agentID})
-	var (
-		content string
-		runErr  error
-	)
-	if timedOut {
-		runErr = fmt.Errorf("background sub-agent %q timed out after %s", taskName, backgroundSubAgentTimeout)
-	} else if len(statuses) == 0 || len(results) == 0 {
-		runErr = fmt.Errorf("background sub-agent %q did not report a final snapshot", taskName)
-	} else {
-		result := results[0]
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		} else if result.Result != "" {
-			content = result.Result
-		} else if result.Progress != "" {
-			content = result.Progress
-		} else {
-			content = "completed without a summary"
-		}
-	}
-	c.publishBackgroundSubAgentResult(ctx, sessionID, taskName, content, runErr)
-	_ = control.close(agentID)
-	c.completeBackgroundTasks(ctx, sessionID, 1)
 }
 
 func (c *coordinator) publishBackgroundSubAgentResult(ctx context.Context, sessionID, taskName, content string, runErr error) {

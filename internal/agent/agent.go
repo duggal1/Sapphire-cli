@@ -1563,7 +1563,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 				`<system_reminder>Complexity mode:
 - Initialize plan with update_plan immediately before technical execution.
 - Keep the plan tracker synchronized after every state change.
-- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of cautious tiny batches.
+- Read one known repository file with "single_view". Read any multi-file target set or broad repository slice with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of minimal batches.
 - Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
 - Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
@@ -1580,7 +1580,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		history = append(history, fantasy.NewUserMessage(
 			`<system_reminder>Sub-agent Directive:
 Execute your assigned chunk of the tasks autonomously and efficiently.
-- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of cautious tiny batches.
+- Read one known repository file with "single_view". Read any multi-file target set or broad repository slice with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of minimal batches.
 - Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
 - Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.

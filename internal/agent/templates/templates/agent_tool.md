@@ -9,7 +9,7 @@ Launch a new sub-agent for operational execution in an isolated worktree that ca
 
 <usage_notes>
 1. Sub-agents operate inside isolated worktrees. They may edit code within their worktree but must never touch the main working tree.
-2. Launch multiple agents concurrently only when the workstreams are truly independent.
+2. Launch multiple agents concurrently aggressively when the workstreams are truly independent.
 3. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 4. Each agent invocation is stateless. Your prompt must include explicit scope, constraints, deliverables, and success criteria.
 5. Ask sub-agents to return only the information you need: absolute file paths, concise findings, risks, and the minimum evidence needed to support their conclusion.

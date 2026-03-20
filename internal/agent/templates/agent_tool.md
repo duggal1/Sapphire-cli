@@ -10,7 +10,7 @@ Launch a new sub-agent with its own terminal to run independently from the main 
 1. Sub-agents default to the shared repository root. Use `worktree: true` or `isolation: "worktree"` only when explicit isolation is required.
 2. Provide a `write_manifest` to restrict writes to owned files. Empty manifest = read-only.
 3. Optional worktree controls: `branch`, `worktree_path`, and `definition_of_done`.
-2. If multiple sub-agents are truly independent, launch them in parallel. If they share files or state, keep the work sequential.
+2. If multiple sub-agents are truly independent, launch them in parallel aggressively. If they share files or state, keep the work sequential.
 3. The sub-agent returns one final report to you. The user does not see that report unless you summarize or apply its outcome.
 4. Each invocation is stateless. Write a precise prompt with explicit scope, constraints, deliverables, and success criteria.
 5. Use the explicit lifecycle: `spawn_agent` -> `send_input` -> `wait` -> `collect_result` -> `close_agent`.

@@ -83,6 +83,7 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/editor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -579,15 +580,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
 
-		// Check if we should open plan approval dialog (Codex visual architecture)
-		// Open dialog when: in plan mode, has todos, and dialog not already open
-		if m.session != nil && m.session.Mode == planmode.PlanMode && len(m.session.Todos) > 0 {
+		// Open the approval dialog only when the formula gate step is active.
+		if m.session != nil && m.session.Mode == planmode.PlanMode && hasPlanApprovalStepActive(m.session.Todos) {
 			if !m.dialog.ContainsDialog(dialog.PlanApprovalID) {
 				planApprovalDialog, err := dialog.NewPlanApprovalDialog(m.com, m.session.Todos, "")
 				if err == nil {
 					m.dialog.OpenDialog(planApprovalDialog)
 				}
 			}
+		} else if m.dialog.ContainsDialog(dialog.PlanApprovalID) {
+			m.dialog.CloseDialog(dialog.PlanApprovalID)
 		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
@@ -1644,22 +1646,30 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
+		if err := m.com.App.UpdateAgentModel(ctx); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
 
 		m.dialog.CloseDialog(dialog.ModesID)
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
 
 		cmds = append(cmds, func() tea.Msg {
-			return util.NewInfoMsg("Mode switched to " + string(msg.Mode))
+			return util.NewInfoMsg("Mode switched to " + msg.Mode.Title())
 		})
 	case dialog.ActionImplementPlan:
-		// User chose to implement the plan - switch to pair_programming mode
+		// User chose to implement the plan - switch to execute mode.
 		if m.session == nil {
 			cmds = append(cmds, util.ReportError(errors.New("no active session")))
 			break
 		}
 
-		// Update session mode to pair_programming
 		ctx := context.Background()
-		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, planmode.PairProgrammingMode); err != nil {
+		if err := m.com.App.Sessions.SetMode(ctx, m.session.ID, planmode.ExecuteMode); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if err := m.com.App.UpdateAgentModel(ctx); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
@@ -2221,8 +2231,8 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if layout.pills.Dy() > 0 && m.pillsView != "" {
 			uv.NewStyledString(m.pillsView).Draw(scr, layout.pills)
 		}
-		if layout.footer.Dy() > 0 && m.assistantFooter != nil {
-			footer := m.assistantFooter.RawRender(layout.footer.Dx())
+		if layout.footer.Dy() > 0 {
+			footer := m.renderFooterView(layout.footer.Dx())
 			if footer != "" {
 				uv.NewStyledString(footer).Draw(scr, layout.footer)
 			}
@@ -2661,10 +2671,7 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	helpHeight := 1
 	// The editor height
 	editorHeight := 5
-	footerHeight := 0
-	if m.assistantFooter != nil {
-		footerHeight = m.assistantFooter.Height()
-	}
+	footerHeight := m.footerHeight(w)
 	// The sidebar width
 	sidebarWidth := 30
 	// The header height
@@ -2821,6 +2828,97 @@ func splitChatBottom(mainRect uv.Rectangle, editorHeight, footerHeight int) (uv.
 	}
 	footerRect, editorRect := layout.SplitVertical(bottomRect, layout.Fixed(footerHeight))
 	return contentRect, footerRect, editorRect
+}
+
+func hasPlanApprovalStepActive(todos []session.Todo) bool {
+	for _, todo := range todos {
+		if todo.Status != session.TodoStatusInProgress {
+			continue
+		}
+		content := strings.TrimSpace(todo.ActiveForm)
+		if content == "" {
+			content = strings.TrimSpace(todo.Content)
+		}
+		content = strings.ToLower(content)
+		if content == "gate approval" || strings.Contains(content, "gate approval") {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *UI) footerHeight(width int) int {
+	footer := m.renderFooterView(width)
+	if footer == "" {
+		return 0
+	}
+	return lipgloss.Height(footer)
+}
+
+func (m *UI) renderFooterView(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if m.assistantFooter != nil {
+		if footer := m.assistantFooter.RawRender(width); footer != "" {
+			parts = append(parts, footer)
+		}
+	}
+	if footer := m.renderModeFooter(width); footer != "" {
+		parts = append(parts, footer)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (m *UI) renderModeFooter(width int) string {
+	if m == nil || m.session == nil || width <= 0 {
+		return ""
+	}
+	mode := m.session.Mode
+	if mode == "" {
+		mode = planmode.DefaultMode()
+	}
+	desc := strings.TrimSpace(mode.FooterSummary())
+	if desc == "" {
+		return ""
+	}
+
+	t := m.com.Styles
+	label := strings.ToUpper(mode.Title())
+	badgeBg := t.Primary
+	if mode == planmode.PlanMode {
+		badgeBg = t.Warning
+	}
+
+	left := t.Base.Foreground(t.White).Render(desc)
+	right := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		t.Muted.Render("mode "),
+		lipgloss.NewStyle().
+			Foreground(t.White).
+			Background(badgeBg).
+			Padding(0, 1).
+			Bold(true).
+			Render(label),
+	)
+
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	if leftWidth+1+rightWidth <= width {
+		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
+	}
+
+	maxLeft := max(0, width-rightWidth-1)
+	if maxLeft <= 0 {
+		return right
+	}
+	left = ansi.Truncate(left, maxLeft, "…")
+	leftWidth = lipgloss.Width(left)
+	if leftWidth+1+rightWidth <= width {
+		return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
+	}
+	return left + " " + right
 }
 
 // uiLayout defines the positioning of UI elements.

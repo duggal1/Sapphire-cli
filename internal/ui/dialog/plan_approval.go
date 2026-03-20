@@ -6,17 +6,17 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 const (
 	// PlanApprovalID is the identifier for the plan approval dialog.
-	PlanApprovalID = "plan_approval"
+	PlanApprovalID              = "plan_approval"
 	planApprovalDialogMaxWidth  = 65
 	planApprovalDialogMaxHeight = 16
 )
@@ -117,7 +117,7 @@ func (p *PlanApprovalDialog) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor 
 	p.help.SetWidth(innerWidth)
 
 	rc := NewRenderContext(t, width)
-	rc.Title = "Plan Ready for Implementation"
+	rc.Title = "Plan is ready. Ready to implement?"
 	rc.Gap = 1
 
 	// Add explanation if provided
@@ -202,8 +202,8 @@ func (p *PlanApprovalDialog) renderPlan(width int) string {
 
 func (p *PlanApprovalDialog) renderButtons() string {
 	buttons := []string{
-		"Switch to Pair Programming & Implement",
-		"Stay in Plan Mode",
+		"Yes, Implement",
+		"No, Refine More",
 	}
 
 	var b strings.Builder

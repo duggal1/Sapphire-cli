@@ -24,8 +24,8 @@ const SetModeToolName = "set_mode"
 
 // SetModeArgs represents the arguments for the set_mode tool
 type SetModeArgs struct {
-	// Mode - The session mode to switch to (plan, pair_programming, execute)
-	Mode string `json:"mode" description:"The session mode to switch to: plan, pair_programming, or execute"`
+	// Mode - The session mode to switch to.
+	Mode string `json:"mode" description:"The session mode to switch to: plan, pair_programming, execute, architecture, security, debug, or orchestrator"`
 
 	// Reason - Optional reason for the mode switch
 	Reason *string `json:"reason,omitempty" description:"Optional brief explanation for the mode switch"`
@@ -63,9 +63,17 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 				newMode = planmode.PairProgrammingMode
 			case "execute":
 				newMode = planmode.ExecuteMode
+			case "architecture":
+				newMode = planmode.ArchitectureMode
+			case "security":
+				newMode = planmode.SecurityMode
+			case "debug":
+				newMode = planmode.DebugMode
+			case "orchestrator":
+				newMode = planmode.OrchestratorMode
 			default:
 				return fantasy.ToolResponse{}, fmt.Errorf(
-					"invalid mode %q - must be one of: plan, pair_programming, execute",
+					"invalid mode %q - must be one of: plan, pair_programming, execute, architecture, security, debug, orchestrator",
 					args.Mode,
 				)
 			}
@@ -101,11 +109,13 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 			// Add mode-specific guidance
 			switch newMode {
 			case planmode.PlanMode:
-				message.WriteString("\n\n**Plan Mode Active**\n- File editing and shell commands are FORBIDDEN\n- Use conversation-based planning with <plan> blocks\n- Do NOT use update_plan in Plan Mode")
+				message.WriteString("\n\n**Plan Mode Active**\n- Formula-driven planning is active\n- Planning stays read-only until approval\n- Approval is required before execution phases continue")
 			case planmode.PairProgrammingMode:
 				message.WriteString("\n\n**Pair Programming Mode Active**\n- All tools available\n- Work in small steps with user collaboration")
 			case planmode.ExecuteMode:
 				message.WriteString("\n\n**Execute Mode Active**\n- All tools available\n- Autonomous execution with minimal questions")
+			default:
+				message.WriteString("\n\n**Mode Active**\n- This mode currently changes UI labeling and workflow intent\n- Runtime specialization for this mode is still a mockup")
 			}
 
 			return fantasy.NewTextResponse(message.String()), nil

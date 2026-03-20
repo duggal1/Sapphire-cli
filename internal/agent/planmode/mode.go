@@ -6,6 +6,14 @@
 
 package planmode
 
+type ModeDescriptor struct {
+	Mode          SessionMode
+	Title         string
+	Description   string
+	FooterSummary string
+	Mock          bool
+}
+
 // SessionMode represents the current collaboration mode (Codex-inspired)
 // Based on Codex CLI v0.88.0+ collaboration modes
 type SessionMode string
@@ -23,6 +31,18 @@ const (
 	// ExecuteMode - Autonomous execution mode
 	// Makes reasonable assumptions, executes tasks end-to-end without asking questions
 	ExecuteMode SessionMode = "execute"
+
+	// ArchitectureMode - Static architecture planning mockup mode.
+	ArchitectureMode SessionMode = "architecture"
+
+	// SecurityMode - Static security planning mockup mode.
+	SecurityMode SessionMode = "security"
+
+	// DebugMode - Static debugging mockup mode.
+	DebugMode SessionMode = "debug"
+
+	// OrchestratorMode - Static multi-agent orchestration mockup mode.
+	OrchestratorMode SessionMode = "orchestrator"
 )
 
 // PlanModeRole represents the AI's role in plan mode (Codex-inspired)
@@ -53,7 +73,7 @@ func (m SessionMode) String() string {
 // IsValid returns true if the session mode is valid
 func (m SessionMode) IsValid() bool {
 	switch m {
-	case PlanMode, PairProgrammingMode, ExecuteMode:
+	case PlanMode, PairProgrammingMode, ExecuteMode, ArchitectureMode, SecurityMode, DebugMode, OrchestratorMode:
 		return true
 	default:
 		return false
@@ -67,7 +87,84 @@ func (m SessionMode) IsPlanMode() bool {
 
 // IsExecutionMode returns true if the mode allows execution (not plan mode)
 func (m SessionMode) IsExecutionMode() bool {
-	return m == PairProgrammingMode || m == ExecuteMode
+	return m == PairProgrammingMode || m == ExecuteMode || m == DebugMode || m == OrchestratorMode
+}
+
+func AvailableModes() []ModeDescriptor {
+	return []ModeDescriptor{
+		{
+			Mode:          PlanMode,
+			Title:         "Plan",
+			Description:   "Formula-driven planning with approval before implementation",
+			FooterSummary: "Formula workflow, read-only analysis, human gate before execute.",
+		},
+		{
+			Mode:          PairProgrammingMode,
+			Title:         "Pair Programming",
+			Description:   "Collaborative coding with incremental execution",
+			FooterSummary: "Interactive coding with steady tool access.",
+		},
+		{
+			Mode:          ExecuteMode,
+			Title:         "Execute",
+			Description:   "Autonomous execution with minimal questions",
+			FooterSummary: "Execution-first workflow with minimal interruptions.",
+		},
+		{
+			Mode:          ArchitectureMode,
+			Title:         "Architecture",
+			Description:   "Static mockup for architecture-first workflow",
+			FooterSummary: "Architecture workflow mockup active.",
+			Mock:          true,
+		},
+		{
+			Mode:          SecurityMode,
+			Title:         "Security",
+			Description:   "Static mockup for security review workflow",
+			FooterSummary: "Security workflow mockup active.",
+			Mock:          true,
+		},
+		{
+			Mode:          DebugMode,
+			Title:         "Debug",
+			Description:   "Static mockup for debugging workflow",
+			FooterSummary: "Debug workflow mockup active.",
+			Mock:          true,
+		},
+		{
+			Mode:          OrchestratorMode,
+			Title:         "Orchestrator",
+			Description:   "Static mockup for orchestration workflow",
+			FooterSummary: "Orchestrator workflow mockup active.",
+			Mock:          true,
+		},
+	}
+}
+
+func LookupMode(mode SessionMode) ModeDescriptor {
+	for _, item := range AvailableModes() {
+		if item.Mode == mode {
+			return item
+		}
+	}
+	return ModeDescriptor{
+		Mode:          mode,
+		Title:         mode.String(),
+		Description:   "",
+		FooterSummary: "",
+	}
+}
+
+func (m SessionMode) Title() string {
+	return LookupMode(m).Title
+}
+
+func (m SessionMode) Description() string {
+	return LookupMode(m).Description
+}
+
+func (m SessionMode) FooterSummary() string {
+	return LookupMode(m).FooterSummary
 }
 
 // PlanModeConfig holds plan mode configuration (Codex-inspired)

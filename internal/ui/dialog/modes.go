@@ -5,19 +5,19 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/list"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/sahilm/fuzzy"
 )
 
 const (
 	// ModesID is the identifier for the modes dialog.
-	ModesID = "modes"
+	ModesID              = "modes"
 	modesDialogMaxWidth  = 60
-	modesDialogMaxHeight = 12
+	modesDialogMaxHeight = 18
 )
 
 // Modes represents a dialog for selecting collaboration mode.
@@ -223,49 +223,20 @@ func (m *Modes) FullHelp() [][]key.Binding {
 }
 
 func (m *Modes) setModeItems() error {
-	items := make([]list.FilterableItem, 0, 3)
+	items := make([]list.FilterableItem, 0, len(planmode.AvailableModes()))
 	selectedIndex := 0
 
-	// Plan Mode
-	planItem := &ModeOption{
-		mode:        planmode.PlanMode,
-		title:       "Plan",
-		description: "Think & design only — no editing or execution",
-		icon:        "📋",
-		isCurrent:   m.currentMode == planmode.PlanMode,
-		t:           m.com.Styles,
-	}
-	items = append(items, planItem)
-	if m.currentMode == planmode.PlanMode {
-		selectedIndex = 0
-	}
-
-	// Pair Programming Mode
-	pairItem := &ModeOption{
-		mode:        planmode.PairProgrammingMode,
-		title:       "Pair Programming",
-		description: "Collaborative coding with step-by-step work",
-		icon:        "👥",
-		isCurrent:   m.currentMode == planmode.PairProgrammingMode,
-		t:           m.com.Styles,
-	}
-	items = append(items, pairItem)
-	if m.currentMode == planmode.PairProgrammingMode {
-		selectedIndex = 1
-	}
-
-	// Execute Mode
-	execItem := &ModeOption{
-		mode:        planmode.ExecuteMode,
-		title:       "Execute",
-		description: "Autonomous execution with minimal questions",
-		icon:        "⚡",
-		isCurrent:   m.currentMode == planmode.ExecuteMode,
-		t:           m.com.Styles,
-	}
-	items = append(items, execItem)
-	if m.currentMode == planmode.ExecuteMode {
-		selectedIndex = 2
+	for i, mode := range planmode.AvailableModes() {
+		items = append(items, &ModeOption{
+			mode:        mode.Mode,
+			title:       mode.Title,
+			description: mode.Description,
+			isCurrent:   m.currentMode == mode.Mode,
+			t:           m.com.Styles,
+		})
+		if m.currentMode == mode.Mode {
+			selectedIndex = i
+		}
 	}
 
 	m.list.SetItems(items...)
@@ -276,7 +247,7 @@ func (m *Modes) setModeItems() error {
 }
 
 func (m *Modes) dialogTitle() string {
-	return "Select Mode"
+	return "Collaboration Mode"
 }
 
 // Filter returns the filter value for the mode option.

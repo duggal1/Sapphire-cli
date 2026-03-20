@@ -192,7 +192,7 @@ func (c *coordinator) awaitPlanModeApproval(ctx context.Context, state *agentfor
 			if err != nil {
 				return false, err
 			}
-			if mode != planmode.PlanMode {
+			if mode.IsExecutionMode() {
 				return true, nil
 			}
 		}

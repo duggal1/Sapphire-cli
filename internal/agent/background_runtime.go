@@ -74,13 +74,21 @@ func (c *coordinator) executeBackgroundSubAgent(ctx context.Context, spec agentb
 	if agentKey == "" {
 		agentKey = config.AgentTask
 	}
-	customTools := []fantasy.AgentTool(nil)
-	if spec.ReadOnly && c.toolRegistry != nil {
+	var customTools []fantasy.AgentTool
+	if spec.ReadOnly {
 		allowed := append([]string{}, spec.AllowedTools...)
 		if len(allowed) == 0 {
 			allowed = agentbackground.DefaultPlanModeRestrictor().AllowedTools
 		}
-		customTools = c.toolRegistry.AgentTools(allowed...)
+		workingDir := strings.TrimSpace(spec.WorktreePath)
+		if workingDir == "" {
+			workingDir = c.mainWorkingDir()
+		}
+		var err error
+		customTools, err = c.buildReadOnlyExplorationTools(ctx, workingDir, allowed)
+		if err != nil {
+			return agentbackground.ExecutionResult{}, err
+		}
 	}
 	agentID, submissionID, err := control.spawn(ctx, parentSessionID, spawnAgentOptions{
 		WorkItemID:       spec.WorkItemID,

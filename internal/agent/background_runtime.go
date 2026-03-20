@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/fantasy"
 	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 )
@@ -73,6 +74,14 @@ func (c *coordinator) executeBackgroundSubAgent(ctx context.Context, spec agentb
 	if agentKey == "" {
 		agentKey = config.AgentTask
 	}
+	customTools := []fantasy.AgentTool(nil)
+	if spec.ReadOnly && c.toolRegistry != nil {
+		allowed := append([]string{}, spec.AllowedTools...)
+		if len(allowed) == 0 {
+			allowed = agentbackground.DefaultPlanModeRestrictor().AllowedTools
+		}
+		customTools = c.toolRegistry.AgentTools(allowed...)
+	}
 	agentID, submissionID, err := control.spawn(ctx, parentSessionID, spawnAgentOptions{
 		WorkItemID:       spec.WorkItemID,
 		Prompt:           spec.Prompt,
@@ -88,6 +97,7 @@ func (c *coordinator) executeBackgroundSubAgent(ctx context.Context, spec agentb
 		Model:            spec.Model,
 		ReasoningEffort:  spec.ReasoningEffort,
 		ForkContext:      spec.ForkContext,
+		CustomTools:      customTools,
 	})
 	if err != nil {
 		return agentbackground.ExecutionResult{}, err

@@ -14,6 +14,24 @@ type ExecutionResult struct {
 	Result         string
 }
 
+type PlanModeRestrictor struct {
+	AllowedTools []string
+}
+
+func DefaultPlanModeRestrictor() PlanModeRestrictor {
+	return PlanModeRestrictor{
+		AllowedTools: []string{
+			"read_file",
+			"search_codebase",
+			"list_directory",
+			"run_command",
+			"launch_exploration_agent",
+			"request_user_input",
+			"update_plan",
+		},
+	}
+}
+
 type Hooks struct {
 	Execute       func(context.Context, TaskSpec) (ExecutionResult, error)
 	DefaultCtx    func() context.Context

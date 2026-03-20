@@ -25,6 +25,7 @@ import (
 	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
 	agentconvoy "github.com/duggal1/Sapphire-cli/internal/agent/convoy"
 	agentdaemon "github.com/duggal1/Sapphire-cli/internal/agent/daemon"
+	agentformula "github.com/duggal1/Sapphire-cli/internal/agent/formula"
 	agenthook "github.com/duggal1/Sapphire-cli/internal/agent/hook"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
@@ -88,6 +89,7 @@ type Coordinator interface {
 	WaitForCompletion(ctx context.Context, agentIDs []string) ([]agentbackground.SubAgent, error)
 	GetLongHorizonState(sessionID string) string
 	GetLongHorizonAuditTail(sessionID string, maxBytes int) string
+	RunPlanMode(ctx context.Context, sessionID, task, taskContext string) (*agentformula.ExecutionState, error)
 }
 
 func (c *coordinator) MemoryPipe() interface{} {
@@ -154,6 +156,8 @@ type coordinator struct {
 	backgroundRegistry        *agentbackground.Registry
 	backgroundDispatcher      *agentbackground.Dispatcher
 	backgroundMonitor         *agentbackground.Monitor
+	toolRegistry              *tools.Registry
+	formulaExecutor           *agentformula.Executor
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
 	subAgentRegistry          *subAgentRegistry
@@ -370,6 +374,9 @@ func NewCoordinator(
 	})
 	if ctx != nil && c.backgroundMonitor != nil {
 		go c.backgroundMonitor.Start(ctx)
+	}
+	if err := c.initPlanMode(); err != nil {
+		return nil, err
 	}
 
 	agentCfg, ok := cfg.Agents[config.AgentCoder]

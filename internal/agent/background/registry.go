@@ -33,6 +33,8 @@ type TaskSpec struct {
 	Model            string
 	ReasoningEffort  string
 	ForkContext      bool
+	ReadOnly         bool
+	AllowedTools     []string
 }
 
 type SubAgent struct {

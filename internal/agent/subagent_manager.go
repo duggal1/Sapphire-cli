@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/google/uuid"
 
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
@@ -495,6 +496,7 @@ type spawnAgentOptions struct {
 	Model            string
 	ReasoningEffort  string
 	ForkContext      bool
+	CustomTools      []fantasy.AgentTool
 }
 
 func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string, opts spawnAgentOptions) (string, string, error) {
@@ -580,6 +582,9 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	if err != nil {
 		cleanup()
 		return "", "", err
+	}
+	if len(opts.CustomTools) > 0 {
+		agent.SetTools(opts.CustomTools)
 	}
 
 	title := opts.Title

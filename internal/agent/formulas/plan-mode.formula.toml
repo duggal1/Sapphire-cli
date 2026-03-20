@@ -1,0 +1,120 @@
+formula = "plan-mode"
+description = """
+Formula-driven plan mode for Sapphire CLI.
+"""
+type = "workflow"
+version = 1
+
+[vars.task]
+description = "Primary task to solve"
+required = true
+
+[vars.context]
+description = "Supplemental task context"
+required = false
+default = ""
+
+[vars.task_slug]
+description = "Filesystem-safe task slug"
+required = true
+
+[[steps]]
+id = "understand"
+title = "Understand"
+description = """
+Restate the task `{{task}}`, identify hard requirements, and list the ambiguities that still matter.
+"""
+acceptance = "Task is restated with requirements and ambiguities."
+
+[[steps]]
+id = "analyze"
+title = "Analyze"
+needs = ["understand"]
+description = """
+Inspect the repo and identify the files, packages, and runtime seams involved in `{{task}}`.
+Use the available read-only tools before making assumptions.
+"""
+acceptance = "Relevant files and seams are identified."
+
+[[steps]]
+id = "launch-exploration"
+title = "Launch Exploration"
+needs = ["analyze"]
+description = """
+Launch up to 5 read-only exploration agents in parallel. Each agent should explore a distinct slice of the codebase and return structured findings.
+"""
+acceptance = "At least one exploration agent has been launched."
+
+[[steps]]
+id = "wait-exploration"
+title = "Wait For Exploration"
+needs = ["launch-exploration"]
+description = """
+Wait for the exploration agents to finish and gather their results.
+"""
+acceptance = "All launched exploration agents have completed."
+
+[[steps]]
+id = "design"
+title = "Design"
+needs = ["wait-exploration"]
+description = """
+Describe the implementation approach, phases, major files, dependencies, and risks for `{{task}}` using the exploration findings.
+"""
+acceptance = "Implementation design is complete."
+
+[[steps]]
+id = "plan"
+title = "Plan"
+needs = ["design"]
+description = """
+Write a detailed markdown implementation plan for `{{task}}`.
+The final plan must be decision-complete and suitable for direct implementation.
+"""
+acceptance = "Plan file exists at .plans/{{task_slug}}/04-plan.md."
+
+[[steps]]
+id = "gate-approval"
+title = "Gate Approval"
+needs = ["plan"]
+description = """
+Pause and ask the human: Ready to implement?
+Wait for explicit approval before continuing.
+"""
+acceptance = "Human approval has been granted."
+
+[[steps]]
+id = "execute-phase-1"
+title = "Execute Phase 1"
+needs = ["gate-approval"]
+description = """
+Execute the setup phase from the approved plan for `{{task}}`.
+"""
+acceptance = "Setup phase completed."
+
+[[steps]]
+id = "execute-phase-2"
+title = "Execute Phase 2"
+needs = ["execute-phase-1"]
+description = """
+Execute the main implementation phase from the approved plan.
+"""
+acceptance = "Implementation phase completed."
+
+[[steps]]
+id = "execute-phase-3"
+title = "Execute Phase 3"
+needs = ["execute-phase-2"]
+description = """
+Run targeted tests, build checks, and fix failures caused by the implementation.
+"""
+acceptance = "Validation phase completed."
+
+[[steps]]
+id = "execute-phase-4"
+title = "Execute Phase 4"
+needs = ["execute-phase-3"]
+description = """
+Verify the final acceptance criteria and produce a concise completion summary.
+"""
+acceptance = "Final verification completed."

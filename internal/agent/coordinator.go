@@ -711,7 +711,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
 		"session_id": env.sessionID,
 	})
-	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, result.Response.Content.Text(), "completed", nil))
+	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, extractAgentResultText(result), "completed", nil))
 	return result, nil
 }
 
@@ -2391,7 +2391,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		return fantasy.ToolResponse{}, err
 	}
 
-	return fantasy.NewTextResponse(result.Response.Content.Text()), nil
+	return fantasy.NewTextResponse(extractAgentResultText(result)), nil
 }
 
 // updateParentSessionCost accumulates the cost from a child session to its parent session.

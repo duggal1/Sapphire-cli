@@ -976,9 +976,10 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 	}
 
-	// PlainMarkdown style - neutral thinking body with purple/pink accents.
-	var plainBg *string
-	plainFg := stringPtr(colorHex(fgSubtle))
+	// PlainMarkdown style - neutral thinking body with the same surface fill as
+	// the thinking box so inline formatting does not punch visual holes in it.
+	plainBg := stringPtr(bgOverlayHex)
+	plainFg := stringPtr(colorHex(fgMuted))
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -1591,7 +1592,11 @@ func stringPtr(s string) *string { return &s }
 func uintPtr(u uint) *uint       { return &u }
 
 func colorHex(c color.Color) string {
-	return fmt.Sprint(c)
+	if c == nil {
+		return ""
+	}
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02X%02X%02X", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }
 func chromaStyle(style ansi.StylePrimitive) string {
 	var s strings.Builder

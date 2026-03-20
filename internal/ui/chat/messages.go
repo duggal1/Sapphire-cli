@@ -562,18 +562,7 @@ func ShouldRenderAssistantMessage(msg *message.Message) bool {
 }
 
 func shouldRenderAssistantAfterTools(msg *message.Message) bool {
-	if msg == nil {
-		return false
-	}
-	if len(msg.ToolCalls()) == 0 {
-		return false
-	}
-	if msg.IsFinished() {
-		return false
-	}
-	content := strings.TrimSpace(msg.Content().Text)
-	thinking := strings.TrimSpace(msg.ReasoningContent().Thinking)
-	return content == "" && thinking == ""
+	return false
 }
 
 // BuildToolResultMap creates a map of tool call IDs to their results from a list of messages.

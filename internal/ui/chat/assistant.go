@@ -242,16 +242,11 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 }
 
 func (a *AssistantMessageItem) renderLiveLoader(width int) string {
-	if strings.TrimSpace(a.message.Content().Text) != "" {
+	if a.message == nil || a.message.IsFinished() {
 		return ""
 	}
 
-	label := assistantLiveStatusLabel(a.message)
-	if label == "" {
-		return ""
-	}
-
-	line := styles.ShimmerText(a.sty, label, 0)
+	line := styles.ShimmerText(a.sty, loadingPhraseForMessage(a.message.ID), 0)
 
 	loader := lipgloss.NewStyle().
 		PaddingTop(1).
@@ -288,6 +283,9 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 
 	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
 	boxParts := []string{}
+	if a.message.IsThinking() {
+		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingFooterTitle.Render("Thinking ..."))
+	}
 	if isTruncated {
 		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(
 			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),

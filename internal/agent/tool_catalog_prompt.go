@@ -13,7 +13,7 @@ var runtimeToolSummaries = map[string]string{
 	"agent_mail_send":         "send durable coordination mail to another agent",
 	"agentic_edit":            "edit multiple files in one structured operation",
 	"agentic_fetch":           "fetch and analyze external web sources",
-	"agentic_view":            "read 2-250 files in parallel; primary codebase exploration tool",
+	"agentic_view":            "read broad relevant file sets comprehensively in parallel; primary codebase exploration tool",
 	"apply_patch":             "apply precise unified-diff patches",
 	"bash":                    "run terminal commands only when structured tools cannot do the job",
 	"call_mcp_tool":           "invoke an MCP tool dynamically",

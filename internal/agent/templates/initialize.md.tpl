@@ -2,7 +2,7 @@ Analyze this codebase and create/update {{.Config.Options.InitializeAs}} to enab
 
 Capabilities (use precisely):
 - Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `connect_mcp`.
-- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for exactly 1 file, `agentic_view` for 2+ files.
+- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for exactly 1 file, `agentic_view` for 2+ files. Use `agentic_view` comprehensively for broad repository reads.
 - `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or prompt/CSV setup when structured tools exist.
 - Never create temporary `.txt` or `.csv` payload files just to call `spawn_agent` or related tools. Pass prompts directly as tool parameters.
 - `view_memory` is the long-horizon recovery tool. Use it to recover exact earlier decisions, older tool/result trails, and prior-session context when current context is no longer enough.
@@ -30,14 +30,14 @@ Classify the repository into one of three tiers:
 
 **Step 2 — Adaptive orchestration**:
 
-Small repo: Analyze directly. Read exactly 1 file with `single_view`. Read 2 or more files with `agentic_view`. Keep each `agentic_view` batch to 2–30 files. If more than 30 files are needed, split them into multiple `agentic_view` calls. No subagent overhead.
+Small repo: Analyze directly. Read exactly 1 file with `single_view`. Read 2 or more files with `agentic_view`. Use `agentic_view` comprehensively for broad reads. No subagent overhead.
 
-Medium repo: Identify the 2–4 highest-value domains. Spawn one subagent per domain. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, keeping each `agentic_view` batch to 2–30 files and chunking larger sets.
+Medium repo: Identify the 2–4 highest-value domains. Spawn one subagent per domain. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, using `agentic_view` comprehensively for broad domain reads.
 
-Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, keeping each `agentic_view` batch to 2–30 files and chunking larger sets. Return only synthesized, actionable findings — no raw file dumps.
+Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent reads exactly 1 file with `single_view` and reads 2 or more files with `agentic_view`, using `agentic_view` comprehensively for broad domain reads. Return only synthesized, actionable findings — no raw file dumps.
 
 Every subagent must:
-1. Read exactly 1 assigned file with `single_view`. Read 2 or more assigned files with `agentic_view`, capped at 2–30 files per batch. If more than 30 files are needed, split them into multiple `agentic_view` calls.
+1. Read exactly 1 assigned file with `single_view`. Read 2 or more assigned files with `agentic_view`. Use `agentic_view` comprehensively for broad assigned reads.
 2. Return only synthesized findings — no raw file content
 3. Report only what is explicitly observed — never infer or fabricate
 

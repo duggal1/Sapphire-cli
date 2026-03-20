@@ -60,6 +60,7 @@ completions/crush.*sh
 .go-cache/
 .gocache/
 .tmp/
+.tmp/go-build-cache/
 .sapphire/
 
 # Pasted files and folders

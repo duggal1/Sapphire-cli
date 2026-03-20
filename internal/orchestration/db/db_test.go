@@ -2,10 +2,13 @@ package orchestrationdb
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 func TestStoreMailLifecycleAndState(t *testing.T) {
@@ -179,4 +182,51 @@ func TestStoreDispatchQueueAndCheckpointLifecycle(t *testing.T) {
 	prefs, err := store.ListUserPreferences(ctx, 10)
 	require.NoError(t, err)
 	require.Len(t, prefs, 1)
+}
+
+func TestOpenMigratesLegacyWorkItemsSchema(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "orchestration.db")
+
+	conn, err := sql.Open("sqlite", "file:"+dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
+	_, err = conn.ExecContext(ctx, `CREATE TABLE work_items (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		title TEXT NOT NULL,
+		description TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL,
+		assignee TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		closed_at INTEGER NOT NULL DEFAULT 0
+	);`)
+	require.NoError(t, err)
+
+	store, err := Open(ctx, dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.UpsertWorkItem(ctx, WorkItem{
+		ID:           "legacy-work-item",
+		Type:         "task",
+		Title:        "Legacy row",
+		Status:       "open",
+		ParentID:     "parent-1",
+		ConvoyID:     "convoy-1",
+		Dependencies: `["dep-1"]`,
+		CreatedAt:    time.Now().UTC(),
+	}))
+
+	item, err := store.GetWorkItem(ctx, "legacy-work-item")
+	require.NoError(t, err)
+	require.Equal(t, "parent-1", item.ParentID)
+	require.Equal(t, "convoy-1", item.ConvoyID)
+	require.Equal(t, `["dep-1"]`, item.Dependencies)
 }

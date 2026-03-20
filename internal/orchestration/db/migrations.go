@@ -55,7 +55,6 @@ var schemaStatements = []string{
 		closed_at INTEGER NOT NULL DEFAULT 0
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_work_items_assignee_status ON work_items(assignee, status, created_at DESC);`,
-	`CREATE INDEX IF NOT EXISTS idx_work_items_convoy_status ON work_items(convoy_id, status, created_at DESC);`,
 	`CREATE TABLE IF NOT EXISTS convoys (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -80,7 +79,6 @@ var schemaStatements = []string{
 		hooked_at INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'idle'
 	);`,
-	`CREATE INDEX IF NOT EXISTS idx_agent_hooks_status_hooked_at ON agent_hooks(status, hooked_at DESC);`,
 	`CREATE TABLE IF NOT EXISTS dispatch_queue (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -162,8 +160,31 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 	if err := ensureColumn(ctx, conn, "session_checkpoints", "files_modified_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, conn, "work_items", "parent_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, conn, "work_items", "convoy_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	if err := ensureColumn(ctx, conn, "work_items", "dependencies", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_hooks", "hook_bead_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_hooks", "hooked_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_hooks", "status", "TEXT NOT NULL DEFAULT 'idle'"); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_work_items_convoy_status ON work_items(convoy_id, status, created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_hooks_status_hooked_at ON agent_hooks(status, hooked_at DESC);`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("apply orchestration schema: %w", err)
+		}
 	}
 	return nil
 }

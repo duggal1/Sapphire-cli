@@ -11,15 +11,18 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const (
-	maxChunkBytes   = 4800
-	minChunkBytes   = 900
-	maxSnippetRunes = 220
-	maxBatchEmbeds  = 96
+	singleFileChunkBytes = 12 * 1024
+	maxChunkBytes        = 6400
+	minChunkBytes        = 1200
+	maxSnippetRunes      = 220
+	maxBatchEmbeds       = 192
 )
 
 type discoveredFile struct {
@@ -121,7 +124,7 @@ var allowedHiddenDirs = map[string]struct{}{
 }
 
 func discoverFiles(root string) ([]discoveredFile, error) {
-	files := make([]discoveredFile, 0, 256)
+	paths := make([]string, 0, 256)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -142,36 +145,13 @@ func discoverFiles(root string) ([]discoveredFile, error) {
 		if !shouldIndexPath(path, name) {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if info.Size() == 0 || info.Size() > 2*1024*1024 {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if !isTextFile(raw) {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		files = append(files, discoveredFile{
-			AbsolutePath: path,
-			RelativePath: rel,
-			Language:     detectLanguage(path, name),
-			Content:      string(raw),
-			ContentHash:  hashBytes(raw),
-			ModTimeUnix:  info.ModTime().Unix(),
-			Size:         info.Size(),
-		})
+		paths = append(paths, path)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	files, err := loadDiscoveredFiles(root, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +159,80 @@ func discoverFiles(root string) ([]discoveredFile, error) {
 		return strings.Compare(a.RelativePath, b.RelativePath)
 	})
 	return files, nil
+}
+
+func loadDiscoveredFiles(root string, paths []string) ([]discoveredFile, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	workers := discoveryWorkerCount(len(paths))
+	type result struct {
+		file discoveredFile
+		err  error
+	}
+	workCh := make(chan string)
+	resultCh := make(chan result, len(paths))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range workCh {
+				file, err := loadDiscoveredFile(root, path)
+				resultCh <- result{file: file, err: err}
+			}
+		}()
+	}
+	for _, path := range paths {
+		workCh <- path
+	}
+	close(workCh)
+	wg.Wait()
+	close(resultCh)
+
+	files := make([]discoveredFile, 0, len(paths))
+	for result := range resultCh {
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.file.RelativePath == "" {
+			continue
+		}
+		files = append(files, result.file)
+	}
+	return files, nil
+}
+
+func loadDiscoveredFile(root, path string) (discoveredFile, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return discoveredFile{}, err
+	}
+	if info.Size() == 0 || info.Size() > 2*1024*1024 {
+		return discoveredFile{}, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return discoveredFile{}, err
+	}
+	if !isTextFile(raw) {
+		return discoveredFile{}, nil
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return discoveredFile{}, err
+	}
+	rel = filepath.ToSlash(rel)
+	name := filepath.Base(path)
+	return discoveredFile{
+		AbsolutePath: path,
+		RelativePath: rel,
+		Language:     detectLanguage(path, name),
+		Content:      string(raw),
+		ContentHash:  hashBytes(raw),
+		ModTimeUnix:  info.ModTime().Unix(),
+		Size:         info.Size(),
+	}, nil
 }
 
 func shouldIndexPath(path, name string) bool {
@@ -231,12 +285,25 @@ func buildIndexedFile(file discoveredFile) indexedFile {
 }
 
 func chunkFile(file discoveredFile) []indexedChunk {
+	if shouldUseSingleChunk(file) {
+		return []indexedChunk{newChunk(file, 0, "file", 1, max(1, len(strings.Split(file.Content, "\n"))), filepath.Base(file.RelativePath), strings.TrimSpace(file.Content))}
+	}
 	if file.Language == "go" {
 		if chunks := chunkGoFile(file); len(chunks) > 0 {
 			return chunks
 		}
 	}
 	return chunkTextFile(file)
+}
+
+func shouldUseSingleChunk(file discoveredFile) bool {
+	if file.Size <= 0 {
+		return false
+	}
+	if file.Size > singleFileChunkBytes {
+		return false
+	}
+	return estimateTokens(file.Content) <= 2200
 }
 
 func chunkGoFile(file discoveredFile) []indexedChunk {
@@ -388,4 +455,18 @@ func snippet(text string) string {
 		return text
 	}
 	return string(runes[:maxSnippetRunes]) + "…"
+}
+
+func discoveryWorkerCount(totalPaths int) int {
+	workers := runtime.GOMAXPROCS(0) * 2
+	if workers < 4 {
+		workers = 4
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if totalPaths < workers {
+		return totalPaths
+	}
+	return workers
 }

@@ -25,6 +25,12 @@ type Service struct {
 	lastSentAt time.Time
 }
 
+type chunkRef struct {
+	fileIdx  int
+	chunkIdx int
+	text     string
+}
+
 func New(ctx context.Context, cfg Config) (*Service, error) {
 	_ = ctx
 	if cfg.WorkspaceRoot == "" {
@@ -49,7 +55,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		root:  root,
 		store: store,
 	}
-	embedder, err := newEmbedder(cfg.APIKey, cfg.Model, cfg.Dimensions)
+	embedder, err := newEmbedder(cfg.APIKey, cfg.Model, cfg.Dimensions, cfg.DataDir, cfg.OllamaURL)
 	if err != nil {
 		service.initErr = err
 	} else {
@@ -62,6 +68,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 func (s *Service) Close() error {
 	if s == nil {
 		return nil
+	}
+	if s.embedder != nil {
+		_ = s.embedder.Close()
 	}
 	return s.store.Close()
 }
@@ -204,8 +213,15 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 	if err := s.embedFilesParallel(ctx, toIndex, &progress); err != nil {
 		progress.Active = false
 		progress.Finished = true
+		progress.SetupRequired = IsSetupRequired(err)
 		progress.Error = err.Error()
-		progress.Message = "Embedding code chunks failed"
+		if progress.SetupRequired {
+			progress.Phase = "setup_required"
+			progress.Message = err.Error()
+			progress.Error = ""
+		} else {
+			progress.Message = "Embedding code chunks failed"
+		}
 		s.publish(progress, false)
 		return Stats{}, err
 	}
@@ -220,8 +236,15 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 	if err := s.store.ReplaceFiles(ctx, toIndex); err != nil {
 		progress.Active = false
 		progress.Finished = true
+		progress.SetupRequired = IsSetupRequired(err)
 		progress.Error = err.Error()
-		progress.Message = "Writing vector index failed"
+		if progress.SetupRequired {
+			progress.Phase = "setup_required"
+			progress.Message = err.Error()
+			progress.Error = ""
+		} else {
+			progress.Message = "Writing vector index failed"
+		}
 		s.publish(progress, false)
 		return Stats{}, err
 	}
@@ -256,22 +279,26 @@ func (s *Service) embedChunkBatch(ctx context.Context, file *indexedFile, texts 
 }
 
 func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, progress *Progress) error {
-	if len(files) == 0 {
+	refs := flattenChunkRefs(files)
+	if len(refs) == 0 {
 		return nil
 	}
-	workerCount := embeddingWorkerCount(len(files))
-	workCh := make(chan int)
+	batches := buildEmbeddingBatches(refs)
+	workerCount := embeddingWorkerCount(len(batches))
+	workCh := make(chan []chunkRef)
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	var embeddedChunks atomic.Int64
 	var indexedFiles atomic.Int64
+	fileChunkCounts := fileChunkCountMap(files)
+	fileEmbeddedCounts := make([]atomic.Int64, len(files))
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for idx := range workCh {
-				if err := s.embedIndexedFile(ctx, &files[idx], progress, &embeddedChunks, &indexedFiles); err != nil {
+			for batch := range workCh {
+				if err := s.embedChunkRefBatch(ctx, files, batch, progress, &embeddedChunks, &indexedFiles, fileChunkCounts, fileEmbeddedCounts); err != nil {
 					select {
 					case errCh <- err:
 					default:
@@ -282,7 +309,7 @@ func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, p
 		}()
 	}
 
-	for idx := range files {
+	for _, batch := range batches {
 		select {
 		case <-ctx.Done():
 			close(workCh)
@@ -292,7 +319,7 @@ func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, p
 			close(workCh)
 			wg.Wait()
 			return err
-		case workCh <- idx:
+		case workCh <- batch:
 		}
 	}
 	close(workCh)
@@ -306,37 +333,34 @@ func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, p
 	}
 }
 
-func (s *Service) embedIndexedFile(ctx context.Context, file *indexedFile, progress *Progress, embeddedChunks, indexedFiles *atomic.Int64) error {
-	texts := make([]string, 0, maxBatchEmbeds)
-	chunkIndexes := make([]int, 0, maxBatchEmbeds)
-	flush := func() error {
-		if len(texts) == 0 {
-			return nil
-		}
-		if err := s.embedChunkBatch(ctx, file, texts, chunkIndexes); err != nil {
-			return err
-		}
-		totalEmbedded := int(embeddedChunks.Add(int64(len(texts))))
-		s.updateEmbeddingProgress(progress, totalEmbedded, int(indexedFiles.Load()))
-		texts = texts[:0]
-		chunkIndexes = chunkIndexes[:0]
-		return nil
+func (s *Service) embedChunkRefBatch(
+	ctx context.Context,
+	files []indexedFile,
+	batch []chunkRef,
+	progress *Progress,
+	embeddedChunks, indexedFiles *atomic.Int64,
+	fileChunkCounts map[int]int,
+	fileEmbeddedCounts []atomic.Int64,
+) error {
+	texts := make([]string, 0, len(batch))
+	for _, ref := range batch {
+		texts = append(texts, ref.text)
 	}
-
-	for idx := range file.Chunks {
-		texts = append(texts, file.Chunks[idx].SearchText)
-		chunkIndexes = append(chunkIndexes, idx)
-		if len(texts) >= maxBatchEmbeds {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
-	}
-	if err := flush(); err != nil {
+	vectors, err := s.embedder.EmbedDocuments(ctx, texts)
+	if err != nil {
 		return err
 	}
-	totalIndexed := int(indexedFiles.Add(1))
-	s.updateEmbeddingProgress(progress, int(embeddedChunks.Load()), totalIndexed)
+	for i, ref := range batch {
+		files[ref.fileIdx].Chunks[ref.chunkIdx].Embedding = vectors[i]
+	}
+	totalEmbedded := int(embeddedChunks.Add(int64(len(batch))))
+	for _, ref := range batch {
+		current := fileEmbeddedCounts[ref.fileIdx].Add(1)
+		if current == int64(fileChunkCounts[ref.fileIdx]) {
+			indexedFiles.Add(1)
+		}
+	}
+	s.updateEmbeddingProgress(progress, totalEmbedded, int(indexedFiles.Load()))
 	return nil
 }
 
@@ -398,18 +422,65 @@ func computeEmbeddingPercent(done, total int) float64 {
 	return 0.15 + (0.82 * progress)
 }
 
-func embeddingWorkerCount(totalFiles int) int {
-	workers := runtime.GOMAXPROCS(0) * 3
-	if workers < 6 {
-		workers = 6
+func embeddingWorkerCount(totalBatches int) int {
+	workers := max(2, runtime.GOMAXPROCS(0)-1)
+	if workers > 10 {
+		workers = 10
 	}
-	if workers > 24 {
-		workers = 24
-	}
-	if totalFiles < workers {
-		return totalFiles
+	if totalBatches < workers {
+		return totalBatches
 	}
 	return workers
+}
+
+func flattenChunkRefs(files []indexedFile) []chunkRef {
+	total := 0
+	for _, file := range files {
+		total += len(file.Chunks)
+	}
+	refs := make([]chunkRef, 0, total)
+	for fileIdx := range files {
+		for chunkIdx := range files[fileIdx].Chunks {
+			refs = append(refs, chunkRef{
+				fileIdx:  fileIdx,
+				chunkIdx: chunkIdx,
+				text:     files[fileIdx].Chunks[chunkIdx].SearchText,
+			})
+		}
+	}
+	return refs
+}
+
+func buildEmbeddingBatches(refs []chunkRef) [][]chunkRef {
+	batches := make([][]chunkRef, 0, max(1, len(refs)/maxBatchEmbeds))
+	current := make([]chunkRef, 0, maxBatchEmbeds)
+	currentBytes := 0
+	for _, ref := range refs {
+		nextBytes := currentBytes + len(ref.text)
+		if len(current) >= maxBatchEmbeds || (len(current) > 0 && nextBytes > 512*1024) {
+			batch := make([]chunkRef, len(current))
+			copy(batch, current)
+			batches = append(batches, batch)
+			current = current[:0]
+			currentBytes = 0
+		}
+		current = append(current, ref)
+		currentBytes += len(ref.text)
+	}
+	if len(current) > 0 {
+		batch := make([]chunkRef, len(current))
+		copy(batch, current)
+		batches = append(batches, batch)
+	}
+	return batches
+}
+
+func fileChunkCountMap(files []indexedFile) map[int]int {
+	counts := make(map[int]int, len(files))
+	for idx, file := range files {
+		counts[idx] = len(file.Chunks)
+	}
+	return counts
 }
 
 func parseInt64(value string) (int64, error) {

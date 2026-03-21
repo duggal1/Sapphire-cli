@@ -90,10 +90,12 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 	filesDone := max(i.progress.FilesProcessed, i.progress.FilesIndexed)
 	filesTotal := max(i.progress.FilesDiscovered, i.progress.FilesIndexed)
 	detail := fmt.Sprintf("%s · %d/%d files", percentLabel, filesDone, max(0, filesTotal))
-	if i.progress.ChunksTotal > 0 {
+	if i.progress.SetupRequired {
+		detail = ""
+	} else if i.progress.ChunksTotal > 0 {
 		detail = fmt.Sprintf("%s · %d/%d chunks", detail, i.progress.ChunksEmbedded, i.progress.ChunksTotal)
 	}
-	if i.progress.Phase != "" {
+	if !i.progress.SetupRequired && i.progress.Phase != "" {
 		detail = fmt.Sprintf("%s · %s", detail, strings.ReplaceAll(i.progress.Phase, "_", " "))
 	}
 
@@ -112,12 +114,20 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 		i.sty.HalfMuted.Render(i.progress.Workspace),
 		"",
 		i.sty.Muted.Render(messageText),
-		"",
-		progressLine,
-		"",
-		i.sty.HalfMuted.Render(detail),
-		"",
 	)
+	if !i.progress.SetupRequired {
+		body = lipgloss.JoinVertical(
+			lipgloss.Left,
+			body,
+			"",
+			progressLine,
+			"",
+			i.sty.HalfMuted.Render(detail),
+			"",
+		)
+	} else {
+		body = lipgloss.JoinVertical(lipgloss.Left, body, "")
+	}
 
 	return lipgloss.NewStyle().
 		PaddingLeft(2).
@@ -129,6 +139,8 @@ func (i *IndexingMessageItem) renderTitle() string {
 	switch {
 	case i.progress.Active:
 		return shimmer.RenderIndexingText("Indexing codebase...", i.frame)
+	case i.progress.SetupRequired:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B")).Bold(true).Render("Codebase indexing needs local setup")
 	case strings.TrimSpace(i.progress.Error) != "":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FB7185")).Bold(true).Render("Codebase indexing failed")
 	default:

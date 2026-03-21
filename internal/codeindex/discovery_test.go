@@ -17,3 +17,20 @@ func TestNewChunkUsesUUIDPointID(t *testing.T) {
 		t.Fatalf("expected UUID point id, got %q", chunk.ID)
 	}
 }
+
+func TestChunkFileUsesSingleChunkForSmallFiles(t *testing.T) {
+	file := discoveredFile{
+		RelativePath: "internal/example.ts",
+		Language:     "typescript",
+		Content:      "export function add(a: number, b: number) { return a + b }\n",
+		ContentHash:  hashBytes([]byte("export function add(a: number, b: number) { return a + b }\n")),
+		Size:         int64(len("export function add(a: number, b: number) { return a + b }\n")),
+	}
+	chunks := chunkFile(file)
+	if len(chunks) != 1 {
+		t.Fatalf("expected single chunk for small file, got %d", len(chunks))
+	}
+	if chunks[0].Kind != "file" {
+		t.Fatalf("expected file chunk kind, got %q", chunks[0].Kind)
+	}
+}

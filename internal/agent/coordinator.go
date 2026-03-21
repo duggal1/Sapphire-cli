@@ -214,7 +214,7 @@ type coordinator struct {
 	mcpSelectionInFlight      map[string]bool
 	planApprovalMu            sync.Mutex
 	planApprovalWaiters       map[string]chan bool
-	indexedSessions          sync.Map
+	indexedSessions           sync.Map
 }
 
 type autonomousSubAgentTask struct {
@@ -347,6 +347,10 @@ func NewCoordinator(
 	}
 	mainDir := c.mainWorkingDir()
 	apiKey := c.resolveGeminiAPIKey()
+	ollamaURL := strings.TrimSpace(os.Getenv("SAPPHIRE_OLLAMA_URL"))
+	if ollamaURL == "" {
+		ollamaURL = strings.TrimSpace(os.Getenv("OLLAMA_HOST"))
+	}
 	codeIndex, indexErr := codeindex.New(ctx, codeindex.Config{
 		WorkspaceRoot: mainDir,
 		DataDir:       cfg.Options.DataDirectory,
@@ -354,6 +358,7 @@ func NewCoordinator(
 		Model:         codeindex.DefaultEmbeddingModel,
 		Dimensions:    codeindex.DefaultEmbeddingDimensions,
 		QdrantURL:     strings.TrimSpace(os.Getenv("SAPPHIRE_QDRANT_URL")),
+		OllamaURL:     ollamaURL,
 	})
 	if indexErr != nil {
 		slog.Warn("Failed to initialize codebase index", "error", indexErr)

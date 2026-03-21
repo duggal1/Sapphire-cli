@@ -1420,6 +1420,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(errors.New("agent coordinator is not initialized"))()
 			}
 			if _, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), true); err != nil {
+				if codeindex.IsSetupRequired(err) {
+					return nil
+				}
 				return util.ReportError(err)()
 			}
 			return util.NewInfoMsg("Codebase indexing complete")

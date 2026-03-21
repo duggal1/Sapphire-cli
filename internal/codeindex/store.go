@@ -32,6 +32,7 @@ type store struct {
 	collection    string
 	workspace     string
 	dimensions    int
+	ready         bool
 }
 
 type qdrantRuntime struct {
@@ -70,15 +71,15 @@ func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*st
 		workspace: workspace,
 		dimensions: dimensions,
 	}
-	if err := s.init(context.Background()); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
 func (s *store) Close() error { return nil }
 
 func (s *store) init(ctx context.Context) error {
+	if s.ready {
+		return nil
+	}
 	if err := s.ensureRuntime(ctx); err != nil {
 		return err
 	}
@@ -87,6 +88,7 @@ func (s *store) init(ctx context.Context) error {
 		return err
 	}
 	if exists {
+		s.ready = true
 		return nil
 	}
 	body := map[string]any{
@@ -98,11 +100,19 @@ func (s *store) init(ctx context.Context) error {
 			"default_segment_number": 2,
 		},
 	}
-	return s.requestJSON(ctx, http.MethodPut, "/collections/"+s.collection, body, nil)
+	if err := s.requestJSON(ctx, http.MethodPut, "/collections/"+s.collection, body, nil); err != nil {
+		return err
+	}
+	s.ready = true
+	return nil
 }
 
 func (s *store) ensureRuntime(ctx context.Context) error {
+	if s.ready {
+		return nil
+	}
 	if err := s.ping(ctx); err == nil {
+		s.ready = true
 		return nil
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -114,6 +124,7 @@ func (s *store) ensureRuntime(ctx context.Context) error {
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := s.ping(ctx); err == nil {
+			s.ready = true
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -198,6 +209,7 @@ func (s *store) collectionExists(ctx context.Context) (bool, error) {
 }
 
 func (s *store) Clear(ctx context.Context) error {
+	s.ready = false
 	if err := s.requestJSON(ctx, http.MethodDelete, "/collections/"+s.collection, nil, nil); err != nil {
 		return err
 	}
@@ -205,6 +217,9 @@ func (s *store) Clear(ctx context.Context) error {
 }
 
 func (s *store) ListFiles(ctx context.Context) (map[string]storedFile, error) {
+	if err := s.init(ctx); err != nil {
+		return nil, err
+	}
 	points, err := s.scrollPoints(ctx, map[string]any{
 		"include": []string{"path", "content_hash"},
 	})
@@ -224,6 +239,9 @@ func (s *store) ListFiles(ctx context.Context) (map[string]storedFile, error) {
 }
 
 func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
+	if err := s.init(ctx); err != nil {
+		return err
+	}
 	if err := s.deletePath(ctx, file.Path); err != nil {
 		return err
 	}
@@ -260,12 +278,18 @@ func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
 }
 
 func (s *store) DeleteFile(ctx context.Context, path string) error {
+	if err := s.init(ctx); err != nil {
+		return err
+	}
 	return s.deletePath(ctx, path)
 }
 
 func (s *store) UpdateStats(context.Context, Stats) error { return nil }
 
 func (s *store) Stats(ctx context.Context) (Stats, error) {
+	if err := s.init(ctx); err != nil {
+		return Stats{}, err
+	}
 	points, err := s.scrollPoints(ctx, map[string]any{
 		"include": []string{"path", "token_estimate", "indexed_at_unix"},
 	})
@@ -295,6 +319,9 @@ func (s *store) Stats(ctx context.Context) (Stats, error) {
 }
 
 func (s *store) Search(ctx context.Context, query string, queryVector []float32, limit int) ([]SearchResult, error) {
+	if err := s.init(ctx); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 10
 	}

@@ -50,11 +50,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	} else {
 		service.embedder = embedder
 	}
-	stats, _ := store.Stats(ctx)
 	service.lastStatus = Progress{
 		Workspace: root,
-		Finished:  stats.ChunkCount > 0,
-		Stats:     stats,
 	}
 	return service, nil
 }

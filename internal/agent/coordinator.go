@@ -214,6 +214,7 @@ type coordinator struct {
 	mcpSelectionInFlight      map[string]bool
 	planApprovalMu            sync.Mutex
 	planApprovalWaiters       map[string]chan bool
+	indexedSessions          sync.Map
 }
 
 type autonomousSubAgentTask struct {
@@ -597,8 +598,11 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		return nil, err
 	}
 	if c.codeIndex != nil {
-		if _, err := c.codeIndex.EnsureReady(ctx); err != nil {
-			return nil, err
+		if _, indexed := c.indexedSessions.Load(env.sessionID); !indexed {
+			if _, err := c.codeIndex.EnsureReady(ctx); err != nil {
+				return nil, err
+			}
+			c.indexedSessions.Store(env.sessionID, struct{}{})
 		}
 	}
 	agent, err := c.mainAgentForSession(ctx, env.sessionID)

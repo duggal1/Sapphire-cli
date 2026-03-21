@@ -598,23 +598,23 @@ func DefaultStyles(yellowMode bool) Styles {
 		info    = tertiary
 
 		// Toast backgrounds (status bar)
-		toastSuccessBg     = lipgloss.Color("#253227")
-		toastSuccessBorder = lipgloss.Color("#527A5D")
+		toastSuccessBg     = lipgloss.Color("#16A34A")
+		toastSuccessBorder = lipgloss.Color("#22C55E")
 		toastInfoBg        = lipgloss.Color("#241F33")
 		toastInfoBorder    = lipgloss.Color("#6C5A92")
 		toastUpdateBg      = lipgloss.Color("#241F33")
 		toastUpdateBorder  = lipgloss.Color("#6C5A92")
 		toastWarnBg        = lipgloss.Color("#31281F")
 		toastWarnBorder    = lipgloss.Color("#8F7352")
-		toastErrorBg       = lipgloss.Color("#331F29")
-		toastErrorBorder   = lipgloss.Color("#8C5567")
+		toastErrorBg       = lipgloss.Color("#F43F5E")
+		toastErrorBorder   = lipgloss.Color("#FB7185")
 
 		// Toast overlay colors
-		toastSuccessColor = charmtone.Guac
+		toastSuccessColor = toastSuccessBg
 		toastWarnColor    = toastWarnBg
 		toastErrorColor   = toastErrorBg
 		toastInfoColor    = toastInfoBg
-		toastTextColor    = charmtone.Butter
+		toastTextColor    = lipgloss.Color("#FFFFFF")
 
 		// Colors
 		white = charmtone.Butter

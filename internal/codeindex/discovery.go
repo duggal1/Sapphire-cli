@@ -346,7 +346,7 @@ func newChunk(file discoveredFile, chunkIndex int, kind string, startLine, endLi
 	}
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", file.ContentHash, chunkIndex, searchText)))
 	return indexedChunk{
-		ID:            hex.EncodeToString(hash[:]),
+		ID:            uuidFromHash(hash),
 		Path:          file.RelativePath,
 		Language:      file.Language,
 		ChunkIndex:    chunkIndex,
@@ -358,6 +358,14 @@ func newChunk(file discoveredFile, chunkIndex int, kind string, startLine, endLi
 		ContentHash:   hex.EncodeToString(hash[:]),
 		TokenEstimate: estimateTokens(searchText),
 	}
+}
+
+func uuidFromHash(hash [32]byte) string {
+	buf := hash
+	buf[6] = (buf[6] & 0x0f) | 0x40
+	buf[8] = (buf[8] & 0x3f) | 0x80
+	raw := hex.EncodeToString(buf[:16])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", raw[0:8], raw[8:12], raw[12:16], raw[16:20], raw[20:32])
 }
 
 func estimateTokens(text string) int {

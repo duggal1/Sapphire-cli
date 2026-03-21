@@ -96,14 +96,37 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 		detail = fmt.Sprintf("%s · %s", detail, strings.ReplaceAll(i.progress.Phase, "_", " "))
 	}
 
-	metaLines := []string{
+	progressLine := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		bar,
+		"   ",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#F3E8FF")).Bold(true).Render(percentLabel),
+	)
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		title,
+		"",
 		i.sty.HalfMuted.Render(i.progress.Workspace),
+		"",
 		i.sty.Muted.Render(messageText),
-		lipgloss.JoinHorizontal(lipgloss.Left, bar, "  ", lipgloss.NewStyle().Foreground(lipgloss.Color("#E9D5FF")).Bold(true).Render(percentLabel)),
+		"",
+		progressLine,
+		"",
 		i.sty.HalfMuted.Render(detail),
+	)
+
+	cardWidth := min(88, max(52, width-6))
+	if width > 0 {
+		cardWidth = min(cardWidth, width)
 	}
-	lines := append([]string{title}, metaLines...)
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lipgloss.NewStyle().
+		Width(cardWidth).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#7C3AED")).
+		Background(lipgloss.Color("#140F1F")).
+		Render(body)
 }
 
 func (i *IndexingMessageItem) renderTitle() string {

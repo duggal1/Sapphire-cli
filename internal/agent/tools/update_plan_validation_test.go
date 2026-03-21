@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -51,5 +52,25 @@ func TestPrepareToolCallNormalizesPlanStatus(t *testing.T) {
 	if call.Input != `{"plan":[{"status":"in_progress","step":"Inspect renderer"}]}` &&
 		call.Input != `{"plan":[{"step":"Inspect renderer","status":"in_progress"}]}` {
 		t.Fatalf("unexpected normalized payload: %s", call.Input)
+	}
+}
+
+func TestPrepareToolCallDropsBlankPlanItems(t *testing.T) {
+	t.Parallel()
+
+	registry := map[string]fantasy.AgentTool{
+		UpdatePlanToolName: stubUpdatePlanTool(),
+	}
+
+	call, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		Name:  UpdatePlanToolName,
+		Input: `{"plan":[{"step":"","status":"pending"},{"step":"Inspect renderer","status":"in progress"}]}`,
+	}, registry)
+	if err != nil {
+		t.Fatalf("expected normalized update_plan payload, got error: %v", err)
+	}
+
+	if strings.Contains(call.Input, `"step":""`) {
+		t.Fatalf("expected blank plan step to be removed, got %s", call.Input)
 	}
 }

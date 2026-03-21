@@ -70,14 +70,50 @@ func TestAssistantInfoItemRendersLiveFooterBeforeFinish(t *testing.T) {
 	item.SetRequestTiming(time.Now().Add(-2*time.Second), time.Time{})
 
 	rendered := ansi.Strip(item.RawRender(100))
-	if !strings.Contains(rendered, "[⏱") || !strings.Contains(rendered, "0 in") || !strings.Contains(rendered, "0 out") {
-		t.Fatalf("expected live footer stats, got %q", rendered)
+	if !strings.Contains(rendered, "[⏱") {
+		t.Fatalf("expected live footer timer, got %q", rendered)
+	}
+	if strings.Contains(rendered, " in") || strings.Contains(rendered, " out") || strings.Contains(rendered, " cached") || strings.Contains(rendered, " thoughts") {
+		t.Fatalf("expected running footer to hide token stats, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "gpt-test") {
 		t.Fatalf("expected model name in footer, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Thinking") {
 		t.Fatalf("expected live shimmer label to render in the assistant message, got %q", rendered)
+	}
+}
+
+func TestAssistantInfoItemHidesZeroUsageStatsAfterFinish(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	msg := &message.Message{
+		ID:    "assistant-finished-footer",
+		Role:  message.Assistant,
+		Model: "gpt-test",
+		Parts: []message.ContentPart{
+			message.Finish{
+				Reason:           message.FinishReasonEndTurn,
+				Message:          "done",
+				PromptTokens:     0,
+				CompletionTokens: 0,
+				CachedTokens:     0,
+				ThoughtsTokens:   0,
+			},
+		},
+		CreatedAt: time.Now().Add(-3 * time.Second).Unix(),
+	}
+
+	item, ok := NewAssistantInfoItem(&sty, msg, nil, time.Now().Add(-4*time.Second)).(*AssistantInfoItem)
+	if !ok {
+		t.Fatal("expected assistant info item")
+	}
+	item.SetRequestTiming(time.Now().Add(-4*time.Second), time.Now())
+
+	rendered := ansi.Strip(item.RawRender(100))
+	if strings.Contains(rendered, " 0 in") || strings.Contains(rendered, " 0 out") || strings.Contains(rendered, " 0 cached") || strings.Contains(rendered, " 0 thoughts") {
+		t.Fatalf("expected finished footer to hide zero-value stats, got %q", rendered)
 	}
 }
 

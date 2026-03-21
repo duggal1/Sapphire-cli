@@ -326,10 +326,6 @@ func repairUpdatePlanInput(input map[string]any) map[string]any {
 		return map[string]any{}
 	}
 
-	if explanation, ok := input["explanation"].(string); ok {
-		input["explanation"] = strings.TrimSpace(explanation)
-	}
-
 	rawPlan, ok := input["plan"]
 	if !ok {
 		return input
@@ -340,20 +336,33 @@ func repairUpdatePlanInput(input map[string]any) map[string]any {
 		return input
 	}
 
-	normalized := make([]any, 0, len(items))
+	plan := make([]PlanItem, 0, len(items))
 	for _, item := range items {
 		step, _ := item["step"].(string)
 		status, _ := item["status"].(string)
-		next := make(map[string]any)
-		if trimmed := strings.TrimSpace(step); trimmed != "" {
-			next["step"] = trimmed
-		}
-		if normalizedStatus := string(normalizeStepStatus(status)); normalizedStatus != "" {
-			next["status"] = normalizedStatus
-		}
-		normalized = append(normalized, next)
+		plan = append(plan, PlanItem{Step: step, Status: StepStatus(status)})
 	}
 
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Plan: plan,
+	})
+	if explanation, ok := input["explanation"].(string); ok {
+		args.Explanation = &explanation
+		args = NormalizeUpdatePlanArgs(args)
+	}
+
+	normalized := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		normalized = append(normalized, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	if args.Explanation != nil {
+		input["explanation"] = *args.Explanation
+	} else {
+		delete(input, "explanation")
+	}
 	input["plan"] = normalized
 	return input
 }

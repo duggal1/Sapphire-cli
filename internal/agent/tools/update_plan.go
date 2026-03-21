@@ -63,33 +63,75 @@ func normalizeStepStatus(status string) StepStatus {
 	return StepStatus(normalized)
 }
 
-// ValidatePlanItems normalizes and validates update_plan items.
+// NormalizePlanItems coerces update_plan items into a safe canonical form.
+// Invalid/blank steps are dropped, unknown statuses become pending, and only
+// the first in_progress step remains in_progress.
+func NormalizePlanItems(plan []PlanItem) []PlanItem {
+	if len(plan) == 0 {
+		return nil
+	}
+	normalized := make([]PlanItem, 0, len(plan))
+	inProgressCount := 0
+	for i := range plan {
+		step := strings.TrimSpace(plan[i].Step)
+		if step == "" {
+			continue
+		}
+		status := normalizeStepStatus(string(plan[i].Status))
+		switch status {
+		case StepStatusPending, StepStatusInProgress, StepStatusCompleted:
+			if status == StepStatusInProgress {
+				inProgressCount++
+				if inProgressCount > 1 {
+					status = StepStatusPending
+				}
+			}
+		default:
+			status = StepStatusPending
+		}
+		normalized = append(normalized, PlanItem{
+			Step:   step,
+			Status: status,
+		})
+	}
+	return normalized
+}
+
+func NormalizeUpdatePlanArgs(args UpdatePlanArgs) UpdatePlanArgs {
+	args.Plan = NormalizePlanItems(args.Plan)
+	if args.Explanation != nil {
+		explanation := strings.TrimSpace(*args.Explanation)
+		if explanation == "" {
+			args.Explanation = nil
+		} else {
+			args.Explanation = &explanation
+		}
+	}
+	return args
+}
+
+// ValidatePlanItems validates already-normalized update_plan items.
 func ValidatePlanItems(plan []PlanItem) error {
 	if len(plan) == 0 {
 		return fmt.Errorf("plan cannot be empty")
 	}
-
 	inProgressCount := 0
 	for i := range plan {
-		plan[i].Step = strings.TrimSpace(plan[i].Step)
-		plan[i].Status = normalizeStepStatus(string(plan[i].Status))
-		if plan[i].Step == "" {
+		if strings.TrimSpace(plan[i].Step) == "" {
 			return fmt.Errorf("step %d is missing step text", i+1)
 		}
-		switch plan[i].Status {
+		switch normalizeStepStatus(string(plan[i].Status)) {
 		case StepStatusPending, StepStatusInProgress, StepStatusCompleted:
-			if plan[i].Status == StepStatusInProgress {
+			if normalizeStepStatus(string(plan[i].Status)) == StepStatusInProgress {
 				inProgressCount++
 			}
 		default:
 			return fmt.Errorf("invalid status %q for step %q", plan[i].Status, plan[i].Step)
 		}
 	}
-
 	if inProgressCount > 1 {
 		return fmt.Errorf("at most one step can be in_progress at a time")
 	}
-
 	return nil
 }
 
@@ -117,6 +159,10 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 				wasEmpty = len(currentSession.Todos) == 0
 			}
 
+			args = NormalizeUpdatePlanArgs(args)
+			if len(args.Plan) == 0 {
+				return fantasy.WithResponseMetadata(fantasy.NewTextResponse("Plan unchanged"), PlanResponseMetadata{}), nil
+			}
 			if err := ValidatePlanItems(args.Plan); err != nil {
 				return fantasy.ToolResponse{}, err
 			}

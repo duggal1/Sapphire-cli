@@ -26,6 +26,7 @@ type subAgentStatus string
 const (
 	subAgentStatusQueued    subAgentStatus = "queued"
 	subAgentStatusRunning   subAgentStatus = "running"
+	subAgentStatusDegraded  subAgentStatus = "degraded"
 	subAgentStatusStuck     subAgentStatus = "stuck"
 	subAgentStatusCompleted subAgentStatus = "completed"
 	subAgentStatusError     subAgentStatus = "error"
@@ -37,7 +38,9 @@ const (
 	subAgentMessageListTimeout   = 5 * time.Second
 	subAgentForkContextTimeout   = 10 * time.Second
 	subAgentHeartbeatInterval    = 5 * time.Second
-	subAgentHeartbeatStaleAge    = 90 * time.Second
+	subAgentHeartbeatDegradedAge = 45 * time.Second
+	subAgentHeartbeatStuckAge    = 3 * time.Minute
+	subAgentStuckMissThreshold   = 3
 	subAgentTurnTimeout          = 5 * time.Minute
 	subAgentWaitPollInterval     = 2 * time.Second
 )
@@ -84,6 +87,8 @@ type subAgentRunner struct {
 	assignment           subAgentAssignment
 	hookEnabled          bool
 	statusBroker         *pubsub.Broker[subAgentStatus]
+	staleMisses          int
+	firstStaleObservedAt time.Time
 	mu                   sync.Mutex
 }
 
@@ -243,13 +248,15 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 		Status:      subAgentStatusQueued,
 		HeartbeatAt: time.Now().UTC(),
 	}
-	r.pending++
-	r.status = subAgentStatusQueued
-	r.lastResult = ""
-	r.lastError = ""
-	r.lastProgress = ""
-	r.lastHeartbeat = time.Now().UTC()
-	r.heartbeatContext = "queued for execution"
+		r.pending++
+		r.status = subAgentStatusQueued
+		r.lastResult = ""
+		r.lastError = ""
+		r.lastProgress = ""
+		r.staleMisses = 0
+		r.firstStaleObservedAt = time.Time{}
+		r.lastHeartbeat = time.Now().UTC()
+		r.heartbeatContext = "queued for execution"
 	r.assignment.UpdatedAt = time.Now()
 	broker := r.statusBroker
 	r.mu.Unlock()
@@ -297,15 +304,19 @@ func (c *coordinator) startSubAgentHeartbeat(runner *subAgentRunner, submissionI
 				return
 			case <-ticker.C:
 				runner.mu.Lock()
-				if runner.closed || runner.lastSubmission != submissionID || runner.status != subAgentStatusRunning {
+				if runner.closed || runner.lastSubmission != submissionID || (runner.status != subAgentStatusRunning && runner.status != subAgentStatusDegraded) {
 					runner.mu.Unlock()
 					return
 				}
 				now := time.Now().UTC()
+				runner.status = subAgentStatusRunning
+				runner.staleMisses = 0
+				runner.firstStaleObservedAt = time.Time{}
 				runner.lastHeartbeat = now
 				runner.heartbeatContext = "executing assigned task"
 				runner.assignment.UpdatedAt = now
 				if submission := runner.submissions[submissionID]; submission != nil {
+					submission.Status = subAgentStatusRunning
 					submission.HeartbeatAt = now
 				}
 				payload := runner.lifecycleEventLocked(submissionID, SubAgentStageHeartbeat, "")
@@ -377,16 +388,64 @@ func (c *coordinator) failSubAgentSubmission(runner *subAgentRunner, submissionI
 	publishSubAgentLifecycleEvent(eventType, payload)
 }
 
-func (r *subAgentRunner) heartbeatStale(now time.Time) bool {
+type subAgentHeartbeatHealth int
+
+const (
+	subAgentHeartbeatHealthy subAgentHeartbeatHealth = iota
+	subAgentHeartbeatDegraded
+	subAgentHeartbeatStuck
+)
+
+func (r *subAgentRunner) assessHeartbeatHealth(now time.Time) subAgentHeartbeatHealth {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.lastHeartbeat.IsZero() {
-		return false
+		r.staleMisses = 0
+		r.firstStaleObservedAt = time.Time{}
+		return subAgentHeartbeatHealthy
 	}
-	if r.status != subAgentStatusRunning {
-		return false
+	if r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
+		r.staleMisses = 0
+		r.firstStaleObservedAt = time.Time{}
+		return subAgentHeartbeatHealthy
 	}
-	return now.Sub(r.lastHeartbeat) > subAgentHeartbeatStaleAge
+	age := now.Sub(r.lastHeartbeat)
+	if age <= subAgentHeartbeatDegradedAge {
+		r.staleMisses = 0
+		r.firstStaleObservedAt = time.Time{}
+		return subAgentHeartbeatHealthy
+	}
+	if r.firstStaleObservedAt.IsZero() {
+		r.firstStaleObservedAt = now
+	}
+	r.staleMisses++
+	if age >= subAgentHeartbeatStuckAge && r.staleMisses >= subAgentStuckMissThreshold {
+		return subAgentHeartbeatStuck
+	}
+	return subAgentHeartbeatDegraded
+}
+
+func (r *subAgentRunner) markDegraded(now time.Time) (string, bool, *pubsub.Broker[subAgentStatus], SubAgentLifecycleEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
+		return "", false, nil, SubAgentLifecycleEvent{}
+	}
+	if r.lastSubmission == "" {
+		return "", false, nil, SubAgentLifecycleEvent{}
+	}
+	submission := r.submissions[r.lastSubmission]
+	if submission == nil || isSubAgentFinalStatus(submission.Status) {
+		return "", false, nil, SubAgentLifecycleEvent{}
+	}
+	if r.status == subAgentStatusDegraded {
+		return r.lastSubmission, false, nil, SubAgentLifecycleEvent{}
+	}
+	r.status = subAgentStatusDegraded
+	r.heartbeatContext = fmt.Sprintf("awaiting heartbeat for %s", now.Sub(r.lastHeartbeat).Truncate(time.Second))
+	r.assignment.UpdatedAt = now
+	payload := r.lifecycleEventLocked(r.lastSubmission, SubAgentStageDegraded, "")
+	return r.lastSubmission, true, r.statusBroker, payload
 }
 
 func (r *subAgentRunner) interrupt() {
@@ -695,6 +754,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.lastSubmission = input.submissionID
 			runner.lastError = ""
 			runner.lastProgress = ""
+			runner.staleMisses = 0
+			runner.firstStaleObservedAt = time.Time{}
 			runner.lastHeartbeat = now
 			runner.heartbeatContext = "starting sub-agent run"
 			runner.assignment.UpdatedAt = now
@@ -813,6 +874,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				runner.status = subAgentStatusStuck
 				runner.lastError = timeoutErr
 				runner.lastProgress = ""
+				runner.staleMisses = 0
+				runner.firstStaleObservedAt = time.Time{}
 				runner.heartbeatContext = timeoutErr
 				eventType = SubAgentStuckEvent
 				stage = SubAgentStageStuck
@@ -823,6 +886,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				runner.status = subAgentStatusError
 				runner.lastError = err.Error()
 				runner.lastProgress = ""
+				runner.staleMisses = 0
+				runner.firstStaleObservedAt = time.Time{}
 				runner.heartbeatContext = err.Error()
 				eventType = SubAgentFailedEvent
 				stage = SubAgentStageFailed
@@ -835,6 +900,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				}
 				submission.Result = finalResult
 				runner.status = subAgentStatusCompleted
+				runner.staleMisses = 0
+				runner.firstStaleObservedAt = time.Time{}
 				report := parseSubAgentReport(finalResult)
 				if report.Summary != "" {
 					runner.lastResult = report.Summary
@@ -1156,13 +1223,28 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 				if err != nil {
 					continue
 				}
-				if !runner.heartbeatStale(time.Now().UTC()) {
+				now := time.Now().UTC()
+				switch runner.assessHeartbeatHealth(now) {
+				case subAgentHeartbeatHealthy:
 					continue
+				case subAgentHeartbeatDegraded:
+					submissionID, changed, broker, payload := runner.markDegraded(now)
+					if !changed {
+						continue
+					}
+					c.syncRunnerOrchestrationState(context.Background(), runner)
+					c.recordOrchestrationActivity(context.Background(), runner.id, string(SubAgentStageDegraded), map[string]any{
+						"submission_id": submissionID,
+						"status":        subAgentStatusDegraded,
+					})
+					publishSubAgentStatus(broker, subAgentStatusDegraded)
+					publishSubAgentLifecycleEvent(SubAgentDegradedEvent, payload)
+				case subAgentHeartbeatStuck:
+					runner.mu.Lock()
+					submissionID := runner.lastSubmission
+					runner.mu.Unlock()
+					c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStuckAge), subAgentStatusStuck, SubAgentStageStuck, SubAgentStuckEvent)
 				}
-				runner.mu.Lock()
-				submissionID := runner.lastSubmission
-				runner.mu.Unlock()
-				c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStaleAge), subAgentStatusStuck, SubAgentStageStuck, SubAgentStuckEvent)
 			}
 			snapshots, allFinal := c.snapshotSubAgentsByID(ids)
 			if allFinal {

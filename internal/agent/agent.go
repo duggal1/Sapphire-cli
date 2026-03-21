@@ -1125,7 +1125,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		var fantasyErr *fantasy.Error
 		var providerErr *fantasy.ProviderError
-		const defaultTitle = "Provider Error"
+		const providerErrorTitle = "Provider Error"
+		const requestErrorTitle = "Request Error"
 		linkStyle := lipgloss.NewStyle().Foreground(charmtone.Guac).Underline(true)
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
@@ -1145,12 +1146,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
 				)
 			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), defaultTitle), providerErr.Message)
+				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), providerErrorTitle), providerErr.Message)
 			}
 		} else if errors.As(err, &fantasyErr) {
-			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), defaultTitle), fantasyErr.Message)
+			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), requestErrorTitle), fantasyErr.Message)
 		} else {
-			currentAssistant.AddFinish(message.FinishReasonError, defaultTitle, err.Error())
+			currentAssistant.AddFinish(message.FinishReasonError, requestErrorTitle, err.Error())
 		}
 		// Note: we use the parent context here because the genCtx has been
 		// cancelled.
@@ -1572,7 +1573,7 @@ Skip this only for a single non-destructive read requiring exactly one tool call
 		} else {
 			history = append(history, fantasy.NewUserMessage(
 				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`For multi-step tasks, use update_plan before execution: 5-7 steps max (5-7 words each), always send the full plan, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
+					`For multi-step tasks, use update_plan before execution only when the plan is clear and non-trivial. Every plan item must include explicit step text; never send blank or placeholder steps. Keep 5-7 steps max, send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
 				),
 			))
 		}
@@ -2405,7 +2406,7 @@ func todoStatesFromSessionTodos(todos []session.Todo) []memory.TodoState {
 }
 */
 
-func parseStructuredSummaryData(raw string, todos interface{}) (memory.StructuredSummaryData, error) { // COMMENTED OUT - was []session.Todo
+func parseStructuredSummaryData(raw string, todos interface{}) (memory.StructuredSummaryData, error) {
 	trimmed := strings.TrimSpace(raw)
 	start := strings.Index(trimmed, "{")
 	end := strings.LastIndex(trimmed, "}")
@@ -2418,19 +2419,38 @@ func parseStructuredSummaryData(raw string, todos interface{}) (memory.Structure
 		return memory.StructuredSummaryData{}, err
 	}
 
-	// data.TodoStates = todoStatesFromSessionTodos(todos) // COMMENTED OUT
+	if sessionTodos, ok := todos.([]session.Todo); ok && len(sessionTodos) > 0 {
+		data.TodoStates = todoStatesFromSessionTodos(sessionTodos)
+	}
 	return data, nil
 }
 
-func buildSessionContinuityInjection(structured *memory.StructuredSummaryData, todos interface{}) string { // COMMENTED OUT - was []session.Todo
+func todoStatesFromSessionTodos(todos []session.Todo) []memory.TodoState {
+	states := make([]memory.TodoState, 0, len(todos))
+	for _, todo := range todos {
+		if !session.IsRenderableTodo(todo) {
+			continue
+		}
+		states = append(states, memory.TodoState{
+			Content:      cmp.Or(strings.TrimSpace(todo.Content), strings.TrimSpace(todo.ActiveForm)),
+			Status:       string(todo.Status),
+			Dependencies: nil,
+		})
+	}
+	return states
+}
+
+func buildSessionContinuityInjection(structured *memory.StructuredSummaryData, todos interface{}) string {
 	if structured == nil {
 		structured = &memory.StructuredSummaryData{}
 	}
 
 	todoStates := structured.TodoStates
-	// if len(todoStates) == 0 {  // COMMENTED OUT - no todos
-	// 	todoStates = todoStatesFromSessionTodos(todos)
-	// }
+	if len(todoStates) == 0 {
+		if sessionTodos, ok := todos.([]session.Todo); ok && len(sessionTodos) > 0 {
+			todoStates = todoStatesFromSessionTodos(sessionTodos)
+		}
+	}
 
 	var sb strings.Builder
 	if len(structured.Decisions) > 0 || len(structured.FileChanges) > 0 || len(structured.FailureModes) > 0 || len(todoStates) > 0 {
@@ -2438,18 +2458,15 @@ func buildSessionContinuityInjection(structured *memory.StructuredSummaryData, t
 		sb.WriteString("Use this as the stable handoff state for provider/model switches and post-compaction recovery.\n")
 	}
 
-	// COMMENTED OUT - TODO LIST DISABLED
-	/*
-		if len(todoStates) > 0 {
-			sb.WriteString("\n### Active Todo State\n")
-			for _, todo := range todoStates {
-				if strings.TrimSpace(todo.Content) == "" {
-					continue
-				}
-				fmt.Fprintf(&sb, "- [%s] %s\n", todo.Status, todo.Content)
+	if len(todoStates) > 0 {
+		sb.WriteString("\n### Active Todo State\n")
+		for _, todo := range todoStates {
+			if strings.TrimSpace(todo.Content) == "" {
+				continue
 			}
+			fmt.Fprintf(&sb, "- [%s] %s\n", todo.Status, todo.Content)
 		}
-	*/
+	}
 
 	if len(structured.Decisions) > 0 {
 		sb.WriteString("\n### Key Decisions\n")

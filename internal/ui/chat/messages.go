@@ -320,6 +320,10 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 	modelLine := a.sty.Chat.Message.AssistantInfoModel.Render(modelName)
 
 	duration := a.renderDurationFormatted(finish)
+	if a.shouldAnimate() {
+		return a.renderFooter(width, duration, modelLine)
+	}
+
 	promptTokens := int64(0)
 	completionTokens := int64(0)
 	cachedTokens := int64(0)
@@ -331,12 +335,18 @@ func (a *AssistantInfoItem) renderContent(width int) string {
 		thoughtsTokens = finish.ThoughtsTokens
 	}
 
-	parts := []string{
-		duration,
-		formatUsageTokens(promptTokens) + " in",
-		formatUsageTokens(completionTokens) + " out",
-		formatUsageTokens(cachedTokens) + " cached",
-		formatUsageTokens(thoughtsTokens) + " thoughts",
+	parts := []string{duration}
+	if promptTokens > 0 {
+		parts = append(parts, formatUsageTokens(promptTokens)+" in")
+	}
+	if completionTokens > 0 {
+		parts = append(parts, formatUsageTokens(completionTokens)+" out")
+	}
+	if cachedTokens > 0 {
+		parts = append(parts, formatUsageTokens(cachedTokens)+" cached")
+	}
+	if thoughtsTokens > 0 {
+		parts = append(parts, formatUsageTokens(thoughtsTokens)+" thoughts")
 	}
 
 	if finish != nil && finish.AvgLatencyMs > 0 {

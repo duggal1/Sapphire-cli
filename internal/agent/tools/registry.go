@@ -234,6 +234,10 @@ func updatePlanToolSpec(sessions session.Service) ToolSpec {
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return fantasy.ToolResponse{}, err
 			}
+			args = NormalizeUpdatePlanArgs(args)
+			if len(args.Plan) == 0 {
+				return fantasy.NewTextResponse("Plan unchanged"), nil
+			}
 			if err := ValidatePlanItems(args.Plan); err != nil {
 				return fantasy.ToolResponse{}, err
 			}

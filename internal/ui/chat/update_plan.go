@@ -44,6 +44,7 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &args); err != nil {
 		return ""
 	}
+	args = tools.NormalizeUpdatePlanArgs(args)
 
 	if err := tools.ValidatePlanItems(args.Plan); err != nil {
 		return ""

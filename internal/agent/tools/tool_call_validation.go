@@ -75,6 +75,10 @@ func validateUpdatePlanInputMap(input map[string]any) error {
 			Status: StepStatus(status),
 		})
 	}
+	plan = NormalizePlanItems(plan)
+	if len(plan) == 0 {
+		return errors.New("plan must contain at least one non-empty step")
+	}
 
 	return ValidatePlanItems(plan)
 }

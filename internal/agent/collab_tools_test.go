@@ -187,12 +187,12 @@ func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
 		sessionID:      "session-stale",
 		status:         subAgentStatusRunning,
 		lastSubmission: "submission-stale",
-		lastHeartbeat:  time.Now().UTC().Add(-1 * time.Minute),
+		lastHeartbeat:  time.Now().UTC().Add(-5 * time.Minute),
 		submissions: map[string]*subAgentSubmission{
 			"submission-stale": {
 				ID:          "submission-stale",
 				Status:      subAgentStatusRunning,
-				HeartbeatAt: time.Now().UTC().Add(-1 * time.Minute),
+				HeartbeatAt: time.Now().UTC().Add(-5 * time.Minute),
 			},
 		},
 		assignment:   subAgentAssignment{Task: "Investigate stall"},
@@ -200,10 +200,41 @@ func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
 	}
 	coord.subAgentRegistry.upsert("agent-stale", runner)
 
-	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-stale"}, 3*time.Second)
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-stale"}, 8*time.Second)
 	require.False(t, timedOut)
 	require.Len(t, snapshots, 1)
 	require.Equal(t, subAgentStatusStuck, snapshots[0].Status)
+}
+
+func TestWaitSubAgentsMarksHeartbeatStaleRunnerDegradedBeforeStuck(t *testing.T) {
+	t.Parallel()
+
+	coord := &coordinator{
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+	runner := &subAgentRunner{
+		id:             "agent-degraded",
+		sessionID:      "session-degraded",
+		status:         subAgentStatusRunning,
+		lastSubmission: "submission-degraded",
+		lastHeartbeat:  time.Now().UTC().Add(-1 * time.Minute),
+		submissions: map[string]*subAgentSubmission{
+			"submission-degraded": {
+				ID:          "submission-degraded",
+				Status:      subAgentStatusRunning,
+				HeartbeatAt: time.Now().UTC().Add(-1 * time.Minute),
+			},
+		},
+		assignment:   subAgentAssignment{Task: "Investigate stall"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
+	}
+	coord.subAgentRegistry.upsert("agent-degraded", runner)
+
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-degraded"}, 3*time.Second)
+	require.True(t, timedOut)
+	require.Len(t, snapshots, 1)
+	require.Equal(t, subAgentStatusDegraded, snapshots[0].Status)
 }
 
 func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {

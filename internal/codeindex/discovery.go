@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	maxChunkBytes    = 2200
-	minChunkBytes    = 300
-	maxSnippetRunes  = 220
-	maxBatchEmbeds   = 20
+	maxChunkBytes   = 2200
+	minChunkBytes   = 300
+	maxSnippetRunes = 220
+	maxBatchEmbeds  = 20
 )
 
 type discoveredFile struct {
@@ -33,85 +33,85 @@ type discoveredFile struct {
 }
 
 type indexedChunk struct {
-	ID           string
-	Path         string
-	Language     string
-	ChunkIndex   int
-	Kind         string
-	StartLine    int
-	EndLine      int
-	Content      string
-	SearchText   string
-	ContentHash  string
+	ID            string
+	Path          string
+	Language      string
+	ChunkIndex    int
+	Kind          string
+	StartLine     int
+	EndLine       int
+	Content       string
+	SearchText    string
+	ContentHash   string
 	TokenEstimate int
-	Embedding    []float32
+	Embedding     []float32
 }
 
 type indexedFile struct {
-	Path         string
-	Language     string
-	ContentHash  string
-	ModTimeUnix  int64
-	Size         int64
-	Chunks       []indexedChunk
+	Path        string
+	Language    string
+	ContentHash string
+	ModTimeUnix int64
+	Size        int64
+	Chunks      []indexedChunk
 }
 
 var allowedFileExtensions = map[string]string{
-	".go":   "go",
-	".ts":   "typescript",
-	".tsx":  "tsx",
-	".js":   "javascript",
-	".jsx":  "jsx",
-	".mjs":  "javascript",
-	".cjs":  "javascript",
-	".py":   "python",
-	".rs":   "rust",
-	".java": "java",
-	".kt":   "kotlin",
-	".rb":   "ruby",
-	".php":  "php",
-	".swift":"swift",
-	".css":  "css",
-	".scss": "scss",
-	".html": "html",
-	".json": "json",
-	".yaml": "yaml",
-	".yml":  "yaml",
-	".toml": "toml",
-	".md":   "markdown",
-	".txt":  "text",
-	".sql":  "sql",
-	".sh":   "shell",
+	".go":    "go",
+	".ts":    "typescript",
+	".tsx":   "tsx",
+	".js":    "javascript",
+	".jsx":   "jsx",
+	".mjs":   "javascript",
+	".cjs":   "javascript",
+	".py":    "python",
+	".rs":    "rust",
+	".java":  "java",
+	".kt":    "kotlin",
+	".rb":    "ruby",
+	".php":   "php",
+	".swift": "swift",
+	".css":   "css",
+	".scss":  "scss",
+	".html":  "html",
+	".json":  "json",
+	".yaml":  "yaml",
+	".yml":   "yaml",
+	".toml":  "toml",
+	".md":    "markdown",
+	".txt":   "text",
+	".sql":   "sql",
+	".sh":    "shell",
 }
 
 var allowedNamedFiles = map[string]string{
-	"dockerfile": "docker",
-	"makefile":   "make",
-	"go.mod":     "gomod",
-	"go.sum":     "gosum",
-	"readme":     "markdown",
-	"readme.md":  "markdown",
-	"package.json": "json",
+	"dockerfile":        "docker",
+	"makefile":          "make",
+	"go.mod":            "gomod",
+	"go.sum":            "gosum",
+	"readme":            "markdown",
+	"readme.md":         "markdown",
+	"package.json":      "json",
 	"package-lock.json": "json",
-	"tsconfig.json": "json",
-	".gitignore":  "text",
-	".editorconfig": "text",
-	".npmrc":      "text",
-	".env.example": "text",
+	"tsconfig.json":     "json",
+	".gitignore":        "text",
+	".editorconfig":     "text",
+	".npmrc":            "text",
+	".env.example":      "text",
 }
 
 var ignoredDirs = map[string]struct{}{
-	".git": {},
-	".sapphire": {},
+	".git":         {},
+	".sapphire":    {},
 	"node_modules": {},
-	"vendor": {},
-	"dist": {},
-	"build": {},
-	"coverage": {},
-	".next": {},
-	".turbo": {},
-	".idea": {},
-	".vscode": {},
+	"vendor":       {},
+	"dist":         {},
+	"build":        {},
+	"coverage":     {},
+	".next":        {},
+	".turbo":       {},
+	".idea":        {},
+	".vscode":      {},
 }
 
 var allowedHiddenDirs = map[string]struct{}{

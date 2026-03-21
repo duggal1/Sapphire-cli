@@ -36,7 +36,7 @@ type store struct {
 	managedLocal bool
 }
 
-func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*store, error) {
+func openStore(dataDir, workspace, model string, dimensions int, qdrantURL string) (*store, error) {
 	if dataDir == "" {
 		return nil, fmt.Errorf("code index: data directory is required")
 	}
@@ -61,7 +61,7 @@ func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*st
 		client:       &http.Client{Timeout: 30 * time.Second},
 		runtime:      runtime,
 		baseURL:      baseURL,
-		collection:   "sapphire_code_chunks_" + workspaceKey(workspace),
+		collection:   "sapphire_code_chunks_" + workspaceKey(fmt.Sprintf("%s:%s:%d", workspace, model, dimensions)),
 		workspace:    workspace,
 		dimensions:   dimensions,
 		managedLocal: shouldManageLocalQdrant(baseURL, qdrantURL),
@@ -220,9 +220,44 @@ func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
 	if err := s.init(ctx); err != nil {
 		return err
 	}
-	if err := s.deletePath(ctx, file.Path); err != nil {
+	if file.NeedsDelete {
+		if err := s.deletePath(ctx, file.Path); err != nil {
+			return err
+		}
+	}
+	return s.upsertPoints(ctx, pointsFromFile(file))
+}
+
+func (s *store) ReplaceFiles(ctx context.Context, files []indexedFile) error {
+	if err := s.init(ctx); err != nil {
 		return err
 	}
+	for _, file := range files {
+		if !file.NeedsDelete {
+			continue
+		}
+		if err := s.deletePath(ctx, file.Path); err != nil {
+			return err
+		}
+	}
+	points := make([]map[string]any, 0, 1024)
+	for _, file := range files {
+		filePoints := pointsFromFile(file)
+		if len(filePoints) == 0 {
+			continue
+		}
+		if len(points)+len(filePoints) > 768 && len(points) > 0 {
+			if err := s.upsertPoints(ctx, points); err != nil {
+				return err
+			}
+			points = points[:0]
+		}
+		points = append(points, filePoints...)
+	}
+	return s.upsertPoints(ctx, points)
+}
+
+func pointsFromFile(file indexedFile) []map[string]any {
 	points := make([]map[string]any, 0, len(file.Chunks))
 	indexedAtUnix := time.Now().Unix()
 	for _, chunk := range file.Chunks {
@@ -247,6 +282,10 @@ func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
 			},
 		})
 	}
+	return points
+}
+
+func (s *store) upsertPoints(ctx context.Context, points []map[string]any) error {
 	if len(points) == 0 {
 		return nil
 	}

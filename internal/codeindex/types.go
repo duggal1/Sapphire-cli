@@ -4,7 +4,7 @@ import "time"
 
 const (
 	DefaultEmbeddingModel      = "gemini-embedding-001"
-	DefaultEmbeddingDimensions = 3072
+	DefaultEmbeddingDimensions = 768
 )
 
 type Config struct {

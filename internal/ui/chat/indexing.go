@@ -87,8 +87,9 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 	barWidth := max(18, min(42, width-12))
 	bar := renderIndexingProgressBar(barWidth, i.progress.Percent)
 
+	filesDone := max(i.progress.FilesProcessed, i.progress.FilesIndexed)
 	filesTotal := max(i.progress.FilesDiscovered, i.progress.FilesIndexed)
-	detail := fmt.Sprintf("%s · %d/%d files", percentLabel, i.progress.FilesProcessed, max(0, filesTotal))
+	detail := fmt.Sprintf("%s · %d/%d files", percentLabel, filesDone, max(0, filesTotal))
 	if i.progress.ChunksTotal > 0 {
 		detail = fmt.Sprintf("%s · %d/%d chunks", detail, i.progress.ChunksEmbedded, i.progress.ChunksTotal)
 	}
@@ -105,6 +106,7 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
+		"",
 		title,
 		"",
 		i.sty.HalfMuted.Render(i.progress.Workspace),
@@ -114,18 +116,12 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 		progressLine,
 		"",
 		i.sty.HalfMuted.Render(detail),
+		"",
 	)
 
-	cardWidth := min(88, max(52, width-6))
-	if width > 0 {
-		cardWidth = min(cardWidth, width)
-	}
 	return lipgloss.NewStyle().
-		Width(cardWidth).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7C3AED")).
-		Background(lipgloss.Color("#140F1F")).
+		PaddingLeft(2).
+		PaddingRight(2).
 		Render(body)
 }
 
@@ -143,6 +139,9 @@ func (i *IndexingMessageItem) renderTitle() string {
 func renderIndexingProgressBar(width int, percent float64) string {
 	width = max(width, 10)
 	filled := int(percent * float64(width))
+	if percent > 0 && filled == 0 {
+		filled = 1
+	}
 	if filled < 0 {
 		filled = 0
 	}
@@ -161,6 +160,10 @@ func clampIndexPercent(percent float64) int {
 	case percent >= 1:
 		return 100
 	default:
-		return int(percent * 100)
+		value := int(percent * 100)
+		if value == 0 {
+			return 1
+		}
+		return value
 	}
 }

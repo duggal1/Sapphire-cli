@@ -32,7 +32,7 @@ func TestBundledQdrantRuntimeStarts(t *testing.T) {
 	defer cancel()
 
 	workDir := t.TempDir()
-	store, err := openStore(t.TempDir(), workDir, 8, defaultQdrantURL)
+	store, err := openStore(t.TempDir(), workDir, DefaultEmbeddingModel, 8, defaultQdrantURL)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestStoreInitRecreatesMissingCollectionAfterReady(t *testing.T) {
 	defer cancel()
 
 	workDir := t.TempDir()
-	store, err := openStore(t.TempDir(), workDir, 8, defaultQdrantURL)
+	store, err := openStore(t.TempDir(), workDir, DefaultEmbeddingModel, 8, defaultQdrantURL)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

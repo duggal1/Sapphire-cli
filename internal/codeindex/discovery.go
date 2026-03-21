@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	maxChunkBytes   = 2200
-	minChunkBytes   = 300
+	maxChunkBytes   = 4800
+	minChunkBytes   = 900
 	maxSnippetRunes = 220
-	maxBatchEmbeds  = 20
+	maxBatchEmbeds  = 96
 )
 
 type discoveredFile struct {
@@ -53,6 +53,7 @@ type indexedFile struct {
 	ContentHash string
 	ModTimeUnix int64
 	Size        int64
+	NeedsDelete bool
 	Chunks      []indexedChunk
 }
 
@@ -247,6 +248,9 @@ func chunkGoFile(file discoveredFile) []indexedChunk {
 	lines := strings.Split(file.Content, "\n")
 	chunks := make([]indexedChunk, 0, len(parsed.Decls))
 	for idx, decl := range parsed.Decls {
+		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
+			continue
+		}
 		start := fset.Position(decl.Pos()).Line
 		end := fset.Position(decl.End()).Line
 		if start <= 0 || end < start || start > len(lines) {
@@ -257,7 +261,7 @@ func chunkGoFile(file discoveredFile) []indexedChunk {
 		}
 		text := strings.Join(lines[start-1:end], "\n")
 		text = strings.TrimSpace(text)
-		if text == "" {
+		if text == "" || len(text) < 120 {
 			continue
 		}
 		kind, name := describeGoDecl(decl)

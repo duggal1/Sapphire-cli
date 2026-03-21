@@ -37,7 +37,7 @@ const (
 	subAgentMessageListTimeout   = 5 * time.Second
 	subAgentForkContextTimeout   = 10 * time.Second
 	subAgentHeartbeatInterval    = 5 * time.Second
-	subAgentHeartbeatStaleAge    = 20 * time.Second
+	subAgentHeartbeatStaleAge    = 90 * time.Second
 	subAgentTurnTimeout          = 5 * time.Minute
 	subAgentWaitPollInterval     = 2 * time.Second
 )
@@ -383,7 +383,7 @@ func (r *subAgentRunner) heartbeatStale(now time.Time) bool {
 	if r.lastHeartbeat.IsZero() {
 		return false
 	}
-	if !isSubAgentActiveStatus(r.status) {
+	if r.status != subAgentStatusRunning {
 		return false
 	}
 	return now.Sub(r.lastHeartbeat) > subAgentHeartbeatStaleAge

@@ -963,8 +963,18 @@ func (c *coordinator) ensureSkillsDiscovered() {
 }
 
 func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
-	allowed, _ := shouldAllowSubAgentLaunch(userPrompt)
-	return allowed && !hasExplicitSubAgentOrWorktreePlan(userPrompt)
+	normalized := strings.ToLower(strings.TrimSpace(userPrompt))
+	decision := evaluateSubAgentLaunch(userPrompt)
+	if !decision.Allowed || hasExplicitSubAgentOrWorktreePlan(userPrompt) {
+		return false
+	}
+	if isInitializationStylePrompt(userPrompt) {
+		return false
+	}
+	if hasAnySignal(normalized, subAgentCodebaseSignals) || hasAnySignal(normalized, subAgentDependencySignals) || hasAnySignal(normalized, subAgentRiskSignals) {
+		return true
+	}
+	return decision.Complexity >= 4
 }
 
 func hasExplicitSubAgentOrWorktreePlan(userPrompt string) bool {
@@ -984,6 +994,26 @@ func hasExplicitSubAgentOrWorktreePlan(userPrompt string) bool {
 		"spawn 5-12 subagents",
 		"one subagent per domain",
 		"one per distinct domain",
+	}
+	return hasAnySignal(prompt, signals)
+}
+
+func isInitializationStylePrompt(userPrompt string) bool {
+	prompt := strings.ToLower(strings.TrimSpace(userPrompt))
+	if prompt == "" {
+		return false
+	}
+	signals := []string{
+		"initialize the codebase",
+		"initialize codebase",
+		"initialize the project",
+		"initialize project",
+		"generate agents.md",
+		"create agents.md",
+		"update agents.md",
+		"read the codebase",
+		"read codebase",
+		"launch submission",
 	}
 	return hasAnySignal(prompt, signals)
 }
@@ -1274,24 +1304,12 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		WriteScope:           writeScope,
 	})
 
-	// Use a local WaitGroup for sub-agents to ensure initialization finishes before returning.
-	// For the main agent, use c.readyWg to allow background initialization during startup.
-	var wg interface {
-		Go(func() error)
-	}
-	if isSubAgent || c.readyDone != nil {
-		innerWg := &errgroup.Group{}
-		wg = innerWg
+	initAgent := func() (err error) {
 		defer func() {
-			if err := innerWg.Wait(); err != nil {
-				slog.Error("Failed to initialize sub-agent", "error", err)
+			if recovered := recover(); recovered != nil {
+				err = fmt.Errorf("initialize agent runtime: %v", recovered)
 			}
 		}()
-	} else {
-		wg = &c.readyWg
-	}
-
-	wg.Go(func() error {
 		agentTools, err := c.buildToolsForWorkingDir(ctx, agent, workingDir)
 		if err != nil {
 			return err
@@ -1325,7 +1343,16 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		}
 		result.SetSystemPrompt(appendToolCatalogToPrompt(systemPrompt, agentTools))
 		return nil
-	})
+	}
+
+	if isSubAgent || c.readyDone != nil {
+		if err := initAgent(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	c.readyWg.Go(initAgent)
 
 	return result, nil
 }

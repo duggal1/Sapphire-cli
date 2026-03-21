@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -297,13 +298,10 @@ func parseSubAgentSimpleParams(sty *styles.Styles, raw string) []*TreeNode {
 	}
 
 	var nodes []*TreeNode
-	if payload.ID != "" {
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Agent", shortenSubAgentID(payload.ID))})
-	}
 	if len(payload.IDs) > 0 {
 		children := make([]*TreeNode, 0, len(payload.IDs))
-		for _, id := range payload.IDs {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLine(sty, subAgentStatusEntry{ID: id})})
+		for i, id := range payload.IDs {
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{ID: id}, fmt.Sprintf("Sub-Agent %d", i+1))})
 		}
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -316,8 +314,8 @@ func parseSubAgentSimpleParams(sty *styles.Styles, raw string) []*TreeNode {
 	if payload.TimeoutMS > 0 {
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Wait up to", fmt.Sprintf("%dms", payload.TimeoutMS))})
 	}
-	if worktreeNode := renderSubAgentWorktreeDetails(sty, firstNonEmptyOrchestrationValue(payload.WorktreePath, payload.WorktreeDir, payload.WorkDir), payload.Branch); worktreeNode != nil {
-		nodes = append(nodes, worktreeNode)
+	if locationNode := renderSubAgentLocationNode(sty, firstNonEmptyOrchestrationValue(payload.WorktreePath, payload.WorktreeDir, payload.WorkDir), payload.Branch, false); locationNode != nil {
+		nodes = append(nodes, locationNode)
 	}
 
 	return nodes
@@ -335,12 +333,6 @@ func parseSubAgentSimpleResult(raw string) []*TreeNode {
 
 	var nodes []*TreeNode
 	sty := (*styles.Styles)(nil)
-	if id, ok := payload["agent_id"].(string); ok && id != "" {
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Agent", shortenSubAgentID(id))})
-	}
-	if submissionID, ok := payload["submission_id"].(string); ok && submissionID != "" {
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Run", shortenSubAgentID(submissionID))})
-	}
 	if status, ok := payload["status"].(string); ok && status != "" {
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "State", humanizeSubAgentStatus(status))})
 	}
@@ -355,8 +347,8 @@ func parseSubAgentSimpleResult(raw string) []*TreeNode {
 	if value, ok := payload["branch"].(string); ok {
 		branch = value
 	}
-	if worktreeNode := renderSubAgentWorktreeDetails(nil, worktree, branch); worktreeNode != nil {
-		nodes = append(nodes, worktreeNode)
+	if locationNode := renderSubAgentLocationNode(nil, worktree, branch, isManagedSubAgentWorktree(worktree)); locationNode != nil {
+		nodes = append(nodes, locationNode)
 	}
 
 	return nodes
@@ -393,18 +385,12 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 
 	if payload != nil {
 		if payload.AgentID != "" || payload.Status != "" {
-			sections = append(sections, &TreeNode{Label: renderSubAgentAgentLine(sty, subAgentStatusEntry{
+			sections = append(sections, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{
 				ID:        payload.AgentID,
 				Status:    payload.Status,
 				WorkDir:   payload.WorkDir,
 				StartedAt: payload.StartedAt,
-			})})
-		}
-		if payload.AgentID != "" {
-			sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Agent", shortenSubAgentID(payload.AgentID))})
-		}
-		if payload.SubmissionID != "" {
-			sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Run", shortenSubAgentID(payload.SubmissionID))})
+			}, "Sub-Agent 1")})
 		}
 	}
 
@@ -427,8 +413,8 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 	sections := make([]*TreeNode, 0, 2)
 	if len(payload.Agents) > 0 {
 		children := make([]*TreeNode, 0, len(payload.Agents))
-		for _, entry := range payload.Agents {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLine(sty, entry)})
+		for i, entry := range payload.Agents {
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Sub-Agent %d", i+1))})
 		}
 		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -446,40 +432,30 @@ func renderSubAgentCollectBody(sty *styles.Styles, payload subAgentCollectResult
 	}
 
 	children := make([]*TreeNode, 0, len(payload.Agents))
-	for _, entry := range payload.Agents {
-		children = append(children, renderCollectedSubAgent(sty, entry))
+	for i, entry := range payload.Agents {
+		children = append(children, renderCollectedSubAgent(sty, entry, i+1))
 	}
 	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Sub-Agents"), Children: children}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
-func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult) *TreeNode {
+func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, index int) *TreeNode {
 	sections := make([]*TreeNode, 0, 8)
 
 	if entry.ID != "" || entry.Status != "" {
-		sections = append(sections, &TreeNode{Label: renderSubAgentAgentLine(sty, subAgentStatusEntry{
+		sections = append(sections, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{
 			ID:           entry.ID,
 			Status:       entry.Status,
 			SubmissionID: entry.SubmissionID,
 			WorkDir:      entry.WorkDir,
 			StartedAt:    entry.StartedAt,
-		})})
+		}, fmt.Sprintf("Sub-Agent %d", index))})
 	}
 	if entry.Status != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "State", humanizeSubAgentStatus(entry.Status))})
 	}
-	if entry.SubmissionID != "" {
-		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Run", shortenSubAgentID(entry.SubmissionID))})
-	}
-	if entry.WorkDir != "" || entry.Branch != "" {
-		worktreeChildren := make([]*TreeNode, 0, 2)
-		if entry.WorkDir != "" {
-			worktreeChildren = append(worktreeChildren, buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{entry.WorkDir}))...)
-		}
-		if entry.Branch != "" {
-			worktreeChildren = append(worktreeChildren, &TreeNode{Label: renderSubAgentField(sty, "Branch", entry.Branch)})
-		}
-		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Worktree"), Children: worktreeChildren})
+	if locationNode := renderSubAgentLocationNode(sty, entry.WorkDir, entry.Branch, isManagedSubAgentWorktree(entry.WorkDir)); locationNode != nil {
+		sections = append(sections, locationNode)
 	}
 	if entry.Progress != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Progress", oneLine(entry.Progress))})
@@ -512,39 +488,41 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult) 
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Blockers", oneLine(report.Blockers))})
 	}
 
-	label := entry.ID
-	if label == "" {
-		label = "Sub-Agent"
-	}
+	label := fmt.Sprintf("Sub-Agent %d", index)
 	return &TreeNode{Label: renderSubAgentAgentTitle(sty, label), Children: sections}
 }
 
 func renderWorktreeNode(sty *styles.Styles, enabled *bool, path, branch string) *TreeNode {
-	useWorktree := true
+	useWorktree := false
 	if enabled != nil {
 		useWorktree = *enabled
+	} else if isManagedSubAgentWorktree(path) {
+		useWorktree = true
 	}
-	if !useWorktree {
-		return nil
-	}
-	return renderSubAgentWorktreeDetails(sty, path, branch)
+	return renderSubAgentLocationNode(sty, path, branch, useWorktree)
 }
 
-func renderSubAgentWorktreeDetails(sty *styles.Styles, path, branch string) *TreeNode {
+func renderSubAgentLocationNode(sty *styles.Styles, path, branch string, isolated bool) *TreeNode {
 	children := make([]*TreeNode, 0, 2)
-	if path != "" {
-		if sty != nil {
-			children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
+	label := "Workspace"
+	if isolated {
+		label = "Worktree"
+		if path != "" {
+			if sty != nil {
+				children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
+			} else {
+				children = append(children, &TreeNode{Label: formatRelativePath(path)})
+			}
 		} else {
-			children = append(children, &TreeNode{Label: formatRelativePath(path)})
+			children = append(children, &TreeNode{Label: renderSubAgentFieldValue(sty, "auto")})
 		}
 	} else {
-		children = append(children, &TreeNode{Label: renderSubAgentFieldValue(sty, "auto")})
+		children = append(children, &TreeNode{Label: renderSubAgentFieldValue(sty, "repo")})
 	}
 	if branch != "" {
 		children = append(children, &TreeNode{Label: renderSubAgentField(sty, "Branch", branch)})
 	}
-	return &TreeNode{Label: renderSubAgentSectionLabel(sty, "Worktree"), Children: children}
+	return &TreeNode{Label: renderSubAgentSectionLabel(sty, label), Children: children}
 }
 
 func renderPathChildren(paths []string) []*TreeNode {
@@ -586,10 +564,11 @@ func renderSubAgentSectionLabel(sty *styles.Styles, label string) string {
 }
 
 func renderSubAgentAgentTitle(sty *styles.Styles, id string) string {
+	label := subAgentDisplayLabel(id)
 	if sty == nil {
-		return shortenSubAgentID(id)
+		return label
 	}
-	return sty.Base.Foreground(sty.FgBase).Bold(true).Render(shortenSubAgentID(id))
+	return sty.Base.Foreground(sty.FgBase).Bold(true).Render(label)
 }
 
 func renderSubAgentField(sty *styles.Styles, key, value string) string {
@@ -624,15 +603,19 @@ func renderSubAgentFieldValueForKey(sty *styles.Styles, key, value string) strin
 }
 
 func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) string {
-	id := shortenSubAgentID(entry.ID)
+	return renderSubAgentAgentLineWithLabel(sty, entry, "")
+}
+
+func renderSubAgentAgentLineWithLabel(sty *styles.Styles, entry subAgentStatusEntry, label string) string {
+	id := subAgentDisplayLabel(firstNonEmptyOrchestrationValue(label, entry.ID))
 	if id == "" {
-		id = "agent"
+		id = "Sub-Agent"
 	}
-	worktree := subAgentWorktreeSummary(entry.WorkDir)
+	workspace := subAgentWorkspaceSummary(entry.WorkDir)
 	status := normalizeSubAgentStatus(entry.Status)
 	icon := subAgentStatusIcon(status)
 	if sty == nil {
-		parts := []string{icon, id, worktree}
+		parts := []string{icon, id, workspace}
 		if status != "" {
 			parts = append(parts, status)
 		}
@@ -644,10 +627,10 @@ func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) stri
 
 	iconText := sty.Base.Foreground(subAgentStatusColor(status)).Render(icon)
 	idText := sty.Base.Foreground(sty.FgBase).Bold(true).Render(id)
-	worktreeText := sty.Base.Foreground(sty.FgMuted).Render(worktree)
+	workspaceText := sty.Base.Foreground(sty.FgMuted).Render(workspace)
 	statusText := sty.Base.Foreground(subAgentStatusColor(status)).Bold(true).Render(status)
 
-	parts := []string{iconText, idText, worktreeText}
+	parts := []string{iconText, idText, workspaceText}
 	if status != "" {
 		parts = append(parts, statusText)
 	}
@@ -666,9 +649,20 @@ func shortenSubAgentID(id string) string {
 	return id[:8]
 }
 
-func subAgentWorktreeSummary(path string) string {
-	if strings.TrimSpace(path) == "" {
-		return "worktree/auto"
+func subAgentDisplayLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	if strings.Contains(label, " ") {
+		return label
+	}
+	return shortenSubAgentID(label)
+}
+
+func subAgentWorkspaceSummary(path string) string {
+	if !isManagedSubAgentWorktree(path) {
+		return "repo"
 	}
 	rel := formatRelativePath(path)
 	parts := strings.Split(strings.Trim(rel, "/"), "/")
@@ -677,6 +671,15 @@ func subAgentWorktreeSummary(path string) string {
 		name = parts[len(parts)-1]
 	}
 	return "worktree/" + name
+}
+
+func isManagedSubAgentWorktree(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	slashed := filepath.ToSlash(filepath.Clean(path))
+	return strings.Contains(slashed, "/.sapphire/worktrees/") || strings.HasPrefix(slashed, ".sapphire/worktrees/")
 }
 
 func normalizeSubAgentStatus(status string) string {

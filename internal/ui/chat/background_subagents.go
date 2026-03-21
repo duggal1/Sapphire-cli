@@ -115,9 +115,9 @@ func renderBackgroundSubAgentNode(sty *styles.Styles, entry agent.BackgroundSubA
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Focus", focus)})
 	}
 	if workdir := strings.TrimSpace(entry.WorkDir); workdir != "" {
-		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Workspace", formatRelativePath(workdir))})
+		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Workspace", backgroundSubAgentWorkspaceValue(workdir))})
 	}
-	if branch := strings.TrimSpace(entry.Branch); branch != "" {
+	if branch := strings.TrimSpace(entry.Branch); branch != "" && isManagedSubAgentWorktree(entry.WorkDir) {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Branch", branch)})
 	}
 
@@ -159,14 +159,7 @@ func renderBackgroundSubAgentNode(sty *styles.Styles, entry agent.BackgroundSubA
 }
 
 func backgroundSubAgentDisplayTitle(entry agent.BackgroundSubAgentView, index int) string {
-	label := firstNonEmptyBackgroundText(entry.Title, entry.Name)
-	if label == "" && strings.TrimSpace(entry.LegType) != "" {
-		label = humanizeBackgroundLeg(entry.LegType)
-	}
-	if label == "" {
-		return fmt.Sprintf("Sub-Agent %d", index)
-	}
-	return label
+	return fmt.Sprintf("Sub-Agent %d", index)
 }
 
 func backgroundSubAgentFocus(entry agent.BackgroundSubAgentView) string {
@@ -196,4 +189,11 @@ func firstNonEmptyBackgroundText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func backgroundSubAgentWorkspaceValue(path string) string {
+	if isManagedSubAgentWorktree(path) {
+		return formatRelativePath(path)
+	}
+	return "repo"
 }

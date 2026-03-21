@@ -86,7 +86,17 @@ func NewPrompt(name, promptTemplate string, opts ...Option) (*Prompt, error) {
 	return p, nil
 }
 
-func (p *Prompt) Build(ctx context.Context, provider, model string, cfg config.Config) (string, error) {
+func (p *Prompt) Build(ctx context.Context, provider, model string, cfg config.Config) (built string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			name := "<nil>"
+			if p != nil {
+				name = p.name
+			}
+			built = ""
+			err = fmt.Errorf("building prompt %q failed: %v", name, recovered)
+		}
+	}()
 	t, err := template.New(p.name).Parse(p.template)
 	if err != nil {
 		return "", fmt.Errorf("parsing template: %w", err)
@@ -150,8 +160,10 @@ func ExpandPath(path string, cfg config.Config) string {
 	path = home.Long(path)
 	// Handle environment variable expansion using the same pattern as config
 	if strings.HasPrefix(path, "$") {
-		if expanded, err := cfg.Resolver().ResolveValue(path); err == nil {
-			path = expanded
+		if resolver := cfg.Resolver(); resolver != nil {
+			if expanded, err := resolver.ResolveValue(path); err == nil {
+				path = expanded
+			}
 		}
 	}
 
@@ -161,10 +173,18 @@ func ExpandPath(path string, cfg config.Config) string {
 func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg config.Config) (PromptDat, error) {
 	workingDir := cmp.Or(p.workingDir, cfg.WorkingDir())
 	platform := cmp.Or(p.platform, runtime.GOOS)
+	options := cfg.Options
+	if options == nil {
+		options = &config.Options{}
+	}
+	nowFn := p.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 
 	files := map[string][]ContextFile{}
 
-	for _, pth := range cfg.Options.ContextPaths {
+	for _, pth := range options.ContextPaths {
 		expanded := ExpandPath(pth, cfg)
 		pathKey := strings.ToLower(expanded)
 		if _, ok := files[pathKey]; ok {
@@ -176,9 +196,9 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 
 	// Discover and load skills metadata.
 	var availSkillXML string
-	if len(cfg.Options.SkillsPaths) > 0 {
-		expandedPaths := make([]string, 0, len(cfg.Options.SkillsPaths))
-		for _, pth := range cfg.Options.SkillsPaths {
+	if len(options.SkillsPaths) > 0 {
+		expandedPaths := make([]string, 0, len(options.SkillsPaths))
+		for _, pth := range options.SkillsPaths {
 			expandedPaths = append(expandedPaths, ExpandPath(pth, cfg))
 		}
 		if discoveredSkills := skills.Discover(expandedPaths); len(discoveredSkills) > 0 {
@@ -194,7 +214,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		WorkingDir:     filepath.ToSlash(workingDir),
 		IsGitRepo:      isGit,
 		Platform:       platform,
-		Date:           p.now().Format("1/2/2006"),
+		Date:           nowFn().Format("1/2/2006"),
 		AvailSkillXML:  availSkillXML,
 		PlanToolPrompt: p.planToolPrompt,
 	}

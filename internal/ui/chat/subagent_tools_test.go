@@ -44,14 +44,14 @@ func TestRenderSubAgentWaitBodyUsesFriendlySummaryLine(t *testing.T) {
 		},
 	}, 120))
 
-	if !strings.Contains(rendered, "d5655f40") {
-		t.Fatalf("expected shortened id, got %q", rendered)
+	if !strings.Contains(rendered, "Sub-Agent 1") {
+		t.Fatalf("expected friendly label, got %q", rendered)
 	}
-	if strings.Contains(rendered, "agent-d5655f40-f83b-46af-8b5d-2ff2becf4b78") {
-		t.Fatalf("expected full agent id to be removed, got %q", rendered)
+	if strings.Contains(rendered, "d5655f40") {
+		t.Fatalf("expected internal id to be hidden, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "worktree/auto") {
-		t.Fatalf("expected worktree summary, got %q", rendered)
+	if !strings.Contains(rendered, "repo") {
+		t.Fatalf("expected repo workspace summary, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "running") {
 		t.Fatalf("expected running status, got %q", rendered)

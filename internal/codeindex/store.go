@@ -8,8 +8,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -26,19 +28,21 @@ type storedFile struct {
 }
 
 type store struct {
-	client        *http.Client
-	runtime       *qdrantRuntime
-	baseURL       string
-	collection    string
-	workspace     string
-	dimensions    int
-	ready         bool
+	client       *http.Client
+	runtime      *qdrantRuntime
+	baseURL      string
+	collection   string
+	workspace    string
+	dimensions   int
+	ready        bool
+	managedLocal bool
 }
 
 type qdrantRuntime struct {
 	containerName string
 	storageDir    string
 	baseURL       string
+	engine        string
 }
 
 func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*store, error) {
@@ -64,12 +68,13 @@ func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*st
 		return nil, err
 	}
 	s := &store{
-		client: &http.Client{Timeout: 30 * time.Second},
-		runtime: runtime,
-		baseURL: baseURL,
-		collection: "sapphire_code_chunks_" + workspaceKey(workspace),
-		workspace: workspace,
-		dimensions: dimensions,
+		client:       &http.Client{Timeout: 30 * time.Second},
+		runtime:      runtime,
+		baseURL:      baseURL,
+		collection:   "sapphire_code_chunks_" + workspaceKey(workspace),
+		workspace:    workspace,
+		dimensions:   dimensions,
+		managedLocal: shouldManageLocalQdrant(baseURL, qdrantURL),
 	}
 	return s, nil
 }
@@ -115,9 +120,14 @@ func (s *store) ensureRuntime(ctx context.Context) error {
 		s.ready = true
 		return nil
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("code index: qdrant is not reachable and docker is unavailable: %w", err)
+	if !s.managedLocal {
+		return fmt.Errorf("code index: qdrant is not reachable at %s; set SAPPHIRE_QDRANT_URL to a running Qdrant server or use the default local endpoint", s.baseURL)
 	}
+	engine, err := detectContainerEngine()
+	if err != nil {
+		return fmt.Errorf("code index: qdrant is not reachable at %s and no local container runtime is installed; install Docker or Podman, or set SAPPHIRE_QDRANT_URL to a running Qdrant server", s.baseURL)
+	}
+	s.runtime.engine = engine
 	if err := s.startOrRunContainer(ctx); err != nil {
 		return err
 	}
@@ -129,7 +139,7 @@ func (s *store) ensureRuntime(ctx context.Context) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("code index: qdrant container started but service did not become ready")
+	return fmt.Errorf("code index: qdrant %s runtime started but the service did not become ready at %s", s.runtime.engine, s.baseURL)
 }
 
 func (s *store) ping(ctx context.Context) error {
@@ -149,32 +159,38 @@ func (s *store) ping(ctx context.Context) error {
 }
 
 func (s *store) startOrRunContainer(ctx context.Context) error {
+	if s.runtime.engine == "" {
+		return fmt.Errorf("code index: no local container runtime selected")
+	}
 	if err := s.ensurePortAvailable(); err != nil {
 		return err
 	}
-	inspect := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", s.runtime.containerName)
+	if err := ensureContainerRuntimeReady(ctx, s.runtime.engine); err != nil {
+		return err
+	}
+	inspect := exec.CommandContext(ctx, s.runtime.engine, "inspect", "-f", "{{.State.Running}}", s.runtime.containerName)
 	output, err := inspect.CombinedOutput()
 	if err == nil {
 		if strings.TrimSpace(string(output)) == "true" {
 			return nil
 		}
-		start := exec.CommandContext(ctx, "docker", "start", s.runtime.containerName)
+		start := exec.CommandContext(ctx, s.runtime.engine, "start", s.runtime.containerName)
 		if startOut, startErr := start.CombinedOutput(); startErr != nil {
-			return fmt.Errorf("code index: start qdrant container: %w (%s)", startErr, strings.TrimSpace(string(startOut)))
+			return fmt.Errorf("code index: start qdrant %s container: %w (%s)", s.runtime.engine, startErr, strings.TrimSpace(string(startOut)))
 		}
 		return nil
 	}
 	run := exec.CommandContext(ctx,
-		"docker", "run", "-d",
+		s.runtime.engine, "run", "-d",
 		"--name", s.runtime.containerName,
 		"-p", defaultQdrantPort+":6333",
 		"-p", defaultQdrantGRPC+":6334",
 		"-v", s.runtime.storageDir+":/qdrant/storage",
-		"qdrant/qdrant",
+		"docker.io/qdrant/qdrant:latest",
 	)
 	runOut, runErr := run.CombinedOutput()
 	if runErr != nil {
-		return fmt.Errorf("code index: run qdrant container: %w (%s)", runErr, strings.TrimSpace(string(runOut)))
+		return fmt.Errorf("code index: run qdrant %s container: %w (%s)", s.runtime.engine, runErr, strings.TrimSpace(string(runOut)))
 	}
 	return nil
 }
@@ -252,19 +268,19 @@ func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
 			"id":     chunk.ID,
 			"vector": chunk.Embedding,
 			"payload": map[string]any{
-				"path":           chunk.Path,
-				"language":       chunk.Language,
-				"kind":           chunk.Kind,
-				"chunk_index":    chunk.ChunkIndex,
-				"start_line":     chunk.StartLine,
-				"end_line":       chunk.EndLine,
-				"content_hash":   file.ContentHash,
-				"chunk_hash":     chunk.ContentHash,
-				"search_text":    chunk.SearchText,
-				"content":        chunk.Content,
-				"token_estimate": chunk.TokenEstimate,
-				"size_bytes":     file.Size,
-				"mod_time_unix":  file.ModTimeUnix,
+				"path":            chunk.Path,
+				"language":        chunk.Language,
+				"kind":            chunk.Kind,
+				"chunk_index":     chunk.ChunkIndex,
+				"start_line":      chunk.StartLine,
+				"end_line":        chunk.EndLine,
+				"content_hash":    file.ContentHash,
+				"chunk_hash":      chunk.ContentHash,
+				"search_text":     chunk.SearchText,
+				"content":         chunk.Content,
+				"token_estimate":  chunk.TokenEstimate,
+				"size_bytes":      file.Size,
+				"mod_time_unix":   file.ModTimeUnix,
 				"indexed_at_unix": indexedAtUnix,
 			},
 		})
@@ -327,10 +343,10 @@ func (s *store) Search(ctx context.Context, query string, queryVector []float32,
 	}
 	var response qdrantQueryResponse
 	body := map[string]any{
-		"query":         queryVector,
-		"limit":         limit,
-		"with_payload":  true,
-		"with_vector":   false,
+		"query":        queryVector,
+		"limit":        limit,
+		"with_payload": true,
+		"with_vector":  false,
 	}
 	if err := s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/query", body, &response); err != nil {
 		return nil, err
@@ -431,9 +447,9 @@ func (s *store) requestJSON(ctx context.Context, method, path string, body any, 
 }
 
 type qdrantPoint struct {
-	ID      any                `json:"id"`
-	Score   float64            `json:"score"`
-	Payload map[string]any     `json:"payload"`
+	ID      any            `json:"id"`
+	Score   float64        `json:"score"`
+	Payload map[string]any `json:"payload"`
 }
 
 type qdrantScrollResponse struct {
@@ -499,4 +515,59 @@ func payloadInt64(payload map[string]any, key string) int64 {
 
 func isQdrantMissingCollection(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "status 404")
+}
+
+func shouldManageLocalQdrant(baseURL, rawConfiguredURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if strings.TrimSpace(rawConfiguredURL) == "" {
+		return baseURL == defaultQdrantURL
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	return (host == "127.0.0.1" || host == "localhost") && (port == "" || port == defaultQdrantPort)
+}
+
+func detectContainerEngine() (string, error) {
+	for _, candidate := range []string{"docker", "podman"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no container runtime found")
+}
+
+func ensureContainerRuntimeReady(ctx context.Context, engine string) error {
+	switch engine {
+	case "docker":
+		info := exec.CommandContext(ctx, "docker", "info")
+		if output, err := info.CombinedOutput(); err != nil {
+			return fmt.Errorf("code index: docker is installed but unavailable: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	case "podman":
+		return ensurePodmanReady(ctx)
+	default:
+		return fmt.Errorf("unsupported container runtime %q", engine)
+	}
+}
+
+func ensurePodmanReady(ctx context.Context) error {
+	info := exec.CommandContext(ctx, "podman", "info")
+	if output, err := info.CombinedOutput(); err == nil {
+		_ = output
+		return nil
+	}
+	if runtime.GOOS == "darwin" {
+		start := exec.CommandContext(ctx, "podman", "machine", "start")
+		if output, err := start.CombinedOutput(); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("code index: podman is installed but unavailable; start the podman machine or set SAPPHIRE_QDRANT_URL (%s)", strings.TrimSpace(string(output)))
+		}
+	}
+	return fmt.Errorf("code index: podman is installed but unavailable; start podman or set SAPPHIRE_QDRANT_URL")
 }

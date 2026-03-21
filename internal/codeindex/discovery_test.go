@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-func TestUUIDFromHashReturnsUUIDFormat(t *testing.T) {
-	hash := hashBytes([]byte("hello world"))
-	var raw [32]byte
-	copy(raw[:], []byte(hash))
-	_ = raw
-}
-
 func TestNewChunkUsesUUIDPointID(t *testing.T) {
 	file := discoveredFile{
 		RelativePath: "internal/example.go",

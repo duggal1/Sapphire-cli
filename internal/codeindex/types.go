@@ -1,12 +1,16 @@
 package codeindex
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
-	DefaultEmbeddingModel      = "unclemusclez/jina-embeddings-v2-base-code:q4"
-	DefaultEmbeddingDimensions = 768
-	DefaultOllamaURL           = "http://127.0.0.1:11434"
+	DefaultEmbeddingModel      = "jina-code-embeddings-1.5b"
+	DefaultEmbeddingDimensions = 1024
 )
+
+var ErrMissingAPIKey = errors.New("code index: Jina API key is required for embeddings")
 
 type Config struct {
 	WorkspaceRoot string
@@ -15,7 +19,6 @@ type Config struct {
 	Model         string
 	Dimensions    int
 	QdrantURL     string
-	OllamaURL     string
 }
 
 type Stats struct {
@@ -41,7 +44,6 @@ type Progress struct {
 	StartedAt       time.Time
 	UpdatedAt       time.Time
 	Error           string
-	SetupRequired   bool
 	Stats           Stats
 }
 

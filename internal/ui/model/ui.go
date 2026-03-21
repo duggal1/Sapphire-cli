@@ -1401,32 +1401,24 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		})
 	case dialog.ActionIndexCodebase:
 		m.dialog.CloseDialog(dialog.CommandsID)
-		m.setState(uiChat, uiFocusEditor)
-		m.indexingFrame = 0
-		m.indexingProgress = codeindex.Progress{
-			Workspace: m.com.Config().WorkingDir(),
-			Phase:     "starting",
-			Message:   "Preparing codebase indexing",
-			Active:    true,
-			StartedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}
-		if cmd := m.syncIndexingMessageItem(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		cmds = append(cmds, shimmer.IndexingTickCmd())
-		cmds = append(cmds, func() tea.Msg {
-			if m.com.App == nil || m.com.App.AgentCoordinator == nil {
-				return util.ReportError(errors.New("agent coordinator is not initialized"))()
+		if strings.TrimSpace(m.com.Config().ResolveJinaAPIKey()) == "" {
+			if cmd := m.openJinaAPIKeyDialog(true); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
-			if _, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), true); err != nil {
-				if codeindex.IsSetupRequired(err) {
-					return nil
-				}
-				return util.ReportError(err)()
-			}
-			return util.NewInfoMsg("Codebase indexing complete")
-		})
+			break
+		}
+		cmds = append(cmds, m.startCodebaseIndexing(true))
+	case dialog.ActionSaveJinaAPIKey:
+		if err := m.com.Config().SetJinaAPIKey(msg.APIKey); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.dialog.CloseDialog(dialog.JinaAPIKeyInputID)
+		if msg.ContinueIndex {
+			cmds = append(cmds, m.startCodebaseIndexing(true))
+		} else {
+			cmds = append(cmds, util.ReportInfo("Jina API key saved"))
+		}
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -1893,6 +1885,42 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 
 	m.dialog.OpenDialog(dlg)
 	return cmd
+}
+
+func (m *UI) openJinaAPIKeyDialog(continueIndex bool) tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.JinaAPIKeyInputID) {
+		m.dialog.BringToFront(dialog.JinaAPIKeyInputID)
+		return nil
+	}
+	m.dialog.OpenDialog(dialog.NewJinaAPIKeyInput(m.com, continueIndex))
+	return nil
+}
+
+func (m *UI) startCodebaseIndexing(force bool) tea.Cmd {
+	m.setState(uiChat, uiFocusEditor)
+	m.indexingFrame = 0
+	m.indexingProgress = codeindex.Progress{
+		Workspace: m.com.Config().WorkingDir(),
+		Phase:     "starting",
+		Message:   "Preparing codebase indexing",
+		Active:    true,
+		StartedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	cmds := []tea.Cmd{shimmer.IndexingTickCmd()}
+	if cmd := m.syncIndexingMessageItem(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	cmds = append(cmds, func() tea.Msg {
+		if m.com.App == nil || m.com.App.AgentCoordinator == nil {
+			return util.ReportError(errors.New("agent coordinator is not initialized"))()
+		}
+		if _, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), force); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Codebase indexing complete")
+	})
+	return tea.Batch(cmds...)
 }
 
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {

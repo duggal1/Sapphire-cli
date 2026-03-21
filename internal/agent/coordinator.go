@@ -111,6 +111,9 @@ func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) e
 }
 
 func (c *coordinator) IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error) {
+	if err := c.ensureCodeIndex(ctx); err != nil {
+		return codeindex.Stats{}, err
+	}
 	if c.codeIndex == nil {
 		return codeindex.Stats{}, fmt.Errorf("codebase indexing is not configured")
 	}
@@ -138,18 +141,20 @@ func (c *coordinator) GetLongHorizonAuditTail(sessionID string, maxBytes int) st
 
 // coordinator implements the Coordinator interface and manages multiple AI agents.
 type coordinator struct {
-	cfg         *config.Config
-	sessions    session.Service
-	messages    message.Service
-	permissions permission.Service
-	history     history.Service
-	filetracker filetracker.Service
-	editGuard   *tools.EditGuard
-	lspManager  *lsp.Manager
-	memory      memory.MemoryService
-	codeIndex   *codeindex.Service
-	pmem        *pmem.System
-	longHorizon *longhorizon.Manager
+	cfg          *config.Config
+	sessions     session.Service
+	messages     message.Service
+	permissions  permission.Service
+	history      history.Service
+	filetracker  filetracker.Service
+	editGuard    *tools.EditGuard
+	lspManager   *lsp.Manager
+	memory       memory.MemoryService
+	codeIndex    *codeindex.Service
+	codeIndexMu  sync.Mutex
+	codeIndexSig string
+	pmem         *pmem.System
+	longHorizon  *longhorizon.Manager
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -347,23 +352,8 @@ func NewCoordinator(
 	}
 	mainDir := c.mainWorkingDir()
 	apiKey := c.resolveGeminiAPIKey()
-	ollamaURL := strings.TrimSpace(os.Getenv("SAPPHIRE_OLLAMA_URL"))
-	if ollamaURL == "" {
-		ollamaURL = strings.TrimSpace(os.Getenv("OLLAMA_HOST"))
-	}
-	codeIndex, indexErr := codeindex.New(ctx, codeindex.Config{
-		WorkspaceRoot: mainDir,
-		DataDir:       cfg.Options.DataDirectory,
-		APIKey:        apiKey,
-		Model:         codeindex.DefaultEmbeddingModel,
-		Dimensions:    codeindex.DefaultEmbeddingDimensions,
-		QdrantURL:     strings.TrimSpace(os.Getenv("SAPPHIRE_QDRANT_URL")),
-		OllamaURL:     ollamaURL,
-	})
-	if indexErr != nil {
-		slog.Warn("Failed to initialize codebase index", "error", indexErr)
-	} else {
-		c.codeIndex = codeIndex
+	if err := c.ensureCodeIndex(ctx); err != nil {
+		slog.Warn("Failed to initialize codebase index", "error", err)
 	}
 	if !isNonInteractiveMode() {
 		c.longHorizon = longhorizon.NewManager(mainDir)
@@ -602,12 +592,20 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
 		return nil, err
 	}
+	if err := c.ensureCodeIndex(ctx); err != nil {
+		return nil, err
+	}
 	if c.codeIndex != nil {
 		if _, indexed := c.indexedSessions.Load(env.sessionID); !indexed {
 			if _, err := c.codeIndex.EnsureReady(ctx); err != nil {
-				return nil, err
+				if errors.Is(err, codeindex.ErrMissingAPIKey) {
+					slog.Debug("Skipping automatic codebase indexing; Jina API key is not configured")
+				} else {
+					return nil, err
+				}
+			} else {
+				c.indexedSessions.Store(env.sessionID, struct{}{})
 			}
-			c.indexedSessions.Store(env.sessionID, struct{}{})
 		}
 	}
 	agent, err := c.mainAgentForSession(ctx, env.sessionID)
@@ -755,6 +753,60 @@ func (c *coordinator) initEmbeddingService() {
 	}
 	c.embeddingService = skills.NewEmbeddingService(apiKey, skills.DefaultSimilarityThreshold)
 	slog.Debug("Embedding-based skill retrieval initialized")
+}
+
+func (c *coordinator) ensureCodeIndex(ctx context.Context) error {
+	if c == nil {
+		return nil
+	}
+	cfg, sig := c.codeIndexConfig()
+	c.codeIndexMu.Lock()
+	defer c.codeIndexMu.Unlock()
+	if c.codeIndex != nil && c.codeIndexSig == sig {
+		return nil
+	}
+	if c.codeIndex != nil {
+		_ = c.codeIndex.Close()
+		c.codeIndex = nil
+	}
+	service, err := codeindex.New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	c.codeIndex = service
+	c.codeIndexSig = sig
+	return nil
+}
+
+func (c *coordinator) codeIndexConfig() (codeindex.Config, string) {
+	dataDir := ""
+	if c.cfg != nil && c.cfg.Options != nil {
+		dataDir = c.cfg.Options.DataDirectory
+	}
+	cfg := codeindex.Config{
+		WorkspaceRoot: c.mainWorkingDir(),
+		DataDir:       dataDir,
+		APIKey:        c.resolveCodeIndexAPIKey(),
+		Model:         codeindex.DefaultEmbeddingModel,
+		Dimensions:    codeindex.DefaultEmbeddingDimensions,
+		QdrantURL:     strings.TrimSpace(os.Getenv("SAPPHIRE_QDRANT_URL")),
+	}
+	sig := strings.Join([]string{
+		cfg.WorkspaceRoot,
+		cfg.DataDir,
+		cfg.APIKey,
+		cfg.Model,
+		fmt.Sprintf("%d", cfg.Dimensions),
+		cfg.QdrantURL,
+	}, "|")
+	return cfg, sig
+}
+
+func (c *coordinator) resolveCodeIndexAPIKey() string {
+	if c == nil || c.cfg == nil {
+		return strings.TrimSpace(os.Getenv("JINA_API_KEY"))
+	}
+	return c.cfg.ResolveJinaAPIKey()
 }
 
 // resolveGeminiAPIKey finds a Google/Gemini API key from configured providers.

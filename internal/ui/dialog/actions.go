@@ -118,6 +118,10 @@ type (
 	ActionChangeAPIKeyState struct {
 		State APIKeyInputState
 	}
+	ActionSaveJinaAPIKey struct {
+		APIKey        string
+		ContinueIndex bool
+	}
 )
 
 // Messages for OAuth2 device flow dialog.

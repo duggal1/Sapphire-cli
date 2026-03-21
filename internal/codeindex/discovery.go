@@ -22,7 +22,7 @@ const (
 	maxChunkBytes        = 6400
 	minChunkBytes        = 1200
 	maxSnippetRunes      = 220
-	maxBatchEmbeds       = 64
+	maxBatchEmbeds       = 96
 )
 
 type discoveredFile struct {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,7 +55,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		root:  root,
 		store: store,
 	}
-	embedder, err := newEmbedder(cfg.APIKey, cfg.Model, cfg.Dimensions, cfg.DataDir, cfg.OllamaURL)
+	embedder, err := newEmbedder(cfg.APIKey, cfg.Model, cfg.Dimensions)
 	if err != nil {
 		service.initErr = err
 	} else {
@@ -117,7 +118,7 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 	progress := Progress{
 		Workspace: s.root,
 		Phase:     "discovering",
-		Message:   "Discovering indexable files",
+		Message:   "Scanning workspace",
 		Active:    true,
 		StartedAt: startedAt,
 		UpdatedAt: startedAt,
@@ -145,7 +146,6 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 		return Stats{}, err
 	}
 	progress.FilesDiscovered = len(files)
-	progress.Message = "Preparing changed chunks"
 	s.publish(progress, false)
 
 	storedFiles, err := s.store.ListFiles(ctx)
@@ -154,27 +154,24 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 	}
 
 	currentPaths := make(map[string]struct{}, len(files))
-	toIndex := make([]indexedFile, 0, len(files))
-	totalChunks := 0
+	changedFiles := make([]discoveredFile, 0, len(files))
+	needsDelete := make(map[string]struct{}, len(files))
 	for i, file := range files {
 		currentPaths[file.RelativePath] = struct{}{}
 		if !force {
 			if existing, ok := storedFiles[file.RelativePath]; ok && existing.ContentHash == file.ContentHash {
 				progress.FilesProcessed = i + 1
-				progress.Percent = computePercent(progress.FilesProcessed, len(files)) * 0.15
+				progress.Percent = computePercent(progress.FilesProcessed, len(files))
 				s.publish(progress, false)
 				continue
 			}
 		}
-		indexed := buildIndexedFile(file)
 		if _, ok := storedFiles[file.RelativePath]; ok {
-			indexed.NeedsDelete = true
+			needsDelete[file.RelativePath] = struct{}{}
 		}
-		totalChunks += len(indexed.Chunks)
-		toIndex = append(toIndex, indexed)
+		changedFiles = append(changedFiles, file)
 		progress.FilesProcessed = i + 1
-		progress.ChunksTotal = totalChunks
-		progress.Percent = computePercent(progress.FilesProcessed, len(files)) * 0.15
+		progress.Percent = computePercent(progress.FilesProcessed, len(files))
 		s.publish(progress, false)
 	}
 
@@ -186,7 +183,7 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 		}
 	}
 
-	if len(toIndex) == 0 {
+	if len(changedFiles) == 0 {
 		stats, err := s.store.Stats(ctx)
 		if err != nil {
 			return Stats{}, err
@@ -201,26 +198,39 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 		return stats, nil
 	}
 
+	progress.Phase = "preparing"
+	progress.Message = "Preparing changed chunks"
+	progress.FilesProcessed = 0
+	progress.FilesIndexed = 0
+	progress.ChunksTotal = 0
+	progress.ChunksEmbedded = 0
+	progress.Percent = 0
+	s.publish(progress, false)
+
+	toIndex, totalChunks, err := s.buildIndexedFilesParallel(ctx, changedFiles, needsDelete, &progress)
+	if err != nil {
+		progress.Active = false
+		progress.Finished = true
+		progress.Error = err.Error()
+		progress.Message = "Preparing changed chunks failed"
+		s.publish(progress, false)
+		return Stats{}, err
+	}
+
 	progress.Phase = "embedding"
 	progress.Message = "Embedding code chunks"
-	progress.FilesIndexed = 0
 	progress.FilesProcessed = 0
+	progress.FilesIndexed = 0
 	progress.ChunksTotal = totalChunks
-	progress.Percent = 0.15
+	progress.ChunksEmbedded = 0
+	progress.Percent = 0
 	s.publish(progress, false)
 
 	if err := s.embedFilesParallel(ctx, toIndex, &progress); err != nil {
 		progress.Active = false
 		progress.Finished = true
-		progress.SetupRequired = IsSetupRequired(err)
 		progress.Error = err.Error()
-		if progress.SetupRequired {
-			progress.Phase = "setup_required"
-			progress.Message = err.Error()
-			progress.Error = ""
-		} else {
-			progress.Message = "Embedding code chunks failed"
-		}
+		progress.Message = "Embedding code chunks failed"
 		s.publish(progress, false)
 		return Stats{}, err
 	}
@@ -229,21 +239,14 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 
 	progress.Phase = "upserting"
 	progress.Message = "Writing vector index"
-	progress.Percent = 0.97
+	progress.Percent = 0
 	s.publish(progress, false)
 
 	if err := s.store.ReplaceFiles(ctx, toIndex); err != nil {
 		progress.Active = false
 		progress.Finished = true
-		progress.SetupRequired = IsSetupRequired(err)
 		progress.Error = err.Error()
-		if progress.SetupRequired {
-			progress.Phase = "setup_required"
-			progress.Message = err.Error()
-			progress.Error = ""
-		} else {
-			progress.Message = "Writing vector index failed"
-		}
+		progress.Message = "Writing vector index failed"
 		s.publish(progress, false)
 		return Stats{}, err
 	}
@@ -266,15 +269,65 @@ func (s *Service) index(ctx context.Context, force bool) (Stats, error) {
 	return stats, nil
 }
 
-func (s *Service) embedChunkBatch(ctx context.Context, file *indexedFile, texts []string, indexes []int) error {
-	vectors, err := s.embedder.EmbedDocuments(ctx, texts)
-	if err != nil {
-		return err
+func (s *Service) buildIndexedFilesParallel(ctx context.Context, files []discoveredFile, needsDelete map[string]struct{}, progress *Progress) ([]indexedFile, int, error) {
+	if len(files) == 0 {
+		return nil, 0, nil
 	}
-	for i, chunkIndex := range indexes {
-		file.Chunks[chunkIndex].Embedding = vectors[i]
+	type result struct {
+		index int
+		file  indexedFile
+		err   error
 	}
-	return nil
+	workerCount := prepWorkerCount(len(files))
+	workCh := make(chan int)
+	resultCh := make(chan result, len(files))
+	var wg sync.WaitGroup
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range workCh {
+				select {
+				case <-ctx.Done():
+					resultCh <- result{index: idx, err: ctx.Err()}
+					return
+				default:
+				}
+				indexed := buildIndexedFile(files[idx])
+				if _, ok := needsDelete[indexed.Path]; ok {
+					indexed.NeedsDelete = true
+				}
+				resultCh <- result{index: idx, file: indexed}
+			}
+		}()
+	}
+
+	for idx := range files {
+		workCh <- idx
+	}
+	close(workCh)
+	wg.Wait()
+	close(resultCh)
+
+	out := make([]indexedFile, len(files))
+	totalChunks := 0
+	processed := 0
+	for res := range resultCh {
+		if res.err != nil {
+			return nil, 0, res.err
+		}
+		out[res.index] = res.file
+		totalChunks += len(res.file.Chunks)
+		processed++
+		progressCopy := *progress
+		progressCopy.FilesProcessed = processed
+		progressCopy.Message = fmt.Sprintf("Prepared %d/%d changed files", processed, len(files))
+		progressCopy.ChunksTotal = totalChunks
+		progressCopy.Percent = computePercent(processed, len(files))
+		s.publish(progressCopy, false)
+	}
+	return out, totalChunks, nil
 }
 
 func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, progress *Progress) error {
@@ -288,16 +341,13 @@ func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, p
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	var embeddedChunks atomic.Int64
-	var indexedFiles atomic.Int64
-	fileChunkCounts := fileChunkCountMap(files)
-	fileEmbeddedCounts := make([]atomic.Int64, len(files))
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for batch := range workCh {
-				if err := s.embedChunkRefBatch(ctx, files, batch, progress, &embeddedChunks, &indexedFiles, fileChunkCounts, fileEmbeddedCounts); err != nil {
+				if err := s.embedChunkRefBatch(ctx, files, batch, progress, &embeddedChunks); err != nil {
 					select {
 					case errCh <- err:
 					default:
@@ -332,15 +382,7 @@ func (s *Service) embedFilesParallel(ctx context.Context, files []indexedFile, p
 	}
 }
 
-func (s *Service) embedChunkRefBatch(
-	ctx context.Context,
-	files []indexedFile,
-	batch []chunkRef,
-	progress *Progress,
-	embeddedChunks, indexedFiles *atomic.Int64,
-	fileChunkCounts map[int]int,
-	fileEmbeddedCounts []atomic.Int64,
-) error {
+func (s *Service) embedChunkRefBatch(ctx context.Context, files []indexedFile, batch []chunkRef, progress *Progress, embeddedChunks *atomic.Int64) error {
 	texts := make([]string, 0, len(batch))
 	for _, ref := range batch {
 		texts = append(texts, ref.text)
@@ -353,22 +395,14 @@ func (s *Service) embedChunkRefBatch(
 		files[ref.fileIdx].Chunks[ref.chunkIdx].Embedding = vectors[i]
 	}
 	totalEmbedded := int(embeddedChunks.Add(int64(len(batch))))
-	for _, ref := range batch {
-		current := fileEmbeddedCounts[ref.fileIdx].Add(1)
-		if current == int64(fileChunkCounts[ref.fileIdx]) {
-			indexedFiles.Add(1)
-		}
-	}
-	s.updateEmbeddingProgress(progress, totalEmbedded, int(indexedFiles.Load()))
+	s.updateEmbeddingProgress(progress, totalEmbedded)
 	return nil
 }
 
-func (s *Service) updateEmbeddingProgress(progress *Progress, embeddedChunks, indexedFiles int) {
+func (s *Service) updateEmbeddingProgress(progress *Progress, embeddedChunks int) {
 	progressCopy := *progress
 	progressCopy.ChunksEmbedded = embeddedChunks
-	progressCopy.FilesIndexed = indexedFiles
-	progressCopy.Message = fmt.Sprintf("Indexed %d/%d files", indexedFiles, max(progress.FilesDiscovered, indexedFiles))
-	progressCopy.Percent = computeEmbeddingPercent(embeddedChunks, progress.ChunksTotal)
+	progressCopy.Percent = computePercent(embeddedChunks, progress.ChunksTotal)
 	s.publish(progressCopy, false)
 }
 
@@ -407,27 +441,35 @@ func computePercent(done, total int) float64 {
 	return float64(done) / float64(total)
 }
 
-func computeEmbeddingPercent(done, total int) float64 {
-	if total <= 0 {
-		return 0.15
+func prepWorkerCount(totalFiles int) int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		workers = 2
 	}
-	if done >= total {
-		return 0.97
+	if workers > 12 {
+		workers = 12
 	}
-	progress := float64(done) / float64(total)
-	if progress > 0 && progress < 0.01 {
-		progress = 0.01
+	if totalFiles < workers {
+		return totalFiles
 	}
-	return 0.15 + (0.82 * progress)
+	return workers
 }
 
 func embeddingWorkerCount(totalBatches int) int {
 	if totalBatches <= 0 {
 		return 1
 	}
-	// Ollama already drives the local model across available CPU threads.
-	// Extra same-model HTTP concurrency often reduces throughput instead of improving it.
-	return 1
+	workers := runtime.GOMAXPROCS(0) * 2
+	if workers < 4 {
+		workers = 4
+	}
+	if workers > 8 {
+		workers = 8
+	}
+	if totalBatches < workers {
+		return totalBatches
+	}
+	return workers
 }
 
 func flattenChunkRefs(files []indexedFile) []chunkRef {
@@ -470,14 +512,6 @@ func buildEmbeddingBatches(refs []chunkRef) [][]chunkRef {
 		batches = append(batches, batch)
 	}
 	return batches
-}
-
-func fileChunkCountMap(files []indexedFile) map[int]int {
-	counts := make(map[int]int, len(files))
-	for idx, file := range files {
-		counts[idx] = len(file.Chunks)
-	}
-	return counts
 }
 
 func parseInt64(value string) (int64, error) {

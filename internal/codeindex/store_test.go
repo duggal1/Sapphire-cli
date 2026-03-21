@@ -4,10 +4,10 @@ import "testing"
 
 func TestShouldManageLocalQdrant(t *testing.T) {
 	cases := []struct {
-		name   string
-		base   string
-		raw    string
-		want   bool
+		name string
+		base string
+		raw  string
+		want bool
 	}{
 		{name: "default local no config", base: defaultQdrantURL, raw: "", want: true},
 		{name: "explicit localhost", base: "http://localhost:6333", raw: "http://localhost:6333", want: true},

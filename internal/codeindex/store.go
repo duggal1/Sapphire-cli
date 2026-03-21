@@ -9,9 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -38,13 +36,6 @@ type store struct {
 	managedLocal bool
 }
 
-type qdrantRuntime struct {
-	containerName string
-	storageDir    string
-	baseURL       string
-	engine        string
-}
-
 func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*store, error) {
 	if dataDir == "" {
 		return nil, fmt.Errorf("code index: data directory is required")
@@ -60,9 +51,8 @@ func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*st
 		baseURL = defaultQdrantURL
 	}
 	runtime := &qdrantRuntime{
-		containerName: "sapphire-qdrant-" + workspaceKey(workspace),
-		storageDir:    filepath.Join(dataDir, "vectordb", "qdrant"),
-		baseURL:       baseURL,
+		storageDir: filepath.Join(dataDir, "vectordb", "qdrant"),
+		baseURL:    baseURL,
 	}
 	if err := ensureDir(runtime.storageDir); err != nil {
 		return nil, err
@@ -79,7 +69,12 @@ func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*st
 	return s, nil
 }
 
-func (s *store) Close() error { return nil }
+func (s *store) Close() error {
+	if s == nil || s.runtime == nil {
+		return nil
+	}
+	return s.runtime.Close()
+}
 
 func (s *store) init(ctx context.Context) error {
 	if s.ready {
@@ -123,12 +118,7 @@ func (s *store) ensureRuntime(ctx context.Context) error {
 	if !s.managedLocal {
 		return fmt.Errorf("code index: qdrant is not reachable at %s; set SAPPHIRE_QDRANT_URL to a running Qdrant server or use the default local endpoint", s.baseURL)
 	}
-	engine, err := detectContainerEngine()
-	if err != nil {
-		return fmt.Errorf("code index: qdrant is not reachable at %s and no local container runtime is installed; install Docker or Podman, or set SAPPHIRE_QDRANT_URL to a running Qdrant server", s.baseURL)
-	}
-	s.runtime.engine = engine
-	if err := s.startOrRunContainer(ctx); err != nil {
+	if err := s.startBundledQdrant(ctx); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(25 * time.Second)
@@ -139,7 +129,7 @@ func (s *store) ensureRuntime(ctx context.Context) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("code index: qdrant %s runtime started but the service did not become ready at %s", s.runtime.engine, s.baseURL)
+	return fmt.Errorf("code index: bundled qdrant started but the service did not become ready at %s", s.baseURL)
 }
 
 func (s *store) ping(ctx context.Context) error {
@@ -158,41 +148,11 @@ func (s *store) ping(ctx context.Context) error {
 	return fmt.Errorf("qdrant ping returned status %d", resp.StatusCode)
 }
 
-func (s *store) startOrRunContainer(ctx context.Context) error {
-	if s.runtime.engine == "" {
-		return fmt.Errorf("code index: no local container runtime selected")
-	}
+func (s *store) startBundledQdrant(ctx context.Context) error {
 	if err := s.ensurePortAvailable(); err != nil {
 		return err
 	}
-	if err := ensureContainerRuntimeReady(ctx, s.runtime.engine); err != nil {
-		return err
-	}
-	inspect := exec.CommandContext(ctx, s.runtime.engine, "inspect", "-f", "{{.State.Running}}", s.runtime.containerName)
-	output, err := inspect.CombinedOutput()
-	if err == nil {
-		if strings.TrimSpace(string(output)) == "true" {
-			return nil
-		}
-		start := exec.CommandContext(ctx, s.runtime.engine, "start", s.runtime.containerName)
-		if startOut, startErr := start.CombinedOutput(); startErr != nil {
-			return fmt.Errorf("code index: start qdrant %s container: %w (%s)", s.runtime.engine, startErr, strings.TrimSpace(string(startOut)))
-		}
-		return nil
-	}
-	run := exec.CommandContext(ctx,
-		s.runtime.engine, "run", "-d",
-		"--name", s.runtime.containerName,
-		"-p", defaultQdrantPort+":6333",
-		"-p", defaultQdrantGRPC+":6334",
-		"-v", s.runtime.storageDir+":/qdrant/storage",
-		"docker.io/qdrant/qdrant:latest",
-	)
-	runOut, runErr := run.CombinedOutput()
-	if runErr != nil {
-		return fmt.Errorf("code index: run qdrant %s container: %w (%s)", s.runtime.engine, runErr, strings.TrimSpace(string(runOut)))
-	}
-	return nil
+	return s.runtime.Start(ctx)
 }
 
 func (s *store) ensurePortAvailable() error {
@@ -529,45 +489,4 @@ func shouldManageLocalQdrant(baseURL, rawConfiguredURL string) bool {
 	host := strings.ToLower(parsed.Hostname())
 	port := parsed.Port()
 	return (host == "127.0.0.1" || host == "localhost") && (port == "" || port == defaultQdrantPort)
-}
-
-func detectContainerEngine() (string, error) {
-	for _, candidate := range []string{"docker", "podman"} {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no container runtime found")
-}
-
-func ensureContainerRuntimeReady(ctx context.Context, engine string) error {
-	switch engine {
-	case "docker":
-		info := exec.CommandContext(ctx, "docker", "info")
-		if output, err := info.CombinedOutput(); err != nil {
-			return fmt.Errorf("code index: docker is installed but unavailable: %w (%s)", err, strings.TrimSpace(string(output)))
-		}
-		return nil
-	case "podman":
-		return ensurePodmanReady(ctx)
-	default:
-		return fmt.Errorf("unsupported container runtime %q", engine)
-	}
-}
-
-func ensurePodmanReady(ctx context.Context) error {
-	info := exec.CommandContext(ctx, "podman", "info")
-	if output, err := info.CombinedOutput(); err == nil {
-		_ = output
-		return nil
-	}
-	if runtime.GOOS == "darwin" {
-		start := exec.CommandContext(ctx, "podman", "machine", "start")
-		if output, err := start.CombinedOutput(); err == nil {
-			return nil
-		} else {
-			return fmt.Errorf("code index: podman is installed but unavailable; start the podman machine or set SAPPHIRE_QDRANT_URL (%s)", strings.TrimSpace(string(output)))
-		}
-	}
-	return fmt.Errorf("code index: podman is installed but unavailable; start podman or set SAPPHIRE_QDRANT_URL")
 }

@@ -43,6 +43,7 @@ Thumbs.db
 /dist/
 /sapphire
 /sapphire_test
+binanry
 
 # Local environment variables
 .env

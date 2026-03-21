@@ -49,6 +49,7 @@ var runtimeToolSummaries = map[string]string{
 	"request_user_input":      "ask structured clarifying questions when mode permits",
 	"resume_agent":            "resume a previously spawned sub-agent",
 	"search_tools":            "search tools by name, purpose, or parameters",
+	"semantic_search":         "search the indexed codebase with embeddings and retrieval-ready matches",
 	"send_input":              "send more context or instructions to a sub-agent",
 	"set_mode":                "switch execution mode",
 	"single_edit":             "edit exactly one file",

@@ -8,6 +8,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/logo"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 )
@@ -152,9 +153,11 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 		"",
 		cwd,
 		"",
-		m.modelInfo(width),
-		"",
 	}
+	if indexing := m.indexingInfo(width); indexing != "" {
+		blocks = append(blocks, indexing, "")
+	}
+	blocks = append(blocks, m.modelInfo(width), "")
 
 	sidebarHeader := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -185,4 +188,19 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 				),
 			),
 	).Draw(scr, area)
+}
+
+func (m *UI) indexingInfo(width int) string {
+	if !m.indexingProgress.Active {
+		return ""
+	}
+	title := shimmer.RenderIndexingText("Indexing...", m.indexingFrame)
+	bar := renderIndexingBar(max(10, width-6), m.indexingProgress.Percent)
+	detail := m.com.Styles.HalfMuted.Render(fmt.Sprintf("%d/%d files · %d/%d chunks",
+		m.indexingProgress.FilesProcessed,
+		max(m.indexingProgress.FilesDiscovered, m.indexingProgress.FilesIndexed),
+		m.indexingProgress.ChunksEmbedded,
+		max(0, m.indexingProgress.ChunksTotal),
+	))
+	return lipgloss.JoinVertical(lipgloss.Left, title, bar, detail)
 }

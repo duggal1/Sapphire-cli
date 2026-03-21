@@ -36,6 +36,7 @@ import (
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	agentsupervisor "github.com/duggal1/Sapphire-cli/internal/agent/supervisor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/duggal1/Sapphire-cli/internal/filetracker"
@@ -87,6 +88,7 @@ type Coordinator interface {
 	GetBackgroundStatus(agentID string) (agentbackground.SubAgent, bool)
 	ListBackgroundAgents() []agentbackground.SubAgent
 	WaitForCompletion(ctx context.Context, agentIDs []string) ([]agentbackground.SubAgent, error)
+	IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error)
 	ListWorktrees(ctx context.Context, sessionID string, statuses []string, limit int) ([]orchestrationdb.WorktreeRun, error)
 	LandWorktree(ctx context.Context, idOrPath, strategy string) (orchestrationdb.WorktreeRun, error)
 	RepairWorktree(ctx context.Context, idOrPath string) (orchestrationdb.WorktreeRun, error)
@@ -106,6 +108,16 @@ func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) e
 		return nil
 	}
 	return c.memoryPipe.ConsolidateMemory(ctx, sessionID)
+}
+
+func (c *coordinator) IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error) {
+	if c.codeIndex == nil {
+		return codeindex.Stats{}, fmt.Errorf("codebase indexing is not configured")
+	}
+	if force {
+		return c.codeIndex.Refresh(ctx)
+	}
+	return c.codeIndex.EnsureReady(ctx)
 }
 
 func (c *coordinator) GetLongHorizonState(sessionID string) string {
@@ -135,7 +147,7 @@ type coordinator struct {
 	editGuard   *tools.EditGuard
 	lspManager  *lsp.Manager
 	memory      memory.MemoryService
-	indexer     *Indexer
+	codeIndex   *codeindex.Service
 	pmem        *pmem.System
 	longHorizon *longhorizon.Manager
 
@@ -332,27 +344,26 @@ func NewCoordinator(
 	} else if err != nil {
 		slog.Warn("Failed to prepare main worktree; falling back to repo root", "error", err)
 	}
+	mainDir := c.mainWorkingDir()
+	apiKey := c.resolveGeminiAPIKey()
+	codeIndex, indexErr := codeindex.New(ctx, codeindex.Config{
+		WorkspaceRoot: mainDir,
+		DataDir:       cfg.Options.DataDirectory,
+		APIKey:        apiKey,
+		Model:         codeindex.DefaultEmbeddingModel,
+		Dimensions:    codeindex.DefaultEmbeddingDimensions,
+		QdrantURL:     strings.TrimSpace(os.Getenv("SAPPHIRE_QDRANT_URL")),
+	})
+	if indexErr != nil {
+		slog.Warn("Failed to initialize codebase index", "error", indexErr)
+	} else {
+		c.codeIndex = codeIndex
+	}
 	if !isNonInteractiveMode() {
-		mainDir := c.mainWorkingDir()
-		c.indexer = NewIndexer(mainDir, lspManager, c.memory, func() bool {
-			if c.currentAgent != nil && c.currentAgent.IsBusy() {
-				return true
-			}
-			c.mainAgentsMu.RLock()
-			defer c.mainAgentsMu.RUnlock()
-			for _, agent := range c.mainAgents {
-				if agent != nil && agent.IsBusy() {
-					return true
-				}
-			}
-			return false
-		})
-		go c.indexer.Start(ctx)
 		c.longHorizon = longhorizon.NewManager(mainDir)
 
 		// Initialize persistent memory system. Session history and memory.md stay
 		// available even when model-based extraction is disabled.
-		apiKey := c.resolveGeminiAPIKey()
 		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
 			ExtractionModel: c.resolveGeminiExtractionModel(),
 			APIKey:          apiKey,
@@ -584,6 +595,11 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 
 	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
 		return nil, err
+	}
+	if c.codeIndex != nil {
+		if _, err := c.codeIndex.EnsureReady(ctx); err != nil {
+			return nil, err
+		}
 	}
 	agent, err := c.mainAgentForSession(ctx, env.sessionID)
 	if err != nil {
@@ -1507,6 +1523,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewFetchTool(c.permissions, workingDir, nil),
 		tools.NewGlobTool(workingDir),
 		tools.NewMemoryQueryTool(c.memory),
+		tools.NewSemanticSearchTool(c.codeIndex),
 		tools.NewGrepTool(workingDir, c.cfg.Tools.Grep),
 		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),

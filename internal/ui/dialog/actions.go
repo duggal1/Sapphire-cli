@@ -53,6 +53,7 @@ type (
 	ActionExternalEditor        struct{}
 	ActionToggleYoloMode        struct{}
 	ActionCycleWorktreePolicy   struct{}
+	ActionIndexCodebase         struct{}
 	ActionToggleGoogleGrounding struct{}
 	// ActionInitializeProject is a message to initialize a project.
 	ActionInitializeProject struct{}

@@ -23,6 +23,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
+	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/duggal1/Sapphire-cli/internal/event"
@@ -474,6 +475,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "history", app.History.Subscribe, app.events, subscriberCritical)
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events, subscriberBestEffort)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events, subscriberBestEffort)
+	setupSubscriber(ctx, app.serviceEventsWG, "codeindex", codeindex.SubscribeEvents, app.events, subscriberBestEffort)
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()

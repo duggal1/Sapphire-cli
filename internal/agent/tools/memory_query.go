@@ -2,8 +2,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
@@ -16,33 +14,18 @@ type MemoryQueryParams struct {
 
 const MemoryQueryToolName = "memory_query"
 
-func NewMemoryQueryTool(mem memory.MemoryService) fantasy.AgentTool {
+func NewMemoryQueryTool(_ memory.MemoryService) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		MemoryQueryToolName,
-		"Query the agent's long-term memory (cold memory), including codebase knowledge. Session-history summaries are intentionally disabled.",
+		"Query the agent's long-term memory. Use semantic_search for indexed codebase retrieval. Session-history summaries are intentionally disabled.",
 		func(ctx context.Context, params MemoryQueryParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			var sb strings.Builder
-
 			if params.Type == "summaries" || params.Type == "history" {
 				return fantasy.NewTextResponse("Session-history summaries are disabled."), nil
 			}
-
-			if params.Type == "" || params.Type == "codebase" {
-				knowledge, err := mem.SearchCodebaseKnowledge(ctx, params.Query, 20)
-				if err == nil && len(knowledge) > 0 {
-					sb.WriteString("\n### Codebase Knowledge\n")
-					for _, k := range knowledge {
-						sb.WriteString(fmt.Sprintf("- **%s** (%s) in %s\n  %s\n", k.SymbolName, k.SymbolType, k.FilePath, k.Documentation.String))
-					}
-				}
+			if params.Type == "codebase" {
+				return fantasy.NewTextResponse("Codebase retrieval moved to semantic_search."), nil
 			}
-
-			output := sb.String()
-			if output == "" {
-				return fantasy.NewTextResponse("No relevant memory found."), nil
-			}
-
-			return fantasy.NewTextResponse(output), nil
+			return fantasy.NewTextResponse("No relevant long-term memory found."), nil
 		},
 	)
 }

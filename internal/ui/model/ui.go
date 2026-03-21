@@ -89,6 +89,7 @@ import (
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
 	"github.com/duggal1/Sapphire-cli/internal/app"
+	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/commands"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/fsext"
@@ -282,6 +283,9 @@ type UI struct {
 	// Todo spinner
 	todoSpinner    spinner.Model
 	todoIsSpinning bool
+
+	indexingProgress codeindex.Progress
+	indexingFrame    int
 
 	// mouse highlighting related state
 	lastClickTime time.Time
@@ -610,6 +614,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case mcp.EventResourcesListChanged:
 			return m, handleMCPResourcesEvent(msg.Payload.Name)
 		}
+	case pubsub.Event[codeindex.Progress]:
+		wasActive := m.indexingProgress.Active
+		m.indexingProgress = msg.Payload
+		if m.indexingProgress.Active && !wasActive {
+			cmds = append(cmds, shimmer.IndexingTickCmd())
+		}
 	case pubsub.Event[permission.PermissionRequest]:
 		if cmd := m.openPermissionsDialog(msg.Payload); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -775,6 +785,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cmd := shimmer.ShimmerTickCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
+		}
+	case shimmer.IndexingTickMsg:
+		if m.indexingProgress.Active {
+			m.indexingFrame++
+			cmds = append(cmds, shimmer.IndexingTickCmd())
 		}
 	case spinner.TickMsg:
 		if m.dialog.HasDialogs() {
@@ -1348,6 +1363,17 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			return util.NewInfoMsg("Worktree execution set to " + next.Title())
 		})
+	case dialog.ActionIndexCodebase:
+		cmds = append(cmds, func() tea.Msg {
+			if m.com.App == nil || m.com.App.AgentCoordinator == nil {
+				return util.ReportError(errors.New("agent coordinator is not initialized"))()
+			}
+			if _, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), true); err != nil {
+				return util.ReportError(err)()
+			}
+			return util.NewInfoMsg("Codebase indexing complete")
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -2922,16 +2948,53 @@ func (m *UI) renderFooterView(width int) string {
 	if width <= 0 {
 		return ""
 	}
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if m.assistantFooter != nil {
 		if footer := m.assistantFooter.RawRender(width); footer != "" {
 			parts = append(parts, footer)
 		}
 	}
+	if footer := m.renderIndexingFooter(width); footer != "" {
+		parts = append(parts, footer)
+	}
 	if footer := m.renderModeFooter(width); footer != "" {
 		parts = append(parts, footer)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (m *UI) renderIndexingFooter(width int) string {
+	if m == nil || width <= 0 || !m.indexingProgress.Active {
+		return ""
+	}
+	label := shimmer.RenderIndexingText("Indexing codebase...", m.indexingFrame)
+	barWidth := max(12, min(28, width/5))
+	bar := renderIndexingBar(barWidth, m.indexingProgress.Percent)
+	detail := fmt.Sprintf("%d/%d files", m.indexingProgress.FilesProcessed, max(m.indexingProgress.FilesDiscovered, m.indexingProgress.FilesIndexed))
+	if m.indexingProgress.ChunksTotal > 0 {
+		detail = fmt.Sprintf("%s · %d/%d chunks", detail, m.indexingProgress.ChunksEmbedded, m.indexingProgress.ChunksTotal)
+	}
+	line := lipgloss.JoinHorizontal(lipgloss.Left, label, "  ", bar, "  ", m.com.Styles.HalfMuted.Render(detail))
+	return lipgloss.NewStyle().
+		Align(lipgloss.Right).
+		Width(width).
+		Render(line)
+}
+
+func renderIndexingBar(width int, percent float64) string {
+	if width <= 0 {
+		return ""
+	}
+	filled := int(percent * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#A855F7")).
+		Render(strings.Repeat("━", filled) + strings.Repeat("─", width-filled))
 }
 
 func (m *UI) renderModeFooter(width int) string {

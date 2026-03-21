@@ -117,7 +117,8 @@ These rules override everything else. Follow them strictly:
 - `set_mode`: switch execution mode.
 - `view_memory`: fetch durable per-session history, prior decisions, and earlier tool/result trails.
 - `refresh_memory`: force regeneration of the concise `memory.md` projection.
-- `memory_query`: search stored project or codebase memory.
+- `memory_query`: search persistent long-term memory.
+- `semantic_search`: search the indexed codebase with embeddings before broad manual reads.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
 - `list_available_mcps` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
 - `spawn_agent` / `resume_agent` / `send_input` / `wait` / `collect_result` / `close_agent`: real sub-agent lifecycle.

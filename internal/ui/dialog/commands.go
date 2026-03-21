@@ -397,6 +397,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_session", "Sessions", "ctrl+s", ActionOpenDialog{SessionsID}),
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
 		NewCommandItem(c.com.Styles, "switch_mode", "Switch Mode", "", ActionOpenDialog{ModesID}),
+		NewCommandItem(c.com.Styles, "index_codebase", "Index Codebase", "", ActionIndexCodebase{}),
 		NewCommandItem(c.com.Styles, "mcp_browser", "MCP Browser (Beautiful)", "", ActionOpenDialog{MCPBrowserID}),
 		NewCommandItem(c.com.Styles, "mcp_manager", "MCP Manager", "", ActionOpenDialog{MCPManagerID}),
 	}

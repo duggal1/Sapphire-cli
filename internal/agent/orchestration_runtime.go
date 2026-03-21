@@ -36,6 +36,9 @@ func (c *coordinator) Close() error {
 	if c.supervisor != nil {
 		c.supervisor.Stop()
 	}
+	if c.codeIndex != nil {
+		_ = c.codeIndex.Close()
+	}
 	if c.orchestrationStore == nil {
 		return nil
 	}

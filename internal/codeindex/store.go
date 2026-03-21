@@ -1,0 +1,475 @@
+package codeindex
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	defaultQdrantURL  = "http://127.0.0.1:6333"
+	defaultQdrantPort = "6333"
+	defaultQdrantGRPC = "6334"
+)
+
+type storedFile struct {
+	Path        string
+	ContentHash string
+}
+
+type store struct {
+	client        *http.Client
+	runtime       *qdrantRuntime
+	baseURL       string
+	collection    string
+	workspace     string
+	dimensions    int
+}
+
+type qdrantRuntime struct {
+	containerName string
+	storageDir    string
+	baseURL       string
+}
+
+func openStore(dataDir, workspace string, dimensions int, qdrantURL string) (*store, error) {
+	if dataDir == "" {
+		return nil, fmt.Errorf("code index: data directory is required")
+	}
+	if workspace == "" {
+		return nil, fmt.Errorf("code index: workspace root is required")
+	}
+	if dimensions <= 0 {
+		return nil, fmt.Errorf("code index: dimensions must be positive")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(qdrantURL), "/")
+	if baseURL == "" {
+		baseURL = defaultQdrantURL
+	}
+	runtime := &qdrantRuntime{
+		containerName: "sapphire-qdrant-" + workspaceKey(workspace),
+		storageDir:    filepath.Join(dataDir, "vectordb", "qdrant"),
+		baseURL:       baseURL,
+	}
+	if err := ensureDir(runtime.storageDir); err != nil {
+		return nil, err
+	}
+	s := &store{
+		client: &http.Client{Timeout: 30 * time.Second},
+		runtime: runtime,
+		baseURL: baseURL,
+		collection: "sapphire_code_chunks_" + workspaceKey(workspace),
+		workspace: workspace,
+		dimensions: dimensions,
+	}
+	if err := s.init(context.Background()); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *store) Close() error { return nil }
+
+func (s *store) init(ctx context.Context) error {
+	if err := s.ensureRuntime(ctx); err != nil {
+		return err
+	}
+	exists, err := s.collectionExists(ctx)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	body := map[string]any{
+		"vectors": map[string]any{
+			"size":     s.dimensions,
+			"distance": "Cosine",
+		},
+		"optimizers_config": map[string]any{
+			"default_segment_number": 2,
+		},
+	}
+	return s.requestJSON(ctx, http.MethodPut, "/collections/"+s.collection, body, nil)
+}
+
+func (s *store) ensureRuntime(ctx context.Context) error {
+	if err := s.ping(ctx); err == nil {
+		return nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return fmt.Errorf("code index: qdrant is not reachable and docker is unavailable: %w", err)
+	}
+	if err := s.startOrRunContainer(ctx); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := s.ping(ctx); err == nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("code index: qdrant container started but service did not become ready")
+}
+
+func (s *store) ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/collections", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("qdrant ping returned status %d", resp.StatusCode)
+}
+
+func (s *store) startOrRunContainer(ctx context.Context) error {
+	if err := s.ensurePortAvailable(); err != nil {
+		return err
+	}
+	inspect := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", s.runtime.containerName)
+	output, err := inspect.CombinedOutput()
+	if err == nil {
+		if strings.TrimSpace(string(output)) == "true" {
+			return nil
+		}
+		start := exec.CommandContext(ctx, "docker", "start", s.runtime.containerName)
+		if startOut, startErr := start.CombinedOutput(); startErr != nil {
+			return fmt.Errorf("code index: start qdrant container: %w (%s)", startErr, strings.TrimSpace(string(startOut)))
+		}
+		return nil
+	}
+	run := exec.CommandContext(ctx,
+		"docker", "run", "-d",
+		"--name", s.runtime.containerName,
+		"-p", defaultQdrantPort+":6333",
+		"-p", defaultQdrantGRPC+":6334",
+		"-v", s.runtime.storageDir+":/qdrant/storage",
+		"qdrant/qdrant",
+	)
+	runOut, runErr := run.CombinedOutput()
+	if runErr != nil {
+		return fmt.Errorf("code index: run qdrant container: %w (%s)", runErr, strings.TrimSpace(string(runOut)))
+	}
+	return nil
+}
+
+func (s *store) ensurePortAvailable() error {
+	listener, err := net.Listen("tcp", "127.0.0.1:"+defaultQdrantPort)
+	if err != nil {
+		return fmt.Errorf("code index: port %s is already in use and qdrant is not reachable there", defaultQdrantPort)
+	}
+	_ = listener.Close()
+	return nil
+}
+
+func (s *store) collectionExists(ctx context.Context) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/collections/"+s.collection, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true, nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return false, fmt.Errorf("code index: get collection: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func (s *store) Clear(ctx context.Context) error {
+	if err := s.requestJSON(ctx, http.MethodDelete, "/collections/"+s.collection, nil, nil); err != nil {
+		return err
+	}
+	return s.init(ctx)
+}
+
+func (s *store) ListFiles(ctx context.Context) (map[string]storedFile, error) {
+	points, err := s.scrollPoints(ctx, map[string]any{
+		"include": []string{"path", "content_hash"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string]storedFile)
+	for _, point := range points {
+		path, _ := payloadString(point.Payload, "path")
+		hash, _ := payloadString(point.Payload, "content_hash")
+		if path == "" || hash == "" {
+			continue
+		}
+		files[path] = storedFile{Path: path, ContentHash: hash}
+	}
+	return files, nil
+}
+
+func (s *store) ReplaceFile(ctx context.Context, file indexedFile) error {
+	if err := s.deletePath(ctx, file.Path); err != nil {
+		return err
+	}
+	points := make([]map[string]any, 0, len(file.Chunks))
+	indexedAtUnix := time.Now().Unix()
+	for _, chunk := range file.Chunks {
+		points = append(points, map[string]any{
+			"id":     chunk.ID,
+			"vector": chunk.Embedding,
+			"payload": map[string]any{
+				"path":           chunk.Path,
+				"language":       chunk.Language,
+				"kind":           chunk.Kind,
+				"chunk_index":    chunk.ChunkIndex,
+				"start_line":     chunk.StartLine,
+				"end_line":       chunk.EndLine,
+				"content_hash":   file.ContentHash,
+				"chunk_hash":     chunk.ContentHash,
+				"search_text":    chunk.SearchText,
+				"content":        chunk.Content,
+				"token_estimate": chunk.TokenEstimate,
+				"size_bytes":     file.Size,
+				"mod_time_unix":  file.ModTimeUnix,
+				"indexed_at_unix": indexedAtUnix,
+			},
+		})
+	}
+	if len(points) == 0 {
+		return nil
+	}
+	return s.requestJSON(ctx, http.MethodPut, "/collections/"+s.collection+"/points?wait=true", map[string]any{
+		"points": points,
+	}, nil)
+}
+
+func (s *store) DeleteFile(ctx context.Context, path string) error {
+	return s.deletePath(ctx, path)
+}
+
+func (s *store) UpdateStats(context.Context, Stats) error { return nil }
+
+func (s *store) Stats(ctx context.Context) (Stats, error) {
+	points, err := s.scrollPoints(ctx, map[string]any{
+		"include": []string{"path", "token_estimate", "indexed_at_unix"},
+	})
+	if err != nil {
+		return Stats{}, err
+	}
+	files := make(map[string]struct{})
+	stats := Stats{
+		ChunkCount:    len(points),
+		EmbeddedCount: len(points),
+	}
+	var latest int64
+	for _, point := range points {
+		if path, _ := payloadString(point.Payload, "path"); path != "" {
+			files[path] = struct{}{}
+		}
+		stats.EstimatedTokens += payloadInt(point.Payload, "token_estimate")
+		if indexedAt := payloadInt64(point.Payload, "indexed_at_unix"); indexedAt > latest {
+			latest = indexedAt
+		}
+	}
+	stats.FileCount = len(files)
+	if latest > 0 {
+		stats.LastIndexedAt = time.Unix(latest, 0)
+	}
+	return stats, nil
+}
+
+func (s *store) Search(ctx context.Context, query string, queryVector []float32, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var response qdrantQueryResponse
+	body := map[string]any{
+		"query":         queryVector,
+		"limit":         limit,
+		"with_payload":  true,
+		"with_vector":   false,
+	}
+	if err := s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/query", body, &response); err != nil {
+		return nil, err
+	}
+	results := make([]SearchResult, 0, len(response.Result.Points))
+	for _, point := range response.Result.Points {
+		results = append(results, SearchResult{
+			Path:      payloadStringDefault(point.Payload, "path"),
+			Language:  payloadStringDefault(point.Payload, "language"),
+			Kind:      payloadStringDefault(point.Payload, "kind"),
+			StartLine: payloadInt(point.Payload, "start_line"),
+			EndLine:   payloadInt(point.Payload, "end_line"),
+			Score:     point.Score,
+			Snippet:   snippet(payloadStringDefault(point.Payload, "content")),
+		})
+	}
+	return results, nil
+}
+
+func (s *store) deletePath(ctx context.Context, path string) error {
+	return s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/delete?wait=true", map[string]any{
+		"filter": map[string]any{
+			"must": []map[string]any{
+				{
+					"key": "path",
+					"match": map[string]any{
+						"value": path,
+					},
+				},
+			},
+		},
+	}, nil)
+}
+
+func (s *store) scrollPoints(ctx context.Context, payload any) ([]qdrantPoint, error) {
+	results := make([]qdrantPoint, 0, 512)
+	var offset any
+	for {
+		var response qdrantScrollResponse
+		body := map[string]any{
+			"limit":        256,
+			"with_payload": payload,
+			"with_vector":  false,
+		}
+		if offset != nil {
+			body["offset"] = offset
+		}
+		if err := s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/scroll", body, &response); err != nil {
+			if isQdrantMissingCollection(err) {
+				return results, nil
+			}
+			return nil, err
+		}
+		results = append(results, response.Result.Points...)
+		if response.Result.NextPageOffset == nil {
+			break
+		}
+		offset = response.Result.NextPageOffset
+	}
+	return results, nil
+}
+
+func (s *store) requestJSON(ctx context.Context, method, path string, body any, out any) error {
+	if err := s.ensureRuntime(ctx); err != nil {
+		return err
+	}
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, s.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("code index: qdrant %s %s failed with status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	if out == nil || len(respBody) == 0 {
+		return nil
+	}
+	return json.Unmarshal(respBody, out)
+}
+
+type qdrantPoint struct {
+	ID      any                `json:"id"`
+	Score   float64            `json:"score"`
+	Payload map[string]any     `json:"payload"`
+}
+
+type qdrantScrollResponse struct {
+	Result struct {
+		Points         []qdrantPoint `json:"points"`
+		NextPageOffset any           `json:"next_page_offset"`
+	} `json:"result"`
+}
+
+type qdrantQueryResponse struct {
+	Result struct {
+		Points []qdrantPoint `json:"points"`
+	} `json:"result"`
+}
+
+func payloadString(payload map[string]any, key string) (string, bool) {
+	value, ok := payload[key]
+	if !ok {
+		return "", false
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed, true
+	default:
+		return "", false
+	}
+}
+
+func payloadStringDefault(payload map[string]any, key string) string {
+	value, _ := payloadString(payload, key)
+	return value
+}
+
+func payloadInt(payload map[string]any, key string) int {
+	switch value := payload[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		n, _ := value.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func payloadInt64(payload map[string]any, key string) int64 {
+	switch value := payload[key].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	case json.Number:
+		n, _ := value.Int64()
+		return n
+	default:
+		return 0
+	}
+}
+
+func isQdrantMissingCollection(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "status 404")
+}

@@ -5,12 +5,12 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/logo"
 	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/ultraviolet/layout"
 )
 
 // formatReasoningEffortBrackets formats a reasoning effort level for display.
@@ -191,7 +191,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 }
 
 func (m *UI) indexingInfo(width int) string {
-	if !m.indexingProgress.Active {
+	if !m.indexingProgress.Active || m.state == uiChat {
 		return ""
 	}
 	title := shimmer.RenderIndexingText("Indexing...", m.indexingFrame)

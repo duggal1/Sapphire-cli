@@ -77,9 +77,6 @@ func (s *store) Close() error {
 }
 
 func (s *store) init(ctx context.Context) error {
-	if s.ready {
-		return nil
-	}
 	if err := s.ensureRuntime(ctx); err != nil {
 		return err
 	}
@@ -109,7 +106,10 @@ func (s *store) init(ctx context.Context) error {
 
 func (s *store) ensureRuntime(ctx context.Context) error {
 	if s.ready {
-		return nil
+		if err := s.ping(ctx); err == nil {
+			return nil
+		}
+		s.ready = false
 	}
 	if err := s.ping(ctx); err == nil {
 		s.ready = true
@@ -187,7 +187,9 @@ func (s *store) collectionExists(ctx context.Context) (bool, error) {
 func (s *store) Clear(ctx context.Context) error {
 	s.ready = false
 	if err := s.requestJSON(ctx, http.MethodDelete, "/collections/"+s.collection, nil, nil); err != nil {
-		return err
+		if !isQdrantMissingCollection(err) {
+			return err
+		}
 	}
 	return s.init(ctx)
 }
@@ -327,7 +329,7 @@ func (s *store) Search(ctx context.Context, query string, queryVector []float32,
 }
 
 func (s *store) deletePath(ctx context.Context, path string) error {
-	return s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/delete?wait=true", map[string]any{
+	err := s.requestJSON(ctx, http.MethodPost, "/collections/"+s.collection+"/points/delete?wait=true", map[string]any{
 		"filter": map[string]any{
 			"must": []map[string]any{
 				{
@@ -339,6 +341,11 @@ func (s *store) deletePath(ctx context.Context, path string) error {
 			},
 		},
 	}, nil)
+	if isQdrantMissingCollection(err) {
+		s.ready = false
+		return nil
+	}
+	return err
 }
 
 func (s *store) scrollPoints(ctx context.Context, payload any) ([]qdrantPoint, error) {

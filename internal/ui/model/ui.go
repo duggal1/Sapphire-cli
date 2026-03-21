@@ -617,6 +617,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pubsub.Event[codeindex.Progress]:
 		wasActive := m.indexingProgress.Active
 		m.indexingProgress = msg.Payload
+		if m.indexingProgress.Active {
+			m.setState(uiChat, uiFocusEditor)
+			if cmd := m.syncIndexingMessageItem(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		} else if wasActive || m.chat.MessageItem(chat.IndexingMessageID) != nil {
+			if cmd := m.syncIndexingMessageItem(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 		if m.indexingProgress.Active && !wasActive {
 			cmds = append(cmds, shimmer.IndexingTickCmd())
 		}
@@ -789,6 +799,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shimmer.IndexingTickMsg:
 		if m.indexingProgress.Active {
 			m.indexingFrame++
+			if cmd := m.syncIndexingMessageItem(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 			cmds = append(cmds, shimmer.IndexingTickCmd())
 		}
 	case spinner.TickMsg:
@@ -916,6 +929,11 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
+	if m.indexingProgress.Active || m.chat.MessageItem(chat.IndexingMessageID) != nil {
+		if cmd := m.syncIndexingMessageItem(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
 	m.updateLayoutAndSize()
 	if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -986,6 +1004,24 @@ func (m *UI) updateAssistantFooter(msg *message.Message) {
 		infoItem.SetRequestTiming(start, end)
 		m.assistantFooter = infoItem
 	}
+}
+
+func (m *UI) syncIndexingMessageItem() tea.Cmd {
+	if m == nil || m.chat == nil {
+		return nil
+	}
+	item := m.chat.MessageItem(chat.IndexingMessageID)
+	if indexingItem, ok := item.(*chat.IndexingMessageItem); ok {
+		indexingItem.SetProgress(m.indexingProgress)
+		indexingItem.SetFrame(m.indexingFrame)
+		if idx, exists := m.chat.IndexForID(chat.IndexingMessageID); exists {
+			m.chat.list.InvalidateItem(idx)
+		}
+	} else {
+		m.chat.AppendMessages(chat.NewIndexingMessageItem(m.com.Styles, m.indexingProgress, m.indexingFrame))
+	}
+	m.chat.SelectLast()
+	return m.chat.ScrollToBottomAndAnimate()
 }
 
 func (m *UI) refreshModelStateDialogs() {
@@ -1364,6 +1400,21 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Worktree execution set to " + next.Title())
 		})
 	case dialog.ActionIndexCodebase:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		m.setState(uiChat, uiFocusEditor)
+		m.indexingFrame = 0
+		m.indexingProgress = codeindex.Progress{
+			Workspace: m.com.Config().WorkingDir(),
+			Phase:     "starting",
+			Message:   "Preparing codebase indexing",
+			Active:    true,
+			StartedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if cmd := m.syncIndexingMessageItem(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, shimmer.IndexingTickCmd())
 		cmds = append(cmds, func() tea.Msg {
 			if m.com.App == nil || m.com.App.AgentCoordinator == nil {
 				return util.ReportError(errors.New("agent coordinator is not initialized"))()
@@ -1373,7 +1424,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 			return util.NewInfoMsg("Codebase indexing complete")
 		})
-		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -2964,7 +3014,7 @@ func (m *UI) renderFooterView(width int) string {
 }
 
 func (m *UI) renderIndexingFooter(width int) string {
-	if m == nil || width <= 0 || !m.indexingProgress.Active {
+	if m == nil || width <= 0 || !m.indexingProgress.Active || m.state == uiChat {
 		return ""
 	}
 	label := shimmer.RenderIndexingText("Indexing codebase...", m.indexingFrame)

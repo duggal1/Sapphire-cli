@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -423,14 +422,12 @@ func computeEmbeddingPercent(done, total int) float64 {
 }
 
 func embeddingWorkerCount(totalBatches int) int {
-	workers := max(2, runtime.GOMAXPROCS(0)-1)
-	if workers > 10 {
-		workers = 10
+	if totalBatches <= 0 {
+		return 1
 	}
-	if totalBatches < workers {
-		return totalBatches
-	}
-	return workers
+	// Ollama already drives the local model across available CPU threads.
+	// Extra same-model HTTP concurrency often reduces throughput instead of improving it.
+	return 1
 }
 
 func flattenChunkRefs(files []indexedFile) []chunkRef {

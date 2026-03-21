@@ -3,7 +3,7 @@ package codeindex
 import "time"
 
 const (
-	DefaultEmbeddingModel      = "unclemusclez/jina-embeddings-v2-base-code:latest"
+	DefaultEmbeddingModel      = "unclemusclez/jina-embeddings-v2-base-code:q4"
 	DefaultEmbeddingDimensions = 768
 	DefaultOllamaURL           = "http://127.0.0.1:11434"
 )

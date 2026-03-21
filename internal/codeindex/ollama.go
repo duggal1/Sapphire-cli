@@ -107,7 +107,12 @@ func (r *ollamaRuntime) start(ctx context.Context) error {
 	cmd := exec.Command("ollama", "serve")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.Env = append(os.Environ(), "OLLAMA_HOST="+strings.TrimPrefix(r.baseURL, "http://"))
+	cmd.Env = append(os.Environ(),
+		"OLLAMA_HOST="+strings.TrimPrefix(r.baseURL, "http://"),
+		"OLLAMA_NUM_PARALLEL=1",
+		"OLLAMA_MAX_LOADED_MODELS=1",
+		"OLLAMA_KEEP_ALIVE=24h",
+	)
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return newSetupRequiredError(ollamaSetupMessage(

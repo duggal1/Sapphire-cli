@@ -1151,7 +1151,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		} else if errors.As(err, &fantasyErr) {
 			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), requestErrorTitle), fantasyErr.Message)
 		} else {
-			currentAssistant.AddFinish(message.FinishReasonError, requestErrorTitle, err.Error())
+			if title, details, ok := classifyProviderTransportError(err, linkStyle); ok {
+				currentAssistant.AddFinish(message.FinishReasonError, title, details)
+			} else {
+				currentAssistant.AddFinish(message.FinishReasonError, requestErrorTitle, err.Error())
+			}
 		}
 		// Note: we use the parent context here because the genCtx has been
 		// cancelled.
@@ -1230,6 +1234,32 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	firstQueuedMessage := queuedMessages[0]
 	a.messageQueue.Set(call.SessionID, queuedMessages[1:])
 	return a.Run(ctx, firstQueuedMessage)
+}
+
+func classifyProviderTransportError(err error, linkStyle lipgloss.Style) (string, string, bool) {
+	if err == nil {
+		return "", "", false
+	}
+	raw := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(raw)
+
+	if strings.Contains(lower, "openrouter.ai/api/v1/chat/completions") &&
+		strings.Contains(lower, "no endpoints available matching your guardrail restrictions and data policy") {
+		url := "https://openrouter.ai/settings/privacy"
+		link := linkStyle.Hyperlink(url, "id=openrouter-privacy").Render(url)
+		return "OpenRouter privacy settings blocked this model",
+			"No OpenRouter provider endpoint currently matches your account privacy and guardrail settings for this model. Review your provider/privacy policy here: " + link,
+			true
+	}
+
+	if strings.Contains(lower, "openrouter.ai/api/v1/chat/completions") &&
+		(strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "eof")) {
+		return "OpenRouter connection reset",
+			"The selected OpenRouter endpoint dropped the network connection. This is usually a transient provider routing failure; retry the request or switch to another model/provider.",
+			true
+	}
+
+	return "", "", false
 }
 
 func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fantasy.ProviderOptions) error {

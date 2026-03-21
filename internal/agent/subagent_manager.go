@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -248,15 +249,15 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 		Status:      subAgentStatusQueued,
 		HeartbeatAt: time.Now().UTC(),
 	}
-		r.pending++
-		r.status = subAgentStatusQueued
-		r.lastResult = ""
-		r.lastError = ""
-		r.lastProgress = ""
-		r.staleMisses = 0
-		r.firstStaleObservedAt = time.Time{}
-		r.lastHeartbeat = time.Now().UTC()
-		r.heartbeatContext = "queued for execution"
+	r.pending++
+	r.status = subAgentStatusQueued
+	r.lastResult = ""
+	r.lastError = ""
+	r.lastProgress = ""
+	r.staleMisses = 0
+	r.firstStaleObservedAt = time.Time{}
+	r.lastHeartbeat = time.Now().UTC()
+	r.heartbeatContext = "queued for execution"
 	r.assignment.UpdatedAt = time.Now()
 	broker := r.statusBroker
 	r.mu.Unlock()
@@ -660,14 +661,17 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		cleanup()
 		return "", "", fmt.Errorf("create sub-agent session: %w", err)
 	}
-	if err := c.recordSubAgentMetadata(ctx, session.ID, subAgentMetadata{
+	meta := subAgentMetadata{
 		AssignmentID:     assignment.ID,
-		WorktreePath:     workDir,
-		Branch:           branch,
 		WriteManifest:    normalizedManifest,
 		DefinitionOfDone: opts.DefinitionOfDone,
 		TestCommand:      opts.TestCommand,
-	}); err != nil {
+	}
+	if worktreePolicy == worktreepolicy.Isolated {
+		meta.WorktreePath = workDir
+		meta.Branch = branch
+	}
+	if err := c.recordSubAgentMetadata(ctx, session.ID, meta); err != nil {
 		cleanup()
 		return "", "", err
 	}
@@ -1027,7 +1031,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 	if assignmentID == "" {
 		assignmentID = fmt.Sprintf("subagent-resume-%d", time.Now().UnixNano())
 	}
-	if meta.WorktreePath != "" {
+	if strings.TrimSpace(meta.WorktreePath) != "" && filepath.Clean(meta.WorktreePath) != filepath.Clean(c.cfg.WorkingDir()) {
 		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, effectiveParent, agentID, subAgentWorktreeSpec{
 			WorktreePath: meta.WorktreePath,
 			Branch:       branch,

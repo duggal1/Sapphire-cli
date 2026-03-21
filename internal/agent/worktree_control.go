@@ -22,21 +22,14 @@ func (c *coordinator) resolveSessionWorktreePolicy(ctx context.Context, sessionI
 	return worktreepolicy.Normalize(policy)
 }
 
-func (c *coordinator) resolveSpawnWorktreePolicy(ctx context.Context, sessionID string, opts spawnAgentOptions) worktreepolicy.Policy {
+func (c *coordinator) resolveSpawnWorktreePolicy(_ context.Context, _ string, opts spawnAgentOptions) worktreepolicy.Policy {
 	if opts.WorktreeSet {
 		if opts.Worktree {
 			return worktreepolicy.Isolated
 		}
 		return worktreepolicy.SharedRepo
 	}
-	policy := c.resolveSessionWorktreePolicy(ctx, sessionID)
-	if policy != worktreepolicy.Auto {
-		return policy
-	}
 	if opts.ReuseWorktree || strings.TrimSpace(opts.WorktreePath) != "" || strings.TrimSpace(opts.Branch) != "" {
-		return worktreepolicy.Isolated
-	}
-	if len(normalizeStringSlice(opts.WriteManifest)) > 0 {
 		return worktreepolicy.Isolated
 	}
 	return worktreepolicy.SharedRepo

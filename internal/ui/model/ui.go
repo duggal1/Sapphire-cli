@@ -1960,6 +1960,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 
+			if m.handleBusyEditorChatNavigation(msg, &cmds) {
+				return tea.Batch(cmds...)
+			}
+
 			switch {
 			case key.Matches(msg, m.keyMap.Editor.AddImage):
 				if cmd := m.openFilesDialog(); cmd != nil {
@@ -2430,6 +2434,13 @@ func (m *UI) ShortHelp() []key.Binding {
 			binds = append(binds,
 				k.Editor.Newline,
 			)
+			if m.isAgentBusy() {
+				binds = append(binds,
+					k.Chat.UpDown,
+					k.Chat.PageUp,
+					k.Chat.PageDown,
+				)
+			}
 			if m.attachments.HasPasteBlocks() {
 				if m.attachments.EditingPasteBlocks() {
 					binds = append(binds, k.Editor.PasteBlockNext, k.Editor.PasteBlockDelete)
@@ -2531,6 +2542,21 @@ func (m *UI) FullHelp() [][]key.Binding {
 					k.Editor.OpenEditor,
 				},
 			)
+			if m.isAgentBusy() {
+				binds = append(binds,
+					[]key.Binding{
+						k.Chat.UpDown,
+						k.Chat.PageUp,
+						k.Chat.PageDown,
+					},
+					[]key.Binding{
+						k.Chat.HalfPageUp,
+						k.Chat.HalfPageDown,
+						k.Chat.Home,
+						k.Chat.End,
+					},
+				)
+			}
 			if hasAttachments {
 				binds = append(binds,
 					[]key.Binding{
@@ -3210,6 +3236,97 @@ func (m *UI) isAgentBusy() bool {
 	return m.com.App != nil &&
 		m.com.App.AgentCoordinator != nil &&
 		m.com.App.AgentCoordinator.IsBusy()
+}
+
+func (m *UI) focusChatForNavigation() {
+	if m == nil {
+		return
+	}
+	m.focus = uiFocusMain
+	m.textarea.Blur()
+	m.chat.Focus()
+	if m.chat.Len() > 0 {
+		selected := m.chat.list.Selected()
+		if selected < 0 || selected >= m.chat.Len() {
+			m.chat.SetSelected(m.chat.Len() - 1)
+		}
+	}
+}
+
+func (m *UI) handleBusyEditorChatNavigation(msg tea.KeyMsg, cmds *[]tea.Cmd) bool {
+	if m == nil || !m.isAgentBusy() || m.focus != uiFocusEditor {
+		return false
+	}
+	if m.state != uiChat && m.state != uiLanding {
+		return false
+	}
+
+	appendCmd := func(cmd tea.Cmd) {
+		if cmd != nil && cmds != nil {
+			*cmds = append(*cmds, cmd)
+		}
+	}
+
+	switch {
+	case key.Matches(msg, m.keyMap.Chat.Up):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(-1))
+		if !m.chat.SelectedItemInView() {
+			m.chat.SelectPrev()
+			appendCmd(m.chat.ScrollToSelectedAndAnimate())
+		}
+		return true
+	case key.Matches(msg, m.keyMap.Chat.Down):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(1))
+		if !m.chat.SelectedItemInView() {
+			m.chat.SelectNext()
+			appendCmd(m.chat.ScrollToSelectedAndAnimate())
+		}
+		return true
+	case key.Matches(msg, m.keyMap.Chat.UpOneItem):
+		m.focusChatForNavigation()
+		m.chat.SelectPrev()
+		appendCmd(m.chat.ScrollToSelectedAndAnimate())
+		return true
+	case key.Matches(msg, m.keyMap.Chat.DownOneItem):
+		m.focusChatForNavigation()
+		m.chat.SelectNext()
+		appendCmd(m.chat.ScrollToSelectedAndAnimate())
+		return true
+	case key.Matches(msg, m.keyMap.Chat.HalfPageUp):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(-m.chat.Height() / 2))
+		m.chat.SelectFirstInView()
+		return true
+	case key.Matches(msg, m.keyMap.Chat.HalfPageDown):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(m.chat.Height() / 2))
+		m.chat.SelectLastInView()
+		return true
+	case key.Matches(msg, m.keyMap.Chat.PageUp):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(-m.chat.Height()))
+		m.chat.SelectFirstInView()
+		return true
+	case key.Matches(msg, m.keyMap.Chat.PageDown):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollByAndAnimate(m.chat.Height()))
+		m.chat.SelectLastInView()
+		return true
+	case key.Matches(msg, m.keyMap.Chat.Home):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollToTopAndAnimate())
+		m.chat.SelectFirst()
+		return true
+	case key.Matches(msg, m.keyMap.Chat.End):
+		m.focusChatForNavigation()
+		appendCmd(m.chat.ScrollToBottomAndAnimate())
+		m.chat.SelectLast()
+		return true
+	default:
+		return false
+	}
 }
 
 // hasSession returns true if there is an active session with a valid ID.

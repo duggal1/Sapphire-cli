@@ -1949,7 +1949,7 @@ func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[stri
 	opts := []openrouter.Option{
 		openrouter.WithAPIKey(apiKey),
 	}
-	opts = append(opts, openrouter.WithHTTPClient(c.httpClient()))
+	opts = append(opts, openrouter.WithHTTPClient(c.openrouterHTTPClient()))
 	if len(headers) > 0 {
 		opts = append(opts, openrouter.WithHeaders(headers))
 	}
@@ -2073,6 +2073,36 @@ func (c *coordinator) buildHyperProvider(baseURL, apiKey string) (fantasy.Provid
 
 func (c *coordinator) httpClient() *http.Client {
 	return log.NewHTTPClientWithTimeouts(c.cfg.Options.Debug)
+}
+
+func (c *coordinator) openrouterHTTPClient() *http.Client {
+	base := c.httpClient()
+	transport := base.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	cloned := *base
+	cloned.Transport = &log.RetryRoundTripper{
+		Transport:  transport,
+		MaxRetries: 1,
+		ShouldRetry: func(req *http.Request, resp *http.Response, err error) bool {
+			if req == nil || req.URL == nil {
+				return false
+			}
+			if !strings.Contains(strings.ToLower(req.URL.Host), "openrouter.ai") {
+				return false
+			}
+			if err == nil {
+				return false
+			}
+			lower := strings.ToLower(err.Error())
+			if strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "eof") {
+				return true
+			}
+			return false
+		},
+	}
+	return &cloned
 }
 
 func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {

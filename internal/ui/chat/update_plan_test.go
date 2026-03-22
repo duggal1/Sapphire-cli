@@ -30,6 +30,9 @@ func TestUpdatePlanRenderShowsChecklist(t *testing.T) {
 	if !strings.Contains(rendered, "Inspect renderer path") {
 		t.Fatalf("expected update_plan render to show plan step, got %q", rendered)
 	}
+	if !strings.Contains(rendered, "├──") && !strings.Contains(rendered, "└──") {
+		t.Fatalf("expected update_plan render to restore tree branches, got %q", rendered)
+	}
 }
 
 func TestUpdatePlanInvalidInputRendersError(t *testing.T) {

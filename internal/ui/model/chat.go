@@ -205,6 +205,9 @@ func (m *Chat) InvalidateShimmeringItems() bool {
 	active := false
 	for idx := startIdx; idx <= endIdx; idx++ {
 		item := m.list.ItemAt(idx)
+		if animating, ok := item.(chat.AnimationActive); ok && animating.HasActiveAnimation() {
+			active = true
+		}
 		tickable, ok := item.(chat.ShimmerTickable)
 		if !ok {
 			continue

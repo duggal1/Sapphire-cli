@@ -159,6 +159,7 @@ type baseToolMessageItem struct {
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
+var _ AnimationActive = (*baseToolMessageItem)(nil)
 
 // newBaseToolMessageItem is the internal constructor for base tool message items.
 func newBaseToolMessageItem(
@@ -453,6 +454,10 @@ func (t *baseToolMessageItem) OnShimmerTick() bool {
 	t.lastSpinnerFrame = frame
 	t.clearCache()
 	return true
+}
+
+func (t *baseToolMessageItem) HasActiveAnimation() bool {
+	return t.isSpinning()
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

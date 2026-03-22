@@ -44,6 +44,12 @@ type ShimmerTickable interface {
 	OnShimmerTick() bool
 }
 
+// AnimationActive is implemented by items that are still animating even when
+// the current frame did not change on this specific tick.
+type AnimationActive interface {
+	HasActiveAnimation() bool
+}
+
 // Expandable is an interface for items that can be expanded or collapsed.
 type Expandable interface {
 	// ToggleExpanded toggles the expanded state of the item. It returns

@@ -53,15 +53,22 @@ func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 	}
 
 	bodyWidth := max(1, cappedWidth-toolBodyLeftPaddingTotal)
-	lines := make([]string, 0, len(args.Plan)+2)
+	nodes := make([]*TreeNode, 0, len(args.Plan)+1)
 	if explanation := deref(args.Explanation); explanation != "" {
-		lines = append(lines, sty.Muted.Render(explanation), "")
+		nodes = append(nodes, &TreeNode{
+			Label: renderPlanExplanationLabel(sty, explanation, bodyWidth),
+		})
 	}
 	for _, item := range args.Plan {
-		lines = append(lines, renderPlanStepLines(sty, item, bodyWidth)...)
+		nodes = append(nodes, &TreeNode{
+			Label: renderPlanStepLabel(sty, item, bodyWidth),
+		})
+	}
+	if len(nodes) == 0 {
+		return header
 	}
 
-	return joinToolParts(header, sty.Tool.Body.Render(strings.Join(lines, "\n")))
+	return joinToolParts(header, sty.Tool.Body.Render(strings.Join(renderTreeLines(nodes, "", bodyWidth), "\n")))
 }
 
 func deref(ptr *string) string {
@@ -91,4 +98,16 @@ func renderPlanStepLines(sty *styles.Styles, item tools.PlanItem, width int) []s
 		lines[i] = render(lines[i])
 	}
 	return lines
+}
+
+func renderPlanStepLabel(sty *styles.Styles, item tools.PlanItem, width int) string {
+	return strings.Join(renderPlanStepLines(sty, item, max(1, width-4)), "\n")
+}
+
+func renderPlanExplanationLabel(sty *styles.Styles, explanation string, width int) string {
+	lines := wrapPrefixedText(strings.TrimSpace(explanation), max(1, width-4), "", "")
+	for i := range lines {
+		lines[i] = sty.Muted.Render(lines[i])
+	}
+	return strings.Join(lines, "\n")
 }

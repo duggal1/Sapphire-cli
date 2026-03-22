@@ -188,6 +188,9 @@ type (
 	sessionFilesUpdatesMsg struct {
 		sessionFiles []SessionFile
 	}
+
+	clearPendingAssistantPlaceholderMsg struct{}
+	pendingAssistantErrorMsg            struct{ err string }
 )
 
 // UI represents the main user interface model.
@@ -245,6 +248,7 @@ type UI struct {
 	chat *Chat
 	// assistantFooter is the fixed footer rendered above the editor.
 	assistantFooter *chat.AssistantInfoItem
+	pendingAssistantPlaceholderID string
 
 	// onboarding state
 	onboarding struct {
@@ -534,6 +538,17 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case closeDialogMsg:
 		m.dialog.CloseFrontDialog()
+
+	case clearPendingAssistantPlaceholderMsg:
+		m.clearPendingAssistantPlaceholder()
+
+	case pendingAssistantErrorMsg:
+		m.clearPendingAssistantPlaceholder()
+		m.status.SetInfoMsg(util.InfoMsg{
+			Type: util.InfoTypeError,
+			Msg:  msg.err,
+		})
+		cmds = append(cmds, clearInfoMsgCmd(DefaultStatusTTL))
 
 	case pubsub.Event[session.Session]:
 		if msg.Type == pubsub.DeletedEvent {
@@ -929,6 +944,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
+	m.syncPendingAssistantPlaceholder()
 	if m.indexingProgress.Active || m.chat.MessageItem(chat.IndexingMessageID) != nil {
 		if cmd := m.syncIndexingMessageItem(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1121,6 +1137,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		}
 		m.chat.SelectLast()
 	case message.Assistant:
+		m.clearPendingAssistantPlaceholder()
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
@@ -1180,6 +1197,9 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 // that is why we need to handle creating/updating each tool call message too
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
+	if msg.Role == message.Assistant {
+		m.clearPendingAssistantPlaceholder()
+	}
 	existingItem := m.chat.MessageItem(msg.ID)
 
 	if existingItem != nil {
@@ -3543,6 +3563,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
+	m.showPendingAssistantPlaceholder(sessionID)
 	sessionMode := planmode.NormalizeMode(m.session.Mode)
 	planContext := buildPlanModeContext(attachments)
 	cmds = append(cmds, func() tea.Msg {
@@ -3557,16 +3578,76 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
 			isApprovalDenied := errors.Is(err, agentformula.ErrApprovalDenied)
 			if isCancelErr || isPermissionErr || isApprovalDenied {
-				return nil
+				return clearPendingAssistantPlaceholderMsg{}
 			}
-			return util.InfoMsg{
-				Type: util.InfoTypeError,
-				Msg:  err.Error(),
-			}
+			return pendingAssistantErrorMsg{err: err.Error()}
 		}
 		return nil
 	})
 	return tea.Batch(cmds...)
+}
+
+func (m *UI) showPendingAssistantPlaceholder(sessionID string) {
+	m.clearPendingAssistantPlaceholder()
+	if sessionID == "" {
+		return
+	}
+
+	now := time.Now().Unix()
+	placeholderID := "local:pending-assistant:" + sessionID
+	msg := &message.Message{
+		ID:        placeholderID,
+		Role:      message.Assistant,
+		SessionID: sessionID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
+	if len(items) == 0 {
+		return
+	}
+
+	m.pendingAssistantPlaceholderID = placeholderID
+	for _, item := range items {
+		if animatable, ok := item.(chat.Animatable); ok {
+			_ = animatable.StartAnimation()
+		}
+	}
+	m.chat.AppendMessages(items...)
+	m.updateLayoutAndSize()
+	m.chat.ScrollToBottom()
+	m.chat.SelectLast()
+}
+
+func (m *UI) clearPendingAssistantPlaceholder() {
+	if m.pendingAssistantPlaceholderID == "" {
+		return
+	}
+	m.chat.RemoveMessage(m.pendingAssistantPlaceholderID)
+	m.pendingAssistantPlaceholderID = ""
+}
+
+func (m *UI) syncPendingAssistantPlaceholder() {
+	if m.pendingAssistantPlaceholderID == "" {
+		return
+	}
+	if m.chat.MessageItem(m.pendingAssistantPlaceholderID) != nil {
+		return
+	}
+
+	now := time.Now().Unix()
+	msg := &message.Message{
+		ID:        m.pendingAssistantPlaceholderID,
+		Role:      message.Assistant,
+		SessionID: m.session.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
+	if len(items) == 0 {
+		return
+	}
+	m.chat.AppendMessages(items...)
 }
 
 func buildPlanModeContext(attachments []message.Attachment) string {

@@ -124,3 +124,16 @@ GASTOWN_*.md
 # Subagent architecture reference
 SUBAGENT_ARCHITECTURE_REFERENCE.md
 .sapphire/worktrees/
+
+# Impeccable skills repository
+impeccable/
+
+# Skills repository (curated skills source)
+skills-repo/
+
+# Storage and snapshots
+storage/
+snapshots/
+
+# Long horizon testing
+long_horizon/

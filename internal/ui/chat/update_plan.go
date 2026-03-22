@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -30,10 +31,37 @@ type UpdatePlanToolRenderContext struct{}
 
 // RenderTool implements the ToolRenderer interface.
 func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	_ = sty
-	_ = width
-	_ = opts
-	return ""
+	cappedWidth := cappedMessageWidth(width)
+
+	var args tools.UpdatePlanArgs
+	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &args); err != nil {
+		return toolErrorContent(sty, &message.ToolResult{Content: "Invalid parameters"}, cappedWidth)
+	}
+
+	args = tools.NormalizeUpdatePlanArgs(args)
+	header := toolHeader(sty, opts.Status, "To-Do", cappedWidth, opts.Compact)
+	if opts.Compact {
+		return header
+	}
+
+	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+		return joinToolParts(header, earlyState)
+	}
+
+	if len(args.Plan) == 0 {
+		return header
+	}
+
+	bodyWidth := max(1, cappedWidth-toolBodyLeftPaddingTotal)
+	lines := make([]string, 0, len(args.Plan)+2)
+	if explanation := deref(args.Explanation); explanation != "" {
+		lines = append(lines, sty.Muted.Render(explanation), "")
+	}
+	for _, item := range args.Plan {
+		lines = append(lines, renderPlanStepLines(sty, item, bodyWidth)...)
+	}
+
+	return joinToolParts(header, sty.Tool.Body.Render(strings.Join(lines, "\n")))
 }
 
 func deref(ptr *string) string {

@@ -11,7 +11,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
-func TestUpdatePlanRenderIsHidden(t *testing.T) {
+func TestUpdatePlanRenderShowsChecklist(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.DefaultStyles(false)
@@ -26,12 +26,13 @@ func TestUpdatePlanRenderIsHidden(t *testing.T) {
 		Content:    "Plan updated",
 	}, false)
 
-	if rendered := ansi.Strip(item.Render(100)); rendered != "" {
-		t.Fatalf("expected update_plan render to stay hidden, got %q", rendered)
+	rendered := ansi.Strip(item.Render(100))
+	if !strings.Contains(rendered, "Inspect renderer path") {
+		t.Fatalf("expected update_plan render to show plan step, got %q", rendered)
 	}
 }
 
-func TestUpdatePlanInvalidInputRendersNothing(t *testing.T) {
+func TestUpdatePlanInvalidInputRendersError(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.DefaultStyles(false)
@@ -46,8 +47,9 @@ func TestUpdatePlanInvalidInputRendersNothing(t *testing.T) {
 		Content:    "missing required parameter: plan",
 	}, false)
 
-	if rendered := item.Render(100); rendered != "" {
-		t.Fatalf("expected invalid update_plan render to be hidden, got %q", rendered)
+	rendered := ansi.Strip(item.Render(100))
+	if !strings.Contains(rendered, "To-Do") {
+		t.Fatalf("expected invalid update_plan render to remain visible, got %q", rendered)
 	}
 }
 

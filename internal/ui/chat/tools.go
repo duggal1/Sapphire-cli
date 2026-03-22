@@ -282,7 +282,7 @@ func NewToolMessageItem(
 }
 
 func ShouldRenderToolCall(tc message.ToolCall) bool {
-	return tc.Name != tools.UpdatePlanToolName
+	return true
 }
 
 // SetCompact implements the Compactable interface.

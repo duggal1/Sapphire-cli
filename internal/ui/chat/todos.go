@@ -1,18 +1,14 @@
-// COMMENTED OUT - TODO LIST UI CODE DISABLED
-// Codex update_plan tool is used for logic, but Sapphire UI/UX is restored
-
 package chat
 
 import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
-// RESTORED FOR UI/UX - Used by pills.go
 func FormatTodosList(sty *styles.Styles, todos []session.Todo, inProgressIcon string, width int) string {
 	if len(todos) == 0 {
 		return ""

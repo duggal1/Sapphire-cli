@@ -509,7 +509,7 @@ func renderSubAgentLocationNode(sty *styles.Styles, path, branch string, isolate
 		label = "Worktree"
 		if path != "" {
 			if sty != nil {
-				children = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
+				children, _ = buildFileContextNodes(sty, fileContextEntriesFromPaths([]string{path}))
 			} else {
 				children = append(children, &TreeNode{Label: formatRelativePath(path)})
 			}

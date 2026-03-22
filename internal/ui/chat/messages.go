@@ -538,6 +538,9 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 			items = append(items, assistantItem)
 		}
 		for _, tc := range msg.ToolCalls() {
+			if !ShouldRenderToolCall(tc) {
+				continue
+			}
 			var result *message.ToolResult
 			if tr, ok := toolResults[tc.ID]; ok {
 				result = &tr

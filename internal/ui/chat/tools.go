@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -26,6 +27,8 @@ const responseContextHeight = 10
 
 // toolBodyLeftPaddingTotal represents the padding that should be applied to each tool body
 const toolBodyLeftPaddingTotal = 0
+
+var toolHeaderSpinner = spinner.MiniDot
 
 // ToolStatus represents the current state of a tool call.
 type ToolStatus int
@@ -256,7 +259,7 @@ func NewToolMessageItem(
 		item = NewWebSearchToolMessageItem(sty, toolCall, result, canceled)
 	// case tools.TodosToolName:  // COMMENTED OUT - TODO LIST DISABLED
 	// 	item = NewTodosToolMessageItem(sty, toolCall, result, canceled)
-	case tools.LoadSkillToolName:
+	case tools.LoadSkillToolName, "list_skills", "search_skills":
 		item = NewSkillToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ReferencesToolName:
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
@@ -275,6 +278,10 @@ func NewToolMessageItem(
 	}
 	item.SetMessageID(messageID)
 	return item
+}
+
+func ShouldRenderToolCall(tc message.ToolCall) bool {
+	return tc.Name != tools.UpdatePlanToolName
 }
 
 // SetCompact implements the Compactable interface.
@@ -425,7 +432,7 @@ func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 
 // pendingTool renders a tool that is still in progress.
 func pendingTool(sty *styles.Styles, name string) string {
-	icon := sty.Tool.IconPending.Render()
+	icon := toolIcon(sty, ToolStatusRunning, name)
 	toolName := sty.Tool.NameNormal.Render(name)
 
 	return fmt.Sprintf("%s %s", icon, toolName)
@@ -482,16 +489,36 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 
 // toolIcon returns the status icon for a tool call.
 // toolIcon returns the status icon for a tool call based on its status.
-func toolIcon(sty *styles.Styles, status ToolStatus) string {
+func toolSpinnerFrame() string {
+	frames := toolHeaderSpinner.Frames
+	if len(frames) == 0 {
+		return styles.LoadingIcon
+	}
+	index := int(time.Now().UnixMilli()/80) % len(frames)
+	if index < 0 {
+		index = 0
+	}
+	return frames[index]
+}
+
+func isSkillToolLabel(name string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(name)), "skill")
+}
+
+func toolIcon(sty *styles.Styles, status ToolStatus, name string) string {
 	switch status {
 	case ToolStatusSuccess:
-		return sty.Tool.IconSuccess.String()
+		return sty.Tool.IconSuccess.SetString(styles.CheckIcon).String()
 	case ToolStatusError:
 		return sty.Tool.IconError.String()
 	case ToolStatusCanceled:
-		return sty.Tool.IconCancelled.String()
+		return sty.Tool.IconCancelled.SetString("−").String()
 	default:
-		return sty.Tool.IconPending.String()
+		iconStyle := sty.Tool.IconPending
+		if isSkillToolLabel(name) {
+			iconStyle = sty.Tool.IconPendingSkill
+		}
+		return iconStyle.SetString(toolSpinnerFrame()).String()
 	}
 }
 
@@ -532,7 +559,7 @@ func toolParamList(sty *styles.Styles, params []string, width int) string {
 
 // toolHeader builds the tool header line: "● ToolName params..."
 func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, nested bool, params ...string) string {
-	icon := toolIcon(sty, status)
+	icon := toolIcon(sty, status, name)
 	nameStyle := sty.Tool.NameNormal
 	if nested {
 		nameStyle = sty.Tool.NameNested

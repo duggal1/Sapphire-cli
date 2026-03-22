@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,7 +10,13 @@ import (
 )
 
 func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "coder-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
 	cfg, err := config.Load(dir, "", false)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -30,6 +37,21 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	}
 	if !strings.Contains(out, "Live recipients are nudged automatically by the control plane") {
 		t.Fatalf("expected mail protocol overlay in coder prompt")
+	}
+	if !strings.Contains(out, "# SOUL.md") {
+		t.Fatalf("expected SOUL prompt section in coder prompt")
+	}
+	if !strings.Contains(out, "If there is even slight uncertainty about which skill applies, call `search_skills` first") {
+		t.Fatalf("expected strict skill policy in coder prompt")
+	}
+	if !strings.Contains(out, "`search_skills`") {
+		t.Fatalf("expected search_skills guidance in coder prompt")
+	}
+	if strings.Contains(out, "Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.") {
+		t.Fatalf("expected hardcoded skill routing to be removed from coder prompt")
+	}
+	if strings.Contains(out, "<available_skills>") {
+		t.Fatalf("expected prompt to stop inlining full available skills inventory")
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListAndLoadSkillTools(t *testing.T) {
+func TestListSearchAndLoadSkillTools(t *testing.T) {
 	t.Parallel()
 
 	workingDir := t.TempDir()
@@ -34,6 +34,12 @@ Use strict backend workflows.`), 0o644))
 	listResp := runAgentTool(t, listTool, "list_skills", struct{}{})
 	require.Contains(t, listResp.Content, "backend")
 	require.Contains(t, listResp.Content, "Backend implementation skill")
+
+	searchTool, err := coord.searchSkillsTool(t.Context())
+	require.NoError(t, err)
+	searchResp := runAgentTool(t, searchTool, "search_skills", SearchSkillsParams{Query: "backend api server", Limit: 5})
+	require.Contains(t, searchResp.Content, "backend")
+	require.Contains(t, searchResp.Content, "Matching Skills")
 
 	loadTool, err := coord.loadSkillTool(t.Context())
 	require.NoError(t, err)

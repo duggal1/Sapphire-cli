@@ -80,6 +80,9 @@ func (i *IndexingMessageItem) Render(width int) string {
 func (i *IndexingMessageItem) renderContent(width int) string {
 	title := i.renderTitle()
 	messageText := strings.TrimSpace(i.progress.Message)
+	if errText := strings.TrimSpace(i.progress.Error); errText != "" {
+		messageText = errText
+	}
 	if messageText == "" {
 		messageText = "Preparing codebase indexing"
 	}

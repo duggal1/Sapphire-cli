@@ -34,3 +34,16 @@ func TestChunkFileUsesSingleChunkForSmallFiles(t *testing.T) {
 		t.Fatalf("expected file chunk kind, got %q", chunks[0].Kind)
 	}
 }
+
+func TestSanitizeTextMakesInvalidUTF8Safe(t *testing.T) {
+	raw := []byte{'a', 0xff, 'b', '\x1b', '[', '0', 'm'}
+	got := sanitizeText(raw)
+	if got == "" {
+		t.Fatal("expected sanitized text")
+	}
+	for _, r := range got {
+		if r == '\x1b' {
+			t.Fatalf("expected control characters to be removed, got %q", got)
+		}
+	}
+}

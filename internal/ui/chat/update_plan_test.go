@@ -11,7 +11,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
-func TestUpdatePlanRendersTodoTree(t *testing.T) {
+func TestUpdatePlanRenderIsHidden(t *testing.T) {
 	t.Parallel()
 
 	sty := styles.DefaultStyles(false)
@@ -26,12 +26,8 @@ func TestUpdatePlanRendersTodoTree(t *testing.T) {
 		Content:    "Plan updated",
 	}, false)
 
-	rendered := ansi.Strip(item.Render(100))
-	if !strings.Contains(rendered, "To-Do") || !strings.Contains(rendered, "Inspect renderer path") || strings.Contains(rendered, "╭") {
-		t.Fatalf("expected todo tree, got %q", rendered)
-	}
-	if strings.Contains(rendered, `"plan"`) {
-		t.Fatalf("expected raw update_plan payload to stay hidden, got %q", rendered)
+	if rendered := ansi.Strip(item.Render(100)); rendered != "" {
+		t.Fatalf("expected update_plan render to stay hidden, got %q", rendered)
 	}
 }
 

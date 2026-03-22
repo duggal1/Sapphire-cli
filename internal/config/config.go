@@ -534,6 +534,13 @@ func (c *Config) SetJinaAPIKey(apiKey string) error {
 	return c.SetConfigField("options.jina_api_key", c.Options.JinaAPIKey)
 }
 
+func (c *Config) ClearJinaAPIKey() error {
+	if c.Options != nil {
+		c.Options.JinaAPIKey = ""
+	}
+	return c.RemoveConfigField("options.jina_api_key")
+}
+
 func IsGemini3Model(modelID string) bool {
 	id := strings.ToLower(modelID)
 	return strings.HasPrefix(id, "gemini-3") || strings.HasPrefix(id, "gemini-3.")
@@ -900,6 +907,7 @@ func allToolNames() []string {
 		"write",
 		"list_tools",
 		"search_tools",
+		"search_skills",
 		"tool_suggest",
 		"list_available_mcps",
 		"connect_mcp",

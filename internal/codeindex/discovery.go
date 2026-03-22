@@ -15,14 +15,17 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
-	singleFileChunkBytes = 12 * 1024
-	maxChunkBytes        = 6400
-	minChunkBytes        = 1200
-	maxSnippetRunes      = 220
-	maxBatchEmbeds       = 96
+	singleFileChunkBytes   = 12 * 1024
+	maxChunkBytes          = 6400
+	minChunkBytes          = 1200
+	maxSnippetRunes        = 220
+	maxBatchEmbeds         = 192
+	maxEmbeddingBatchBytes = 1024 * 1024
 )
 
 type discoveredFile struct {
@@ -228,7 +231,7 @@ func loadDiscoveredFile(root, path string) (discoveredFile, error) {
 		AbsolutePath: path,
 		RelativePath: rel,
 		Language:     detectLanguage(path, name),
-		Content:      string(raw),
+		Content:      sanitizeText(raw),
 		ContentHash:  hashBytes(raw),
 		ModTimeUnix:  info.ModTime().Unix(),
 		Size:         info.Size(),
@@ -409,12 +412,14 @@ func chunkTextFile(file discoveredFile) []indexedChunk {
 }
 
 func newChunk(file discoveredFile, chunkIndex int, kind string, startLine, endLine int, name, text string) indexedChunk {
+	text = strings.TrimSpace(sanitizeText([]byte(text)))
 	searchText := text
 	if name != "" {
 		searchText = fmt.Sprintf("%s\n%s\n%s", file.RelativePath, name, text)
 	} else {
 		searchText = fmt.Sprintf("%s\n%s", file.RelativePath, text)
 	}
+	searchText = strings.TrimSpace(sanitizeText([]byte(searchText)))
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", file.ContentHash, chunkIndex, searchText)))
 	return indexedChunk{
 		ID:            uuidFromHash(hash),
@@ -446,6 +451,31 @@ func estimateTokens(text string) int {
 	}
 	runes := len([]rune(text))
 	return max(1, runes/4)
+}
+
+func sanitizeText(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	text := string(data)
+	if !utf8.ValidString(text) {
+		text = strings.ToValidUTF8(text, " ")
+	}
+	var builder strings.Builder
+	builder.Grow(len(text))
+	for _, r := range text {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			builder.WriteRune(r)
+		case r == utf8.RuneError:
+			builder.WriteByte(' ')
+		case unicode.IsControl(r):
+			builder.WriteByte(' ')
+		default:
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func snippet(text string) string {

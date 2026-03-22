@@ -1,4 +1,4 @@
-# Sapphire CLI
+roo# Sapphire CLI
 
 A tool for managing Sapphire agents.
 

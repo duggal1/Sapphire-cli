@@ -267,10 +267,11 @@ type Styles struct {
 	// Tool - styles for tool call rendering
 	Tool struct {
 		// Icon styles with tool status
-		IconPending   lipgloss.Style // Pending operation icon
-		IconSuccess   lipgloss.Style // Successful operation icon
-		IconError     lipgloss.Style // Error operation icon
-		IconCancelled lipgloss.Style // Cancelled operation icon
+		IconPending      lipgloss.Style // Pending operation icon
+		IconPendingSkill lipgloss.Style // Pending skill operation icon
+		IconSuccess      lipgloss.Style // Successful operation icon
+		IconError        lipgloss.Style // Error operation icon
+		IconCancelled    lipgloss.Style // Cancelled operation icon
 
 		// Tool name styles
 		NameNormal        lipgloss.Style // Normal tool name
@@ -1266,7 +1267,8 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Tool rendering styles
 	// Icon palette follows the Codex-like neutral/green/rose state model.
-	s.Tool.IconPending = base.Foreground(fgHalfMuted).SetString(ToolPending)
+	s.Tool.IconPending = base.Foreground(greenLight).Bold(true).SetString(ToolPending)
+	s.Tool.IconPendingSkill = base.Foreground(tertiary).Bold(true).SetString(ToolPending)
 	s.Tool.IconSuccess = base.Foreground(greenLight).SetString(ToolSuccess)
 	s.Tool.IconError = base.Foreground(error).SetString(ToolError)
 	s.Tool.IconCancelled = s.Muted.SetString(ToolPending)

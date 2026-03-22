@@ -6,20 +6,31 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/skills"
 )
 
 //go:embed templates/list_skills.md
 var listSkillsToolDescription []byte
+
+//go:embed templates/search_skills.md
+var searchSkillsToolDescription []byte
 
 //go:embed templates/load_skill.md
 var loadSkillToolDescription []byte
 
 type LoadSkillParams struct {
 	Name string `json:"name" description:"The name of the skill to load (e.g., 'frontend', 'backend', 'debugging')"`
+}
+
+type SearchSkillsParams struct {
+	Query string `json:"query" description:"Short domain query for skill discovery, e.g. 'frontend react ui accessibility motion'"`
+	Limit int    `json:"limit,omitempty" description:"Maximum number of matches to return"`
 }
 
 type ListSkillsResponse struct {
@@ -31,6 +42,11 @@ type SkillInfo struct {
 	Description string `json:"description"`
 	IsInternal  bool   `json:"is_internal"`
 	Location    string `json:"location,omitempty"`
+}
+
+type rankedSkill struct {
+	info  SkillInfo
+	score int
 }
 
 // listSkillsTool returns a tool that lists all available skills with O(1) cache lookup.
@@ -77,6 +93,60 @@ func (c *coordinator) listSkillsTool(_ context.Context) (fantasy.AgentTool, erro
 
 			return fantasy.NewTextResponse(sb.String()), nil
 		}), nil
+}
+
+func (c *coordinator) searchSkillsTool(_ context.Context) (fantasy.AgentTool, error) {
+	return fantasy.NewParallelAgentTool(
+		"search_skills",
+		string(searchSkillsToolDescription),
+		func(ctx context.Context, params SearchSkillsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			c.ensureSkillsDiscovered()
+
+			query := strings.TrimSpace(params.Query)
+			if query == "" {
+				return fantasy.NewTextErrorResponse("query is required"), nil
+			}
+			if len(c.discoveredSkills) == 0 {
+				return fantasy.NewTextResponse("No skills available. Check that skills are installed in the project or system skills directory."), nil
+			}
+
+			limit := params.Limit
+			if limit <= 0 {
+				limit = 8
+			}
+			if limit > 20 {
+				limit = 20
+			}
+
+			matches := rankSkills(c.discoveredSkills, query, limit)
+			if len(matches) == 0 {
+				return fantasy.NewTextResponse(fmt.Sprintf("No skills matched query %q. Try broader terms or call list_skills for full inventory.", query)), nil
+			}
+
+			var sb strings.Builder
+			sb.WriteString("## Matching Skills\n\n")
+			for _, match := range matches {
+				source := "System"
+				if !match.info.IsInternal {
+					source = "Project"
+				}
+				sb.WriteString("- **")
+				sb.WriteString(match.info.Name)
+				sb.WriteString("**")
+				sb.WriteString(" (score ")
+				sb.WriteString(strconv.Itoa(match.score))
+				sb.WriteString("): ")
+				sb.WriteString(match.info.Description)
+				sb.WriteString(" [")
+				sb.WriteString(source)
+				sb.WriteString(": ")
+				sb.WriteString(match.info.Location)
+				sb.WriteString("]\n")
+			}
+			sb.WriteString("\nNext: call `load_skill` with the exact skill name you want to activate.")
+			return fantasy.NewTextResponse(sb.String()), nil
+		},
+	), nil
 }
 
 // loadSkillTool returns a tool that loads a specific skill's instructions with O(1) cache lookup.
@@ -183,4 +253,119 @@ func (c *coordinator) loadSkillTool(_ context.Context) (fantasy.AgentTool, error
 				Content: fmt.Sprintf("%s\n\n<instructions>\n%s\n</instructions>", msg, matchedInstructions),
 			}, nil
 		}), nil
+}
+
+func rankSkills(discovered []*skills.Skill, query string, limit int) []rankedSkill {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	tokens := uniqueTokens(query)
+	matches := make([]rankedSkill, 0, len(discovered))
+
+	for _, skill := range discovered {
+		if skill == nil {
+			continue
+		}
+		info := skillInfoFromSkill(skill)
+		name := strings.ToLower(info.Name)
+		description := strings.ToLower(info.Description)
+		location := strings.ToLower(info.Location)
+		instructions := strings.ToLower(skill.Instructions)
+
+		score := 0
+		if name == query {
+			score += 300
+		}
+		if strings.Contains(name, query) {
+			score += 180
+		}
+		if strings.Contains(description, query) {
+			score += 120
+		}
+		if strings.Contains(location, query) {
+			score += 80
+		}
+		if strings.Contains(instructions, query) {
+			score += 30
+		}
+
+		matchedTokens := 0
+		for _, token := range tokens {
+			tokenMatched := false
+			if strings.Contains(name, token) {
+				score += 45
+				tokenMatched = true
+			}
+			if strings.Contains(description, token) {
+				score += 28
+				tokenMatched = true
+			}
+			if strings.Contains(location, token) {
+				score += 18
+				tokenMatched = true
+			}
+			if strings.Contains(instructions, token) {
+				score += 8
+				tokenMatched = true
+			}
+			if tokenMatched {
+				matchedTokens++
+			}
+		}
+		if matchedTokens == len(tokens) && len(tokens) > 0 {
+			score += 40
+		}
+		if score == 0 {
+			continue
+		}
+		matches = append(matches, rankedSkill{
+			info:  info,
+			score: score,
+		})
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].score == matches[j].score {
+			return matches[i].info.Name < matches[j].info.Name
+		}
+		return matches[i].score > matches[j].score
+	})
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches
+}
+
+func skillInfoFromSkill(s *skills.Skill) SkillInfo {
+	displayName := s.Name
+	if displayName == "" || displayName == "SKILLNAME" {
+		displayName = filepath.Base(s.Path)
+	}
+	return SkillInfo{
+		Name:        displayName,
+		Description: s.Description,
+		IsInternal:  s.IsInternal,
+		Location:    s.SkillFilePath,
+	}
+}
+
+func uniqueTokens(query string) []string {
+	parts := strings.FieldsFunc(query, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	seen := make(map[string]struct{}, len(parts))
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.ToLower(part))
+		if len(part) < 2 {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		tokens = append(tokens, part)
+	}
+	return tokens
 }

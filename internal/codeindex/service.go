@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -389,6 +391,13 @@ func (s *Service) embedChunkRefBatch(ctx context.Context, files []indexedFile, b
 	}
 	vectors, err := s.embedder.EmbedDocuments(ctx, texts)
 	if err != nil {
+		if isJinaEncodeTextError(err) && len(batch) > 1 {
+			return s.embedChunkRefSplit(ctx, files, batch, progress, embeddedChunks)
+		}
+		if isJinaEncodeTextError(err) && len(batch) == 1 {
+			s.skipRejectedChunk(files, batch[0], err)
+			return nil
+		}
 		return err
 	}
 	for i, ref := range batch {
@@ -397,6 +406,46 @@ func (s *Service) embedChunkRefBatch(ctx context.Context, files []indexedFile, b
 	totalEmbedded := int(embeddedChunks.Add(int64(len(batch))))
 	s.updateEmbeddingProgress(progress, totalEmbedded)
 	return nil
+}
+
+func (s *Service) embedChunkRefSplit(ctx context.Context, files []indexedFile, batch []chunkRef, progress *Progress, embeddedChunks *atomic.Int64) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if len(batch) == 1 {
+		return s.embedSingleChunk(ctx, files, batch[0], progress, embeddedChunks)
+	}
+	mid := len(batch) / 2
+	if err := s.embedChunkRefBatch(ctx, files, batch[:mid], progress, embeddedChunks); err != nil {
+		return err
+	}
+	return s.embedChunkRefBatch(ctx, files, batch[mid:], progress, embeddedChunks)
+}
+
+func (s *Service) embedSingleChunk(ctx context.Context, files []indexedFile, ref chunkRef, progress *Progress, embeddedChunks *atomic.Int64) error {
+	vectors, err := s.embedder.EmbedDocuments(ctx, []string{ref.text})
+	if err != nil {
+		if isJinaEncodeTextError(err) {
+			s.skipRejectedChunk(files, ref, err)
+			return nil
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return err
+	}
+	if len(vectors) == 0 {
+		return nil
+	}
+	files[ref.fileIdx].Chunks[ref.chunkIdx].Embedding = vectors[0]
+	totalEmbedded := int(embeddedChunks.Add(1))
+	s.updateEmbeddingProgress(progress, totalEmbedded)
+	return nil
+}
+
+func (s *Service) skipRejectedChunk(files []indexedFile, ref chunkRef, err error) {
+	files[ref.fileIdx].Chunks[ref.chunkIdx].Embedding = nil
+	slog.Warn("Skipping chunk rejected by Jina tokenizer", "path", files[ref.fileIdx].Path, "chunk_index", ref.chunkIdx, "error", err)
 }
 
 func (s *Service) updateEmbeddingProgress(progress *Progress, embeddedChunks int) {
@@ -446,8 +495,8 @@ func prepWorkerCount(totalFiles int) int {
 	if workers < 2 {
 		workers = 2
 	}
-	if workers > 12 {
-		workers = 12
+	if workers > 16 {
+		workers = 16
 	}
 	if totalFiles < workers {
 		return totalFiles
@@ -459,12 +508,12 @@ func embeddingWorkerCount(totalBatches int) int {
 	if totalBatches <= 0 {
 		return 1
 	}
-	workers := runtime.GOMAXPROCS(0) * 2
-	if workers < 4 {
-		workers = 4
+	workers := runtime.GOMAXPROCS(0) * 4
+	if workers < 12 {
+		workers = 12
 	}
-	if workers > 8 {
-		workers = 8
+	if workers > 32 {
+		workers = 32
 	}
 	if totalBatches < workers {
 		return totalBatches
@@ -496,7 +545,7 @@ func buildEmbeddingBatches(refs []chunkRef) [][]chunkRef {
 	currentBytes := 0
 	for _, ref := range refs {
 		nextBytes := currentBytes + len(ref.text)
-		if len(current) >= maxBatchEmbeds || (len(current) > 0 && nextBytes > 512*1024) {
+		if len(current) >= maxBatchEmbeds || (len(current) > 0 && nextBytes > maxEmbeddingBatchBytes) {
 			batch := make([]chunkRef, len(current))
 			copy(batch, current)
 			batches = append(batches, batch)

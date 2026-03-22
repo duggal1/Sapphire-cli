@@ -9,7 +9,7 @@ import (
 
 const ProjectSkillsDirName = "skills"
 
-//go:embed bundled/*/SKILL.md
+//go:embed bundled
 var bundledSkills embed.FS
 
 func ProjectSkillsDir(dataDir string) string {
@@ -19,6 +19,9 @@ func ProjectSkillsDir(dataDir string) string {
 func EnsureProjectSkills(dataDir string) error {
 	targetRoot := ProjectSkillsDir(dataDir)
 	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(targetRoot, "teach-impeccable")); err != nil {
 		return err
 	}
 

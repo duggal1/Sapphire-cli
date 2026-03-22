@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -31,45 +30,10 @@ type UpdatePlanToolRenderContext struct{}
 
 // RenderTool implements the ToolRenderer interface.
 func (u *UpdatePlanToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
-	cappedWidth := cappedMessageWidth(width)
-	if opts.IsPending() {
-		return ""
-	}
-
-	if opts.Status == ToolStatusError {
-		return ""
-	}
-
-	var args tools.UpdatePlanArgs
-	if err := json.Unmarshal([]byte(opts.ToolCall.Input), &args); err != nil {
-		return ""
-	}
-	args = tools.NormalizeUpdatePlanArgs(args)
-
-	if err := tools.ValidatePlanItems(args.Plan); err != nil {
-		return ""
-	}
-
-	title := sty.Base.Foreground(sty.GreenLight).Bold(true).Render("To-Do")
-	lines := []string{sty.Base.Foreground(sty.GreenLight).Render("• ") + title}
-
-	indented := make([]string, 0, len(args.Plan)+1)
-	if expl := strings.TrimSpace(deref(args.Explanation)); expl != "" {
-		indented = append(indented, wrapPrefixedText(sty.Base.Faint(true).Italic(true).Render(expl), cappedWidth-4, "", "")...)
-	}
-	for _, item := range args.Plan {
-		indented = append(indented, renderPlanStepLines(sty, item, cappedWidth)...)
-	}
-
-	for i, line := range indented {
-		prefix := "    "
-		if i == 0 {
-			prefix = sty.Muted.Render("  └ ")
-		}
-		lines = append(lines, prefix+line)
-	}
-
-	return strings.Join(lines, "\n")
+	_ = sty
+	_ = width
+	_ = opts
+	return ""
 }
 
 func deref(ptr *string) string {

@@ -14,7 +14,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/home"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
-	"github.com/duggal1/Sapphire-cli/internal/skills"
 )
 
 const gitPromptTimeout = 750 * time.Millisecond
@@ -39,7 +38,6 @@ type PromptDat struct {
 	Date           string
 	GitStatus      string
 	ContextFiles   []ContextFile
-	AvailSkillXML  string
 	PlanToolPrompt string
 }
 
@@ -194,18 +192,6 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		files[pathKey] = content
 	}
 
-	// Discover and load skills metadata.
-	var availSkillXML string
-	if len(options.SkillsPaths) > 0 {
-		expandedPaths := make([]string, 0, len(options.SkillsPaths))
-		for _, pth := range options.SkillsPaths {
-			expandedPaths = append(expandedPaths, ExpandPath(pth, cfg))
-		}
-		if discoveredSkills := skills.Discover(expandedPaths); len(discoveredSkills) > 0 {
-			availSkillXML = skills.ToPromptXML(discoveredSkills)
-		}
-	}
-
 	isGit := isGitRepo(workingDir)
 	data := PromptDat{
 		Provider:       provider,
@@ -215,7 +201,6 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		IsGitRepo:      isGit,
 		Platform:       platform,
 		Date:           nowFn().Format("1/2/2006"),
-		AvailSkillXML:  availSkillXML,
 		PlanToolPrompt: p.planToolPrompt,
 	}
 	if isGit {

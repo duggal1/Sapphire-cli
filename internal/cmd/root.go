@@ -17,6 +17,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/fang"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/charmbracelet/x/term"
 	"github.com/duggal1/Sapphire-cli/internal/app"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
@@ -25,10 +29,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	ui "github.com/duggal1/Sapphire-cli/internal/ui/model"
 	"github.com/duggal1/Sapphire-cli/internal/version"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +45,7 @@ func init() {
 		worktreesCmd,
 		dirsCmd,
 		projectsCmd,
+		jinaCmd,
 		updateProvidersCmd,
 		logsCmd,
 		schemaCmd,

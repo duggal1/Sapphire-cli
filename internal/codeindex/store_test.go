@@ -21,3 +21,17 @@ func TestShouldManageLocalQdrant(t *testing.T) {
 		}
 	}
 }
+
+func TestPointsFromFileSkipsChunksWithoutEmbeddings(t *testing.T) {
+	file := indexedFile{
+		ContentHash: "hash",
+		Chunks: []indexedChunk{
+			{ID: "a", Embedding: []float32{1, 2}, Path: "a.go"},
+			{ID: "b", Embedding: nil, Path: "a.go"},
+		},
+	}
+	points := pointsFromFile(file)
+	if len(points) != 1 {
+		t.Fatalf("expected 1 point, got %d", len(points))
+	}
+}

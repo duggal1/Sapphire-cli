@@ -233,6 +233,9 @@ func repairToolCall(
 		normalizeKey(input, "name", "skill", "skill_name", "skillName")
 	case "list_skills":
 		// No parameters needed
+	case "search_skills":
+		normalizeKey(input, "query", "q", "search", "term")
+		normalizeKey(input, "limit", "count", "max_results")
 
 	// ── Agent delegation tool ────────────────────────────────────────
 	case "agent":

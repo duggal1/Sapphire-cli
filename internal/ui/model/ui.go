@@ -1204,6 +1204,9 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 
 	var items []chat.MessageItem
 	for _, tc := range msg.ToolCalls() {
+		if !chat.ShouldRenderToolCall(tc) {
+			continue
+		}
 		existingToolItem := m.chat.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {
 			existingToolCall := toolItem.ToolCall()
@@ -1274,6 +1277,9 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Update or create nested tool calls.
 	for _, tc := range event.Payload.ToolCalls() {
+		if !chat.ShouldRenderToolCall(tc) {
+			continue
+		}
 		found := false
 		for _, existingTool := range nestedTools {
 			if existingTool.ToolCall().ID == tc.ID {
@@ -1399,15 +1405,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			return util.NewInfoMsg("Worktree execution set to " + next.Title())
 		})
-	case dialog.ActionIndexCodebase:
-		m.dialog.CloseDialog(dialog.CommandsID)
-		if strings.TrimSpace(m.com.Config().ResolveJinaAPIKey()) == "" {
-			if cmd := m.openJinaAPIKeyDialog(true); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			break
-		}
-		cmds = append(cmds, m.startCodebaseIndexing(true))
 	case dialog.ActionSaveJinaAPIKey:
 		if err := m.com.Config().SetJinaAPIKey(msg.APIKey); err != nil {
 			cmds = append(cmds, util.ReportError(err))
@@ -1415,7 +1412,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.JinaAPIKeyInputID)
 		if msg.ContinueIndex {
-			cmds = append(cmds, m.startCodebaseIndexing(true))
+			cmds = append(cmds, util.ReportWarn("Codebase indexing is temporarily disabled"))
 		} else {
 			cmds = append(cmds, util.ReportInfo("Jina API key saved"))
 		}
@@ -1897,30 +1894,8 @@ func (m *UI) openJinaAPIKeyDialog(continueIndex bool) tea.Cmd {
 }
 
 func (m *UI) startCodebaseIndexing(force bool) tea.Cmd {
-	m.setState(uiChat, uiFocusEditor)
-	m.indexingFrame = 0
-	m.indexingProgress = codeindex.Progress{
-		Workspace: m.com.Config().WorkingDir(),
-		Phase:     "starting",
-		Message:   "Preparing codebase indexing",
-		Active:    true,
-		StartedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	cmds := []tea.Cmd{shimmer.IndexingTickCmd()}
-	if cmd := m.syncIndexingMessageItem(); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	cmds = append(cmds, func() tea.Msg {
-		if m.com.App == nil || m.com.App.AgentCoordinator == nil {
-			return util.ReportError(errors.New("agent coordinator is not initialized"))()
-		}
-		if _, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), force); err != nil {
-			return util.ReportError(err)()
-		}
-		return util.NewInfoMsg("Codebase indexing complete")
-	})
-	return tea.Batch(cmds...)
+	_ = force
+	return util.ReportWarn("Codebase indexing is temporarily disabled")
 }
 
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {

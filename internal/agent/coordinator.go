@@ -111,16 +111,9 @@ func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) e
 }
 
 func (c *coordinator) IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error) {
-	if err := c.ensureCodeIndex(ctx); err != nil {
-		return codeindex.Stats{}, err
-	}
-	if c.codeIndex == nil {
-		return codeindex.Stats{}, fmt.Errorf("codebase indexing is not configured")
-	}
-	if force {
-		return c.codeIndex.Refresh(ctx)
-	}
-	return c.codeIndex.EnsureReady(ctx)
+	_ = ctx
+	_ = force
+	return codeindex.Stats{}, fmt.Errorf("codebase indexing is temporarily disabled")
 }
 
 func (c *coordinator) GetLongHorizonState(sessionID string) string {
@@ -352,9 +345,7 @@ func NewCoordinator(
 	}
 	mainDir := c.mainWorkingDir()
 	apiKey := c.resolveGeminiAPIKey()
-	if err := c.ensureCodeIndex(ctx); err != nil {
-		slog.Warn("Failed to initialize codebase index", "error", err)
-	}
+	// Codebase indexing is temporarily disabled. Keep the plumbing dormant for now.
 	if !isNonInteractiveMode() {
 		c.longHorizon = longhorizon.NewManager(mainDir)
 
@@ -592,22 +583,6 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
 		return nil, err
 	}
-	if err := c.ensureCodeIndex(ctx); err != nil {
-		return nil, err
-	}
-	if c.codeIndex != nil {
-		if _, indexed := c.indexedSessions.Load(env.sessionID); !indexed {
-			if _, err := c.codeIndex.EnsureReady(ctx); err != nil {
-				if errors.Is(err, codeindex.ErrMissingAPIKey) {
-					slog.Debug("Skipping automatic codebase indexing; Jina API key is not configured")
-				} else {
-					return nil, err
-				}
-			} else {
-				c.indexedSessions.Store(env.sessionID, struct{}{})
-			}
-		}
-	}
 	agent, err := c.mainAgentForSession(ctx, env.sessionID)
 	if err != nil {
 		return nil, err
@@ -756,25 +731,17 @@ func (c *coordinator) initEmbeddingService() {
 }
 
 func (c *coordinator) ensureCodeIndex(ctx context.Context) error {
+	_ = ctx
 	if c == nil {
 		return nil
 	}
-	cfg, sig := c.codeIndexConfig()
 	c.codeIndexMu.Lock()
 	defer c.codeIndexMu.Unlock()
-	if c.codeIndex != nil && c.codeIndexSig == sig {
-		return nil
-	}
 	if c.codeIndex != nil {
 		_ = c.codeIndex.Close()
 		c.codeIndex = nil
 	}
-	service, err := codeindex.New(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	c.codeIndex = service
-	c.codeIndexSig = sig
+	c.codeIndexSig = ""
 	return nil
 }
 
@@ -1584,7 +1551,6 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewFetchTool(c.permissions, workingDir, nil),
 		tools.NewGlobTool(workingDir),
 		tools.NewMemoryQueryTool(c.memory),
-		tools.NewSemanticSearchTool(c.codeIndex),
 		tools.NewGrepTool(workingDir, c.cfg.Tools.Grep),
 		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
 		tools.NewSourcegraphTool(nil),
@@ -1687,7 +1653,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		)
 	}
 
-	// Add skill tools (list_skills, load_skill).
+	// Add skill tools (list_skills, search_skills, load_skill).
 	loadSkillTool, err := c.loadSkillTool(ctx)
 	if err == nil {
 		allTools = append(allTools, loadSkillTool)
@@ -1695,6 +1661,10 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	listSkillsTool, err := c.listSkillsTool(ctx)
 	if err == nil {
 		allTools = append(allTools, listSkillsTool)
+	}
+	searchSkillsTool, err := c.searchSkillsTool(ctx)
+	if err == nil {
+		allTools = append(allTools, searchSkillsTool)
 	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).

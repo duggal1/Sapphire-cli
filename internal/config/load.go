@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
+	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/csync"
 	"github.com/duggal1/Sapphire-cli/internal/env"
@@ -24,7 +25,6 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/home"
 	"github.com/duggal1/Sapphire-cli/internal/log"
 	"github.com/duggal1/Sapphire-cli/internal/skills"
-	powernapConfig "github.com/charmbracelet/x/powernap/pkg/config"
 	"github.com/qjebbs/go-jsons"
 )
 
@@ -419,7 +419,6 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if !slices.Contains(c.Options.SkillsPaths, projectSkillsDir) {
 		c.Options.SkillsPaths = append(c.Options.SkillsPaths, projectSkillsDir)
 	}
-
 	if str, ok := os.LookupEnv("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE"); ok {
 		c.Options.DisableProviderAutoUpdate, _ = strconv.ParseBool(str)
 	}

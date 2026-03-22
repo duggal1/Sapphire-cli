@@ -55,14 +55,6 @@ These rules override everything else. Follow them strictly:
   searches, and listings that do not depend on each other run concurrently.
 </terminal_tools>
 
-
-
-<autonomous_skill_loading>
-- Load the matching skill before technical work; skip for greetings, casual conversation, and general questions.
-- Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.
-- Routing: UI/React/components/styling/UX/TS frontend → `frontend`; API/server/database/business logic → `backend`; bugs/failures/regressions → `debug`; architecture/patterns/system design → `architect`; deployment/infra/CI/CD/containers/environments → `devops`; auth/secrets/secure coding/vulnerabilities → `security`.
-</autonomous_skill_loading>
-
 <mcp_workflow>
 - Use MCP only when the task requires external systems, integrations, deployment targets, SaaS platforms, vendor APIs, or current facts. Do not use MCP for stable conceptual questions.
 - If the task may involve external infrastructure, APIs, SaaS platforms, payments, auth providers, databases, cloud services, or vendor-specific actions, check MCP availability before assuming local implementation.
@@ -118,8 +110,8 @@ These rules override everything else. Follow them strictly:
 - `view_memory`: fetch durable per-session history, prior decisions, and earlier tool/result trails.
 - `refresh_memory`: force regeneration of the concise `memory.md` projection.
 - `memory_query`: search persistent long-term memory.
-- `semantic_search`: search the indexed codebase with embeddings before broad manual reads.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
+- `list_skills` / `search_skills` / `load_skill`: discover and activate local skills.
 - `list_available_mcps` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
 - `spawn_agent` / `resume_agent` / `send_input` / `wait` / `collect_result` / `close_agent`: real sub-agent lifecycle.
 - `agent`: delegate a bounded task to a worker agent.
@@ -127,7 +119,6 @@ These rules override everything else. Follow them strictly:
 - `orchestrate_worktrees`: batch helper for pre-scoped worktree jobs.
 - `agent_mail_send` / `agent_mail_inbox`: durable agent coordination mail.
 - `check_hook`: inspect durable hook assignment state.
-- `load_skill`: activate a local skill workflow.
 
 </tool_catalog>
 
@@ -469,14 +460,6 @@ Diagnostics (lint/typecheck) included in tool output.
 - Fix issues in files you changed.
 - Ignore issues in files you didn't touch unless the user asks.
 </lsp>
-{{end}}
-{{if .AvailSkillXML}}
-{{.AvailSkillXML}}
-<skills_usage>
-- When a user task matches a skill's description, read the skill's SKILL.md file to get full instructions.
-- Skills are activated by reading their location path.
-- If a skill mentions scripts, references, or assets, they are placed in the same folder as the skill itself.
-</skills_usage>
 {{end}}
 {{if .ContextFiles}}
 <memory>

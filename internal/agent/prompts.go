@@ -12,6 +12,12 @@ import (
 //go:embed templates/coder.md.tpl
 var coderPromptTmpl []byte
 
+//go:embed templates/Personality/soul/SOUL.md
+var soulPromptSection []byte
+
+//go:embed templates/skills_policy.md
+var skillsPolicyPromptSection []byte
+
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
@@ -107,7 +113,16 @@ var mainAgentOrchestrationOverlay = composePromptSections(
 // coderPrompt creates a new prompt specifically tailored for the coding agent.
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
-	systemPrompt, err := prompt.NewPrompt("coder", appendPromptSections(string(coderPromptTmpl), string(mainAgentOrchestrationOverlay)), opts...)
+	systemPrompt, err := prompt.NewPrompt(
+		"coder",
+		string(composePromptSections(
+			soulPromptSection,
+			coderPromptTmpl,
+			skillsPolicyPromptSection,
+			mainAgentOrchestrationOverlay,
+		)),
+		opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +131,16 @@ func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 
 func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
-	systemPrompt, err := prompt.NewPrompt("task", appendPromptSections(string(taskPromptTmpl), string(mainAgentOrchestrationOverlay)), opts...)
+	systemPrompt, err := prompt.NewPrompt(
+		"task",
+		string(composePromptSections(
+			soulPromptSection,
+			taskPromptTmpl,
+			skillsPolicyPromptSection,
+			mainAgentOrchestrationOverlay,
+		)),
+		opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -142,14 +166,4 @@ func composePromptSections(parts ...[]byte) []byte {
 		return nil
 	}
 	return []byte(strings.Join(sections, "\n\n"))
-}
-
-func appendPromptSections(base string, extras ...string) string {
-	sections := []string{strings.TrimSpace(base)}
-	for _, extra := range extras {
-		if text := strings.TrimSpace(extra); text != "" {
-			sections = append(sections, text)
-		}
-	}
-	return strings.Join(sections, "\n\n")
 }

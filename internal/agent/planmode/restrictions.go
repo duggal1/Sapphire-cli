@@ -98,6 +98,7 @@ var planModeAllowedTools = []string{
 
 	// Skill tools - ALLOWED
 	"list_skills",
+	"search_skills",
 	"load_skill",
 
 	// LSP tools - ALLOWED (static analysis, non-mutating)

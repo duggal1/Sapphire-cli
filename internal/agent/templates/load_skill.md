@@ -6,23 +6,23 @@ Loads domain-specific engineering protocols into the active session.
 
 Invoke `load_skill` BEFORE technical implementation, refactoring, or architectural modification.
 
-## DOMAIN-TRIGGERED LOADING
+## DISCOVERY-FIRST LOADING
 
-| Domain | Skill | Trigger |
-|--------|-------|---------|
-| Frontend/UI | `frontend` | React, TypeScript, components, styling, UI/UX |
-| Backend/API | `backend` | Server, database, API, business logic |
-| Debugging | `debug` | Error investigation, bug fix, failure analysis |
-| Architecture | `architect` | System design, structural change, patterns |
-| DevOps | `devops` | Deployment, CI/CD, infrastructure, containers |
-| Security | `security` | Auth, vulnerabilities, secure coding |
+Do not guess skill names when the catalog is large.
+
+Preferred sequence:
+1. Use `search_skills(query: "...")` for focused routing
+2. Use `list_skills()` only when full inventory browsing is actually needed
+3. Invoke `load_skill(name: "<exact-name>")`
 
 ## EXECUTION SEQUENCE
 
-1. Recognize task domain
-2. Invoke `load_skill(name: "<domain>")`
-3. Await instructions
-4. Proceed with implementation
+1. Build a concise domain query from the user task
+2. Call `search_skills`
+3. Choose exact skill names from results
+4. Invoke `load_skill(name: "<exact-name>")`
+5. Await instructions
+6. Proceed with implementation
 
 ## EXCEPTIONS
 
@@ -30,47 +30,42 @@ Do NOT load skills for:
 - Greetings
 - General questions without technical implementation
 
-## AVAILABLE SKILLS
-
-- `architect` — System design, architectural patterns
-- `backend` — Go, Node.js, databases, APIs, layered architecture
-- `debug` — Error investigation, root-cause analysis
-- `devops` — Deployment, CI/CD, infrastructure
-- `frontend` — React, TypeScript, UI/UX, design systems
-- `security` — Auth, vulnerabilities, secure coding
-
 ## RULES
 
-1. Use exact skill identifiers
+1. Use exact skill identifiers returned by `search_skills` or `list_skills`
 2. Load BEFORE implementation
 3. Load multiple skills sequentially for multi-domain tasks
 4. Do NOT load for greetings
+5. Do NOT hardcode domain-to-skill mappings in your head; discover first
 
 ## EXAMPLES
 
 **Correct:**
 ```
 User: "Add a login form"
-→ load_skill(name: "frontend")
+→ search_skills(query: "frontend ui form auth")
+→ load_skill(name: "<exact result>")
 → Implement
 ```
 
 **Correct:**
 ```
 User: "Why is the API failing?"
-→ load_skill(name: "debug")
+→ search_skills(query: "debug api failure error")
+→ load_skill(name: "<exact result>")
 → Investigate
 ```
 
 **Correct:**
 ```
 User: "Build API endpoint with React frontend"
-→ load_skill(name: "backend")
-→ load_skill(name: "frontend")
+→ search_skills(query: "backend api frontend react")
+→ load_skill(name: "<first exact result>")
+→ load_skill(name: "<second exact result>")
 → Implement
 ```
 
 **Incorrect:**
 - Loading after implementation starts
-- Using paths: `./skills/frontend`
+- Using guessed names without discovery first
 - Loading for: "Hello"

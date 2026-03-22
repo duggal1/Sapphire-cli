@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	defaultQdrantURL  = "http://127.0.0.1:6333"
-	defaultQdrantPort = "6333"
-	defaultQdrantGRPC = "6334"
+	defaultQdrantURL    = "http://127.0.0.1:6333"
+	defaultQdrantPort   = "6333"
+	defaultQdrantGRPC   = "6334"
+	maxQdrantUpsertSize = 2048
 )
 
 type storedFile struct {
@@ -246,7 +247,7 @@ func (s *store) ReplaceFiles(ctx context.Context, files []indexedFile) error {
 		if len(filePoints) == 0 {
 			continue
 		}
-		if len(points)+len(filePoints) > 768 && len(points) > 0 {
+		if len(points)+len(filePoints) > maxQdrantUpsertSize && len(points) > 0 {
 			if err := s.upsertPoints(ctx, points); err != nil {
 				return err
 			}
@@ -261,6 +262,9 @@ func pointsFromFile(file indexedFile) []map[string]any {
 	points := make([]map[string]any, 0, len(file.Chunks))
 	indexedAtUnix := time.Now().Unix()
 	for _, chunk := range file.Chunks {
+		if len(chunk.Embedding) == 0 {
+			continue
+		}
 		points = append(points, map[string]any{
 			"id":     chunk.ID,
 			"vector": chunk.Embedding,

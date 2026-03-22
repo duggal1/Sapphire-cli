@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
@@ -35,21 +34,36 @@ type SkillToolRenderContext struct{}
 func (t *SkillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
 
-	var params agent.LoadSkillParams
-	_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
-
-	skillName := params.Name
 	displayMode := "Skill"
-	
-	if skillName == "" {
-		// list_skills call
-		displayMode = "Skills Directory"
-		skillName = "Available"
-	} else {
-		skillName = strings.Title(skillName)
-	}
+	headerText := "Reading Skill"
+	msg := "Activating specialized context"
 
-	headerText := fmt.Sprintf("Reading %s", displayMode)
+	switch opts.ToolCall.Name {
+	case "list_skills":
+		displayMode = "Skills Directory"
+		headerText = "Reading Skills Directory"
+		msg = "Listing available specialized engineering skills"
+	case "search_skills":
+		displayMode = "Skill Search"
+		headerText = "Searching Skills"
+		var params struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+		msg = "Searching specialized skills"
+		if query := strings.TrimSpace(params.Query); query != "" {
+			msg = fmt.Sprintf("Searching specialized skills for: %s", query)
+		}
+	default:
+		var params struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal([]byte(opts.ToolCall.Input), &params)
+		skillName := strings.TrimSpace(params.Name)
+		if skillName != "" {
+			msg = fmt.Sprintf("Activating specialized context: %s Instructions", genericPrettyName(skillName))
+		}
+	}
 
 	header := toolHeader(sty, opts.Status, "Skill", cappedWidth, opts.Compact, headerText)
 	if opts.Compact {
@@ -60,13 +74,6 @@ func (t *SkillToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 	tag := sty.Tool.SkillTag.Render(displayMode)
 	tagWidth := lipgloss.Width(tag)
 
-	// Display the intent in a clean way
-	var msg string
-	if params.Name == "" {
-		msg = "Listing all available specialized engineering skills"
-	} else {
-		msg = fmt.Sprintf("Activating specialized context: %s Instructions", skillName)
-	}
 	remainingWidth := cappedWidth - tagWidth - 5
 	if remainingWidth < 10 {
 		remainingWidth = 10

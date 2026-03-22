@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSkillToolsRegistered verifies that load_skill and list_skills tools are registered.
+// TestSkillToolsRegistered verifies that load_skill, list_skills, and search_skills tools are registered.
 func TestSkillToolsRegistered(t *testing.T) {
 	cfg := &config.Config{
 		Options: &config.Options{
@@ -24,11 +24,13 @@ func TestSkillToolsRegistered(t *testing.T) {
 	// Verify skill tools are in allowed tools
 	require.Contains(t, coderAgent.AllowedTools, "load_skill", "load_skill should be in allowed tools")
 	require.Contains(t, coderAgent.AllowedTools, "list_skills", "list_skills should be in allowed tools")
+	require.Contains(t, coderAgent.AllowedTools, "search_skills", "search_skills should be in allowed tools")
 
 	// Verify task agent also has skill tools (but not agent tool)
 	taskAgent := cfg.Agents[config.AgentTask]
 	require.Contains(t, taskAgent.AllowedTools, "load_skill", "load_skill should be in task agent tools")
 	require.Contains(t, taskAgent.AllowedTools, "list_skills", "list_skills should be in task agent tools")
+	require.Contains(t, taskAgent.AllowedTools, "search_skills", "search_skills should be in task agent tools")
 	require.NotContains(t, taskAgent.AllowedTools, "agent", "task agent should not have agent tool")
 }
 
@@ -53,6 +55,11 @@ func TestSkillToolExecution(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, listTool)
 	require.Equal(t, "list_skills", listTool.Info().Name)
+
+	searchTool, err := c.searchSkillsTool(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, searchTool)
+	require.Equal(t, "search_skills", searchTool.Info().Name)
 
 	// Test load_skill tool creation
 	loadTool, err := c.loadSkillTool(ctx)

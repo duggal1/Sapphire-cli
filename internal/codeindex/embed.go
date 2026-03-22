@@ -36,7 +36,6 @@ type jinaEmbeddingRequest struct {
 	Task          string   `json:"task,omitempty"`
 	Dimensions    int      `json:"dimensions,omitempty"`
 	EmbeddingType string   `json:"embedding_type,omitempty"`
-	Normalized    bool     `json:"normalized"`
 	Truncate      bool     `json:"truncate"`
 }
 
@@ -126,7 +125,6 @@ func (e *embedder) embedTexts(ctx context.Context, texts []string, task string) 
 		Task:          task,
 		Dimensions:    e.dimensions,
 		EmbeddingType: "float",
-		Normalized:    true,
 		Truncate:      true,
 	}
 	resp, err := e.embedWithRetry(ctx, reqBody)
@@ -286,6 +284,14 @@ func shouldRetryEmbeddingError(err error) bool {
 	}
 	var netErr net.Error
 	return strings.Contains(lower, "connection reset") || strings.Contains(lower, "eof") || (errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()))
+}
+
+func isJinaEncodeTextError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "failed to encode text")
 }
 
 func parseRetryAfter(value string) time.Duration {

@@ -25,7 +25,6 @@ func TestEmbedDocumentsUsesJinaPassageTask(t *testing.T) {
 		Task          string   `json:"task"`
 		Dimensions    int      `json:"dimensions"`
 		EmbeddingType string   `json:"embedding_type"`
-		Normalized    bool     `json:"normalized"`
 		Truncate      bool     `json:"truncate"`
 	}
 
@@ -68,7 +67,7 @@ func TestEmbedDocumentsUsesJinaPassageTask(t *testing.T) {
 	if captured.Dimensions != 1024 {
 		t.Fatalf("unexpected dimensions %d", captured.Dimensions)
 	}
-	if captured.EmbeddingType != "float" || !captured.Normalized || !captured.Truncate {
+	if captured.EmbeddingType != "float" || !captured.Truncate {
 		t.Fatalf("unexpected request flags: %+v", captured)
 	}
 	if len(vectors) != 2 {

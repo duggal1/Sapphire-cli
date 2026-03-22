@@ -5,9 +5,11 @@ Lists all available skills.
 ## USAGE
 
 Invoke when:
-- Discovering available skills before loading
-- Uncertain which skill applies to current task
+- You need full inventory browsing
+- You want to inspect the entire skill catalog
 - User requests available capabilities
+
+For focused routing on large skill sets, use `search_skills` instead.
 
 ## OUTPUT
 
@@ -27,5 +29,5 @@ list_skills()
 **Correct:**
 ```
 list_skills()
-→ load_skill(name: "frontend")
+→ search_skills(query: "frontend react ui design")
 ```

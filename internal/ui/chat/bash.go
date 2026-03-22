@@ -360,7 +360,7 @@ func renderJobTool(sty *styles.Styles, opts *ToolRenderOpts, width int, action, 
 // jobHeader builds a header for job-related tools.
 // Format: "● Job (Action) PID shellID description..."
 func jobHeader(sty *styles.Styles, status ToolStatus, action, shellID, description string, width int) string {
-	icon := toolIcon(sty, status)
+	icon := toolIcon(sty, status, tools.BashToolName)
 	jobPart := sty.Tool.JobToolName.Render("Job")
 	actionPart := sty.Tool.JobAction.Render("(" + action + ")")
 	pidPart := sty.Tool.JobPID.Render("PID " + shellID)

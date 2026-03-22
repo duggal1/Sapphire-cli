@@ -247,6 +247,7 @@ type UI struct {
 	// Chat components
 	chat *Chat
 	// assistantFooter is the fixed footer rendered above the editor.
+	pendingUserPlaceholderID      string
 	assistantFooter               *chat.AssistantInfoItem
 	pendingAssistantPlaceholderID string
 

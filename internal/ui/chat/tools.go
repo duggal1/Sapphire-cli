@@ -155,6 +155,7 @@ type baseToolMessageItem struct {
 
 	sty             *styles.Styles
 	expandedContent bool
+	lastSpinnerFrame string
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -311,8 +312,7 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 	}
 
 	content, height, ok := t.getCachedRender(toolItemWidth)
-	// if we are spinning or there is no cache rerender
-	if !ok || t.isSpinning() {
+	if !ok {
 		content = t.toolRenderer.RenderTool(t.sty, toolItemWidth, &ToolRenderOpts{
 			ToolCall:        t.toolCall,
 			Result:          t.result,
@@ -440,7 +440,17 @@ func pendingTool(sty *styles.Styles, name string) string {
 
 // OnShimmerTick invalidates the cached render while the tool is pending.
 func (t *baseToolMessageItem) OnShimmerTick() bool {
-	return false
+	if !t.isSpinning() {
+		t.lastSpinnerFrame = ""
+		return false
+	}
+	frame := toolSpinnerFrame()
+	if frame == t.lastSpinnerFrame {
+		return false
+	}
+	t.lastSpinnerFrame = frame
+	t.clearCache()
+	return true
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

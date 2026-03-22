@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	sweepDuration  = 950 * time.Millisecond
-	bandHalfWidth  = 14.0
+	sweepDuration  = 1150 * time.Millisecond
+	bandHalfWidth  = 16.0
 	shimmerPadding = 10
 )
 

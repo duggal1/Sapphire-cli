@@ -13,9 +13,9 @@ import (
 )
 
 const (
-    sweepDuration  = 750 * time.Millisecond  // was 1300 — faster sweep
-    bandHalfWidth  = 14.0                     // was 5.0 — wider shimmer band
-    shimmerPadding = 10
+	sweepDuration  = 950 * time.Millisecond
+	bandHalfWidth  = 14.0
+	shimmerPadding = 10
 )
 
 type renderMode uint8
@@ -245,23 +245,34 @@ func intensityAt(index, position int) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{130, 130, 130}
-		highlightColor := [3]uint8{220, 220, 220}
+		baseColor := [3]uint8{236, 236, 236}
+		highlightColor := [3]uint8{150, 150, 150}
 		r, g, b := blend(highlightColor, baseColor, clamp01(intensity)*0.9)
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 240 + int(math.Round(float64(intensity)*12))
-		if index < 240 {
-			index = 240
+		index := 255 - int(math.Round(float64(intensity)*10))
+		if index < 245 {
+			index = 245
 		}
 		if index > 255 {
 			index = 255
 		}
-		return renderIndexedColor(index, intensity >= 0.7, ch)
+		return renderIndexedColor(index, intensity < 0.35, ch)
 	case renderDecorated:
-		return styleForIntensity(intensity)(ch)
+		return reversedStyleForIntensity(intensity)(ch)
 	default:
 		return ch
+	}
+}
+
+func reversedStyleForIntensity(intensity float32) func(string) string {
+	switch {
+	case intensity < 0.2:
+		return renderBold
+	case intensity < 0.6:
+		return renderNormal
+	default:
+		return renderDim
 	}
 }
 

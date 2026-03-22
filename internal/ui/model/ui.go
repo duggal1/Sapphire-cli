@@ -247,7 +247,7 @@ type UI struct {
 	// Chat components
 	chat *Chat
 	// assistantFooter is the fixed footer rendered above the editor.
-	assistantFooter *chat.AssistantInfoItem
+	assistantFooter               *chat.AssistantInfoItem
 	pendingAssistantPlaceholderID string
 
 	// onboarding state
@@ -944,7 +944,9 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
-	m.syncPendingAssistantPlaceholder()
+	if cmd := m.syncPendingAssistantPlaceholder(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.indexingProgress.Active || m.chat.MessageItem(chat.IndexingMessageID) != nil {
 		if cmd := m.syncIndexingMessageItem(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -3563,7 +3565,9 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
-	m.showPendingAssistantPlaceholder(sessionID)
+	if cmd := m.showPendingAssistantPlaceholder(sessionID); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	sessionMode := planmode.NormalizeMode(m.session.Mode)
 	planContext := buildPlanModeContext(attachments)
 	cmds = append(cmds, func() tea.Msg {
@@ -3587,10 +3591,10 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	return tea.Batch(cmds...)
 }
 
-func (m *UI) showPendingAssistantPlaceholder(sessionID string) {
+func (m *UI) showPendingAssistantPlaceholder(sessionID string) tea.Cmd {
 	m.clearPendingAssistantPlaceholder()
 	if sessionID == "" {
-		return
+		return nil
 	}
 
 	now := time.Now().Unix()
@@ -3604,19 +3608,23 @@ func (m *UI) showPendingAssistantPlaceholder(sessionID string) {
 	}
 	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
 	if len(items) == 0 {
-		return
+		return nil
 	}
 
 	m.pendingAssistantPlaceholderID = placeholderID
+	var cmds []tea.Cmd
 	for _, item := range items {
 		if animatable, ok := item.(chat.Animatable); ok {
-			_ = animatable.StartAnimation()
+			if cmd := animatable.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 	m.chat.AppendMessages(items...)
 	m.updateLayoutAndSize()
 	m.chat.ScrollToBottom()
 	m.chat.SelectLast()
+	return tea.Batch(cmds...)
 }
 
 func (m *UI) clearPendingAssistantPlaceholder() {
@@ -3627,12 +3635,15 @@ func (m *UI) clearPendingAssistantPlaceholder() {
 	m.pendingAssistantPlaceholderID = ""
 }
 
-func (m *UI) syncPendingAssistantPlaceholder() {
+func (m *UI) syncPendingAssistantPlaceholder() tea.Cmd {
 	if m.pendingAssistantPlaceholderID == "" {
-		return
+		return nil
 	}
 	if m.chat.MessageItem(m.pendingAssistantPlaceholderID) != nil {
-		return
+		return nil
+	}
+	if m.session == nil {
+		return nil
 	}
 
 	now := time.Now().Unix()
@@ -3645,9 +3656,18 @@ func (m *UI) syncPendingAssistantPlaceholder() {
 	}
 	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
 	if len(items) == 0 {
-		return
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, item := range items {
+		if animatable, ok := item.(chat.Animatable); ok {
+			if cmd := animatable.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	}
 	m.chat.AppendMessages(items...)
+	return tea.Batch(cmds...)
 }
 
 func buildPlanModeContext(attachments []message.Attachment) string {

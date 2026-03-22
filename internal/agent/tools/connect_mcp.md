@@ -1,2 +1,3 @@
-Install or connect an MCP server by name.
-Use this after `list_available_mcps` and before `list_mcp_tools` or `call_mcp_tool`.
+Connect an installed MCP server by exact name.
+If the server is not installed yet, call `install_mcp` first.
+Use this before `list_mcp_tools`, direct `mcp_*` tools, or `call_mcp_tool`.

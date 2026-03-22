@@ -80,13 +80,6 @@ func (c *coordinator) preflightMCPDiscovery(ctx context.Context, sessionID, prom
 		return "", errMissingMCP
 	}
 
-	candidates := parseMCPNames(content)
-	if len(candidates) > 0 && !inventoryRequest {
-		if _, err := c.ensureMCPInstalled(ctx, candidates); err != nil {
-			return "", err
-		}
-	}
-
 	return "<mcp_discovery>\n" + content + "\n</mcp_discovery>", nil
 }
 

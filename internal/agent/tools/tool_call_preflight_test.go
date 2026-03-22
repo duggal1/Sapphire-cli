@@ -555,6 +555,34 @@ func TestPrepareToolCallParsesStringifiedMCPArguments(t *testing.T) {
 	require.IsType(t, map[string]any{}, input["arguments"])
 }
 
+func TestPrepareToolCallInfersConnectMCPNameFromDescription(t *testing.T) {
+	t.Parallel()
+
+	connectTool := fantasy.NewAgentTool(
+		ConnectMCPToolName,
+		"",
+		func(ctx context.Context, params ConnectMCPParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		ConnectMCPToolName: connectTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:   "mcp-connect-1",
+		Name: ConnectMCPToolName,
+		Input: `{
+			"description":"A managed MCP server enabling AI agents to access AWS using docs and API calls. Use io.github.aws/aws-mcp."
+		}`,
+	}, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "io.github.aws/aws-mcp", input["mcp_name"])
+}
+
 func TestPrepareToolCallNormalizesCollectResultAliases(t *testing.T) {
 	t.Parallel()
 

@@ -43,6 +43,7 @@ func DefaultPlanModeRestrictor() PlanModeRestrictor {
 			"search_skills",
 			"tool_suggest",
 			"list_available_mcps",
+			"install_mcp",
 			"connect_mcp",
 			"list_mcp_tools",
 			"list_mcp_resources",

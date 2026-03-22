@@ -44,6 +44,9 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "If there is even slight uncertainty about which skill applies, call `search_skills` first") {
 		t.Fatalf("expected strict skill policy in coder prompt")
 	}
+	if !strings.Contains(out, "`install_mcp`") || !strings.Contains(out, "Verify before claim.") {
+		t.Fatalf("expected MCP policy module in coder prompt")
+	}
 	if !strings.Contains(out, "`search_skills`") {
 		t.Fatalf("expected search_skills guidance in coder prompt")
 	}

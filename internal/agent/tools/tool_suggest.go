@@ -120,7 +120,7 @@ func NewToolSuggestTool(cfg *config.Config, permissions permission.Service) fant
 
 				suggestions = append(suggestions, toolSuggestion{
 					Name:        entry.Name,
-					Action:      "connect_mcp",
+					Action:      suggestedMCPAction(entry),
 					Reason:      truncateText(reason, 160),
 					Category:    entry.Category,
 					Description: truncateText(entry.Description, 160),
@@ -145,10 +145,21 @@ func NewToolSuggestTool(cfg *config.Config, permissions permission.Service) fant
 				sb.WriteString(line + "\n")
 			}
 
-			sb.WriteString("Use connect_mcp with the MCP name you choose.")
+			sb.WriteString("If the MCP is not installed, call install_mcp first. If it is already installed, call connect_mcp.")
 			return fantasy.NewTextResponse(strings.TrimSpace(sb.String())), nil
 		},
 	)
+}
+
+func suggestedMCPAction(entry mcpServerSnapshot) string {
+	switch {
+	case entry.Connected:
+		return "list_mcp_tools"
+	case entry.Configured:
+		return "connect_mcp"
+	default:
+		return InstallMCPToolName
+	}
 }
 
 func minInt(a, b int) int {

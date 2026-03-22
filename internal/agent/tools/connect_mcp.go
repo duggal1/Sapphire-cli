@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -17,7 +18,7 @@ import (
 )
 
 type ConnectMCPParams struct {
-	MCPName string `json:"mcp_name" description:"The MCP server name to install or connect"`
+	MCPName string `json:"mcp_name" description:"The installed MCP server name to connect"`
 }
 
 type ConnectMCPPermissionsParams struct {
@@ -52,7 +53,7 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 					ToolCallID:  call.ID,
 					ToolName:    ConnectMCPToolName,
 					Action:      "execute",
-					Description: fmt.Sprintf("Install or connect MCP server %s", params.MCPName),
+					Description: fmt.Sprintf("Connect MCP server %s", params.MCPName),
 					Params:      ConnectMCPPermissionsParams(params),
 				},
 			)
@@ -63,17 +64,14 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 				return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
 			}
 
-			mcpCfg, ok, err := ensureMCPConfig(ctx, cfg, params.MCPName)
-			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("OPERATIONAL FAILURE: %w", err)
-			}
+			mcpCfg, ok := cfg.MCP[params.MCPName]
 			if !ok {
-				return fantasy.ToolResponse{}, fmt.Errorf("OPERATIONAL FAILURE: MCP server %q was not found in the registry. Do not retry with the same name.", params.MCPName)
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q is not installed. Call install_mcp first.", params.MCPName)), nil
 			}
 
 			if missing := missingEnvKeys(mcpCfg.Env); len(missing) > 0 {
 				sort.Strings(missing)
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q requires environment variables: %s", params.MCPName, strings.Join(missing, ", "))), nil
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q is installed but requires environment variables before it can connect: %s", params.MCPName, strings.Join(missing, ", "))), nil
 			}
 
 			mcpCfg.Disabled = false
@@ -81,7 +79,12 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
-			if err := mcp.ApplyConfig(ctx, cfg, params.MCPName); err != nil {
+			connectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if err := mcp.ApplyConfig(connectCtx, cfg, params.MCPName); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q did not connect before the timeout. Inspect its configuration and retry.", params.MCPName)), nil
+				}
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
@@ -111,9 +114,9 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 	)
 }
 
-func ensureMCPConfig(ctx context.Context, cfg *config.Config, name string) (config.MCPConfig, bool, error) {
+func installMCPConfig(ctx context.Context, cfg *config.Config, name string) (config.MCPConfig, bool, bool, error) {
 	if existing, ok := cfg.MCP[name]; ok {
-		return existing, true, nil
+		return existing, true, false, nil
 	}
 
 	registryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -124,12 +127,12 @@ func ensureMCPConfig(ctx context.Context, cfg *config.Config, name string) (conf
 		}
 		installCfg := config.RegistryDefinitionToMCPConfig(def, false)
 		if err := cfg.UpsertMCPConfig(name, installCfg); err != nil {
-			return config.MCPConfig{}, false, err
+			return config.MCPConfig{}, false, false, err
 		}
-		return installCfg, true, nil
+		return installCfg, true, true, nil
 	}
 
-	return config.MCPConfig{}, false, nil
+	return config.MCPConfig{}, false, false, nil
 }
 
 func missingEnvKeys(envMap map[string]string) []string {
@@ -141,4 +144,16 @@ func missingEnvKeys(envMap map[string]string) []string {
 		missing = append(missing, key)
 	}
 	return missing
+}
+
+func canEnableInstalledMCP(envMap map[string]string) bool {
+	if len(envMap) == 0 {
+		return true
+	}
+	for key := range envMap {
+		if _, ok := os.LookupEnv(key); !ok {
+			return false
+		}
+	}
+	return true
 }

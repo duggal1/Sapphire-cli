@@ -262,8 +262,9 @@ func repairToolCall(
 	case ListMCPToolsToolName:
 		normalizeKey(input, "mcp_name", "server", "server_name")
 		normalizeKey(input, "query", "search", "q", "capability", "tool_query")
-	case ListMCPResourcesToolName, ReadMCPResourceToolName, ConnectMCPToolName:
-		normalizeKey(input, "mcp_name", "server", "server_name")
+	case ListMCPResourcesToolName, ReadMCPResourceToolName, ConnectMCPToolName, InstallMCPToolName:
+		normalizeKey(input, "mcp_name", "server", "server_name", "name")
+		inferMCPName(input)
 	case ListAvailableMCPsToolName:
 		// No parameters needed
 
@@ -607,6 +608,43 @@ func normalizeKey(input map[string]any, target string, aliases ...string) {
 			return
 		}
 	}
+}
+
+func inferMCPName(input map[string]any) {
+	if input == nil {
+		return
+	}
+	if name, ok := input["mcp_name"].(string); ok && strings.TrimSpace(name) != "" {
+		return
+	}
+	for _, key := range []string{"description", "value", "text", "query"} {
+		raw, ok := input[key].(string)
+		if !ok {
+			continue
+		}
+		if name := extractMCPNameCandidate(raw); name != "" {
+			input["mcp_name"] = name
+			return
+		}
+	}
+}
+
+var mcpNameCandidatePattern = regexp.MustCompile(`[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+`)
+
+func extractMCPNameCandidate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	matches := mcpNameCandidatePattern.FindAllString(raw, -1)
+	for _, match := range matches {
+		match = strings.TrimRight(match, ".,:;)")
+		if strings.Count(match, "/") == 0 {
+			continue
+		}
+		return match
+	}
+	return ""
 }
 
 // repairFromSchema is a generic fallback parameter repair function.

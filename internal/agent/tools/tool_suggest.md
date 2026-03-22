@@ -8,4 +8,4 @@ Parameters:
 - query: The capability you need (e.g., "payments", "database", "auth", "observability").
 - limit (optional): Max suggestions to return.
 
-The response lists suggested MCP servers and instructs to use `connect_mcp`.
+The response lists suggested MCP servers and tells you whether to use `install_mcp` or `connect_mcp`.

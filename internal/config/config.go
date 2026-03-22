@@ -910,6 +910,7 @@ func allToolNames() []string {
 		"search_skills",
 		"tool_suggest",
 		"list_available_mcps",
+		"install_mcp",
 		"connect_mcp",
 		"call_mcp_tool",
 		"list_mcp_tools",

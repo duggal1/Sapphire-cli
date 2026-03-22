@@ -1,4 +1,5 @@
 <skills_policy>
+- For inspectable questions about skills, tools, capabilities, files, config, or runtime state, verify with tools before answering. Do not answer from prior belief.
 - Skills are mandatory for non-trivial technical work. They are not optional decoration.
 - Before serious implementation, debugging, architecture, frontend, backend, infra, security, auth, data, deployment, integration, or performance work, use skills first.
 - For large skill sets, never rely on prompt-injected skill catalogs. Discover on demand with tool calls.

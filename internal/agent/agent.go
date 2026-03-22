@@ -492,7 +492,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if capabilityMap := buildMCPCapabilityMap(); capabilityMap != "" {
 		systemPrompt += "\n\n" + capabilityMap
 	}
-	systemPrompt += "\n\n" + mcpPolicyBlock
 
 	if len(agentTools) > 0 {
 		// Add Anthropic caching to the last tool.

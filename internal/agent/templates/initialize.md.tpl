@@ -1,7 +1,7 @@
 Analyze this codebase and create/update {{.Config.Options.InitializeAs}} to enable future agents to operate effectively in this repository.
 
 Capabilities (use precisely):
-- Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `connect_mcp`.
+- Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `install_mcp` or `connect_mcp`.
 - Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for one known file, `agentic_view` for any multi-file or broad repository read. Use `agentic_view` comprehensively.
 - `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or prompt/CSV setup when structured tools exist.
 - Never create temporary `.txt` or `.csv` payload files just to call `spawn_agent` or related tools. Pass prompts directly as tool parameters.

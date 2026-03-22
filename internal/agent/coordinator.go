@@ -596,52 +596,75 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	var activeSkillNames []string
 	selectedMCP := map[string]struct{}(nil)
 
-	if !env.deferPreflight {
-		if shouldPrimeAutonomousSubAgents(env.userPrompt) {
-			subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, env.sessionID, env.userPrompt)
-			if err != nil {
-				slog.Debug("Autonomous sub-agent priming skipped", "error", err)
-			} else if strings.TrimSpace(subAgentContext) != "" {
-				skillContext = subAgentContext
-			}
-		}
-
-		preflightContext := ""
-		if requiresMCPDiscovery(env.userPrompt) {
-			preflightContext = c.getMCPPreflightContext(env.sessionID, env.userPrompt)
-		}
-		if strings.TrimSpace(preflightContext) != "" {
-			if skillContext != "" {
-				skillContext += "\n\n"
-			}
-			skillContext += preflightContext
-		}
-
-		mcpContext := ""
-		if requiresMCPDiscovery(env.userPrompt) {
-			selectedMCP, mcpContext = c.getMCPSelection(env.sessionID, env.userPrompt)
-		}
-		if strings.TrimSpace(mcpContext) != "" {
-			if skillContext != "" {
-				skillContext += "\n\n"
-			}
-			skillContext += mcpContext
-		}
-		if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
-			if skillContext != "" {
-				skillContext += "\n\n"
-			}
-			skillContext += inventoryContext
-		}
-		if subAgentContext := c.buildSubAgentStatusContext(env.sessionID); strings.TrimSpace(subAgentContext) != "" {
-			if skillContext != "" {
-				skillContext += "\n\n"
-			}
-			skillContext += subAgentContext
-		}
-	} else {
+	if env.deferPreflight {
 		c.refreshMCPPreflightAsync(env.sessionID, env.userPrompt)
 		c.refreshMCPSelectionAsync(env.sessionID, env.userPrompt)
+	}
+	if !env.deferPreflight && shouldPrimeAutonomousSubAgents(env.userPrompt) {
+		subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, env.sessionID, env.userPrompt)
+		if err != nil {
+			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
+		} else if strings.TrimSpace(subAgentContext) != "" {
+			skillContext = subAgentContext
+		}
+	}
+
+	preflightContext := ""
+	if requiresMCPDiscovery(env.userPrompt) {
+		preflightContext = c.getMCPPreflightContext(env.sessionID, env.userPrompt)
+		if strings.TrimSpace(preflightContext) == "" {
+			preflightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1500*time.Millisecond)
+			resolved, err := c.preflightMCPDiscovery(preflightCtx, env.sessionID, env.userPrompt)
+			cancel()
+			switch {
+			case err == nil:
+				preflightContext = resolved
+			case errors.Is(err, errMissingMCP):
+				preflightContext = "<mcp_missing>\n" + missingMCPMessage + "\n</mcp_missing>"
+			default:
+				slog.Debug("Synchronous MCP preflight skipped", "error", err)
+			}
+		}
+	}
+	if strings.TrimSpace(preflightContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += preflightContext
+	}
+
+	mcpContext := ""
+	if requiresMCPDiscovery(env.userPrompt) {
+		selectedMCP, mcpContext = c.getMCPSelection(env.sessionID, env.userPrompt)
+		if len(selectedMCP) == 0 && strings.TrimSpace(mcpContext) == "" {
+			selectionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1500*time.Millisecond)
+			selected, resolved, err := c.selectMCPServers(selectionCtx, env.userPrompt)
+			cancel()
+			if err != nil {
+				slog.Debug("Synchronous MCP selection skipped", "error", err)
+			} else {
+				selectedMCP = selected
+				mcpContext = resolved
+			}
+		}
+	}
+	if strings.TrimSpace(mcpContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += mcpContext
+	}
+	if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += inventoryContext
+	}
+	if subAgentContext := c.buildSubAgentStatusContext(env.sessionID); strings.TrimSpace(subAgentContext) != "" {
+		if skillContext != "" {
+			skillContext += "\n\n"
+		}
+		skillContext += subAgentContext
 	}
 
 	cachedTools, _ := c.getToolCache()
@@ -1675,6 +1698,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	allTools = append(
 		allTools,
 		tools.NewListAvailableMCPsTool(c.cfg, c.permissions),
+		tools.NewInstallMCPTool(c.cfg, c.permissions),
 		tools.NewConnectMCPTool(c.cfg, c.permissions),
 		tools.NewCallMCPTool(c.cfg, c.permissions),
 		tools.NewListMCPToolsTool(c.cfg, c.permissions),

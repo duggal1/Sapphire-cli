@@ -262,6 +262,8 @@ func NewToolMessageItem(
 	// 	item = NewTodosToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LoadSkillToolName, "list_skills", "search_skills":
 		item = NewSkillToolMessageItem(sty, toolCall, result, canceled)
+	case tools.InstallMCPToolName, tools.ConnectMCPToolName, tools.ListAvailableMCPsToolName, tools.ListMCPToolsToolName, tools.ListMCPResourcesToolName, tools.ReadMCPResourceToolName:
+		item = NewMCPControlToolMessageItem(sty, toolCall, result, canceled)
 	case tools.ReferencesToolName:
 		item = NewReferencesToolMessageItem(sty, toolCall, result, canceled)
 	case tools.LSPRestartToolName:

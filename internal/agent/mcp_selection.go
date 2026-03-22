@@ -80,10 +80,6 @@ func (c *coordinator) selectMCPServers(ctx context.Context, userPrompt string) (
 		selectedSet[name] = struct{}{}
 	}
 
-	if _, err := c.ensureMCPInstalled(ctx, targets); err != nil {
-		return nil, "", err
-	}
-
 	return selectedSet, buildMCPSelectionContext(selectedEntries, selectedSet), nil
 }
 
@@ -206,7 +202,7 @@ func buildMCPSelectionContext(selected []scoredRegistryMCP, active map[string]st
 
 	var sb strings.Builder
 	sb.WriteString("<mcp_task_context>\n")
-	sb.WriteString("Potential MCP servers for this task (not yet connected):\n")
+	sb.WriteString("Potential MCP servers for this task:\n")
 	for _, item := range selected {
 		name := item.Entry.Definition.Name
 		if _, ok := active[name]; !ok {
@@ -218,7 +214,7 @@ func buildMCPSelectionContext(selected []scoredRegistryMCP, active map[string]st
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("Use list_available_mcps to confirm inventory, then connect_mcp only if you must execute a tool.\n")
+	sb.WriteString("Use list_available_mcps to confirm inventory. If the server is not installed, call install_mcp. Then call connect_mcp before execution.\n")
 	sb.WriteString("</mcp_task_context>")
 	return sb.String()
 }

@@ -70,7 +70,7 @@ func (c *coordinator) buildMCPInventoryContext(ctx context.Context) string {
 		}
 		sb.WriteString(fmt.Sprintf("- %s: %d (examples: %s)\n", category, len(names), strings.Join(examples, ", ")))
 	}
-	sb.WriteString("Use list_available_mcps to search the full registry and connect_mcp to start a server.\n")
+	sb.WriteString("Use list_available_mcps to search the full registry. If the right MCP is not installed, call install_mcp first, then connect_mcp.\n")
 	sb.WriteString("</mcp_inventory>")
 	return sb.String()
 }

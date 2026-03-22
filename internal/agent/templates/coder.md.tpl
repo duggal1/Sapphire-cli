@@ -62,16 +62,18 @@ These rules override everything else. Follow them strictly:
 - Sequence:
   1. Call `list_available_mcps` first.
   2. Do not call `connect_mcp` or `list_mcp_tools` only to inspect inventory.
-  3. If a relevant MCP exists but is not connected, call `connect_mcp`.
-  4. If it is already connected and exposes direct `mcp_*` tools, use them immediately.
-  5. Use `list_mcp_tools` only when you need the tool surface before execution.
-  6. Use `call_mcp_tool` when no direct `mcp_*` tool is available or when dynamic dispatch is required.
-  7. Use `list_mcp_resources` and `read_mcp_resource` when the MCP exposes docs, schemas, or other resources.
-  8. Never claim MCP coverage or inventory without calling `list_available_mcps`.
-  9. If the required MCP does not exist, respond exactly:
+  3. If the exact MCP exists but is not installed, call `install_mcp`.
+  4. After installation, call `connect_mcp`.
+  5. If it is already connected and exposes direct `mcp_*` tools, use them immediately.
+  6. Use `list_mcp_tools` only when you need the tool surface before execution.
+  7. Use `call_mcp_tool` when no direct `mcp_*` tool is available or when dynamic dispatch is required.
+  8. Use `list_mcp_resources` and `read_mcp_resource` when the MCP exposes docs, schemas, or other resources.
+  9. Never claim MCP coverage or inventory without calling `list_available_mcps`.
+  10. If the required MCP does not exist, respond exactly:
      "This capability requires an MCP server that is not installed.
      Please install the required MCP."
 - Do not hardcode MCP server names. Discover them from tool output.
+- Pass exact `mcp_name` values, never descriptions.
 - If multiple MCPs are relevant, repeat the sequence in dependency order.
 - Do not stop at discovery. Execute the required MCP tools and complete the task.
 </mcp_workflow>
@@ -112,7 +114,7 @@ These rules override everything else. Follow them strictly:
 - `memory_query`: search persistent long-term memory.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
 - `list_skills` / `search_skills` / `load_skill`: discover and activate local skills.
-- `list_available_mcps` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
+- `list_available_mcps` / `install_mcp` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
 - `spawn_agent` / `resume_agent` / `send_input` / `wait` / `collect_result` / `close_agent`: real sub-agent lifecycle.
 - `agent`: delegate a bounded task to a worker agent.
 - `spawn_agents_on_csv` / `report_agent_job_result`: CSV-driven batch worker flow only.

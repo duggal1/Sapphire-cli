@@ -18,6 +18,9 @@ var soulPromptSection []byte
 //go:embed templates/skills_policy.md
 var skillsPolicyPromptSection []byte
 
+//go:embed templates/mcp_policy.md
+var mcpPolicyPromptSection []byte
+
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
@@ -119,6 +122,7 @@ func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 			soulPromptSection,
 			coderPromptTmpl,
 			skillsPolicyPromptSection,
+			mcpPolicyPromptSection,
 			mainAgentOrchestrationOverlay,
 		)),
 		opts...,
@@ -137,6 +141,7 @@ func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 			soulPromptSection,
 			taskPromptTmpl,
 			skillsPolicyPromptSection,
+			mcpPolicyPromptSection,
 			mainAgentOrchestrationOverlay,
 		)),
 		opts...,

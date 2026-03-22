@@ -32,12 +32,10 @@ const (
 type pillSection int
 
 const (
-	pillSectionTodos pillSection = iota  // RESTORED FOR UI/UX
+	pillSectionTodos pillSection = iota
 	pillSectionQueue
 )
 
-// hasIncompleteTodos returns true if there are any non-completed todos.
-// RESTORED FOR UI/UX
 func hasIncompleteTodos(todos []session.Todo) bool {
 	return session.HasIncompleteTodos(todos)
 }
@@ -67,8 +65,6 @@ func queuePill(queue int, focused, panelFocused bool, t *styles.Styles) string {
 	return pillStyle(focused, panelFocused, t).Render(content)
 }
 
-// todoPill renders the todo progress pill with optional spinner and task name.
-// RESTORED FOR UI/UX
 func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bool, t *styles.Styles) string {
 	if !hasIncompleteTodos(todos) {
 		return ""
@@ -118,8 +114,6 @@ func todoPill(todos []session.Todo, spinnerView string, focused, panelFocused bo
 	return pillStyle(focused, panelFocused, t).Render(content)
 }
 
-// todoList renders the expanded todo list.
-// RESTORED FOR UI/UX
 func todoList(sessionTodos []session.Todo, spinnerView string, t *styles.Styles, width int) string {
 	return chat.FormatTodosList(t, sessionTodos, spinnerView, width)
 }
@@ -143,23 +137,16 @@ func queueList(queueItems []string, t *styles.Styles) string {
 	return strings.Join(lines, "\n")
 }
 
-// togglePillsExpanded toggles the pills panel expansion state.
-// RESTORED FOR UI/UX
 func (m *UI) togglePillsExpanded() tea.Cmd {
 	if !m.hasSession() {
 		return nil
 	}
-	hasPills := hasIncompleteTodos(m.session.Todos) || m.promptQueue > 0
-	if !hasPills {
+	if m.promptQueue <= 0 {
 		return nil
 	}
 	m.pillsExpanded = !m.pillsExpanded
 	if m.pillsExpanded {
-		if hasIncompleteTodos(m.session.Todos) {
-			m.focusedPillSection = pillSectionTodos
-		} else {
-			m.focusedPillSection = pillSectionQueue
-		}
+		m.focusedPillSection = pillSectionQueue
 	}
 	m.updateLayoutAndSize()
 
@@ -171,30 +158,14 @@ func (m *UI) togglePillsExpanded() tea.Cmd {
 	return nil
 }
 
-// switchPillSection changes focus between todo and queue sections.
-// RESTORED FOR UI/UX
 func (m *UI) switchPillSection(dir int) tea.Cmd {
 	if !m.pillsExpanded || !m.hasSession() {
 		return nil
 	}
-	hasIncompleteTodos := hasIncompleteTodos(m.session.Todos)
-	hasQueue := m.promptQueue > 0
-
-	if dir < 0 && m.focusedPillSection == pillSectionQueue && hasIncompleteTodos {
-		m.focusedPillSection = pillSectionTodos
-		m.updateLayoutAndSize()
-		return nil
-	}
-	if dir > 0 && m.focusedPillSection == pillSectionTodos && hasQueue {
-		m.focusedPillSection = pillSectionQueue
-		m.updateLayoutAndSize()
-		return nil
-	}
+	_ = dir
 	return nil
 }
 
-// pillsAreaHeight calculates the total height needed for the pills area.
-// RESTORED FOR UI/UX
 func (m *UI) pillsAreaHeight() int {
 	if !m.hasSession() {
 		return 0
@@ -208,21 +179,13 @@ func (m *UI) pillsAreaHeight() int {
 
 	pillsAreaHeight := pillHeightWithBorder
 	if m.pillsExpanded {
-		if m.focusedPillSection == pillSectionTodos && hasIncomplete {
-			for _, todo := range m.session.Todos {
-				if session.IsRenderableTodo(todo) {
-					pillsAreaHeight++
-				}
-			}
-		} else if m.focusedPillSection == pillSectionQueue && hasQueue {
+		if m.focusedPillSection == pillSectionQueue && hasQueue {
 			pillsAreaHeight += m.promptQueue
 		}
 	}
 	return pillsAreaHeight
 }
 
-// renderPills renders the pills panel and stores it in m.pillsView.
-// RESTORED FOR UI/UX
 func (m *UI) renderPills() {
 	m.pillsView = ""
 	if !m.hasSession() {
@@ -235,7 +198,6 @@ func (m *UI) renderPills() {
 	}
 
 	paddingLeft := 3
-	contentWidth := max(width-paddingLeft, 0)
 
 	hasIncomplete := hasIncompleteTodos(m.session.Todos)
 	hasQueue := m.promptQueue > 0
@@ -245,7 +207,7 @@ func (m *UI) renderPills() {
 	}
 
 	t := m.com.Styles
-	todosFocused := m.pillsExpanded && m.focusedPillSection == pillSectionTodos
+	todosFocused := false
 	queueFocused := m.pillsExpanded && m.focusedPillSection == pillSectionQueue
 
 	inProgressIcon := t.Tool.TodoInProgressIcon.Render(styles.SpinnerIcon)
@@ -263,9 +225,7 @@ func (m *UI) renderPills() {
 
 	var expandedList string
 	if m.pillsExpanded {
-		if todosFocused && hasIncomplete {
-			expandedList = todoList(m.session.Todos, inProgressIcon, t, contentWidth)
-		} else if queueFocused && hasQueue {
+		if queueFocused && hasQueue {
 			if m.com.App != nil && m.com.App.AgentCoordinator != nil {
 				queueItems := m.com.App.AgentCoordinator.QueuedPromptsList(m.session.ID)
 				expandedList = queueList(queueItems, t)

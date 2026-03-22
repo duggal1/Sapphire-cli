@@ -945,6 +945,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	}
 
 	m.chat.SetMessages(items...)
+	m.syncPendingUserPlaceholder()
 	if cmd := m.syncPendingAssistantPlaceholder(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -1125,6 +1126,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 
 	switch msg.Role {
 	case message.User:
+		m.clearPendingUserPlaceholder()
 		m.lastUserMessageTime = msg.CreatedAt
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
@@ -3566,6 +3568,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
+	m.showPendingUserPlaceholder(sessionID, content)
 	if cmd := m.showPendingAssistantPlaceholder(sessionID); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -3626,6 +3629,54 @@ func (m *UI) showPendingAssistantPlaceholder(sessionID string) tea.Cmd {
 	m.chat.ScrollToBottom()
 	m.chat.SelectLast()
 	return tea.Batch(cmds...)
+}
+
+func (m *UI) showPendingUserPlaceholder(sessionID, content string) {
+	m.clearPendingUserPlaceholder()
+	content = strings.TrimSpace(content)
+	if sessionID == "" || content == "" {
+		return
+	}
+
+	now := time.Now().Unix()
+	placeholderID := "local:pending-user:" + sessionID
+	msg := &message.Message{
+		ID:        placeholderID,
+		Role:      message.User,
+		SessionID: sessionID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: content},
+		},
+	}
+	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
+	if len(items) == 0 {
+		return
+	}
+
+	m.pendingUserPlaceholderID = placeholderID
+	m.chat.AppendMessages(items...)
+	m.updateLayoutAndSize()
+	m.chat.ScrollToBottom()
+	m.chat.SelectLast()
+}
+
+func (m *UI) clearPendingUserPlaceholder() {
+	if m.pendingUserPlaceholderID == "" {
+		return
+	}
+	m.chat.RemoveMessage(m.pendingUserPlaceholderID)
+	m.pendingUserPlaceholderID = ""
+}
+
+func (m *UI) syncPendingUserPlaceholder() {
+	if m.pendingUserPlaceholderID == "" {
+		return
+	}
+	if m.chat.MessageItem(m.pendingUserPlaceholderID) != nil {
+		return
+	}
 }
 
 func (m *UI) clearPendingAssistantPlaceholder() {

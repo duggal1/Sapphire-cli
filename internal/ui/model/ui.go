@@ -248,6 +248,7 @@ type UI struct {
 	chat *Chat
 	// assistantFooter is the fixed footer rendered above the editor.
 	pendingUserPlaceholderID      string
+	pendingUserPlaceholderText    string
 	assistantFooter               *chat.AssistantInfoItem
 	pendingAssistantPlaceholderID string
 
@@ -3656,6 +3657,7 @@ func (m *UI) showPendingUserPlaceholder(sessionID, content string) {
 	}
 
 	m.pendingUserPlaceholderID = placeholderID
+	m.pendingUserPlaceholderText = content
 	m.chat.AppendMessages(items...)
 	m.updateLayoutAndSize()
 	m.chat.ScrollToBottom()
@@ -3668,6 +3670,7 @@ func (m *UI) clearPendingUserPlaceholder() {
 	}
 	m.chat.RemoveMessage(m.pendingUserPlaceholderID)
 	m.pendingUserPlaceholderID = ""
+	m.pendingUserPlaceholderText = ""
 }
 
 func (m *UI) syncPendingUserPlaceholder() {
@@ -3677,6 +3680,26 @@ func (m *UI) syncPendingUserPlaceholder() {
 	if m.chat.MessageItem(m.pendingUserPlaceholderID) != nil {
 		return
 	}
+	if m.session == nil || strings.TrimSpace(m.pendingUserPlaceholderText) == "" {
+		return
+	}
+
+	now := time.Now().Unix()
+	msg := &message.Message{
+		ID:        m.pendingUserPlaceholderID,
+		Role:      message.User,
+		SessionID: m.session.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: m.pendingUserPlaceholderText},
+		},
+	}
+	items := chat.ExtractMessageItems(m.com.Styles, msg, nil)
+	if len(items) == 0 {
+		return
+	}
+	m.chat.AppendMessages(items...)
 }
 
 func (m *UI) clearPendingAssistantPlaceholder() {

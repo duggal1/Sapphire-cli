@@ -153,8 +153,8 @@ type baseToolMessageItem struct {
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
 
-	sty             *styles.Styles
-	expandedContent bool
+	sty              *styles.Styles
+	expandedContent  bool
 	lastSpinnerFrame string
 }
 

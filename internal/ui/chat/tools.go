@@ -440,11 +440,7 @@ func pendingTool(sty *styles.Styles, name string) string {
 
 // OnShimmerTick invalidates the cached render while the tool is pending.
 func (t *baseToolMessageItem) OnShimmerTick() bool {
-	if !t.isSpinning() {
-		return false
-	}
-	t.clearCache()
-	return true
+	return false
 }
 
 // toolEarlyStateContent handles error/cancelled/pending states before content rendering.

@@ -11,6 +11,8 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
+const maxNestedToolPreviewItems = 12
+
 // -----------------------------------------------------------------------------
 // Agent Tool
 // -----------------------------------------------------------------------------
@@ -125,11 +127,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 		),
 	)
 
-	childNodes := make([]*TreeNode, 0, len(r.agent.nestedTools))
-	for _, nestedTool := range r.agent.nestedTools {
-		childView := nestedTool.Render(remainingWidth)
-		childNodes = append(childNodes, &TreeNode{Label: childView})
-	}
+	childNodes := renderNestedToolPreview(sty, r.agent.nestedTools, remainingWidth)
 	root := &TreeNode{Label: header, Children: childNodes}
 	lines := renderTreeWithRoot(root, cappedWidth)
 	result := strings.Join(lines, "\n")
@@ -302,11 +300,7 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		),
 	)
 
-	childNodes := make([]*TreeNode, 0, len(r.fetch.nestedTools))
-	for _, nestedTool := range r.fetch.nestedTools {
-		childView := nestedTool.Render(remainingWidth)
-		childNodes = append(childNodes, &TreeNode{Label: childView})
-	}
+	childNodes := renderNestedToolPreview(sty, r.fetch.nestedTools, remainingWidth)
 
 	root := &TreeNode{Label: header, Children: childNodes}
 	lines := renderTreeWithRoot(root, cappedWidth)
@@ -319,4 +313,28 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 	}
 
 	return result
+}
+
+func renderNestedToolPreview(sty *styles.Styles, nestedTools []ToolMessageItem, width int) []*TreeNode {
+	if len(nestedTools) == 0 {
+		return nil
+	}
+
+	limit := len(nestedTools)
+	hiddenCount := 0
+	if limit > maxNestedToolPreviewItems {
+		hiddenCount = limit - maxNestedToolPreviewItems
+		limit = maxNestedToolPreviewItems
+	}
+
+	childNodes := make([]*TreeNode, 0, limit+1)
+	for _, nestedTool := range nestedTools[:limit] {
+		childNodes = append(childNodes, &TreeNode{Label: nestedTool.Render(width)})
+	}
+	if hiddenCount > 0 {
+		childNodes = append(childNodes, &TreeNode{
+			Label: sty.Tool.ListHint.Render(fmt.Sprintf("...and %d more tool calls", hiddenCount)),
+		})
+	}
+	return childNodes
 }

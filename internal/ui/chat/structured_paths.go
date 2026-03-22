@@ -24,10 +24,17 @@ type fileContextNode struct {
 	children  []*fileContextNode
 }
 
+const maxStructuredFileContextEntries = 24
+
 func buildFileContextRoot(sty *styles.Styles, rootLabel string, entries []fileContextEntry) *TreeNode {
-	children := buildFileContextNodes(sty, entries)
+	children, hiddenCount := buildFileContextNodes(sty, entries)
 	if len(children) == 0 {
 		return nil
+	}
+	if hiddenCount > 0 {
+		children = append(children, &TreeNode{
+			Label: sty.Tool.ListHint.Render(fmt.Sprintf("...and %d more files", hiddenCount)),
+		})
 	}
 	return &TreeNode{
 		Label:    sty.Tool.ListRoot.Render(rootLabel),
@@ -35,10 +42,16 @@ func buildFileContextRoot(sty *styles.Styles, rootLabel string, entries []fileCo
 	}
 }
 
-func buildFileContextNodes(sty *styles.Styles, entries []fileContextEntry) []*TreeNode {
+func buildFileContextNodes(sty *styles.Styles, entries []fileContextEntry) ([]*TreeNode, int) {
 	root := &fileContextNode{}
+	visibleEntries := entries
+	hiddenCount := 0
+	if len(visibleEntries) > maxStructuredFileContextEntries {
+		hiddenCount = len(visibleEntries) - maxStructuredFileContextEntries
+		visibleEntries = visibleEntries[:maxStructuredFileContextEntries]
+	}
 
-	for _, entry := range entries {
+	for _, entry := range visibleEntries {
 		path := formatRelativePath(strings.TrimSpace(entry.Path))
 		if path == "" {
 			continue
@@ -80,7 +93,7 @@ func buildFileContextNodes(sty *styles.Styles, entries []fileContextEntry) []*Tr
 	for _, child := range root.children {
 		nodes = append(nodes, fileContextNodeToRenderNode(sty, child))
 	}
-	return nodes
+	return nodes, hiddenCount
 }
 
 func findFileContextChild(parent *fileContextNode, name string, isLeaf bool) *fileContextNode {

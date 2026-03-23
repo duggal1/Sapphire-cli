@@ -56,7 +56,7 @@ func TestQueueGitSnapshotCreatesLocalCommitInMainWorkspace(t *testing.T) {
 	runGitSnapshotTest(t, root, "diff", "--cached", "--quiet")
 }
 
-func TestBashToolBlocksDestructiveGitCommandsInIsolatedWorktree(t *testing.T) {
+func TestBashToolAllowsGitPushInIsolatedWorktree(t *testing.T) {
 	t.Parallel()
 
 	root := initSnapshotGitRepo(t)
@@ -79,8 +79,8 @@ func TestBashToolBlocksDestructiveGitCommandsInIsolatedWorktree(t *testing.T) {
 		Input: string(input),
 	})
 	require.NoError(t, err)
-	require.True(t, resp.IsError)
-	require.Contains(t, resp.Content, "git push is blocked")
+	require.False(t, strings.Contains(resp.Content, "git push is blocked"))
+	require.NotContains(t, resp.Content, "push remains human-controlled")
 }
 
 func TestBashToolBlocksMergeInMainWorkspace(t *testing.T) {

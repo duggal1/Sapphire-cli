@@ -236,8 +236,6 @@ func isForbiddenGitAgentCommand(command string) (bool, string) {
 			continue
 		}
 		switch fields[1] {
-		case "push":
-			return true, "git push is blocked for agents; push remains human-controlled"
 		case "merge":
 			return true, "git merge is blocked for agents; integration remains human-controlled"
 		case "rebase":

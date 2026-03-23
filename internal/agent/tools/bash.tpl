@@ -89,7 +89,7 @@ When user asks to create git commit:
 
 6. Run git status to verify.
 
-Notes: Use "git commit -am" when possible, don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response.
+Notes: Use "git commit -am" when possible, don't stage unrelated files, NEVER update config, no -i flags, no empty commits, return empty response.
 </git_commits>
 
 <pull_requests>

@@ -481,7 +481,14 @@ func cloneVariables(variables map[string]string, formula *Formula) map[string]st
 }
 
 func renderTemplate(raw string, variables map[string]string) (string, error) {
-	tmpl, err := template.New("formula-step").Option("missingkey=zero").Parse(raw)
+	funcMap := template.FuncMap{}
+	for key, value := range variables {
+		value := value
+		funcMap[key] = func() string {
+			return value
+		}
+	}
+	tmpl, err := template.New("formula-step").Funcs(funcMap).Option("missingkey=zero").Parse(raw)
 	if err != nil {
 		return "", err
 	}

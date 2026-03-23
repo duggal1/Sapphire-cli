@@ -1747,8 +1747,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.ReasoningID)
 	case dialog.ActionSelectMode:
 		if m.session == nil {
-			cmds = append(cmds, util.ReportError(errors.New("no active session")))
-			break
+			newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
+			if err != nil {
+				cmds = append(cmds, util.ReportError(err))
+				break
+			}
+			m.session = &newSession
+			cmds = append(cmds, m.loadSession(newSession.ID))
+			if m.state != uiChat {
+				m.setState(uiChat, uiFocusEditor)
+			}
 		}
 
 		// Update session mode via session service
@@ -1761,6 +1769,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
+		m.session.Mode = msg.Mode
 
 		m.dialog.CloseDialog(dialog.ModesID)
 		m.dialog.CloseDialog(dialog.PlanApprovalID)

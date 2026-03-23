@@ -22,7 +22,7 @@ required = true
 id = "understand"
 title = "Understand"
 description = """
-Restate the task `{{task}}`, identify hard requirements, and capture the constraints, acceptance bar, and major unknowns that matter.
+Restate the task `{{ .task }}`, identify hard requirements, and capture the constraints, acceptance bar, and major unknowns that matter.
 """
 acceptance = "Task is restated with requirements and ambiguities."
 
@@ -31,7 +31,7 @@ id = "analyze"
 title = "Analyze"
 needs = ["understand"]
 description = """
-Inspect the repo and identify the files, packages, and runtime seams involved in `{{task}}`.
+Inspect the repo and identify the files, packages, and runtime seams involved in `{{ .task }}`.
 Use the available read-only tools before making assumptions.
 """
 acceptance = "Relevant files and seams are identified."
@@ -70,7 +70,7 @@ id = "synthesize-findings"
 title = "Synthesize Findings"
 needs = ["wait-exploration"]
 description = """
-Main planning agent reads all 5 exploration reports, consolidates the findings into one final synthesis, determines the overall verdict, and writes `.plans/{{task_slug}}/05-synthesis.md`.
+Main planning agent reads all 5 exploration reports, consolidates the findings into one final synthesis, determines the overall verdict, and writes `.plans/{{ .task_slug }}/05-synthesis.md`.
 
 Report structure:
 - `<synthesis>`
@@ -84,14 +84,14 @@ Report structure:
 
 If the verdict is NO_GO, revisit understanding and analysis based on the must-fix findings before plan design can continue.
 """
-acceptance = "Synthesis file exists at .plans/{{task_slug}}/05-synthesis.md."
+acceptance = "Synthesis file exists at .plans/{{ .task_slug }}/05-synthesis.md."
 
 [[steps]]
 id = "design"
 title = "Design"
 needs = ["synthesize-findings"]
 description = """
-Describe the implementation approach, phases, major files, dependencies, and risks for `{{task}}`, incorporating the synthesis findings and resolving every must-fix item.
+Describe the implementation approach, phases, major files, dependencies, and risks for `{{ .task }}`, incorporating the synthesis findings and resolving every must-fix item.
 """
 acceptance = "Implementation design is complete."
 
@@ -100,10 +100,10 @@ id = "plan"
 title = "Plan"
 needs = ["design"]
 description = """
-Write a detailed markdown implementation plan for `{{task}}`.
+Write a detailed markdown implementation plan for `{{ .task }}`.
 The final plan must be decision-complete and suitable for direct implementation.
 """
-acceptance = "Plan file exists at .plans/{{task_slug}}/04-plan.md."
+acceptance = "Plan file exists at .plans/{{ .task_slug }}/04-plan.md."
 
 [[steps]]
 id = "gate-approval"
@@ -120,7 +120,7 @@ id = "execute-phase-1"
 title = "Execute Phase 1"
 needs = ["gate-approval"]
 description = """
-Execute the setup phase from the approved plan for `{{task}}`.
+Execute the setup phase from the approved plan for `{{ .task }}`.
 """
 acceptance = "Setup phase completed."
 

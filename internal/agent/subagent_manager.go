@@ -46,8 +46,8 @@ const (
 	subAgentForkContextTimeout   = 10 * time.Second
 	subAgentHeartbeatInterval    = 5 * time.Second
 	subAgentHeartbeatPersistAge  = 30 * time.Second
-	subAgentHeartbeatDegradedAge = 45 * time.Second
-	subAgentHeartbeatStuckAge    = 3 * time.Minute
+	subAgentHeartbeatDegradedAge = 30 * time.Second
+	subAgentHeartbeatStuckAge    = 2 * time.Minute
 	subAgentStuckMissThreshold   = 3
 	subAgentTurnTimeout          = 5 * time.Minute
 	subAgentWaitPollInterval     = 5 * time.Second

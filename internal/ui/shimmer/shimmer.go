@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	sweepDuration  = 1150 * time.Millisecond
-	bandHalfWidth  = 16.0
+	sweepDuration  = 1450 * time.Millisecond
+	bandHalfWidth  = 18.0
 	shimmerPadding = 10
 )
 
@@ -224,18 +224,18 @@ func styleForIntensity(intensity float32) func(string) string {
 	}
 }
 
-func shimmerPosition(textLen int, elapsed time.Duration) int {
+func shimmerPosition(textLen int, elapsed time.Duration) float64 {
 	period := textLen + shimmerPadding*2
 	if period <= 0 {
 		return 0
 	}
 
 	progress := math.Mod(elapsed.Seconds(), sweepDuration.Seconds()) / sweepDuration.Seconds()
-	return int(progress * float64(period))
+	return progress * float64(period)
 }
 
-func intensityAt(index, position int) float32 {
-	dist := float32(math.Abs(float64(index + shimmerPadding - position)))
+func intensityAt(index int, position float64) float32 {
+	dist := float32(math.Abs(float64(index+shimmerPadding) - position))
 	if dist > bandHalfWidth {
 		return 0
 	}
@@ -247,17 +247,17 @@ func intensityAt(index, position int) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{166, 60, 255}
-		highlightColor := [3]uint8{233, 127, 235}
+		baseColor := [3]uint8{160, 112, 255}
+		highlightColor := [3]uint8{198, 201, 210}
 		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 135 + int(math.Round(float64(intensity)*48))
-		if index < 135 {
-			index = 135
+		index := 141 + int(math.Round(float64(intensity)*110))
+		if index < 141 {
+			index = 141
 		}
-		if index > 213 {
-			index = 213
+		if index > 251 {
+			index = 251
 		}
 		return renderIndexedColor(index, intensity > 0.55, ch)
 	case renderDecorated:
@@ -267,7 +267,7 @@ func renderRune(mode renderMode, intensity float32, ch string) string {
 		case intensity < 0.6:
 			return "\033[38;5;177m" + ch + "\033[0m"
 		default:
-			return "\033[1m\033[38;5;213m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;251m" + ch + "\033[0m"
 		}
 	default:
 		return ch

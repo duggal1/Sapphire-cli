@@ -1,6 +1,6 @@
 <worktree_and_git>
-- One sub-agent, one worktree, one branch. Never share writable workspaces.
-- Use explicit `isolation: "worktree"` for isolated sub-agent execution.
+- Lifecycle sub-agents run in the shared repository root for now.
+- Worktree isolation is reserved for explicit worktree orchestration flows.
 - Worktree path: `.sapphire/worktrees/agent/<id>/<task-slug>`.
 - Branch format: `agent/<id>/<task-slug>`.
 - Default base branch is clean `main`. Use `master` only when `main` does not exist.

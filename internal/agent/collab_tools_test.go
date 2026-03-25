@@ -177,6 +177,37 @@ func TestWaitSubAgentsReturnsWhenAnyAgentFinishes(t *testing.T) {
 	require.Equal(t, subAgentStatusRunning, statuses["agent-running"])
 }
 
+func TestWaitSubAgentsDoesNotFinishWhileQueuedWorkRemains(t *testing.T) {
+	t.Parallel()
+
+	coord := &coordinator{
+		subAgents:        make(map[string]*subAgentRunner),
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+	runner := &subAgentRunner{
+		id:             "agent-busy",
+		sessionID:      "session-busy",
+		status:         subAgentStatusCompleted,
+		lastSubmission: "submission-old",
+		pending:        1,
+		submissions: map[string]*subAgentSubmission{
+			"submission-old": {
+				ID:     "submission-old",
+				Status: subAgentStatusCompleted,
+				Result: "first done",
+			},
+		},
+		assignment:   subAgentAssignment{Task: "Continue follow-up work"},
+		statusBroker: pubsub.NewBroker[subAgentStatus](),
+	}
+	coord.subAgentRegistry.upsert("agent-busy", runner)
+
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-busy"}, 150*time.Millisecond)
+	require.True(t, timedOut)
+	require.Len(t, snapshots, 1)
+	require.Equal(t, subAgentStatusQueued, snapshots[0].Status)
+}
+
 func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
 	t.Parallel()
 

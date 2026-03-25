@@ -66,7 +66,7 @@ func publishSubAgentStatus(broker *pubsub.Broker[subAgentStatus], status subAgen
 
 func (r *subAgentRunner) subscribeStatus(ctx context.Context) (subAgentStatus, <-chan pubsub.Event[subAgentStatus]) {
 	r.mu.Lock()
-	status := r.status
+	status := r.effectiveStatusLocked()
 	broker := r.statusBroker
 	r.mu.Unlock()
 	if broker == nil {

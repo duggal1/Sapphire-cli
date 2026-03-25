@@ -126,11 +126,11 @@ These rules override everything else. Follow them strictly:
 
 - Sub-agent lifecycle: `spawn_agent` → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
 - Coordination mail: `agent_mail_send` sends durable agent-to-agent or agent-to-main messages. `agent_mail_inbox` reads them.
-- For explicit isolation, use `spawn_agent` with `isolation: "worktree"`.
+- Lifecycle sub-agents run in the shared repository root. Worktree isolation for normal sub-agents is disabled for now.
 - `spawn_agent` and `send_input`: provide exactly one of `message` or `items`.
 - `wait` and `collect_result`: use arrays for `ids`.
 - `close_agent`: provide a singular `id`.
-- `orchestrate_worktrees` is only a batch helper for pre-scoped worktree jobs. Do not use it when the task is to demonstrate, inspect, validate, or debug the real sub-agent lifecycle or inter-agent coordination.
+- `orchestrate_worktrees` is only a batch helper for explicit worktree jobs. Do not use it when the task is to demonstrate, inspect, validate, or debug the real sub-agent lifecycle or inter-agent coordination.
 - `write_manifest` restricts writes only; reads and commands remain unrestricted. Empty list means read-only.
 
 </runtime_capabilities>

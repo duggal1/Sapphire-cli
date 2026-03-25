@@ -216,7 +216,7 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 	defer r.mu.Unlock()
 	return subAgentSnapshot{
 		ID:                   r.id,
-		Status:               r.status,
+		Status:               r.effectiveStatusLocked(),
 		LastResult:           r.lastResult,
 		LastError:            r.lastError,
 		LastProgress:         r.lastProgress,
@@ -237,6 +237,53 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		LastHeartbeat:        r.lastHeartbeat,
 		HeartbeatContext:     r.heartbeatContext,
 	}
+}
+
+func (r *subAgentRunner) effectiveStatusLocked() subAgentStatus {
+	if r.closed {
+		return subAgentStatusClosed
+	}
+	switch r.status {
+	case subAgentStatusDegraded, subAgentStatusStuck, subAgentStatusError:
+		return r.status
+	}
+	if r.pending > 0 {
+		switch r.status {
+		case subAgentStatusRunning, subAgentStatusDegraded:
+			return r.status
+		default:
+			return subAgentStatusQueued
+		}
+	}
+	if submission := r.submissions[r.lastSubmission]; submission != nil && !isSubAgentFinalStatus(submission.Status) {
+		return submission.Status
+	}
+	for _, submission := range r.submissions {
+		if submission == nil || isSubAgentFinalStatus(submission.Status) {
+			continue
+		}
+		return submission.Status
+	}
+	return r.status
+}
+
+func (r *subAgentRunner) hasOutstandingWorkLocked() bool {
+	if r.closed {
+		return false
+	}
+	if r.pending > 0 {
+		return true
+	}
+	if submission := r.submissions[r.lastSubmission]; submission != nil && !isSubAgentFinalStatus(submission.Status) {
+		return true
+	}
+	for _, submission := range r.submissions {
+		if submission == nil || isSubAgentFinalStatus(submission.Status) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (r *subAgentRunner) enqueue(prompt string, items []string) string {
@@ -553,6 +600,7 @@ type spawnAgentOptions struct {
 	Prompt           string
 	PromptItems      []string
 	Title            string
+	AllowWorktree    bool
 	Worktree         bool
 	WorktreeSet      bool
 	ReuseWorktree    bool
@@ -609,6 +657,8 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		workDir = wtDir
 		branch = wtBranch
 		cleanup = wtCleanup
+	} else {
+		branch = ""
 	}
 
 	writeManifest := opts.WriteManifest
@@ -1052,21 +1102,9 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		assignmentID = fmt.Sprintf("subagent-resume-%d", time.Now().UnixNano())
 	}
 	if strings.TrimSpace(meta.WorktreePath) != "" && filepath.Clean(meta.WorktreePath) != filepath.Clean(c.cfg.WorkingDir()) {
-		wtDir, wtBranch, wtCleanup, err := c.prepareSubAgentWorktree(ctx, effectiveParent, agentID, subAgentWorktreeSpec{
-			WorktreePath: meta.WorktreePath,
-			Branch:       branch,
-			Reuse:        true,
-			AllowReuse:   true,
-			TaskKey:      "",
-			AssignmentID: assignmentID,
-		})
-		if err != nil {
-			slog.Warn("Failed to restore sub-agent worktree; falling back to repo root", "error", err)
-		} else {
-			workDir = wtDir
-			branch = wtBranch
-			cleanup = wtCleanup
-		}
+		// disable work in progress for now: lifecycle sub-agents always resume in
+		// the shared repository root instead of reconstructing a dedicated worktree.
+		branch = ""
 	}
 
 	agentCfg, ok := c.cfg.Agents[config.AgentCoder]
@@ -1207,7 +1245,7 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 				case _, ok := <-ch:
 					if !ok {
 						runner.mu.Lock()
-						status := runner.status
+						status := runner.effectiveStatusLocked()
 						runner.mu.Unlock()
 						if isSubAgentFinalStatus(status) {
 							select {
@@ -1218,7 +1256,7 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 						return
 					}
 					runner.mu.Lock()
-					status := runner.status
+					status := runner.effectiveStatusLocked()
 					runner.mu.Unlock()
 					if !isSubAgentFinalStatus(status) {
 						continue

@@ -168,6 +168,7 @@ func (c *coordinator) OrchestrateWorktrees(ctx context.Context, sessionID string
 			agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
 				Prompt:           prompt,
 				Title:            task.Name,
+				AllowWorktree:    true,
 				Worktree:         true,
 				WorktreeSet:      true,
 				WorktreePath:     task.WorktreePath,
@@ -758,6 +759,7 @@ func (c *coordinator) ResumeWorktree(ctx context.Context, sessionID, worktreePat
 	agentID, submissionID, err := c.spawnSubAgent(ctx, sessionID, spawnAgentOptions{
 		Prompt:          taskPrompt,
 		Title:           "Resume Worktree",
+		AllowWorktree:   true,
 		Worktree:        true,
 		WorktreeSet:     true,
 		ReuseWorktree:   true,

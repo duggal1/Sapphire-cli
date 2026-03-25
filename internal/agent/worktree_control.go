@@ -24,6 +24,12 @@ func (c *coordinator) resolveSessionWorktreePolicy(ctx context.Context, sessionI
 }
 
 func (c *coordinator) resolveSpawnWorktreePolicy(_ context.Context, _ string, opts spawnAgentOptions) worktreepolicy.Policy {
+	// disable work in progress for now: the real sub-agent lifecycle runs in the
+	// shared repository root. Keep isolated worktrees only for explicit
+	// orchestrate_worktrees / resume-worktree flows that opt in via AllowWorktree.
+	if !opts.AllowWorktree {
+		return worktreepolicy.SharedRepo
+	}
 	if opts.WorktreeSet {
 		if opts.Worktree {
 			return worktreepolicy.Isolated

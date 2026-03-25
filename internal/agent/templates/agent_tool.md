@@ -1,4 +1,4 @@
-Launch a new sub-agent with its own terminal to run independently from the main reasoning loop. By default it runs against the shared repository root; use worktree isolation only when you explicitly need it.
+Launch a new sub-agent with its own terminal to run independently from the main reasoning loop. By default it runs against the shared repository root.
 
 <usage>
 - Use when independent operational work can run in parallel or background: builds, installs, scripts, tests/lint/verification, codebase scans, data gathering, API/log/system inspection, or environment setup.
@@ -7,9 +7,9 @@ Launch a new sub-agent with its own terminal to run independently from the main 
 </usage>
 
 <usage_notes>
-1. Sub-agents default to the shared repository root. Use `worktree: true` or `isolation: "worktree"` only when explicit isolation is required.
+1. Sub-agents default to the shared repository root. Lifecycle sub-agent worktree isolation is disabled for now.
 2. Provide a `write_manifest` to restrict writes to owned files. Empty manifest = read-only.
-3. Optional worktree controls: `branch`, `worktree_path`, and `definition_of_done`.
+3. Use `orchestrate_worktrees` or explicit resume-worktree flows when you truly need isolated worktree execution.
 2. If multiple sub-agents are truly independent, launch them in parallel aggressively. If they share files or state, keep the work sequential.
 3. The sub-agent returns one final report to you. The user does not see that report unless you summarize or apply its outcome.
 4. Each invocation is stateless. Write a precise prompt with explicit scope, constraints, deliverables, and success criteria.

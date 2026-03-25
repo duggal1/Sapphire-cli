@@ -100,3 +100,49 @@ func TestSupervisorValidatesCompletionAndReportsToMain(t *testing.T) {
 	require.Len(t, inbox, 1)
 	require.Equal(t, "SUBAGENT_VALIDATED", inbox[0].Subject)
 }
+
+func TestSupervisorReassignsRecoverableAgents(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.UpsertWorkItem(ctx, orchestrationdb.WorkItem{
+		ID:        "work-1",
+		Type:      "task",
+		Title:     "Recover task",
+		Status:    "blocked",
+		Assignee:  "agent-1",
+		CreatedAt: time.Now().UTC(),
+	}))
+
+	dispatchCalls := 0
+	service := NewService(
+		store,
+		agentstate.NewService(store),
+		agentactivity.NewService(store),
+		agentmailbox.NewService(store, nil),
+		Hooks{
+			EnsureDispatchForWorkItem: func(ctx context.Context, item orchestrationdb.WorkItem) (string, error) {
+				dispatchCalls++
+				return "dispatch-1", nil
+			},
+		},
+	)
+
+	service.TrackAgent(AgentRuntimeSnapshot{
+		AgentID:       "agent-1",
+		SessionID:     "session-1",
+		WorkItemID:    "work-1",
+		Status:        "needs_reassignment",
+		LastHeartbeat: time.Now().UTC(),
+	})
+	service.reassignRecoverableAgents(ctx, service.snapshotTrackers())
+
+	item, err := store.GetWorkItem(ctx, "work-1")
+	require.NoError(t, err)
+	require.Equal(t, "open", item.Status)
+	require.Equal(t, 1, dispatchCalls)
+}

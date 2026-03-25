@@ -6,6 +6,7 @@ import (
 	"time"
 
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
+	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	"github.com/duggal1/Sapphire-cli/internal/db"
@@ -57,7 +58,7 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		stateService:       agentstate.NewService(store),
 		activityService:    agentactivity.NewService(store),
 		memory:             orchestrationMemoryStub{},
-		mailbox:            nil,
+		mailbox:            agentmailbox.NewService(store, nil),
 	}
 	coord.checkpointService = agentmemory.NewCheckpointService(store, checkpointMessageSourceStub{}, coord.memory, nil)
 	runner := &subAgentRunner{
@@ -118,6 +119,8 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		CreatedAt:         time.Now().UTC(),
 	})
 	require.NoError(t, err)
+	_, err = coord.mailbox.Send(ctx, "agent-auth", "main:parent-session", "Dependency update", "Auth dependency completed", agentmailbox.SendOptions{})
+	require.NoError(t, err)
 
 	ctxBlock := coord.buildSubAgentPersistentMemoryContext(ctx, runner)
 	require.Contains(t, ctxBlock, "PERSISTENT MEMORY")
@@ -128,6 +131,50 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 	require.Contains(t, ctxBlock, "Latest Checkpoint")
 	require.Contains(t, ctxBlock, "auth path updated")
 	require.Contains(t, ctxBlock, "verify auth tests")
+	require.Contains(t, ctxBlock, "Unread Mail")
+	require.Contains(t, ctxBlock, "Dependency update")
+}
+
+func TestReportSubAgentOutcomeToParentSendsStructuredMail(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	coord := &coordinator{
+		orchestrationStore: store,
+		mailbox:            agentmailbox.NewService(store, nil),
+		activityService:    agentactivity.NewService(store),
+	}
+	runner := &subAgentRunner{
+		id:            "agent-auth",
+		parentSession: "parent-session",
+		assignment: subAgentAssignment{
+			ID:    "work-auth",
+			Title: "Auth flow",
+			Task:  "Finish auth orchestration",
+		},
+	}
+
+	coord.reportSubAgentOutcomeToParent(ctx, runner, "submission-1", subAgentReport{
+		Status:   "needs_followup",
+		Summary:  "Auth flow is ready for review",
+		Progress: "Implemented the orchestration path",
+		Files:    []string{"/tmp/auth.go"},
+		Commands: []string{"go test ./internal/agent"},
+		Next:     "Review and approve merge",
+	}, "raw result")
+
+	inbox, err := coord.mailbox.Inbox(ctx, "main:parent-session", true, 10)
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	require.Equal(t, "SUBAGENT_NEEDS_FOLLOWUP", inbox[0].Subject)
+	require.Contains(t, inbox[0].Body, "Assignment: Auth flow")
+	require.Contains(t, inbox[0].Body, "Status: NEEDS_FOLLOWUP")
+	require.Contains(t, inbox[0].Body, "Files: /tmp/auth.go")
+	require.Equal(t, "work-auth", inbox[0].ThreadID)
 }
 
 type checkpointMessageSourceStub struct{}

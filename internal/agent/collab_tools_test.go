@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/stretchr/testify/require"
 )
@@ -270,4 +272,44 @@ func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {
 	require.Equal(t, "final report", results[0].Result)
 	require.Equal(t, "done", results[0].Progress)
 	require.Equal(t, "feature/test", results[0].Branch)
+}
+
+func TestPublishSubAgentCompletionNotificationDeduplicates(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	coord := &coordinator{messages: env.messages}
+	runner := &subAgentRunner{
+		id:            "agent-1",
+		parentSession: session.ID,
+		submissions: map[string]*subAgentSubmission{
+			"submission-1": {
+				ID:       "submission-1",
+				Status:   subAgentStatusCompleted,
+				Notified: false,
+			},
+		},
+	}
+
+	coord.publishSubAgentCompletionNotification(context.Background(), runner, "submission-1")
+	coord.publishSubAgentCompletionNotification(context.Background(), runner, "submission-1")
+
+	msgs, err := env.messages.List(context.Background(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+
+	var text message.TextContent
+	found := false
+	for _, part := range msgs[0].Parts {
+		if candidate, ok := part.(message.TextContent); ok {
+			text = candidate
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+	require.True(t, strings.Contains(text.Text, "\"submission_id\":\"submission-1\""))
 }

@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
+	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -55,5 +58,59 @@ func TestRenderSubAgentWaitBodyUsesFriendlySummaryLine(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "running") {
 		t.Fatalf("expected running status, got %q", rendered)
+	}
+}
+
+func TestSpawnAgentToolKeepsAnimatingWhileSubAgentIsRunning(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	payload, err := json.Marshal(subAgentSpawnResult{
+		AgentID:   "agent-1",
+		Status:    "running",
+		StartedAt: time.Now().UTC().Add(-2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	item := NewSpawnAgentToolMessageItem(&sty, message.ToolCall{
+		ID:       "tool-1",
+		Name:     agent.SpawnAgentToolName,
+		Finished: true,
+	}, &message.ToolResult{
+		ToolCallID: "tool-1",
+		Name:       agent.SpawnAgentToolName,
+		Content:    string(payload),
+	}, false)
+
+	animating, ok := item.(AnimationActive)
+	if !ok {
+		t.Fatal("expected animation-capable spawn agent tool item")
+	}
+	if !animating.HasActiveAnimation() {
+		t.Fatal("expected spawn agent row to keep animating while sub-agent is running")
+	}
+}
+
+func TestBackgroundSubAgentsPayloadActiveWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(agent.BackgroundSubAgentsToolPayload{
+		Status: "running",
+		Count:  1,
+		Active: 1,
+		Agents: []agent.BackgroundSubAgentView{{
+			ID:        "agent-1",
+			Status:    "running",
+			StartedAt: time.Now().UTC(),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	if !backgroundSubAgentsPayloadActive(&message.ToolResult{Content: string(payload)}) {
+		t.Fatal("expected background payload to remain active while sub-agent is running")
 	}
 }

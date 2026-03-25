@@ -29,6 +29,10 @@ type backgroundIndicatorState struct {
 	title               string
 	agents              map[string]BackgroundSubAgentView
 	order               []string
+	lastToolCallInput   string
+	lastToolResult      string
+	lastFinished        bool
+	lastErrorState      bool
 }
 
 func (c *coordinator) acquireBackgroundSubAgentSlot() {
@@ -336,6 +340,11 @@ func (c *coordinator) updateBackgroundIndicatorMessagesLocked(ctx context.Contex
 	}
 
 	if state.toolResultMessageID != "" {
+		resultContent := string(resultJSON)
+		resultIsError := payload.Failed > 0 && finished
+		if state.lastToolResult == resultContent && state.lastErrorState == resultIsError {
+			goto update_tool_call
+		}
 		resultMsg, err := c.messages.Get(ctx, state.toolResultMessageID)
 		if err == nil {
 			for i, part := range resultMsg.Parts {
@@ -343,30 +352,37 @@ func (c *coordinator) updateBackgroundIndicatorMessagesLocked(ctx context.Contex
 				if !ok || res.Name != BackgroundSubAgentsToolName {
 					continue
 				}
-				res.Content = string(resultJSON)
-				res.IsError = payload.Failed > 0 && finished
+				res.Content = resultContent
+				res.IsError = resultIsError
 				resultMsg.Parts[i] = res
 				break
 			}
 			if err := c.messages.Update(ctx, resultMsg); err != nil {
 				return err
 			}
+			state.lastToolResult = resultContent
+			state.lastErrorState = resultIsError
 		}
 	}
 
+update_tool_call:
 	if state.toolCallMessageID != "" {
+		inputJSON, _ := json.Marshal(BackgroundSubAgentsToolInput{
+			Count: state.total,
+			Title: firstNonEmptyBackgroundValue(state.title, payload.Title),
+		})
+		inputContent := string(inputJSON)
+		if state.lastToolCallInput == inputContent && state.lastFinished == finished {
+			return nil
+		}
 		callMsg, err := c.messages.Get(ctx, state.toolCallMessageID)
 		if err == nil {
-			inputJSON, _ := json.Marshal(BackgroundSubAgentsToolInput{
-				Count: state.total,
-				Title: firstNonEmptyBackgroundValue(state.title, payload.Title),
-			})
 			for i, part := range callMsg.Parts {
 				call, ok := part.(message.ToolCall)
 				if !ok || call.Name != BackgroundSubAgentsToolName {
 					continue
 				}
-				call.Input = string(inputJSON)
+				call.Input = inputContent
 				call.Finished = finished
 				callMsg.Parts[i] = call
 				break
@@ -374,6 +390,8 @@ func (c *coordinator) updateBackgroundIndicatorMessagesLocked(ctx context.Contex
 			if err := c.messages.Update(ctx, callMsg); err != nil {
 				return err
 			}
+			state.lastToolCallInput = inputContent
+			state.lastFinished = finished
 		}
 	}
 

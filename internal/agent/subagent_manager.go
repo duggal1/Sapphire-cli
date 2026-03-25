@@ -39,6 +39,7 @@ const (
 	subAgentMessageListTimeout   = 5 * time.Second
 	subAgentForkContextTimeout   = 10 * time.Second
 	subAgentHeartbeatInterval    = 5 * time.Second
+	subAgentHeartbeatPersistAge  = 30 * time.Second
 	subAgentHeartbeatDegradedAge = 45 * time.Second
 	subAgentHeartbeatStuckAge    = 3 * time.Minute
 	subAgentStuckMissThreshold   = 3
@@ -55,6 +56,7 @@ type subAgentSubmission struct {
 	StartedAt   time.Time
 	HeartbeatAt time.Time
 	EndedAt     time.Time
+	Notified    bool
 }
 
 type subAgentInput struct {
@@ -90,6 +92,7 @@ type subAgentRunner struct {
 	statusBroker         *pubsub.Broker[subAgentStatus]
 	staleMisses          int
 	firstStaleObservedAt time.Time
+	lastPersistedAt      time.Time
 	mu                   sync.Mutex
 }
 
@@ -257,6 +260,7 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 	r.staleMisses = 0
 	r.firstStaleObservedAt = time.Time{}
 	r.lastHeartbeat = time.Now().UTC()
+	r.lastPersistedAt = r.lastHeartbeat
 	r.heartbeatContext = "queued for execution"
 	r.assignment.UpdatedAt = time.Now()
 	broker := r.statusBroker
@@ -320,16 +324,20 @@ func (c *coordinator) startSubAgentHeartbeat(runner *subAgentRunner, submissionI
 					submission.Status = subAgentStatusRunning
 					submission.HeartbeatAt = now
 				}
+				shouldPersist := runner.lastPersistedAt.IsZero() || now.Sub(runner.lastPersistedAt) >= subAgentHeartbeatPersistAge
+				if shouldPersist {
+					runner.lastPersistedAt = now
+				}
 				payload := runner.lifecycleEventLocked(submissionID, SubAgentStageHeartbeat, "")
-				broker := runner.statusBroker
 				runner.mu.Unlock()
 
-				c.syncRunnerOrchestrationState(context.Background(), runner)
-				c.recordOrchestrationActivity(context.Background(), runner.id, "heartbeat", map[string]any{
-					"submission_id": submissionID,
-					"status":        subAgentStatusRunning,
-				})
-				publishSubAgentStatus(broker, subAgentStatusRunning)
+				if shouldPersist {
+					c.syncRunnerOrchestrationState(context.Background(), runner)
+					c.recordOrchestrationActivity(context.Background(), runner.id, "heartbeat", map[string]any{
+						"submission_id": submissionID,
+						"status":        subAgentStatusRunning,
+					})
+				}
 				publishSubAgentLifecycleEvent(SubAgentHeartbeatEvent, payload)
 			}
 		}
@@ -856,6 +864,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			stage := SubAgentStageCompleted
 			errMsg := ""
 			var payload SubAgentLifecycleEvent
+			var parsedReport subAgentReport
+			var finalResult string
 			runner.mu.Lock()
 			runner.cancel = nil
 			submission = runner.submissions[input.submissionID]
@@ -897,29 +907,36 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				stage = SubAgentStageFailed
 				errMsg = err.Error()
 			} else {
-				submission.Status = subAgentStatusCompleted
-				finalResult := result
+				finalResult = result
 				if validationReport != "" && !strings.Contains(result, "VALIDATION GATE") {
 					finalResult += validationReport
 				}
+				parsedReport = parseSubAgentReport(finalResult)
+				disposition := classifySubAgentTurn(parsedReport)
+				submission.Status = disposition.Status
 				submission.Result = finalResult
-				runner.status = subAgentStatusCompleted
+				if disposition.Status == subAgentStatusStuck {
+					submission.Err = disposition.ErrMsg
+				}
+				runner.status = disposition.Status
 				runner.staleMisses = 0
 				runner.firstStaleObservedAt = time.Time{}
-				report := parseSubAgentReport(finalResult)
-				if report.Summary != "" {
-					runner.lastResult = report.Summary
+				if parsedReport.Summary != "" {
+					runner.lastResult = parsedReport.Summary
 				} else {
 					runner.lastResult = finalResult
 				}
-				if report.Progress != "" {
-					runner.lastProgress = report.Progress
+				if parsedReport.Progress != "" {
+					runner.lastProgress = parsedReport.Progress
 				} else {
 					runner.lastProgress = ""
 				}
-				runner.lastError = ""
-				runner.heartbeatContext = "completed"
-				if c.memoryPipe != nil {
+				runner.lastError = disposition.ErrMsg
+				runner.heartbeatContext = firstNonEmptyString(parsedReport.Progress, parsedReport.Summary, disposition.ErrMsg, "completed")
+				stage = disposition.Stage
+				eventType = pubsub.EventType(disposition.EventType)
+				errMsg = disposition.ErrMsg
+				if c.memoryPipe != nil && disposition.Status == subAgentStatusCompleted {
 					c.memoryPipe.TriggerPostCompletion(runner.sessionID, finalResult)
 				}
 			}
@@ -948,6 +965,9 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				"task_key":      runner.assignment.TaskKey,
 				"heartbeat":     runner.heartbeatContext,
 			}))
+			if finalResult != "" {
+				c.reportSubAgentOutcomeToParent(context.Background(), runner, input.submissionID, parsedReport, finalResult)
+			}
 			publishSubAgentStatus(broker, payload.Status)
 			publishSubAgentLifecycleEvent(eventType, payload)
 		}(input)

@@ -23,7 +23,15 @@ func NewSpawnAgentToolMessageItem(
 	result *message.ToolResult,
 	canceled bool,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &SpawnAgentToolRenderContext{}, canceled)
+	t := &SpawnAgentToolMessageItem{}
+	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &SpawnAgentToolRenderContext{}, canceled)
+	t.spinningFunc = func(state SpinningState) bool {
+		if state.IsCanceled() || !spawnAgentResultActive(state.Result) {
+			return !state.HasResult() && !state.IsCanceled()
+		}
+		return true
+	}
+	return t
 }
 
 // SpawnAgentToolRenderContext renders spawn_agent tool messages.

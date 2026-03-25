@@ -61,10 +61,11 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 	text := string(subAgentOrchestratorPrompt)
 	for _, needle := range []string{
-		"This is an operating manual. Follow it exactly.",
-		"Use durable mail for dependency handoffs, blockers, completion notices, recovery notes, and requests for help.",
-		"Healthy workers either make progress, report a blocker, or finish. Silent waiting is a failure.",
-		"You own exactly one assignment at a time. Do not widen scope without instruction.",
+		"# Sub-Agent Contract",
+		"Follow exactly.",
+		"Use `agent_mail_send` for blockers, handoffs, or dependency requests.",
+		"Silent waiting is failure.",
+		"Do not widen scope without instruction.",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("expected %q in sub-agent orchestration prompt", needle)

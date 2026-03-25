@@ -1303,6 +1303,8 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 
 	// Get existing nested tools.
 	nestedTools := agentItem.NestedTools()
+	structureChanged := false
+	contentChanged := false
 
 	// Update or create nested tool calls.
 	for _, tc := range event.Payload.ToolCalls() {
@@ -1312,7 +1314,11 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		found := false
 		for _, existingTool := range nestedTools {
 			if existingTool.ToolCall().ID == tc.ID {
-				existingTool.SetToolCall(tc)
+				prev := existingTool.ToolCall()
+				if prev.Input != tc.Input || prev.Finished != tc.Finished {
+					existingTool.SetToolCall(tc)
+					contentChanged = true
+				}
 				found = true
 				break
 			}
@@ -1329,6 +1335,8 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 				}
 			}
 			nestedTools = append(nestedTools, nestedItem)
+			structureChanged = true
+			contentChanged = true
 		}
 	}
 
@@ -1337,18 +1345,23 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 		for _, nestedTool := range nestedTools {
 			if nestedTool.ToolCall().ID == tr.ToolCallID {
 				nestedTool.SetResult(&tr)
+				contentChanged = true
 				break
 			}
 		}
 	}
 
-	// Update the agent item with the new nested tools.
+	if !structureChanged && !contentChanged {
+		return tea.Sequence(cmds...)
+	}
+
 	agentItem.SetNestedTools(nestedTools)
+	if structureChanged {
+		m.chat.UpdateNestedToolIDs(toolCallID)
+	}
+	m.chat.InvalidateMessage(toolCallID)
 
-	// Update the chat so it updates the index map for animations to work as expected
-	m.chat.UpdateNestedToolIDs(toolCallID)
-
-	if m.chat.Follow() {
+	if structureChanged && m.chat.Follow() {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

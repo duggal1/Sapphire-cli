@@ -178,6 +178,7 @@ func (s *Service) runPatrolCycle(ctx context.Context) {
 	}
 	s.processCompletions(ctx, trackers)
 	s.unblockWaitingAgents(ctx)
+	s.reassignRecoverableAgents(ctx, trackers)
 	s.escalateCriticalIssues(ctx, trackers)
 }
 
@@ -286,6 +287,7 @@ func (s *Service) handleLoopDetection(ctx context.Context, tracker *AgentTracker
 	body := "Loop detected.\n\nBreak the repetition immediately.\n1. Stop the current repeated action.\n2. Report current state.\n3. Wait for updated instructions if blocked."
 	_, _ = s.mailbox.Send(ctx, tracker.AgentID, "supervisor", "LOOP DETECTED", body, agentmailbox.SendOptions{Priority: 0})
 	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		existing.Status = "needs_reassignment"
 		existing.CriticalIssue = "loop detected"
 	})
 	s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
@@ -395,6 +397,51 @@ func (s *Service) unblockDependents(ctx context.Context, completedWorkItemID str
 		return
 	}
 	s.unblockWaitingAgents(ctx)
+}
+
+func (s *Service) reassignRecoverableAgents(ctx context.Context, trackers []*AgentTracker) {
+	if s == nil || s.store == nil || s.hooks.EnsureDispatchForWorkItem == nil {
+		return
+	}
+	for _, tracker := range trackers {
+		if tracker == nil {
+			continue
+		}
+		if normalizeStatus(tracker.Status) != "needs_reassignment" {
+			continue
+		}
+		workItemID := strings.TrimSpace(tracker.WorkItemID)
+		if workItemID == "" {
+			continue
+		}
+		item, err := s.store.GetWorkItem(ctx, workItemID)
+		if err != nil {
+			continue
+		}
+		if !s.areAllDependenciesComplete(ctx, item) {
+			continue
+		}
+		item.Status = "open"
+		item.ClosedAt = time.Time{}
+		if err := s.store.UpsertWorkItem(ctx, item); err != nil {
+			continue
+		}
+		if _, err := s.hooks.EnsureDispatchForWorkItem(ctx, item); err != nil {
+			s.logActivity(ctx, tracker.AgentID, "supervisor_reassign_failed", map[string]any{
+				"work_item_id": workItemID,
+				"error":        err.Error(),
+			})
+			continue
+		}
+		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+			existing.Status = "reassigned"
+			existing.CriticalIssue = ""
+			existing.LastInterventionAt = time.Now().UTC()
+		})
+		s.logActivity(ctx, tracker.AgentID, "supervisor_reassigned", map[string]any{
+			"work_item_id": workItemID,
+		})
+	}
 }
 
 func (s *Service) escalateCriticalIssues(ctx context.Context, trackers []*AgentTracker) {

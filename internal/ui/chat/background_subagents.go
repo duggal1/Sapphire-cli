@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
@@ -110,6 +111,9 @@ func renderBackgroundSubAgentNode(sty *styles.Styles, entry agent.BackgroundSubA
 		status = "Running"
 	}
 	sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "State", status)})
+	if elapsed := formatSubAgentElapsedAt(entry.StartedAt, time.Now()); elapsed != "" {
+		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Elapsed", elapsed)})
+	}
 
 	if focus := backgroundSubAgentFocus(entry); focus != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Focus", focus)})

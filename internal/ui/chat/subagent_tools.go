@@ -128,7 +128,18 @@ func NewWaitAgentsToolMessageItem(
 	result *message.ToolResult,
 	canceled bool,
 ) ToolMessageItem {
-	return newBaseToolMessageItem(sty, toolCall, result, &WaitAgentsToolRenderContext{}, canceled)
+	t := &WaitAgentsToolMessageItem{}
+	t.baseToolMessageItem = newBaseToolMessageItem(sty, toolCall, result, &WaitAgentsToolRenderContext{}, canceled)
+	t.spinningFunc = func(state SpinningState) bool {
+		if state.IsCanceled() {
+			return false
+		}
+		if waitAgentsResultActive(state.Result) {
+			return true
+		}
+		return !state.HasResult() && !state.IsCanceled()
+	}
+	return t
 }
 
 type WaitAgentsToolRenderContext struct{}
@@ -757,6 +768,61 @@ func formatSubAgentElapsedAt(start, now time.Time) string {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	default:
 		return fmt.Sprintf("%ds", seconds)
+	}
+}
+
+func spawnAgentResultActive(result *message.ToolResult) bool {
+	if result == nil {
+		return false
+	}
+	var payload subAgentSpawnResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Content)), &payload); err != nil {
+		return false
+	}
+	return isActiveSubAgentStatus(payload.Status)
+}
+
+func waitAgentsResultActive(result *message.ToolResult) bool {
+	if result == nil {
+		return false
+	}
+	var payload subAgentWaitResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Content)), &payload); err != nil {
+		return false
+	}
+	for _, agent := range payload.Agents {
+		if isActiveSubAgentStatus(agent.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func backgroundSubAgentsPayloadActive(result *message.ToolResult) bool {
+	if result == nil {
+		return false
+	}
+	var payload agent.BackgroundSubAgentsToolPayload
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Content)), &payload); err != nil {
+		return false
+	}
+	if isActiveSubAgentStatus(payload.Status) || strings.EqualFold(strings.TrimSpace(payload.Status), "launching") {
+		return true
+	}
+	for _, entry := range payload.Agents {
+		if isActiveSubAgentStatus(entry.Status) || strings.EqualFold(strings.TrimSpace(entry.Status), "launching") {
+			return true
+		}
+	}
+	return false
+}
+
+func isActiveSubAgentStatus(status string) bool {
+	switch normalizeSubAgentStatus(status) {
+	case "queued", "running", "degraded":
+		return true
+	default:
+		return false
 	}
 }
 

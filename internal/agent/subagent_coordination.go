@@ -7,21 +7,21 @@ import (
 )
 
 type subAgentAssignment struct {
-	ID              string
-	ParentSessionID string
-	Title           string
-	Task            string
-	TaskKey         string
-	Domains         []string
-	WorkDir         string
-	WorktreePath    string
-	Branch          string
-	WriteManifest   []string
-	DefinitionOfDone string
-	TestCommand     string
+	ID                 string
+	ParentSessionID    string
+	Title              string
+	Task               string
+	TaskKey            string
+	Domains            []string
+	WorkDir            string
+	WorktreePath       string
+	Branch             string
+	WriteManifest      []string
+	DefinitionOfDone   string
+	TestCommand        string
 	LongHorizonContext string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type subAgentReport struct {
@@ -51,21 +51,21 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 		assignmentID = fmt.Sprintf("subagent-%d", now.UnixNano())
 	}
 	assignment := subAgentAssignment{
-		ID:              assignmentID,
-		ParentSessionID: parentSessionID,
-		Title:           title,
-		Task:            strings.TrimSpace(task),
-		TaskKey:         decision.TaskKey,
-		Domains:         decision.Domains,
-		WorkDir:         workDir,
-		WorktreePath:    workDir,
-		Branch:          branch,
-		WriteManifest:   append([]string{}, manifest...),
-		DefinitionOfDone: strings.TrimSpace(definitionOfDone),
-		TestCommand:     strings.TrimSpace(testCommand),
+		ID:                 assignmentID,
+		ParentSessionID:    parentSessionID,
+		Title:              title,
+		Task:               strings.TrimSpace(task),
+		TaskKey:            decision.TaskKey,
+		Domains:            decision.Domains,
+		WorkDir:            workDir,
+		WorktreePath:       workDir,
+		Branch:             branch,
+		WriteManifest:      append([]string{}, manifest...),
+		DefinitionOfDone:   strings.TrimSpace(definitionOfDone),
+		TestCommand:        strings.TrimSpace(testCommand),
 		LongHorizonContext: longHorizonContext,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	domainLine := "general"
@@ -82,7 +82,7 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 		builder.WriteString("\n</orchestrator_protocol>\n\n")
 	}
 
-	builder.WriteString("You are a dedicated sub-agent. Execute the assignment below autonomously.\n\n")
+	builder.WriteString("Role: sub-agent\n")
 	builder.WriteString(fmt.Sprintf("Assignment ID: %s\n", assignment.ID))
 	builder.WriteString(fmt.Sprintf("Parent session: %s\n", assignment.ParentSessionID))
 	if assignment.Title != "" {
@@ -103,11 +103,13 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 		builder.WriteString("\n\nTest command:\n")
 		builder.WriteString(assignment.TestCommand)
 	}
-	builder.WriteString("\n\nConstraints:\n")
-	builder.WriteString("- Stay within the assigned domain and task scope.\n")
-	builder.WriteString("- Use tools and terminal commands as needed; run commands inside the workdir.\n")
+	builder.WriteString("\n\nRules:\n")
+	builder.WriteString("- Stay within the assigned task and scope.\n")
+	builder.WriteString("- Run commands inside the workdir.\n")
+	builder.WriteString("- Inspect before claiming.\n")
+	builder.WriteString("- If blocked or dependent on another agent, use durable mail.\n")
 	if len(assignment.WriteManifest) > 0 {
-		builder.WriteString("- Write access is restricted to the manifest below. Read access is unrestricted.\n")
+		builder.WriteString("- Write access is restricted to the manifest below.\n")
 		for _, entry := range assignment.WriteManifest {
 			entry = strings.TrimSpace(entry)
 			if entry == "" {
@@ -116,23 +118,23 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 			builder.WriteString(fmt.Sprintf("  - %s\n", entry))
 		}
 	} else {
-		builder.WriteString("- Write access is restricted: no writes outside the provided manifest.\n")
+		builder.WriteString("- No writes outside the provided manifest.\n")
 	}
-	builder.WriteString("- Report absolute file paths for any findings or edits.\n")
-	builder.WriteString("- If blocked, say so explicitly and state the missing information.\n\n")
-	builder.WriteString("Validation gate:\n")
-	builder.WriteString("- After completion, a validation gate runs automatically: diff, build, test, lint, security scan.\n")
-	builder.WriteString("- Failed validation quarantines the worktree instead of deleting it.\n")
-	builder.WriteString("- Ensure your changes build, test, lint, and scan before reporting STATUS: done.\n\n")
+	builder.WriteString("- Report absolute file paths for findings and edits.\n")
+	builder.WriteString("- If blocked, report the missing dependency or decision.\n\n")
+	builder.WriteString("Validation:\n")
+	builder.WriteString("- A validation gate runs after the turn.\n")
+	builder.WriteString("- Failed validation preserves the worktree for review.\n")
+	builder.WriteString("- Do not report done if required validation is known to be failing.\n\n")
 	builder.WriteString("Output format (strict):\n")
 	builder.WriteString("STATUS: done | blocked | needs_followup\n")
-	builder.WriteString("SUMMARY: <one paragraph>\n")
-	builder.WriteString("PROGRESS: <short status update>\n")
-	builder.WriteString("FILES: <comma-separated absolute paths or 'none'>\n")
-	builder.WriteString("COMMANDS: <comma-separated commands or 'none'>\n")
-	builder.WriteString("RISKS: <brief risks or 'none'>\n")
-	builder.WriteString("NEXT: <next steps or 'none'>\n")
-	builder.WriteString("BLOCKERS: <what is missing, or 'none'>\n")
+	builder.WriteString("SUMMARY: <one concise paragraph>\n")
+	builder.WriteString("PROGRESS: <concrete progress>\n")
+	builder.WriteString("FILES: <comma-separated absolute paths or none>\n")
+	builder.WriteString("COMMANDS: <comma-separated commands or none>\n")
+	builder.WriteString("RISKS: <concise risks or none>\n")
+	builder.WriteString("NEXT: <exact next step or none>\n")
+	builder.WriteString("BLOCKERS: <exact blocker or none>\n")
 
 	return assignment, builder.String()
 }
@@ -147,7 +149,7 @@ func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string,
 		builder.WriteString("\n</orchestrator_protocol>\n\n")
 	}
 
-	builder.WriteString("You are continuing a sub-agent assignment.\n\n")
+	builder.WriteString("Role: sub-agent\n")
 	builder.WriteString(fmt.Sprintf("Assignment ID: %s\n", assignment.ID))
 	if assignment.Title != "" {
 		builder.WriteString(fmt.Sprintf("Title: %s\n", assignment.Title))
@@ -186,17 +188,58 @@ func buildSubAgentFollowupPrompt(assignment subAgentAssignment, followup string,
 			builder.WriteString(fmt.Sprintf("- %s\n", entry))
 		}
 	}
+	builder.WriteString("\n\nRules:\n")
+	builder.WriteString("- Continue the current assignment only.\n")
+	builder.WriteString("- Inspect before claiming.\n")
+	builder.WriteString("- Use durable mail for blockers or dependency handoffs.\n")
+	builder.WriteString("- Report concrete evidence.\n")
 	builder.WriteString("\n\nOutput format (strict):\n")
 	builder.WriteString("STATUS: done | blocked | needs_followup\n")
-	builder.WriteString("SUMMARY: <one paragraph>\n")
-	builder.WriteString("PROGRESS: <short status update>\n")
-	builder.WriteString("FILES: <comma-separated absolute paths or 'none'>\n")
-	builder.WriteString("COMMANDS: <comma-separated commands or 'none'>\n")
-	builder.WriteString("RISKS: <brief risks or 'none'>\n")
-	builder.WriteString("NEXT: <next steps or 'none'>\n")
-	builder.WriteString("BLOCKERS: <what is missing, or 'none'>\n")
+	builder.WriteString("SUMMARY: <one concise paragraph>\n")
+	builder.WriteString("PROGRESS: <concrete progress>\n")
+	builder.WriteString("FILES: <comma-separated absolute paths or none>\n")
+	builder.WriteString("COMMANDS: <comma-separated commands or none>\n")
+	builder.WriteString("RISKS: <concise risks or none>\n")
+	builder.WriteString("NEXT: <exact next step or none>\n")
+	builder.WriteString("BLOCKERS: <exact blocker or none>\n")
 
 	return builder.String()
+}
+
+type subAgentTurnDisposition struct {
+	Status       subAgentStatus
+	ReportStatus string
+	Stage        SubAgentLifecycleStage
+	EventType    string
+	ErrMsg       string
+}
+
+func classifySubAgentTurn(report subAgentReport) subAgentTurnDisposition {
+	status := strings.ToLower(strings.TrimSpace(report.Status))
+	switch status {
+	case "blocked":
+		return subAgentTurnDisposition{
+			Status:       subAgentStatusStuck,
+			ReportStatus: "blocked",
+			Stage:        SubAgentStageStuck,
+			EventType:    string(SubAgentStuckEvent),
+			ErrMsg:       firstNonEmptyString(strings.TrimSpace(report.Blockers), strings.TrimSpace(report.Summary), "sub-agent reported blocked"),
+		}
+	case "needs_followup":
+		return subAgentTurnDisposition{
+			Status:       subAgentStatusCompleted,
+			ReportStatus: "needs_followup",
+			Stage:        SubAgentStageCompleted,
+			EventType:    string(SubAgentCompletedEvent),
+		}
+	default:
+		return subAgentTurnDisposition{
+			Status:       subAgentStatusCompleted,
+			ReportStatus: "done",
+			Stage:        SubAgentStageCompleted,
+			EventType:    string(SubAgentCompletedEvent),
+		}
+	}
 }
 
 func parseSubAgentReport(content string) subAgentReport {

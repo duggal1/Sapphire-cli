@@ -206,6 +206,15 @@ func NewBackgroundSubAgentsToolMessageItem(
 		&BackgroundSubAgentsToolRenderContext{},
 		canceled,
 	)
+	t.spinningFunc = func(state SpinningState) bool {
+		if state.IsCanceled() {
+			return false
+		}
+		if backgroundSubAgentsPayloadActive(state.Result) {
+			return true
+		}
+		return !state.HasResult() && !state.IsCanceled()
+	}
 	return t
 }
 

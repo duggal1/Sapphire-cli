@@ -13,6 +13,7 @@ import (
 	"time"
 
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
+	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 )
@@ -408,6 +409,9 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 			}
 		}
 	}
+	if mailboxSection := c.buildMailboxContext(ctx, runner.id, true, maxOrchestrationMail); mailboxSection != "" {
+		sections = append(sections, mailboxSection)
+	}
 	if activitySection := c.renderRecentAgentActivityContext(ctx, runner.id); activitySection != "" {
 		sections = append(sections, activitySection)
 	}
@@ -419,6 +423,84 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 		return ""
 	}
 	return "## PERSISTENT MEMORY\n" + strings.Join(sections, "\n\n")
+}
+
+func (c *coordinator) reportSubAgentOutcomeToParent(ctx context.Context, runner *subAgentRunner, submissionID string, report subAgentReport, rawResult string) {
+	if c == nil || c.mailbox == nil || runner == nil {
+		return
+	}
+
+	runner.mu.Lock()
+	parentSessionID := strings.TrimSpace(runner.parentSession)
+	assignmentID := strings.TrimSpace(runner.assignment.ID)
+	agentID := strings.TrimSpace(runner.id)
+	title := strings.TrimSpace(runner.assignment.Title)
+	task := strings.TrimSpace(runner.assignment.Task)
+	runner.mu.Unlock()
+
+	if parentSessionID == "" || agentID == "" {
+		return
+	}
+
+	mainMailboxID := mainAgentMailboxID(parentSessionID)
+	if mainMailboxID == "" {
+		return
+	}
+
+	reportStatus := strings.ToUpper(firstNonEmptyString(strings.TrimSpace(report.Status), "done"))
+	subject := "SUBAGENT_DONE"
+	switch strings.ToLower(strings.TrimSpace(report.Status)) {
+	case "blocked":
+		subject = "SUBAGENT_BLOCKED"
+	case "needs_followup":
+		subject = "SUBAGENT_NEEDS_FOLLOWUP"
+	}
+
+	bodyLines := []string{
+		fmt.Sprintf("Agent: %s", agentID),
+		fmt.Sprintf("Assignment: %s", firstNonEmptyString(title, assignmentID, "sub-agent task")),
+		fmt.Sprintf("Submission: %s", strings.TrimSpace(submissionID)),
+		fmt.Sprintf("Status: %s", reportStatus),
+		fmt.Sprintf("Task: %s", firstNonEmptyString(title, task)),
+		fmt.Sprintf("Summary: %s", firstNonEmptyString(strings.TrimSpace(report.Summary), strings.TrimSpace(report.Progress), truncateForContext(strings.TrimSpace(rawResult), 280), "none")),
+		fmt.Sprintf("Progress: %s", firstNonEmptyString(strings.TrimSpace(report.Progress), "none")),
+		fmt.Sprintf("Files: %s", joinOrNone(report.Files)),
+		fmt.Sprintf("Commands: %s", joinOrNone(report.Commands)),
+		fmt.Sprintf("Risks: %s", firstNonEmptyString(strings.TrimSpace(report.Risks), "none")),
+		fmt.Sprintf("Next: %s", firstNonEmptyString(strings.TrimSpace(report.Next), "none")),
+		fmt.Sprintf("Blockers: %s", firstNonEmptyString(strings.TrimSpace(report.Blockers), "none")),
+	}
+
+	if _, err := c.mailbox.Send(ctx, mainMailboxID, agentID, subject, strings.Join(bodyLines, "\n"), agentmailbox.SendOptions{
+		Priority:  1,
+		ThreadID:  assignmentID,
+		SkipNudge: true,
+	}); err != nil {
+		slog.Warn("Failed to report sub-agent outcome to parent", "agent_id", agentID, "parent_session_id", parentSessionID, "error", err)
+		return
+	}
+
+	c.recordOrchestrationActivity(ctx, agentID, "reported_to_parent", map[string]any{
+		"subject":       subject,
+		"submission_id": submissionID,
+		"thread_id":     assignmentID,
+	})
+}
+
+func joinOrNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	trimmed := make([]string, 0, len(items))
+	for _, item := range items {
+		if v := strings.TrimSpace(item); v != "" {
+			trimmed = append(trimmed, v)
+		}
+	}
+	if len(trimmed) == 0 {
+		return "none"
+	}
+	return strings.Join(trimmed, ", ")
 }
 
 func (c *coordinator) buildStructuredSummaryContext(ctx context.Context, sessionID string) string {

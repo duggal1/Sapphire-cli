@@ -447,6 +447,9 @@ func (t *baseToolMessageItem) OnShimmerTick() bool {
 		return false
 	}
 	frame := toolSpinnerFrame()
+	if frame == t.lastSpinnerFrame {
+		return false
+	}
 	t.lastSpinnerFrame = frame
 	t.clearCache()
 	return true

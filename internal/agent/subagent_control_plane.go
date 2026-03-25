@@ -134,11 +134,12 @@ func (c *coordinator) publishSubAgentCompletionNotification(ctx context.Context,
 	if submission != nil {
 		submissionStatus = submission.Status
 	}
-	runner.mu.Unlock()
-
-	if parentSessionID == "" || submission == nil || !isSubAgentFinalStatus(submissionStatus) {
+	if parentSessionID == "" || submission == nil || !isSubAgentFinalStatus(submissionStatus) || submission.Notified {
+		runner.mu.Unlock()
 		return
 	}
+	submission.Notified = true
+	runner.mu.Unlock()
 
 	payload, err := json.Marshal(map[string]string{
 		"agent_id":      runner.id,

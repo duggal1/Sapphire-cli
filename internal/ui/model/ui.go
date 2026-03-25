@@ -688,6 +688,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch m.state {
+		case uiInitialize:
+			if cmd := m.handleInitializeClick(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case uiChat:
 			x, y := msg.X, msg.Y
 			// Adjust for chat area position
@@ -3099,10 +3103,10 @@ func (m *UI) renderModeFooter(width int) string {
 	if mode == planmode.PlanMode {
 		badges = append(badges, lipgloss.NewStyle().
 			Foreground(t.White).
-			Background(lipgloss.Color("#EA580C")).
+			Background(lipgloss.Color("#A34DFF")).
 			Padding(0, 1).
 			Bold(true).
-			Render("PLAN"))
+			Render("MODE PLAN"))
 	}
 	if label := policy.FooterLabel(); label != "" {
 		badges = append(badges, lipgloss.NewStyle().

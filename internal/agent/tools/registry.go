@@ -111,11 +111,12 @@ type registryAgentTool struct {
 }
 
 func (t registryAgentTool) Info() fantasy.ToolInfo {
+	parameters, required := normalizeToolInfoSchema(t.spec.Parameters, t.spec.Required)
 	return fantasy.ToolInfo{
 		Name:        t.spec.Name,
 		Description: t.spec.Description,
-		Parameters:  t.spec.Parameters,
-		Required:    append([]string{}, t.spec.Required...),
+		Parameters:  parameters,
+		Required:    required,
 		Parallel:    t.spec.Parallel,
 	}
 }
@@ -129,6 +130,26 @@ func (t registryAgentTool) ProviderOptions() fantasy.ProviderOptions {
 }
 
 func (t registryAgentTool) SetProviderOptions(opts fantasy.ProviderOptions) {}
+
+func normalizeToolInfoSchema(parameters map[string]any, required []string) (map[string]any, []string) {
+	if len(parameters) == 0 {
+		return nil, append([]string{}, required...)
+	}
+
+	if schemaType, ok := parameters["type"].(string); ok && schemaType == "object" {
+		if props, ok := parameters["properties"].(map[string]any); ok {
+			normalizedRequired := append([]string{}, required...)
+			if len(normalizedRequired) == 0 {
+				if nestedRequired, ok := parameters["required"].([]string); ok {
+					normalizedRequired = append(normalizedRequired, nestedRequired...)
+				}
+			}
+			return props, normalizedRequired
+		}
+	}
+
+	return parameters, append([]string{}, required...)
+}
 
 type PlanQuestionOption struct {
 	Label       string `json:"label"`
@@ -230,8 +251,16 @@ func updatePlanToolSpec(sessions session.Service) ToolSpec {
 			if sessions == nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("session service is not configured")
 			}
+			var input map[string]any
+			if err := json.Unmarshal(raw, &input); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
+			input = repairUpdatePlanInput(input)
+			if err := validateUpdatePlanInputMap(input); err != nil {
+				return fantasy.ToolResponse{}, err
+			}
 			var args UpdatePlanArgs
-			if err := json.Unmarshal(raw, &args); err != nil {
+			if err := decodeInto(input, &args); err != nil {
 				return fantasy.ToolResponse{}, err
 			}
 			args = NormalizeUpdatePlanArgs(args)

@@ -8,8 +8,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/MakeNowJust/heredoc"
-	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 // letterform represents a letterform. It can be stretched horizontally by
@@ -103,7 +103,7 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 // SmallRender renders a smaller version of the Sapphire logo, suitable for
 // smaller windows or sidebar usage.
 func SmallRender(t *styles.Styles, width int) string {
-	title := styles.ApplyBoldForegroundGrad(t, "Sapphire", t.LogoTitleColorA, t.LogoTitleColorB)
+	title := styles.ApplyBoldForegroundGrad(t, "SAPPHIRE", t.LogoTitleColorA, t.LogoTitleColorB)
 	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after "Sapphire"
 	if remainingWidth > 0 {
 		lines := strings.Repeat("╱", remainingWidth)

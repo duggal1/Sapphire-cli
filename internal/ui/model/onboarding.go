@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"image"
 	"log/slog"
 	"strings"
 
@@ -18,12 +19,16 @@ import (
 
 // markProjectInitialized marks the current project as initialized in the config.
 func (m *UI) markProjectInitialized() tea.Msg {
-	// TODO: handle error so we show it in the tui footer
-	err := config.MarkProjectInitialized(m.com.Config())
+	cfg := m.com.Config()
+	if cfg == nil {
+		return util.NewErrorMsg(fmt.Errorf("configuration not loaded"))
+	}
+	err := config.MarkProjectInitialized(cfg)
 	if err != nil {
 		slog.Error(err.Error())
+		return util.NewErrorMsg(err)
 	}
-	return nil
+	return util.InfoMsg{Type: util.InfoTypeSuccess, Msg: "Project initialized"}
 }
 
 // updateInitializeView handles keyboard input for the project initialization prompt.
@@ -43,6 +48,53 @@ func (m *UI) updateInitializeView(msg tea.KeyPressMsg) (cmds []tea.Cmd) {
 		cmds = append(cmds, m.skipInitializeProject())
 	}
 	return cmds
+}
+
+// handleInitializeClick routes mouse clicks on the initialize prompt buttons.
+func (m *UI) handleInitializeClick(msg tea.MouseClickMsg) tea.Cmd {
+	if m.state != uiInitialize {
+		return nil
+	}
+	if msg.Button != tea.MouseButton1 {
+		return nil
+	}
+	if !image.Pt(msg.X, msg.Y).In(m.layout.main) {
+		return nil
+	}
+
+	// The prompt is bottom-aligned, so button clicks are expected on the last
+	// couple of rows of the main layout.
+	if msg.Y < m.layout.main.Max.Y-2 {
+		return nil
+	}
+
+	yesButton := common.Button(m.com.Styles, common.ButtonOpts{
+		Text:     "Yes",
+		Selected: true,
+	})
+	noButton := common.Button(m.com.Styles, common.ButtonOpts{
+		Text:     "No",
+		Selected: false,
+	})
+
+	yesWidth := lipgloss.Width(yesButton)
+	noWidth := lipgloss.Width(noButton)
+
+	yesStart := m.layout.main.Min.X
+	yesEnd := yesStart + yesWidth
+	noStart := yesEnd + 1
+	noEnd := noStart + noWidth
+
+	switch {
+	case msg.X >= yesStart && msg.X < yesEnd:
+		m.onboarding.yesInitializeSelected = true
+		return m.initializeProject()
+	case msg.X >= noStart && msg.X < noEnd:
+		m.onboarding.yesInitializeSelected = false
+		return m.skipInitializeProject()
+	default:
+		return nil
+	}
 }
 
 // initializeProject starts project initialization and transitions to the landing view.
@@ -89,8 +141,8 @@ func (m *UI) initializeView() string {
 	prompt := s.Content.Render("Would you like to initialize now?")
 
 	buttons := common.ButtonGroup(m.com.Styles, []common.ButtonOpts{
-		{Text: "Yep!", Selected: m.onboarding.yesInitializeSelected},
-		{Text: "Nope", Selected: !m.onboarding.yesInitializeSelected},
+		{Text: "Yes", Selected: m.onboarding.yesInitializeSelected},
+		{Text: "No", Selected: !m.onboarding.yesInitializeSelected},
 	}, " ")
 
 	// max width 60 so the text is compact

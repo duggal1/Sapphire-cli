@@ -44,6 +44,7 @@ builds:
   - env:
       - CGO_ENABLED=0
       - GOEXPERIMENT=greenteagc
+    binary: sapphire
     goos:
       - linux
       - darwin

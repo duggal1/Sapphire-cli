@@ -554,19 +554,17 @@ var (
 func DefaultStyles(yellowMode bool) Styles {
 	var (
 		// Semantic Theme Colors - purple-led palette with a calmer pink accent.
-		primaryHex   = "#A34DFF"
+		primaryHex   = "#A63CFF"
 		primary      = lipgloss.Color(primaryHex)
-		secondaryHex = "#E0A7E8"
+		secondaryHex = "#E97FEB"
 		secondary    = lipgloss.Color(secondaryHex)
-		highlightHex = "#C7B8FF"
+		highlightHex = "#C56BFF"
 		highlight    = lipgloss.Color(highlightHex)
-		tertiaryHex  = "#B9A3E8"
+		tertiaryHex  = "#D786FF"
 		tertiary     = lipgloss.Color(tertiaryHex)
-		logoPinkHex  = "#E6A8E4"
-		logoPink     = lipgloss.Color(logoPinkHex)
-		// Markdown accent pair (Purple + Pink)
-		markdownSecondaryHex = secondaryHex
-		markdownTertiaryHex  = tertiaryHex
+		// Markdown accent pair stays softer than the header logo.
+		markdownSecondaryHex = "#D786FF"
+		markdownTertiaryHex  = "#C56BFF"
 
 		// Backgrounds - anchored to the agentic terminal base while keeping
 		// overlays lighter than the canvas.
@@ -737,7 +735,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	syntaxOffWhite := "#EEE7F0"  // Plain text / foreground
 	syntaxPurple := "#A34DFF"    // Keywords / Operators
-	syntaxPink := "#E0A7E8"      // Functions / Methods
+	syntaxPink := "#D786FF"      // Functions / Methods
 	syntaxOrange := "#F4A261"    // Strings
 	syntaxLavender := "#CCB8EC"  // Types / Classes
 	syntaxGray := "#A89AB1"      // Comments / neutral symbols
@@ -1238,7 +1236,7 @@ func DefaultStyles(yellowMode bool) Styles {
 
 	// Compact header styles
 	s.Header.Charm = base.Foreground(tertiary)
-	s.Header.Diagonals = base.Foreground(border)
+	s.Header.Diagonals = base.Foreground(primary)
 	s.Header.Percentage = s.Muted
 	s.Header.Keystroke = s.Muted
 	s.Header.KeystrokeTip = s.Subtle
@@ -1390,7 +1388,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	// Logo colors
 	s.LogoFieldColor = primary
 	s.LogoTitleColorA = primary
-	s.LogoTitleColorB = logoPink
+	s.LogoTitleColorB = secondary
 	s.LogoCharmColor = tertiary
 	s.LogoVersionColor = secondary
 

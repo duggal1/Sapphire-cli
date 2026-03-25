@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -232,6 +233,16 @@ func hasAgenticEditOperations(editMap map[string]any) bool {
 
 func coerceObjectSlice(v any) ([]map[string]any, error) {
 	switch value := v.(type) {
+	case string:
+		text := strings.TrimSpace(value)
+		if text == "" {
+			return nil, errors.New("value must be an object or array")
+		}
+		var decoded any
+		if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+			return nil, errors.New("value must be an object or array")
+		}
+		return coerceObjectSlice(decoded)
 	case map[string]any:
 		return []map[string]any{value}, nil
 	case []any:

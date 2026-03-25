@@ -105,6 +105,9 @@ func MarkProjectInitialized(cfg *Config) error {
 		return fmt.Errorf("config not loaded")
 	}
 	flagFilePath := filepath.Join(cfg.Options.DataDirectory, InitFlagFilename)
+	if err := os.MkdirAll(filepath.Dir(flagFilePath), 0o755); err != nil {
+		return fmt.Errorf("failed to create init directory: %w", err)
+	}
 
 	file, err := os.Create(flagFilePath)
 	if err != nil {

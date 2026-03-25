@@ -74,3 +74,29 @@ func TestPrepareToolCallDropsBlankPlanItems(t *testing.T) {
 		t.Fatalf("expected blank plan step to be removed, got %s", call.Input)
 	}
 }
+
+func TestPrepareToolCallNormalizesStringifiedPlanArray(t *testing.T) {
+	t.Parallel()
+
+	registry := map[string]fantasy.AgentTool{
+		UpdatePlanToolName: stubUpdatePlanTool(),
+	}
+
+	call, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		Name:  UpdatePlanToolName,
+		Input: `{"plan":"[{\"step\":\"Inspect renderer\",\"status\":\"in progress\"}]","explanation":" keep current "}`,
+	}, registry)
+	if err != nil {
+		t.Fatalf("expected stringified update_plan payload to be normalized, got error: %v", err)
+	}
+
+	if !strings.Contains(call.Input, `"step":"Inspect renderer"`) {
+		t.Fatalf("expected normalized plan step, got %s", call.Input)
+	}
+	if !strings.Contains(call.Input, `"status":"in_progress"`) {
+		t.Fatalf("expected normalized plan status, got %s", call.Input)
+	}
+	if !strings.Contains(call.Input, `"explanation":"keep current"`) {
+		t.Fatalf("expected trimmed explanation, got %s", call.Input)
+	}
+}

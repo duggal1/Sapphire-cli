@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -27,8 +25,6 @@ const responseContextHeight = 10
 
 // toolBodyLeftPaddingTotal represents the padding that should be applied to each tool body
 const toolBodyLeftPaddingTotal = 0
-
-var toolHeaderSpinner = spinner.MiniDot
 
 // ToolStatus represents the current state of a tool call.
 type ToolStatus int
@@ -503,15 +499,7 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 // toolIcon returns the status icon for a tool call.
 // toolIcon returns the status icon for a tool call based on its status.
 func toolSpinnerFrame() string {
-	frames := toolHeaderSpinner.Frames
-	if len(frames) == 0 {
-		return styles.LoadingIcon
-	}
-	index := int(time.Now().UnixMilli()/80) % len(frames)
-	if index < 0 {
-		index = 0
-	}
-	return frames[index]
+	return shimmer.CurrentSpinnerFrame()
 }
 
 func isSkillToolLabel(name string) bool {

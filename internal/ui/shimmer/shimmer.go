@@ -18,6 +18,8 @@ const (
 	shimmerPadding = 10
 )
 
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 type renderMode uint8
 
 const (
@@ -245,34 +247,30 @@ func intensityAt(index, position int) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{236, 236, 236}
-		highlightColor := [3]uint8{150, 150, 150}
-		r, g, b := blend(highlightColor, baseColor, clamp01(intensity)*0.9)
+		baseColor := [3]uint8{166, 60, 255}
+		highlightColor := [3]uint8{233, 127, 235}
+		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 255 - int(math.Round(float64(intensity)*10))
-		if index < 245 {
-			index = 245
+		index := 135 + int(math.Round(float64(intensity)*48))
+		if index < 135 {
+			index = 135
 		}
-		if index > 255 {
-			index = 255
+		if index > 213 {
+			index = 213
 		}
-		return renderIndexedColor(index, intensity < 0.35, ch)
+		return renderIndexedColor(index, intensity > 0.55, ch)
 	case renderDecorated:
-		return reversedStyleForIntensity(intensity)(ch)
+		switch {
+		case intensity < 0.2:
+			return "\033[2m\033[38;5;141m" + ch + "\033[0m"
+		case intensity < 0.6:
+			return "\033[38;5;177m" + ch + "\033[0m"
+		default:
+			return "\033[1m\033[38;5;213m" + ch + "\033[0m"
+		}
 	default:
 		return ch
-	}
-}
-
-func reversedStyleForIntensity(intensity float32) func(string) string {
-	switch {
-	case intensity < 0.2:
-		return renderBold
-	case intensity < 0.6:
-		return renderNormal
-	default:
-		return renderDim
 	}
 }
 
@@ -310,11 +308,12 @@ func ShimmerText(text string) string {
 }
 
 func Spinner(startTime *time.Time, animationsEnabled bool) string {
+	frame := CurrentSpinnerFrameAt(startTime)
 	if !animationsEnabled {
 		if currentRenderMode() == renderPlain {
-			return "•"
+			return frame
 		}
-		return renderDim("•")
+		return renderDim(frame)
 	}
 
 	var elapsed time.Duration
@@ -326,16 +325,9 @@ func Spinner(startTime *time.Time, animationsEnabled bool) string {
 
 	mode := currentRenderMode()
 	if mode != renderPlain {
-		spans := shimmerSpansAt("•", elapsed, mode)
-		if len(spans) > 0 {
-			return spans[0]
-		}
+		return renderRune(mode, intensityAt(0, shimmerPosition(1, elapsed)), frame)
 	}
-
-	if (elapsed.Milliseconds()/600)%2 == 0 {
-		return "•"
-	}
-	return "◦"
+	return frame
 }
 
 func ShimmerWithDot(text string) string {
@@ -345,4 +337,25 @@ func ShimmerWithDot(text string) string {
 		return dot
 	}
 	return dot + " " + ShimmerText(text)
+}
+
+func CurrentSpinnerFrameAt(startTime *time.Time) string {
+	var elapsed time.Duration
+	if startTime != nil {
+		elapsed = time.Since(*startTime)
+	} else {
+		elapsed = elapsedSinceStart()
+	}
+	if len(spinnerFrames) == 0 {
+		return "⠋"
+	}
+	index := int((elapsed / (80 * time.Millisecond)) % time.Duration(len(spinnerFrames)))
+	if index < 0 {
+		index = 0
+	}
+	return spinnerFrames[index]
+}
+
+func CurrentSpinnerFrame() string {
+	return CurrentSpinnerFrameAt(nil)
 }

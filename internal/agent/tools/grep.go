@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/fantasy"
@@ -66,6 +67,7 @@ var (
 type GrepParams struct {
 	Pattern     string `json:"pattern" description:"The regex pattern to search for in file contents"`
 	Path        string `json:"path,omitempty" description:"The directory to search in. Defaults to the current working directory."`
+	Paths       []string `json:"paths,omitempty" description:"Optional list of directories to search in one parallel call"`
 	Include     string `json:"include,omitempty" description:"File pattern to include in the search (e.g. \"*.js\", \"*.{ts,tsx}\")"`
 	LiteralText bool   `json:"literal_text,omitempty" description:"If true, the pattern will be treated as literal text with special regex characters escaped. Default is false."`
 }
@@ -80,6 +82,7 @@ type grepMatch struct {
 
 type GrepResponseMetadata struct {
 	NumberOfMatches int  `json:"number_of_matches"`
+	NumberOfRoots   int  `json:"number_of_roots,omitempty"`
 	Truncated       bool `json:"truncated"`
 }
 
@@ -124,7 +127,7 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				searchPattern = escapeRegexPattern(params.Pattern)
 			}
 
-			searchPath := cmp.Or(params.Path, workingDir)
+			searchPaths := normalizeBatchTargets(params.Path, params.Paths, workingDir)
 
 			timeout := config.GetTimeout()
 			if timeout < 15*time.Second {
@@ -133,16 +136,24 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 			searchCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
-			matches, truncated, err := searchFiles(searchCtx, searchPattern, searchPath, params.Include, 100)
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error searching files: %v", err)), nil
+			matches, truncated, errors := searchFilesAcrossRoots(searchCtx, searchPattern, searchPaths, params.Include, 100)
+			if searchCtx.Err() != nil {
+				return fantasy.ToolResponse{}, searchCtx.Err()
+			}
+			rootCount := len(searchPaths)
+			if rootCount == 0 {
+				rootCount = 1
 			}
 
 			var output strings.Builder
 			if len(matches) == 0 {
 				output.WriteString("No files found")
 			} else {
-				fmt.Fprintf(&output, "Found %d matches\n", len(matches))
+				if rootCount > 1 {
+					fmt.Fprintf(&output, "Searched %d roots in parallel. Found %d matches\n", rootCount, len(matches))
+				} else {
+					fmt.Fprintf(&output, "Found %d matches\n", len(matches))
+				}
 
 				currentFile := ""
 				for _, match := range matches {
@@ -172,15 +183,97 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 					output.WriteString("\n(Results are truncated. Consider using a more specific path or pattern.)")
 				}
 			}
+			if len(errors) > 0 {
+				if output.Len() > 0 {
+					output.WriteString("\n\n")
+				}
+				output.WriteString("Errors:\n")
+				output.WriteString(strings.Join(errors, "\n"))
+			}
 
 			return fantasy.WithResponseMetadata(
 				fantasy.NewTextResponse(output.String()),
 				GrepResponseMetadata{
 					NumberOfMatches: len(matches),
+					NumberOfRoots:   rootCount,
 					Truncated:       truncated,
 				},
 			), nil
 		})
+}
+
+func searchFilesAcrossRoots(ctx context.Context, pattern string, rootPaths []string, include string, limit int) ([]grepMatch, bool, []string) {
+	if len(rootPaths) == 0 {
+		rootPaths = []string{"."}
+	}
+	if len(rootPaths) == 1 {
+		matches, truncated, err := searchFiles(ctx, pattern, rootPaths[0], include, limit)
+		if err != nil {
+			return nil, false, []string{fmt.Sprintf("- %s: %v", filepath.ToSlash(rootPaths[0]), err)}
+		}
+		return matches, truncated, nil
+	}
+
+	type rootResult struct {
+		root      string
+		matches   []grepMatch
+		truncated bool
+		err       error
+	}
+
+	results := make([]rootResult, len(rootPaths))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, boundedParallelism(len(rootPaths), 8))
+	for i, rootPath := range rootPaths {
+		wg.Add(1)
+		go func(index int, root string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[index] = rootResult{root: root, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+			matches, truncated, err := searchFiles(ctx, pattern, root, include, limit)
+			results[index] = rootResult{
+				root:      root,
+				matches:   matches,
+				truncated: truncated,
+				err:       err,
+			}
+		}(i, rootPath)
+	}
+	wg.Wait()
+
+	allMatches := make([]grepMatch, 0, len(rootPaths)*limit)
+	errors := make([]string, 0)
+	seen := make(map[string]struct{})
+	truncated := false
+	for _, result := range results {
+		if result.err != nil {
+			errors = append(errors, fmt.Sprintf("- %s: %v", filepath.ToSlash(result.root), result.err))
+			continue
+		}
+		truncated = truncated || result.truncated
+		for _, match := range result.matches {
+			key := fmt.Sprintf("%s:%d:%d:%s", match.path, match.lineNum, match.charNum, match.lineText)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			allMatches = append(allMatches, match)
+		}
+	}
+
+	sort.Slice(allMatches, func(i, j int) bool {
+		return allMatches[i].modTime.After(allMatches[j].modTime)
+	})
+	if limit > 0 && len(allMatches) > limit {
+		allMatches = allMatches[:limit]
+		truncated = true
+	}
+	return allMatches, truncated, errors
 }
 
 func searchFiles(ctx context.Context, pattern, rootPath, include string, limit int) ([]grepMatch, bool, error) {

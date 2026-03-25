@@ -18,6 +18,10 @@ const (
 	defaultDispatchQueueCapacity = 50
 	defaultDispatchActiveLimit   = 8
 	dispatchLeaseOwner           = "sapphire-dispatcher"
+	dispatchTargetSubAgent       = "subagent"
+	dispatchTargetMailNudge      = "mail_nudge"
+	dispatchMailNudgeBackoff     = 5 * time.Second
+	dispatchLeaseBatchSlack      = 8
 )
 
 type queuedSubAgentDispatchPayload struct {
@@ -33,6 +37,19 @@ type queuedSubAgentDispatchPayload struct {
 	Model            string   `json:"model,omitempty"`
 	ReasoningEffort  string   `json:"reasoning_effort,omitempty"`
 	ForkContext      bool     `json:"fork_context,omitempty"`
+}
+
+type queuedAgentNudgePayload struct {
+	Recipient string `json:"recipient"`
+	Prompt    string `json:"prompt,omitempty"`
+}
+
+func mailNudgeDispatchWorkItem(recipient string) string {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		return ""
+	}
+	return "mail-nudge:" + recipient
 }
 
 func (c *coordinator) startOrchestrationServices() {
@@ -108,15 +125,99 @@ func (c *coordinator) enqueueSubAgentDispatch(ctx context.Context, sessionID, wo
 	return item.ID, nil
 }
 
+func (c *coordinator) enqueueAgentNudgeDispatch(ctx context.Context, recipient, prompt string) (string, error) {
+	if c == nil || c.orchestrationStore == nil {
+		return "", fmt.Errorf("orchestration store is not initialized")
+	}
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		return "", fmt.Errorf("recipient is required")
+	}
+	sessionID := c.dispatchSessionForAgent(ctx, recipient)
+	if sessionID == "" {
+		return "", fmt.Errorf("could not resolve dispatch session for %s", recipient)
+	}
+	workItemID := mailNudgeDispatchWorkItem(recipient)
+	existing, err := c.orchestrationStore.ListDispatchesByWorkItem(ctx, workItemID, []string{"queued", "leased", "running"}, 4)
+	if err == nil {
+		for _, item := range existing {
+			if strings.TrimSpace(item.TargetScope) == dispatchTargetMailNudge {
+				return item.ID, nil
+			}
+		}
+	}
+	payload, err := json.Marshal(queuedAgentNudgePayload{
+		Recipient: recipient,
+		Prompt:    firstNonEmptyString(strings.TrimSpace(prompt), mailboxNudgePrompt),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal mail nudge payload: %w", err)
+	}
+	item, err := c.orchestrationStore.EnqueueDispatch(ctx, orchestrationdb.DispatchQueueItem{
+		SessionID:   sessionID,
+		WorkItemID:  workItemID,
+		TargetScope: dispatchTargetMailNudge,
+		Status:      "queued",
+		Priority:    0,
+		PayloadJSON: string(payload),
+		AvailableAt: time.Now().UTC(),
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		return "", err
+	}
+	c.recordOrchestrationActivity(ctx, mainAgentMailboxID(sessionID), "mail_nudge_enqueued", map[string]any{
+		"dispatch_id": item.ID,
+		"recipient":   recipient,
+	})
+	return item.ID, nil
+}
+
+func (c *coordinator) dispatchSessionForAgent(ctx context.Context, agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return ""
+	}
+	if runner := c.ensureSubAgentRegistry().get(agentID); runner != nil {
+		runner.mu.Lock()
+		parentSessionID := strings.TrimSpace(runner.parentSession)
+		sessionID := strings.TrimSpace(runner.sessionID)
+		runner.mu.Unlock()
+		if parentSessionID != "" {
+			return parentSessionID
+		}
+		if sessionID != "" {
+			return sessionID
+		}
+	}
+	if c.orchestrationStore == nil {
+		return ""
+	}
+	state, err := c.orchestrationStore.GetAgentState(ctx, agentID)
+	if err != nil {
+		return ""
+	}
+	if parentAgentID := strings.TrimSpace(state.ParentAgentID); strings.HasPrefix(parentAgentID, mainAgentMailboxPrefix) {
+		if parentSessionID := strings.TrimPrefix(parentAgentID, mainAgentMailboxPrefix); strings.TrimSpace(parentSessionID) != "" {
+			return strings.TrimSpace(parentSessionID)
+		}
+	}
+	return strings.TrimSpace(state.SessionID)
+}
+
 func (c *coordinator) processDispatchQueue(ctx context.Context) error {
 	if c == nil || c.orchestrationStore == nil {
 		return nil
 	}
-	available := c.dispatchActiveLimit() - c.activeSubAgentCountAll()
-	if available <= 0 {
-		return nil
+	leaseLimit := c.dispatchActiveLimit() + dispatchLeaseBatchSlack
+	if leaseLimit < dispatchLeaseBatchSlack {
+		leaseLimit = dispatchLeaseBatchSlack
 	}
-	queued, err := c.orchestrationStore.LeaseDispatch(ctx, dispatchLeaseOwner, available)
+	if leaseLimit > defaultDispatchQueueCapacity {
+		leaseLimit = defaultDispatchQueueCapacity
+	}
+	queued, err := c.orchestrationStore.LeaseDispatch(ctx, dispatchLeaseOwner, leaseLimit)
 	if err != nil {
 		return err
 	}
@@ -129,6 +230,17 @@ func (c *coordinator) processDispatchQueue(ctx context.Context) error {
 }
 
 func (c *coordinator) dispatchQueuedItem(ctx context.Context, item orchestrationdb.DispatchQueueItem) error {
+	switch strings.TrimSpace(item.TargetScope) {
+	case "", dispatchTargetSubAgent:
+		return c.dispatchSubAgentItem(ctx, item)
+	case dispatchTargetMailNudge:
+		return c.dispatchMailNudgeItem(ctx, item)
+	default:
+		return c.failDispatchItem(ctx, item, fmt.Errorf("unsupported dispatch target scope %q", item.TargetScope))
+	}
+}
+
+func (c *coordinator) dispatchSubAgentItem(ctx context.Context, item orchestrationdb.DispatchQueueItem) error {
 	if strings.TrimSpace(item.SessionID) == "" {
 		return c.failDispatchItem(ctx, item, fmt.Errorf("dispatch session id is missing"))
 	}
@@ -185,6 +297,77 @@ func (c *coordinator) dispatchQueuedItem(ctx context.Context, item orchestration
 	return nil
 }
 
+func (c *coordinator) dispatchMailNudgeItem(ctx context.Context, item orchestrationdb.DispatchQueueItem) error {
+	if strings.TrimSpace(item.SessionID) == "" {
+		return c.failDispatchItem(ctx, item, fmt.Errorf("mail nudge session id is missing"))
+	}
+
+	var payload queuedAgentNudgePayload
+	if err := json.Unmarshal([]byte(item.PayloadJSON), &payload); err != nil {
+		return c.failDispatchItem(ctx, item, fmt.Errorf("invalid mail nudge payload: %w", err))
+	}
+	payload.Recipient = strings.TrimSpace(payload.Recipient)
+	if payload.Recipient == "" {
+		return c.failDispatchItem(ctx, item, fmt.Errorf("mail nudge recipient is empty"))
+	}
+
+	unread, err := c.mailbox.Inbox(ctx, payload.Recipient, true, 1)
+	if err != nil {
+		return c.failDispatchItem(ctx, item, fmt.Errorf("load unread mail for %s: %w", payload.Recipient, err))
+	}
+	if len(unread) == 0 {
+		return c.completeDispatchItem(ctx, item, "completed", "", payload.Recipient)
+	}
+
+	runner := c.ensureSubAgentRegistry().get(payload.Recipient)
+	if runner == nil {
+		if _, _, err := c.resumeSubAgent(ctx, item.SessionID, payload.Recipient, ""); err != nil {
+			return c.failDispatchItem(ctx, item, fmt.Errorf("resume nudge recipient %s: %w", payload.Recipient, err))
+		}
+		runner = c.ensureSubAgentRegistry().get(payload.Recipient)
+		if runner == nil {
+			return c.failDispatchItem(ctx, item, fmt.Errorf("mail nudge recipient %s is not available", payload.Recipient))
+		}
+	}
+
+	runner.mu.Lock()
+	closed := runner.closed
+	status := runner.effectiveStatusLocked()
+	outstanding := runner.hasOutstandingWorkLocked()
+	runner.mu.Unlock()
+	if closed {
+		return c.completeDispatchItem(ctx, item, "completed", "", payload.Recipient)
+	}
+	if outstanding || isSubAgentActiveStatus(status) {
+		c.recordOrchestrationActivity(ctx, payload.Recipient, "mail_nudge_requeued", map[string]any{
+			"dispatch_id": item.ID,
+			"status":      status,
+		})
+		return c.requeueDispatchItem(ctx, item, "recipient still busy", dispatchMailNudgeBackoff)
+	}
+
+	submissionID, err := c.sendSubAgentInput(ctx, payload.Recipient, firstNonEmptyString(payload.Prompt, mailboxNudgePrompt), nil, false)
+	if err != nil {
+		return c.failDispatchItem(ctx, item, fmt.Errorf("dispatch mail nudge to %s: %w", payload.Recipient, err))
+	}
+
+	item.Status = "running"
+	item.LeasedBy = ""
+	item.LeasedAt = time.Time{}
+	item.AssignedAgentID = payload.Recipient
+	item.SubmissionID = submissionID
+	item.LastError = ""
+	item.UpdatedAt = time.Now().UTC()
+	if err := c.orchestrationStore.UpdateDispatch(ctx, item); err != nil {
+		return err
+	}
+	c.recordOrchestrationActivity(ctx, payload.Recipient, "mail_nudge_started", map[string]any{
+		"dispatch_id":   item.ID,
+		"submission_id": submissionID,
+	})
+	return nil
+}
+
 func (c *coordinator) reconcileDispatchQueue(ctx context.Context) error {
 	if c == nil || c.orchestrationStore == nil {
 		return nil
@@ -216,24 +399,19 @@ func (c *coordinator) reconcileRunningDispatch(ctx context.Context, item orchest
 		return c.failDispatchItem(ctx, item, fmt.Errorf("dispatch running without assigned agent"))
 	}
 	if runner := c.ensureSubAgentRegistry().get(item.AssignedAgentID); runner != nil {
-		snapshot := runner.snapshot()
-		switch snapshot.Status {
-		case subAgentStatusCompleted, subAgentStatusClosed:
-			return c.completeDispatchItem(ctx, item, "completed", "", snapshot.ID)
-		case subAgentStatusError, subAgentStatusStuck:
-			return c.failDispatchItem(ctx, item, errors.New(firstNonEmptyString(snapshot.LastError, string(snapshot.Status))))
-		default:
-			return nil
+		if status, errMsg, ok := runner.dispatchCompletionLocked(item.SubmissionID); ok {
+			if status == "completed" {
+				return c.completeDispatchItem(ctx, item, status, "", item.AssignedAgentID)
+			}
+			return c.completeDispatchItem(ctx, item, status, errMsg, item.AssignedAgentID)
 		}
+		return nil
 	}
 
 	state, err := c.orchestrationStore.GetAgentState(ctx, item.AssignedAgentID)
 	if err == nil {
-		switch state.Status {
-		case string(subAgentStatusCompleted), string(subAgentStatusClosed):
-			return c.completeDispatchItem(ctx, item, "completed", "", item.AssignedAgentID)
-		case string(subAgentStatusError), string(subAgentStatusStuck):
-			return c.failDispatchItem(ctx, item, fmt.Errorf("agent state ended with %s", state.Status))
+		if dispatchStatus, errMsg, terminal := dispatchTerminalStatus(subAgentStatus(state.Status), ""); terminal {
+			return c.completeDispatchItem(ctx, item, dispatchStatus, errMsg, item.AssignedAgentID)
 		}
 		if !state.LastHeartbeat.IsZero() && now.Sub(state.LastHeartbeat) > dispatchLeaseTimeout {
 			return c.failDispatchItem(ctx, item, fmt.Errorf("agent heartbeat expired during dispatch"))
@@ -241,6 +419,17 @@ func (c *coordinator) reconcileRunningDispatch(ctx context.Context, item orchest
 		return nil
 	}
 	return c.failDispatchItem(ctx, item, fmt.Errorf("assigned agent is missing from runtime and state store"))
+}
+
+func dispatchTerminalStatus(status subAgentStatus, errMsg string) (string, string, bool) {
+	switch status {
+	case subAgentStatusCompleted, subAgentStatusClosed:
+		return "completed", "", true
+	case subAgentStatusBlocked, subAgentStatusTimedOut, subAgentStatusStuck, subAgentStatusError:
+		return "blocked", firstNonEmptyString(strings.TrimSpace(errMsg), string(status)), true
+	default:
+		return "", "", false
+	}
 }
 
 func (c *coordinator) completeDispatchItem(ctx context.Context, item orchestrationdb.DispatchQueueItem, status, errMsg, assignee string) error {

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/fantasy"
@@ -19,12 +21,14 @@ import (
 
 type LSParams struct {
 	Path   string   `json:"path,omitempty" description:"The path to the directory to list (defaults to current working directory)"`
+	Paths  []string `json:"paths,omitempty" description:"Optional list of directory paths to list in one parallel call"`
 	Ignore []string `json:"ignore,omitempty" description:"List of glob patterns to ignore"`
 	Depth  int      `json:"depth,omitempty" description:"The maximum depth to traverse"`
 }
 
 type LSPermissionsParams struct {
-	Path   string   `json:"path"`
+	Path   string   `json:"path,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
 	Ignore []string `json:"ignore"`
 	Depth  int      `json:"depth"`
 }
@@ -45,6 +49,7 @@ type TreeNode struct {
 
 type LSResponseMetadata struct {
 	NumberOfFiles int  `json:"number_of_files"`
+	NumberOfRoots int  `json:"number_of_roots,omitempty"`
 	Truncated     bool `json:"truncated"`
 }
 
@@ -76,52 +81,53 @@ func NewLsTool(permissions permission.Service, workingDir string, lsConfig confi
 				return fantasy.ToolResponse{}, ctx.Err()
 			}
 
-			searchPath, err := fsext.Expand(cmp.Or(params.Path, workingDir))
-			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error expanding path: %v", err)), nil
-			}
-
-			searchPath = filepathext.SmartJoin(workingDir, searchPath)
-
-			// Check if directory is outside working directory and request permission if needed
 			absWorkingDir, err := filepath.Abs(workingDir)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving working directory: %v", err)), nil
 			}
-
-			absSearchPath, err := filepath.Abs(searchPath)
+			searchPaths, err := resolveLSTargets(params, workingDir)
 			if err != nil {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-
-			relPath, err := filepath.Rel(absWorkingDir, absSearchPath)
-			if err != nil || strings.HasPrefix(relPath, "..") {
-				// Directory is outside working directory, request permission
-				sessionID := GetSessionFromContext(ctx)
-				if sessionID == "" {
-					return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for accessing directories outside working directory")
-				}
-
-				granted, err := permissions.Request(ctx,
-					permission.CreatePermissionRequest{
-						SessionID:   sessionID,
-						Path:        absSearchPath,
-						ToolCallID:  call.ID,
-						ToolName:    LSToolName,
-						Action:      "list",
-						Description: fmt.Sprintf("List directory outside working directory: %s", absSearchPath),
-						Params:      LSPermissionsParams(params),
-					},
-				)
+			for _, searchPath := range searchPaths {
+				absSearchPath, err := filepath.Abs(searchPath)
 				if err != nil {
-					return fantasy.ToolResponse{}, err
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
 				}
-				if !granted {
-					return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+
+				relPath, err := filepath.Rel(absWorkingDir, absSearchPath)
+				if err != nil || strings.HasPrefix(relPath, "..") {
+					sessionID := GetSessionFromContext(ctx)
+					if sessionID == "" {
+						return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for accessing directories outside working directory")
+					}
+
+					granted, err := permissions.Request(ctx,
+						permission.CreatePermissionRequest{
+							SessionID:   sessionID,
+							Path:        absSearchPath,
+							ToolCallID:  call.ID,
+							ToolName:    LSToolName,
+							Action:      "list",
+							Description: fmt.Sprintf("List directory outside working directory: %s", absSearchPath),
+							Params: LSPermissionsParams{
+								Path:   params.Path,
+								Paths:  append([]string{}, params.Paths...),
+								Ignore: append([]string{}, params.Ignore...),
+								Depth:  params.Depth,
+							},
+						},
+					)
+					if err != nil {
+						return fantasy.ToolResponse{}, err
+					}
+					if !granted {
+						return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+					}
 				}
 			}
 
-			output, metadata, err := ListDirectoryTree(ctx, searchPath, params, lsConfig)
+			output, metadata, err := ListDirectoryTrees(ctx, searchPaths, params, lsConfig)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
@@ -131,6 +137,89 @@ func NewLsTool(permissions permission.Service, workingDir string, lsConfig confi
 				metadata,
 			), nil
 		})
+}
+
+func resolveLSTargets(params LSParams, workingDir string) ([]string, error) {
+	targets := normalizeBatchTargets(params.Path, params.Paths, workingDir)
+	resolved := make([]string, 0, len(targets))
+	for _, target := range targets {
+		expanded, err := fsext.Expand(target)
+		if err != nil {
+			return nil, fmt.Errorf("error expanding path %q: %w", target, err)
+		}
+		resolved = append(resolved, filepathext.SmartJoin(workingDir, expanded))
+	}
+	return resolved, nil
+}
+
+func ListDirectoryTrees(ctx context.Context, searchPaths []string, params LSParams, lsConfig config.ToolLs) (string, LSResponseMetadata, error) {
+	if len(searchPaths) == 0 {
+		searchPaths = []string{"."}
+	}
+	if len(searchPaths) == 1 {
+		output, metadata, err := ListDirectoryTree(ctx, searchPaths[0], params, lsConfig)
+		if metadata.NumberOfRoots == 0 {
+			metadata.NumberOfRoots = 1
+		}
+		return output, metadata, err
+	}
+
+	type listResult struct {
+		path     string
+		output   string
+		metadata LSResponseMetadata
+		err      error
+	}
+
+	results := make([]listResult, len(searchPaths))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, boundedParallelism(len(searchPaths), 8))
+	for i, searchPath := range searchPaths {
+		wg.Add(1)
+		go func(index int, path string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[index] = listResult{path: path, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+			output, metadata, err := ListDirectoryTree(ctx, path, params, lsConfig)
+			results[index] = listResult{
+				path:     path,
+				output:   output,
+				metadata: metadata,
+				err:      err,
+			}
+		}(i, searchPath)
+	}
+	wg.Wait()
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].path < results[j].path
+	})
+
+	metadata := LSResponseMetadata{NumberOfRoots: len(searchPaths)}
+	sections := make([]string, 0, len(results))
+	errors := make([]string, 0)
+	for _, result := range results {
+		if result.err != nil {
+			errors = append(errors, fmt.Sprintf("- %s: %v", filepath.ToSlash(result.path), result.err))
+			continue
+		}
+		metadata.NumberOfFiles += result.metadata.NumberOfFiles
+		metadata.Truncated = metadata.Truncated || result.metadata.Truncated
+		sections = append(sections, fmt.Sprintf("Path: %s\n%s", filepath.ToSlash(result.path), strings.TrimSpace(result.output)))
+	}
+	if len(sections) == 0 && len(errors) > 0 {
+		return "", metadata, fmt.Errorf("error listing directories:\n%s", strings.Join(errors, "\n"))
+	}
+	output := fmt.Sprintf("Listed %d directories in parallel.\n\n%s", len(sections), strings.Join(sections, "\n\n"))
+	if len(errors) > 0 {
+		output += "\n\nErrors:\n" + strings.Join(errors, "\n")
+	}
+	return output, metadata, nil
 }
 
 func ListDirectoryTree(ctx context.Context, searchPath string, params LSParams, lsConfig config.ToolLs) (string, LSResponseMetadata, error) {
@@ -153,6 +242,7 @@ func ListDirectoryTree(ctx context.Context, searchPath string, params LSParams, 
 
 	metadata := LSResponseMetadata{
 		NumberOfFiles: len(files),
+		NumberOfRoots: 1,
 		Truncated:     truncated,
 	}
 	tree := createFileTree(files, searchPath)

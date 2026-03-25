@@ -280,6 +280,18 @@ func (r *subAgentRunner) effectiveStatusLocked() subAgentStatus {
 	return r.status
 }
 
+func (r *subAgentRunner) dispatchCompletionLocked(submissionID string) (string, string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if submissionID != "" {
+		if submission := r.submissions[submissionID]; submission != nil {
+			return dispatchTerminalStatus(submission.Status, firstNonEmptyString(strings.TrimSpace(submission.Err), strings.TrimSpace(r.lastError)))
+		}
+	}
+	return dispatchTerminalStatus(r.effectiveStatusLocked(), strings.TrimSpace(r.lastError))
+}
+
 func (r *subAgentRunner) currentSubmissionLocked() *subAgentSubmission {
 	if r == nil {
 		return nil

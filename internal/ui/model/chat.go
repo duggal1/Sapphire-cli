@@ -607,7 +607,7 @@ func (m *Chat) HandleDelayedClick(msg DelayedClickMsg) bool {
 	// Execute the click action (e.g., expansion).
 	selectedItem := m.list.SelectedItem()
 	if clickable, ok := selectedItem.(list.MouseClickable); ok {
-		handled := clickable.HandleMouseClick(ansi.MouseButton1, msg.X, msg.Y)
+		handled := clickable.HandleMouseClick(ansi.MouseLeft, msg.X, msg.Y)
 		// Toggle expansion if applicable.
 		if expandable, ok := selectedItem.(chat.Expandable); ok {
 			if !expandable.ToggleExpanded() {

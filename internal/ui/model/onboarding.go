@@ -55,7 +55,7 @@ func (m *UI) handleInitializeClick(msg tea.MouseClickMsg) tea.Cmd {
 	if m.state != uiInitialize {
 		return nil
 	}
-	if msg.Button != tea.MouseButton1 {
+	if msg.Button != tea.MouseLeft {
 		return nil
 	}
 	if !image.Pt(msg.X, msg.Y).In(m.layout.main) {

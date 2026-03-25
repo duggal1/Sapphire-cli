@@ -199,7 +199,7 @@ func blend(a, b [3]uint8, t float32) (uint8, uint8, uint8) {
 }
 
 func renderRGB(r, g, b uint8, ch string) string {
-	return fmt.Sprintf("\033[1m\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, ch)
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r, g, b, ch)
 }
 
 func renderIndexedColor(index int, bold bool, ch string) string {
@@ -247,19 +247,19 @@ func intensityAt(index int, position float64) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{160, 112, 255}
-		highlightColor := [3]uint8{198, 201, 210}
+		baseColor := [3]uint8{150, 102, 240}
+		highlightColor := [3]uint8{164, 168, 178}
 		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 141 + int(math.Round(float64(intensity)*110))
+		index := 141 + int(math.Round(float64(intensity)*107))
 		if index < 141 {
 			index = 141
 		}
-		if index > 251 {
-			index = 251
+		if index > 248 {
+			index = 248
 		}
-		return renderIndexedColor(index, intensity > 0.55, ch)
+		return renderIndexedColor(index, intensity > 0.7, ch)
 	case renderDecorated:
 		switch {
 		case intensity < 0.2:
@@ -267,7 +267,7 @@ func renderRune(mode renderMode, intensity float32, ch string) string {
 		case intensity < 0.6:
 			return "\033[38;5;177m" + ch + "\033[0m"
 		default:
-			return "\033[1m\033[38;5;251m" + ch + "\033[0m"
+			return "\033[38;5;248m" + ch + "\033[0m"
 		}
 	default:
 		return ch

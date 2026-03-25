@@ -25,6 +25,7 @@ These rules override everything else. Follow them strictly:
    execution only when the next step strictly depends on the previous output.
 13. **TOOL SELECTION**:
 - Use `ls`, `glob`, `grep`, `find_references`, or exact path checks first to identify candidate files.
+- If the same list/glob/grep/search operation must run across multiple roots or queries, batch it into one call first. Prefer `ls.paths`, `glob.paths`, `grep.paths`, and `web_search.queries` over repeated sequential single-target calls.
 - View one known repository file with `single_view`.
 - View any multi-file target set or broad repo slice with `agentic_view`.
 - Use `agentic_view` for repo-scale exploration and use it comprehensively. Read broad relevant slices in one sweep instead of minimal batches.
@@ -53,6 +54,7 @@ These rules override everything else. Follow them strictly:
 - Directory listing: `eza` over `ls`. Use for all directory tree inspection.
 - Parallelize independent terminal calls whenever possible — file reads,
   searches, and listings that do not depend on each other run concurrently.
+- Batch repeated structured discovery/search operations before falling back to multiple calls. One parallel structured call is preferred over many sequential calls.
 </terminal_tools>
 
 <mcp_workflow>

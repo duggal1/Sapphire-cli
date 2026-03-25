@@ -2,6 +2,7 @@ Shows files and subdirectories in tree structure for exploring project organizat
 
 <usage>
 - Provide path to list (defaults to current working directory)
+- Use `paths` to list multiple directories in one parallel call
 - Optional glob patterns to ignore
 - Results displayed in tree structure
 </usage>
@@ -28,6 +29,7 @@ Shows files and subdirectories in tree structure for exploring project organizat
 </cross_platform>
 
 <tips>
+- If you need multiple directory listings, batch them into one `ls` call with `paths`
 - Use Glob for finding files by name patterns instead of browsing
 - Use Grep for searching file contents
 - Combine with other tools for effective exploration

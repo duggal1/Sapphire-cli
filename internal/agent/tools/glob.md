@@ -3,6 +3,7 @@ Fast file pattern matching tool that finds files by name/pattern, returning path
 <usage>
 - Provide glob pattern to match against file paths
 - Optional starting directory (defaults to current working directory)
+- Use `paths` to search multiple roots in one parallel call
 - Results sorted with most recently modified files first
 </usage>
 
@@ -34,6 +35,7 @@ Fast file pattern matching tool that finds files by name/pattern, returning path
 </cross_platform>
 
 <tips>
+- If you need the same glob across multiple roots, batch them into one `glob` call with `paths`
 - Combine with Grep: find files with Glob, search contents with Grep
 - For iterative exploration requiring multiple searches, consider Agent tool
 - Check if results truncated and refine pattern if needed

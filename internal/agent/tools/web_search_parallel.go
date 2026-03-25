@@ -2,36 +2,46 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"golang.org/x/sync/errgroup"
 )
 
+type ParallelWebSearchResult struct {
+	Query  string
+	Output string
+	Err    error
+}
+
 // ParallelWebSearch executes multiple search queries concurrently.
-func ParallelWebSearch(ctx context.Context, client *http.Client, queries []string, maxResults int) ([]string, error) {
-	// Bounded fan-out: max 5 parallel searches to avoid rate limits
+func ParallelWebSearch(ctx context.Context, client *http.Client, queries []string, maxResults int) []ParallelWebSearchResult {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(5)
 
-	results := make([]string, len(queries))
+	results := make([]ParallelWebSearchResult, len(queries))
 	for i, query := range queries {
 		i, query := i, query
 		g.Go(func() error {
-			// maybeDelaySearch is non-blocking and handles staggering
 			maybeDelaySearch()
-			
 			searchRes, err := searchDuckDuckGo(ctx, client, query, maxResults)
+			results[i] = ParallelWebSearchResult{Query: query}
 			if err != nil {
-				return fmt.Errorf("search %q failed: %w", query, err)
+				results[i].Err = err
+				return nil
 			}
-			results[i] = formatSearchResults(searchRes)
+			results[i].Output = formatSearchResults(searchRes)
 			return nil
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
+	_ = g.Wait()
+	for i := range results {
+		if results[i].Query == "" && i < len(queries) {
+			results[i].Query = queries[i]
+		}
+		if results[i].Err == nil && results[i].Output == "" && ctx.Err() != nil {
+			results[i].Err = ctx.Err()
+		}
 	}
-	return results, nil
+	return results
 }

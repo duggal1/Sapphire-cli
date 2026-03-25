@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"charm.land/fantasy"
@@ -31,7 +33,8 @@ func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
 		WebSearchToolName,
 		string(webSearchToolDescription),
 		func(ctx context.Context, params WebSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			if params.Query == "" {
+			queries := normalizeBatchTargets(params.Query, params.Queries, "")
+			if len(queries) == 0 {
 				return fantasy.NewTextErrorResponse("query is required"), nil
 			}
 
@@ -43,13 +46,34 @@ func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
 				maxResults = 20
 			}
 
-			maybeDelaySearch()
-			results, err := searchDuckDuckGo(ctx, client, params.Query, maxResults)
-			slog.Debug("Web search completed", "query", params.Query, "results", len(results), "err", err)
-			if err != nil {
-				return fantasy.NewTextErrorResponse("Failed to search: " + err.Error()), nil
+			if len(queries) == 1 {
+				maybeDelaySearch()
+				results, err := searchDuckDuckGo(ctx, client, queries[0], maxResults)
+				slog.Debug("Web search completed", "query", queries[0], "results", len(results), "err", err)
+				if err != nil {
+					return fantasy.NewTextErrorResponse("Failed to search: " + err.Error()), nil
+				}
+
+				return fantasy.NewTextResponse(formatSearchResults(results)), nil
 			}
 
-			return fantasy.NewTextResponse(formatSearchResults(results)), nil
+			sections := make([]string, 0, len(queries))
+			errors := make([]string, 0)
+			for _, result := range ParallelWebSearch(ctx, client, queries, maxResults) {
+				if result.Err != nil {
+					errors = append(errors, fmt.Sprintf("- %s: %v", result.Query, result.Err))
+					continue
+				}
+				sections = append(sections, fmt.Sprintf("Query: %s\n%s", result.Query, strings.TrimSpace(result.Output)))
+			}
+			if len(sections) == 0 && len(errors) > 0 {
+				return fantasy.NewTextErrorResponse("Failed to search:\n" + strings.Join(errors, "\n")), nil
+			}
+
+			output := fmt.Sprintf("Searched %d queries in parallel.\n\n%s", len(sections), strings.Join(sections, "\n\n"))
+			if len(errors) > 0 {
+				output += "\n\nErrors:\n" + strings.Join(errors, "\n")
+			}
+			return fantasy.NewTextResponse(output), nil
 		})
 }

@@ -99,6 +99,15 @@ func TestGlobTool(t *testing.T) {
 	resp := runTool(t, tool, GlobToolName, GlobParams{Pattern: "**/*.go"}, t.Context())
 	require.Contains(t, resp.Content, "main.go")
 	require.Contains(t, resp.Content, "worker.go")
+
+	otherDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "extra.go"), []byte("package other"), 0o644))
+	multiResp := runTool(t, tool, GlobToolName, GlobParams{
+		Pattern: "**/*.go",
+		Paths:   []string{workingDir, otherDir},
+	}, t.Context())
+	require.Contains(t, multiResp.Content, "Searched 2 roots in parallel")
+	require.Contains(t, multiResp.Content, "extra.go")
 }
 
 func TestLSTool(t *testing.T) {
@@ -114,6 +123,37 @@ func TestLSTool(t *testing.T) {
 	require.Contains(t, resp.Content, filepath.ToSlash(workingDir)+"/")
 	require.Contains(t, resp.Content, "nested/")
 	require.Contains(t, resp.Content, "file.txt")
+
+	otherDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "another.txt"), []byte("y"), 0o644))
+	multiResp := runTool(t, tool, LSToolName, LSParams{
+		Paths: []string{workingDir, otherDir},
+		Depth: 2,
+	}, ctx)
+	require.Contains(t, multiResp.Content, "Listed 2 directories in parallel")
+	require.Contains(t, multiResp.Content, "another.txt")
+}
+
+func TestGrepToolParallelPaths(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	firstDir := filepath.Join(workingDir, "first")
+	secondDir := filepath.Join(workingDir, "second")
+	require.NoError(t, os.MkdirAll(firstDir, 0o755))
+	require.NoError(t, os.MkdirAll(secondDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(firstDir, "main.go"), []byte("package main\nconst target = 1\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(secondDir, "worker.go"), []byte("package worker\nconst target = 2\n"), 0o644))
+
+	tool := NewGrepTool(workingDir, config.ToolGrep{})
+	resp := runTool(t, tool, GrepToolName, GrepParams{
+		Pattern: "target",
+		Paths:   []string{firstDir, secondDir},
+		Include: "*.go",
+	}, t.Context())
+	require.Contains(t, resp.Content, "Searched 2 roots in parallel")
+	require.Contains(t, resp.Content, "main.go")
+	require.Contains(t, resp.Content, "worker.go")
 }
 
 func TestWebAndGoogleSearchTools(t *testing.T) {
@@ -140,6 +180,13 @@ func TestWebAndGoogleSearchTools(t *testing.T) {
 	}, t.Context())
 	require.Contains(t, webResp.Content, "Found 2 search results")
 	require.Contains(t, webResp.Content, "https://example.com/one")
+
+	webParallelResp := runTool(t, webTool, WebSearchToolName, WebSearchParams{
+		Queries:    []string{"example query", "another query"},
+		MaxResults: 2,
+	}, t.Context())
+	require.Contains(t, webParallelResp.Content, "Searched 2 queries in parallel")
+	require.Contains(t, webParallelResp.Content, "Query: example query")
 
 	googleTool := NewGoogleSearchTool(
 		nil,

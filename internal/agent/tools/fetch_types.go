@@ -36,8 +36,9 @@ type WebFetchParams struct {
 
 // WebSearchParams defines the parameters for the web_search tool.
 type WebSearchParams struct {
-	Query      string `json:"query" description:"The search query to find information on the web"`
-	MaxResults int    `json:"max_results,omitempty" description:"Maximum number of results to return (default: 10, max: 20)"`
+	Query      string   `json:"query,omitempty" description:"The search query to find information on the web"`
+	Queries    []string `json:"queries,omitempty" description:"Optional list of search queries to execute in parallel"`
+	MaxResults int      `json:"max_results,omitempty" description:"Maximum number of results to return (default: 10, max: 20)"`
 }
 
 // GoogleSearchParams defines the parameters for the google_search tool.
@@ -89,6 +90,8 @@ func (p *WebSearchParams) UnmarshalJSON(data []byte) error {
 		Search     string `json:"search,omitempty"`
 		SearchTerm string `json:"search_query,omitempty"`
 		Term       string `json:"term,omitempty"`
+		Queries    []string `json:"queries,omitempty"`
+		Searches   []string `json:"searches,omitempty"`
 		MaxResults int    `json:"max_results,omitempty"`
 		NumResults int    `json:"num_results,omitempty"`
 		Count      int    `json:"count,omitempty"`
@@ -102,6 +105,7 @@ func (p *WebSearchParams) UnmarshalJSON(data []byte) error {
 	}
 
 	p.Query = firstFetchString(raw.Query, raw.Q, raw.Search, raw.SearchTerm, raw.Term)
+	p.Queries = normalizeBatchTargets(p.Query, append(append([]string{}, raw.Queries...), raw.Searches...), "")
 	p.MaxResults = firstFetchInt(raw.MaxResults, raw.NumResults, raw.Count, raw.Limit, raw.Results)
 	return nil
 }

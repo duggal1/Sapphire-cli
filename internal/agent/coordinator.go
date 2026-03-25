@@ -135,20 +135,21 @@ func (c *coordinator) GetLongHorizonAuditTail(sessionID string, maxBytes int) st
 
 // coordinator implements the Coordinator interface and manages multiple AI agents.
 type coordinator struct {
-	cfg          *config.Config
-	sessions     session.Service
-	messages     message.Service
-	permissions  permission.Service
-	history      history.Service
-	filetracker  filetracker.Service
-	editGuard    *tools.EditGuard
-	lspManager   *lsp.Manager
-	memory       memory.MemoryService
-	codeIndex    *codeindex.Service
-	codeIndexMu  sync.Mutex
-	codeIndexSig string
-	pmem         *pmem.System
-	longHorizon  *longhorizon.Manager
+	cfg            *config.Config
+	sessions       session.Service
+	messages       message.Service
+	permissions    permission.Service
+	history        history.Service
+	filetracker    filetracker.Service
+	editGuard      *tools.EditGuard
+	lspManager     *lsp.Manager
+	memory         memory.MemoryService
+	memoryCompiler *memory.Compiler
+	codeIndex      *codeindex.Service
+	codeIndexMu    sync.Mutex
+	codeIndexSig   string
+	pmem           *pmem.System
+	longHorizon    *longhorizon.Manager
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -292,6 +293,7 @@ func NewCoordinator(
 		editGuard:                 tools.NewEditGuard(),
 		lspManager:                lspManager,
 		memory:                    memory.NewMemoryService(db.New(conn), conn),
+		memoryCompiler:            memory.NewCompiler(conn, nil),
 		agents:                    make(map[string]SessionAgent),
 		mainAgents:                make(map[string]SessionAgent),
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
@@ -315,6 +317,7 @@ func NewCoordinator(
 		return nil, fmt.Errorf("open orchestration database: %w", err)
 	}
 	c.orchestrationStore = orchestrationStore
+	c.memoryCompiler = memory.NewCompiler(conn, orchestrationStore)
 	c.mailbox = agentmailbox.NewService(orchestrationStore, c.nudgeMailboxRecipient)
 	c.stateService = agentstate.NewService(orchestrationStore)
 	c.activityService = agentactivity.NewService(orchestrationStore)
@@ -1366,6 +1369,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		Messages:             c.messages,
 		Tools:                nil,
 		Memory:               c.memory,
+		MemoryCompiler:       c.memoryCompiler,
 		Pmem:                 c.pmem,
 		LongHorizon:          c.longHorizon,
 		MemoryConsolidator:   c.ConsolidateMemory,

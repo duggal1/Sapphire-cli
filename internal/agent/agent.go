@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -103,6 +102,7 @@ var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 type SessionAgentCall struct {
 	SessionID        string
 	Prompt           string
+	ResumePointID    string
 	SkillContext     string
 	ActiveSkills     []string
 	ActiveTools      []string
@@ -118,12 +118,13 @@ type SessionAgentCall struct {
 	PresencePenalty  *float64
 }
 
-func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message) SessionAgentCall {
+func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message, resumePointID string) SessionAgentCall {
 	continuation := call
+	continuation.ResumePointID = strings.TrimSpace(resumePointID)
 	originalPrompt := strings.TrimSpace(call.Prompt)
 	if partialAssistant == nil {
 		continuation.Prompt = fmt.Sprintf(
-			"The previous turn was compacted because the session got too long. Continue the original request without repeating prior work.\n\nOriginal user request:\n%s",
+			"The previous turn was compacted because the session got too long. Resume from the durable boot packet and continue the original request without repeating prior work.\n\nOriginal user request:\n%s",
 			originalPrompt,
 		)
 		return continuation
@@ -137,18 +138,18 @@ func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *me
 	switch {
 	case len(partialAssistant.ToolCalls()) > 0:
 		continuation.Prompt = fmt.Sprintf(
-			"The previous turn was compacted while tools were in flight. Resume from the current session state and continue the original request without repeating completed work.\n\nOriginal user request:\n%s",
+			"The previous turn was compacted while tools were in flight. Resume from the durable boot packet and continue the original request without repeating completed work.\n\nOriginal user request:\n%s",
 			originalPrompt,
 		)
 	case partialText != "":
 		continuation.Prompt = fmt.Sprintf(
-			"The previous response was compacted before it finished. Continue from where it stopped without repeating prior text.\n\nOriginal user request:\n%s\n\nAlready sent partial response tail:\n%s",
+			"The previous response was compacted before it finished. Resume from the durable boot packet and continue from where it stopped without repeating prior text.\n\nOriginal user request:\n%s\n\nAlready sent partial response tail:\n%s",
 			originalPrompt,
 			partialText,
 		)
 	default:
 		continuation.Prompt = fmt.Sprintf(
-			"The previous turn was compacted before completion. Continue the original request without restarting it.\n\nOriginal user request:\n%s",
+			"The previous turn was compacted before completion. Resume from the durable boot packet and continue the original request without restarting it.\n\nOriginal user request:\n%s",
 			originalPrompt,
 		)
 	}
@@ -211,6 +212,7 @@ type sessionAgent struct {
 	messageQueue            *csync.Map[string, []SessionAgentCall]
 	activeRequests          *csync.Map[string, context.CancelFunc]
 	memory                  memory.MemoryService
+	memoryCompiler          *memory.Compiler
 	pmem                    *pmem.System
 	postCompactionInjection *csync.Map[string, bool]
 	longHorizon             *longhorizon.Manager
@@ -241,6 +243,7 @@ type SessionAgentOptions struct {
 	WorkingDir           string
 	WriteScope           *tools.WriteScope
 	Memory               memory.MemoryService
+	MemoryCompiler       *memory.Compiler
 	Pmem                 *pmem.System
 	LongHorizon          *longhorizon.Manager
 	MemoryConsolidator   func(ctx context.Context, sessionID string) error
@@ -267,6 +270,7 @@ func NewSessionAgent(
 		messageQueue:            csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:          csync.NewMap[string, context.CancelFunc](),
 		memory:                  opts.Memory,
+		memoryCompiler:          opts.MemoryCompiler,
 		pmem:                    opts.Pmem,
 		workingDir:              csync.NewValue(opts.WorkingDir),
 		writeScope:              opts.WriteScope,
@@ -578,7 +582,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		return nil
 	}
 	history, files := a.preparePrompt(msgs, call.Prompt, call.Attachments...)
-	history = a.injectTieredMemory(ctx, history, call.SessionID, int(largeModel.CatwalkCfg.ContextWindow))
+	history = a.injectTieredMemory(ctx, history, call, int(largeModel.CatwalkCfg.ContextWindow))
 
 	startTime := time.Now()
 	a.eventPromptSent(call.SessionID)
@@ -1200,16 +1204,38 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				}()
 			}
 		}
-		a.postCompactionInjection.Set(call.SessionID, true)
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, "context compacted", "compacted", true)
+		}
+		resumePointID := ""
+		if a.memoryCompiler != nil {
+			workDir := ""
+			if a.workingDir != nil {
+				workDir = a.workingDir.Get()
+			}
+			if memCtx, memCancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+				resumePoint, resumeErr := a.memoryCompiler.CreateResumePoint(memCtx, memory.ResumeRequest{
+					SessionID:      call.SessionID,
+					WorkingDir:     workDir,
+					Task:           call.Prompt,
+					OriginalPrompt: call.Prompt,
+					Reason:         "context_rollover",
+				})
+				memCancel()
+				if resumeErr == nil {
+					resumePointID = resumePoint.ID
+				}
+			}
+		}
+		if resumePointID == "" {
+			a.postCompactionInjection.Set(call.SessionID, true)
 		}
 		// Queue the message again so it doesn't get dropped.
 		existing, ok := a.messageQueue.Get(call.SessionID)
 		if !ok {
 			existing = []SessionAgentCall{}
 		}
-		call = buildCompactionContinuationCall(call, currentAssistant)
+		call = buildCompactionContinuationCall(call, currentAssistant, resumePointID)
 		existing = append(existing, call)
 		a.messageQueue.Set(call.SessionID, existing)
 	}
@@ -1647,7 +1673,7 @@ Resolve your assigned scope independently and return only verified, concise obje
 	return history, files
 }
 
-func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, sessionID string, contextWindow int) (retHistory []fantasy.Message) {
+func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, call SessionAgentCall, contextWindow int) (retHistory []fantasy.Message) {
 	// Add permanent recovery for any internal panics here.
 	defer func() {
 		if r := recover(); r != nil {
@@ -1657,16 +1683,18 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}()
 
 	retHistory = history
+	sessionID := call.SessionID
 
-	// Skip memory injection if memory service is not available
-	// This can happen with sub-agents that don't have memory initialized
-	if a == nil || a.memory == nil {
+	if a == nil {
 		return history
 	}
-
-	// Double-check for typed nil wrapped in interface
-	if val := reflect.ValueOf(a.memory); val.Kind() == reflect.Ptr && val.IsNil() {
+	if a.memory == nil && a.memoryCompiler == nil {
 		return history
+	}
+	if a.memory != nil {
+		if val := reflect.ValueOf(a.memory); val.Kind() == reflect.Ptr && val.IsNil() && a.memoryCompiler == nil {
+			return history
+		}
 	}
 
 	// Determine whether we're on the first turn after a compaction summary.
@@ -1682,88 +1710,90 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 		charBudget = int(float64(contextWindow) * postCompactionInjectionRatio * postCompactionContextCharsPerTok)
 	}
 
-	// Long-horizon contract injection (runbook/spec/plan/audit)
-	if a.longHorizon != nil && a.isLongHorizon(sessionID) {
-		if lh := a.longHorizon.BuildInjection(sessionID); lh != "" {
-			retHistory = append([]fantasy.Message{
-				fantasy.NewSystemMessage(lh),
-			}, retHistory...)
-		}
-	}
-
-	// Tier 1: Hot Memory - Project Constitution (best-effort).
 	constitution := ""
-	if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
-		constitution, _ = a.memory.GetProjectConstitution(memCtx, "default")
-		cancel()
-	}
-	if constitution != "" {
-		retHistory = append([]fantasy.Message{
-			fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
-		}, retHistory...)
+	if a.memory != nil {
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			constitution, _ = a.memory.GetProjectConstitution(memCtx, "default")
+			cancel()
+		}
 	}
 
-	var structuredSummary *memory.StructuredSummaryData
-	if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
-		if data, err := a.memory.GetStructuredSummary(memCtx, sessionID); err == nil {
-			structuredSummary = data
-		}
-		cancel()
+	longHorizonContext := ""
+	if a.longHorizon != nil && a.isLongHorizon(sessionID) {
+		longHorizonContext = a.longHorizon.BuildInjection(sessionID)
 	}
-	// COMMENTED OUT - TODO LIST DISABLED
-	/*
-		var currentSession session.Session
-		if sessionCtx, cancel := withTimeout(ctx, memoryCallTimeout); sessionCtx != nil {
-			if loadedSession, err := a.getSessionWithTimeout(sessionCtx, sessionID); err == nil {
-				currentSession = loadedSession
+
+	historicalContext := ""
+	if a.pmem != nil {
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			if charBudget > 0 {
+				historicalContext = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, charBudget/postCompactionContextCharsPerTok)
+			} else {
+				historicalContext = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, contextWindow)
 			}
 			cancel()
 		}
-	*/
-	if continuity := buildSessionContinuityInjection(structuredSummary, nil); continuity != "" { // COMMENTED OUT todos
+	}
+
+	compiledInjection := ""
+	if a.memoryCompiler != nil {
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			if strings.TrimSpace(call.ResumePointID) != "" {
+				compiledInjection = a.memoryCompiler.RenderResumePointInjection(memCtx, call.ResumePointID)
+			}
+			if compiledInjection == "" && strings.TrimSpace(call.Prompt) != "" {
+				if resumePoint, ok := a.memoryCompiler.MatchPendingResumePoint(memCtx, sessionID, call.Prompt); ok {
+					compiledInjection = a.memoryCompiler.RenderResumePointInjection(memCtx, resumePoint.ID)
+				}
+			}
+			cancel()
+		}
+	}
+	if compiledInjection == "" && a.memoryCompiler != nil {
+		workDir := ""
+		if a.workingDir != nil {
+			workDir = a.workingDir.Get()
+		}
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			compiledInjection = a.memoryCompiler.RenderPromptInjection(memCtx, memory.CompileRequest{
+				SessionID:           sessionID,
+				WorkingDir:          workDir,
+				Task:                call.Prompt,
+				ProjectConstitution: constitution,
+				LongHorizonContext:  longHorizonContext,
+				HistoricalContext:   historicalContext,
+			})
+			cancel()
+		}
+	}
+
+	if compiledInjection != "" {
 		retHistory = append([]fantasy.Message{
-			fantasy.NewSystemMessage(continuity),
+			fantasy.NewSystemMessage(compiledInjection),
 		}, retHistory...)
+	} else {
+		if constitution != "" {
+			retHistory = append([]fantasy.Message{
+				fantasy.NewSystemMessage("## PROJECT CONSTITUTION (Tier 1 Hot Memory)\n" + constitution),
+			}, retHistory...)
+		}
+		if longHorizonContext != "" {
+			retHistory = append([]fantasy.Message{
+				fantasy.NewSystemMessage(longHorizonContext),
+			}, retHistory...)
+		}
+		if historicalContext != "" {
+			retHistory = append([]fantasy.Message{
+				fantasy.NewSystemMessage(historicalContext),
+			}, retHistory...)
+		}
 	}
 
 	if a.pmem != nil {
-		pmemInjection := ""
-		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
-			if charBudget > 0 {
-				pmemInjection = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, charBudget/postCompactionContextCharsPerTok)
-			} else {
-				pmemInjection = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, contextWindow)
-			}
-			cancel()
-		}
-		if pmemInjection != "" {
-			retHistory = append([]fantasy.Message{
-				fantasy.NewSystemMessage(pmemInjection),
-			}, retHistory...)
-		}
-
 		if notice := a.pmem.BackpressureNotice(); notice != "" {
 			retHistory = append([]fantasy.Message{
 				fantasy.NewSystemMessage(notice),
 			}, retHistory...)
-		}
-	}
-
-	// Tier 4: Durable Reference Memory (Codex-style handbook)
-	if a.workingDir != nil {
-		workDir := a.workingDir.Get()
-		memorySummaryPath := filepath.Join(workDir, ".sapphire-memory", "memory_summary.md")
-		if summaryData, err := os.ReadFile(memorySummaryPath); err == nil {
-			summary := string(summaryData)
-			if summary != "" {
-				readInstructions := string(memoryReadPrompt)
-				readInstructions = strings.ReplaceAll(readInstructions, "{{ base_path }}", filepath.Join(workDir, ".sapphire-memory"))
-				readInstructions = strings.ReplaceAll(readInstructions, "{{ memory_summary }}", summary)
-
-				retHistory = append([]fantasy.Message{
-					fantasy.NewSystemMessage(readInstructions),
-				}, retHistory...)
-			}
 		}
 	}
 

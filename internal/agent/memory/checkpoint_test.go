@@ -142,7 +142,21 @@ func TestCheckpointServiceResolvesPreferenceAndDecisionConflicts(t *testing.T) {
 
 	msgs.items = []message.Message{{SessionID: "session-3", Role: message.User, Parts: []message.ContentPart{message.TextContent{Text: "I prefer Rust over Go. Let's use SQLite."}}}}
 	service.now = func() time.Time { return now.Add(31 * time.Minute) }
-	_, _, err = service.Record(ctx, CheckpointParams{SessionID: "session-3", AgentID: "main:session-3", Status: "completed"})
+	_, _, err = service.Record(ctx, CheckpointParams{SessionID: "session-3", AgentID: "main:session-3", Status: "completed", Force: true})
+	require.NoError(t, err)
+
+	prefs := ExtractUserPreferences(msgs.items, "session-3", now.Add(31*time.Minute))
+	require.Len(t, prefs, 1)
+	require.NoError(t, service.applyUserPreference(ctx, prefs[0]))
+
+	_, err = store.SaveDecision(ctx, orchestrationdb.DecisionRecord{
+		SessionID:  "session-3",
+		Category:   "architecture",
+		Key:        "database",
+		Value:      "sqlite",
+		Confidence: "confirmed",
+		CreatedAt:  now.Add(31 * time.Minute),
+	})
 	require.NoError(t, err)
 
 	pref, err := store.GetUserPreference(ctx, "preference.general")

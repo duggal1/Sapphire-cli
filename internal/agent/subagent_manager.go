@@ -13,6 +13,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/google/uuid"
 
+	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -1128,6 +1129,31 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				"task_key":      runner.assignment.TaskKey,
 				"heartbeat":     runner.heartbeatContext,
 			}))
+			if c.memoryCompiler != nil {
+				runner.mu.Lock()
+				workDir := runner.workDir
+				parentSession := runner.parentSession
+				assignmentID := runner.assignment.ID
+				agentID := runner.id
+				runner.mu.Unlock()
+				_ = c.memoryCompiler.PersistSubAgentOutcome(context.Background(), agentmemory.SubAgentOutcomeInput{
+					SessionID:       runner.sessionID,
+					ParentSessionID: parentSession,
+					AgentID:         agentID,
+					AssignmentID:    assignmentID,
+					SubmissionID:    input.submissionID,
+					WorkingDir:      workDir,
+					Status:          string(payload.Status),
+					Summary:         parsedReport.Summary,
+					Progress:        parsedReport.Progress,
+					Risks:           parsedReport.Risks,
+					Blockers:        firstNonEmptyString(parsedReport.Blockers, errMsg),
+					NextAction:      parsedReport.Next,
+					Files:           parsedReport.Files,
+					Commands:        parsedReport.Commands,
+					RawResult:       firstNonEmptyString(finalResult, errMsg),
+				})
+			}
 			if finalResult != "" {
 				c.reportSubAgentOutcomeToParent(context.Background(), runner, input.submissionID, parsedReport, finalResult)
 			}

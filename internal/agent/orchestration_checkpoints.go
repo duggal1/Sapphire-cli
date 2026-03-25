@@ -40,6 +40,14 @@ func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, age
 		MailCursor:     time.Now().UTC().Unix(),
 		ActivityCursor: time.Now().UTC().Unix(),
 	})
+	if c.memoryCompiler != nil {
+		_ = c.memoryCompiler.PersistHandoff(ctx, agentmemory.CompileRequest{
+			SessionID:  sessionID,
+			AgentID:    agentID,
+			WorkingDir: c.mainWorkingDir(),
+			Task:       firstSummaryString(summary, "prompt"),
+		})
+	}
 }
 
 func buildCheckpointSummary(phase, prompt, result, status string, fields map[string]any) map[string]any {
@@ -171,6 +179,29 @@ func (c *coordinator) checkpointTurn(ctx context.Context, sessionID, prompt, res
 		MailCursor:     time.Now().UTC().Unix(),
 		ActivityCursor: time.Now().UTC().Unix(),
 	})
+	if c.memoryCompiler != nil {
+		workingDir := c.mainWorkingDir()
+		task := strings.TrimSpace(prompt)
+		if runner := c.runnerBySessionID(sessionID); runner != nil {
+			runner.mu.Lock()
+			if strings.TrimSpace(runner.workDir) != "" {
+				workingDir = runner.workDir
+			}
+			if task == "" {
+				task = strings.TrimSpace(runner.assignment.Task)
+				if task == "" {
+					task = strings.TrimSpace(runner.assignment.Title)
+				}
+			}
+			runner.mu.Unlock()
+		}
+		_ = c.memoryCompiler.PersistHandoff(ctx, agentmemory.CompileRequest{
+			SessionID:  sessionID,
+			AgentID:    agentID,
+			WorkingDir: workingDir,
+			Task:       task,
+		})
+	}
 }
 
 func renderPreferencesInline(items []orchestrationdb.UserPreference, max int) string {

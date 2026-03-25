@@ -19,8 +19,8 @@ func TestBuildCompactionContinuationCallUsesContinuationPromptForPartialText(t *
 		},
 	}
 
-	continued := buildCompactionContinuationCall(call, assistant)
-	require.Contains(t, continued.Prompt, "Continue from where it stopped")
+	continued := buildCompactionContinuationCall(call, assistant, "")
+	require.Contains(t, continued.Prompt, "continue from where it stopped")
 	require.Contains(t, continued.Prompt, "Fix the failing request")
 	require.Contains(t, continued.Prompt, "I found the root cause")
 }
@@ -36,7 +36,17 @@ func TestBuildCompactionContinuationCallTrimsPartialTail(t *testing.T) {
 		},
 	}
 
-	continued := buildCompactionContinuationCall(call, assistant)
+	continued := buildCompactionContinuationCall(call, assistant, "")
 	require.LessOrEqual(t, len(continued.Prompt), len(call.Prompt)+1600)
 	require.NotContains(t, continued.Prompt, strings.Repeat("x", 1300))
+}
+
+func TestBuildCompactionContinuationCallCarriesResumePointID(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{Prompt: "Continue the fix"}
+	continued := buildCompactionContinuationCall(call, nil, "resume-123")
+
+	require.Equal(t, "resume-123", continued.ResumePointID)
+	require.Contains(t, continued.Prompt, "durable boot packet")
 }

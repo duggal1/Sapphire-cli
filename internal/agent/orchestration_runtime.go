@@ -363,6 +363,15 @@ func (c *coordinator) buildMainOrchestrationMemoryContext(ctx context.Context, s
 	}
 	parentID := mainAgentMailboxID(sessionID)
 	var sections []string
+	if c.memoryCompiler != nil {
+		if compiled := c.memoryCompiler.RenderPromptInjection(ctx, agentmemory.CompileRequest{
+			SessionID:  sessionID,
+			AgentID:    parentID,
+			WorkingDir: c.mainWorkingDir(),
+		}); compiled != "" {
+			sections = append(sections, compiled)
+		}
+	}
 
 	if mailbox := c.buildMailboxContext(ctx, parentID, true, maxOrchestrationMail); mailbox != "" {
 		sections = append(sections, mailbox)
@@ -396,7 +405,28 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	}
 	var sections []string
 
+	runner.mu.Lock()
+	sessionID := runner.sessionID
 	parentSessionID := strings.TrimSpace(runner.parentSession)
+	task := strings.TrimSpace(runner.assignment.Task)
+	if task == "" {
+		task = strings.TrimSpace(runner.assignment.Title)
+	}
+	workDir := runner.workDir
+	agentID := runner.id
+	runner.mu.Unlock()
+
+	if c.memoryCompiler != nil {
+		if compiled := c.memoryCompiler.RenderPromptInjection(ctx, agentmemory.CompileRequest{
+			SessionID:  sessionID,
+			AgentID:    agentID,
+			WorkingDir: workDir,
+			Task:       task,
+		}); compiled != "" {
+			sections = append(sections, compiled)
+		}
+	}
+
 	if parentSessionID != "" {
 		if longHorizon := compactLongHorizonContext(c.GetLongHorizonState(parentSessionID)); longHorizon != "" {
 			sections = append(sections, "### Long-Horizon State\n"+longHorizon)
@@ -432,7 +462,7 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	if activitySection := c.renderRecentAgentActivityContext(ctx, runner.id); activitySection != "" {
 		sections = append(sections, activitySection)
 	}
-	if checkpointSection := c.renderCheckpointContext(ctx, runner.sessionID, runner.id); checkpointSection != "" {
+	if checkpointSection := c.renderCheckpointContext(ctx, sessionID, agentID); checkpointSection != "" {
 		sections = append(sections, checkpointSection)
 	}
 

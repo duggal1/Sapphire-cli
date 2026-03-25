@@ -247,27 +247,27 @@ func intensityAt(index int, position float64) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{150, 102, 240}
-		highlightColor := [3]uint8{164, 168, 178}
+		baseColor := [3]uint8{126, 74, 214}
+		highlightColor := [3]uint8{191, 146, 255}
 		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 141 + int(math.Round(float64(intensity)*107))
-		if index < 141 {
-			index = 141
+		index := 98 + int(math.Round(float64(intensity)*85))
+		if index < 98 {
+			index = 98
 		}
-		if index > 248 {
-			index = 248
+		if index > 183 {
+			index = 183
 		}
 		return renderIndexedColor(index, intensity > 0.7, ch)
 	case renderDecorated:
 		switch {
 		case intensity < 0.2:
-			return "\033[2m\033[38;5;141m" + ch + "\033[0m"
+			return "\033[2m\033[38;5;98m" + ch + "\033[0m"
 		case intensity < 0.6:
-			return "\033[38;5;177m" + ch + "\033[0m"
+			return "\033[38;5;141m" + ch + "\033[0m"
 		default:
-			return "\033[38;5;248m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;183m" + ch + "\033[0m"
 		}
 	default:
 		return ch

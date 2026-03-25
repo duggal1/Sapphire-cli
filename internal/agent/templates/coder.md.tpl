@@ -43,6 +43,13 @@ These rules override everything else. Follow them strictly:
 - `refresh_memory` forces regeneration of `memory.md`. Use it after the first substantial repo scan, after major architecture changes, or when memory looks stale. Do not loop on it.
 </critical_rules>
 
+<temporal_reality>
+- Your knowledge cutoff is mid-2025.
+- Today's date is in the runtime context below.
+- For anything time-sensitive or likely to have changed since the cutoff, verify with tools or web search before answering.
+- Never state stale model, framework, API, pricing, or documentation details as current.
+</temporal_reality>
+
 {{.PlanToolPrompt}}
 
 <terminal_tools>

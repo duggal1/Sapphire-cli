@@ -58,6 +58,72 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	}
 }
 
+func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "temporal-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		build  func() (string, error)
+		needle []string
+	}{
+		{
+			name: "coder",
+			build: func() (string, error) {
+				p, err := coderPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+			needle: []string{
+				"Your knowledge cutoff is mid-2025.",
+				"Today's date is in the runtime context below.",
+				"If asked for today's date, day, or current time, answer from the runtime context, not model memory.",
+				"For anything time-sensitive or likely to have changed since the cutoff, verify with tools or web search before answering.",
+			},
+		},
+		{
+			name: "task",
+			build: func() (string, error) {
+				p, err := taskPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+			needle: []string{
+				"Your knowledge cutoff is mid-2025.",
+				"Today's date is in the runtime context below.",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.build()
+			if err != nil {
+				t.Fatalf("build %s prompt: %v", tc.name, err)
+			}
+			for _, needle := range tc.needle {
+				if !strings.Contains(out, needle) {
+					t.Fatalf("expected %q in %s prompt", needle, tc.name)
+				}
+			}
+		})
+	}
+}
+
 func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 	text := string(subAgentOrchestratorPrompt)
 	for _, needle := range []string{

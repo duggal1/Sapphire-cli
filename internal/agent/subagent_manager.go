@@ -50,7 +50,7 @@ const (
 	subAgentHeartbeatStuckAge    = 3 * time.Minute
 	subAgentStuckMissThreshold   = 3
 	subAgentTurnTimeout          = 5 * time.Minute
-	subAgentWaitPollInterval     = 2 * time.Second
+	subAgentWaitPollInterval     = 5 * time.Second
 )
 
 type subAgentSubmission struct {
@@ -339,6 +339,7 @@ func (c *coordinator) transitionSubAgentSubmission(runner *subAgentRunner, submi
 		"submission_id": submissionID,
 		"status":        status,
 	})
+	c.countSubAgentLaunchMetric("event.subagent_lifecycle_publish", 1)
 	publishSubAgentLifecycleEvent(eventType, payload)
 }
 
@@ -460,6 +461,7 @@ func (c *coordinator) startSubAgentHeartbeat(runner *subAgentRunner, submissionI
 						"status":        subAgentStatusRunning,
 					})
 				}
+				c.countSubAgentLaunchMetric("event.subagent_lifecycle_publish", 1)
 				publishSubAgentLifecycleEvent(SubAgentHeartbeatEvent, payload)
 			}
 		}
@@ -516,6 +518,7 @@ func (c *coordinator) failSubAgentSubmission(runner *subAgentRunner, submissionI
 		}
 	}
 	publishSubAgentStatus(broker, status)
+	c.countSubAgentLaunchMetric("event.subagent_lifecycle_publish", 1)
 	publishSubAgentLifecycleEvent(eventType, payload)
 }
 
@@ -754,36 +757,49 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		}
 	}
 
-	agentKey := config.AgentCoder
-	if opts.AgentID != "" {
-		agentKey = opts.AgentID
-	}
-	agentCfg, ok := c.cfg.Agents[agentKey]
-	if !ok {
-		cleanup()
-		return "", "", fmt.Errorf("agent %q not configured", agentKey)
-	}
-
 	writeScope := tools.NewWriteScope(workDir, normalizedManifest)
+	var agent SessionAgent
+	var err error
+	if c.subAgentFactory != nil {
+		stepStarted := time.Now()
+		agent, err = c.subAgentFactory(ctx, workDir, normalizedManifest, opts)
+		c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
+		if err != nil {
+			cleanup()
+			return "", "", err
+		}
+	} else {
+		agentKey := config.AgentCoder
+		if opts.AgentID != "" {
+			agentKey = opts.AgentID
+		}
+		agentCfg, ok := c.cfg.Agents[agentKey]
+		if !ok {
+			cleanup()
+			return "", "", fmt.Errorf("agent %q not configured", agentKey)
+		}
 
-	promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
-	if err != nil {
-		cleanup()
-		return "", "", err
-	}
+		promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
+		if err != nil {
+			cleanup()
+			return "", "", err
+		}
 
-	override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort)
-	if err != nil {
-		cleanup()
-		return "", "", err
-	}
-	agent, err := c.buildAgentWithWorkingDirOverrides(ctx, promptTemplate, agentCfg, true, workDir, override, writeScope)
-	if err != nil {
-		cleanup()
-		return "", "", err
-	}
-	if len(opts.CustomTools) > 0 {
-		agent.SetTools(opts.CustomTools)
+		override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort)
+		if err != nil {
+			cleanup()
+			return "", "", err
+		}
+		stepStarted := time.Now()
+		agent, err = c.buildAgentWithWorkingDirOverrides(ctx, promptTemplate, agentCfg, true, workDir, override, writeScope)
+		c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
+		if err != nil {
+			cleanup()
+			return "", "", err
+		}
+		if len(opts.CustomTools) > 0 {
+			agent.SetTools(opts.CustomTools)
+		}
 	}
 
 	title := opts.Title
@@ -791,9 +807,11 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		title = "Sub-Agent Session"
 	}
 
+	stepStarted := time.Now()
 	createCtx, cancel := context.WithTimeout(ctx, subAgentSessionCreateTimeout)
 	session, err := c.sessions.CreateTaskSession(createCtx, agentID, parentSessionID, title)
 	cancel()
+	c.observeSubAgentLaunchStep("spawn.create_session", stepStarted)
 	if err != nil {
 		cleanup()
 		return "", "", fmt.Errorf("create sub-agent session: %w", err)
@@ -808,15 +826,21 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		meta.WorktreePath = workDir
 		meta.Branch = branch
 	}
+	stepStarted = time.Now()
 	if err := c.recordSubAgentMetadata(ctx, session.ID, meta); err != nil {
+		c.observeSubAgentLaunchStep("spawn.record_metadata", stepStarted)
 		cleanup()
 		return "", "", err
 	}
+	c.observeSubAgentLaunchStep("spawn.record_metadata", stepStarted)
 	if opts.ForkContext && parentSessionID != "" {
+		stepStarted = time.Now()
 		if err := c.forkSubAgentContext(ctx, parentSessionID, session.ID); err != nil {
+			c.observeSubAgentLaunchStep("spawn.fork_context", stepStarted)
 			cleanup()
 			return "", "", fmt.Errorf("fork context: %w", err)
 		}
+		c.observeSubAgentLaunchStep("spawn.fork_context", stepStarted)
 	}
 
 	runner := &subAgentRunner{
@@ -835,7 +859,6 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
-	c.syncRunnerOrchestrationState(context.Background(), runner)
 	c.assignRunnerHook(context.Background(), runner)
 	if c.supervisor != nil {
 		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
@@ -849,6 +872,9 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 
 	submissionID := runner.enqueue(assignmentPrompt, opts.PromptItems)
 	if submissionID != "" {
+		stepStarted = time.Now()
+		c.syncRunnerOrchestrationState(context.Background(), runner)
+		c.observeSubAgentLaunchStep("spawn.persist_initial_state", stepStarted)
 		c.recordOrchestrationActivity(context.Background(), runner.id, "spawned", map[string]any{
 			"submission_id": submissionID,
 			"workdir":       runner.workDir,
@@ -857,6 +883,10 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		})
 		c.publishSubAgentEvent(SubAgentWaitingEvent, runner, submissionID, SubAgentStageWaiting, "")
 		c.startSubAgentCompletionWatcher(runner, submissionID)
+	} else {
+		stepStarted = time.Now()
+		c.syncRunnerOrchestrationState(context.Background(), runner)
+		c.observeSubAgentLaunchStep("spawn.persist_initial_state", stepStarted)
 	}
 	return agentID, submissionID, nil
 }
@@ -1102,6 +1132,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				c.reportSubAgentOutcomeToParent(context.Background(), runner, input.submissionID, parsedReport, finalResult)
 			}
 			publishSubAgentStatus(broker, payload.Status)
+			c.countSubAgentLaunchMetric("event.subagent_lifecycle_publish", 1)
 			publishSubAgentLifecycleEvent(eventType, payload)
 		}(input)
 	}
@@ -1294,23 +1325,68 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 	if len(ids) == 0 {
 		return nil, false
 	}
-	waitCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+	if timeout <= 0 {
+		timeout = 60 * time.Second
 	}
+	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	snapshots, _ := c.snapshotSubAgentsByID(ids)
-	for _, snap := range snapshots {
-		if isSubAgentFinalStatus(snap.Status) {
-			return snapshots, false
+	snapshots, allFinal := c.snapshotSubAgentsByID(ids)
+	anyFinal := func(items []subAgentSnapshot) bool {
+		for _, snap := range items {
+			if isSubAgentFinalStatus(snap.Status) {
+				return true
+			}
 		}
+		return false
+	}
+	if allFinal || anyFinal(snapshots) {
+		return snapshots, false
 	}
 
-	completed := make(chan struct{}, len(ids))
+	type waitMarker struct {
+		status       subAgentStatus
+		lastBeat     time.Time
+		submissionID string
+		pending      int
+	}
+	refreshMarkers := func(current []subAgentSnapshot, markers map[string]waitMarker) bool {
+		changed := false
+		for _, snap := range current {
+			marker := waitMarker{
+				status:       snap.Status,
+				lastBeat:     snap.LastHeartbeat,
+				submissionID: snap.LastSubmission,
+				pending:      snap.Pending,
+			}
+			if previous, ok := markers[snap.ID]; !ok || previous != marker {
+				markers[snap.ID] = marker
+				changed = true
+			}
+		}
+		return changed
+	}
+	resetTimer := func(timer *time.Timer) {
+		if timer == nil {
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(timeout)
+	}
+
+	markers := make(map[string]waitMarker, len(snapshots))
+	_ = refreshMarkers(snapshots, markers)
+	activityCh := make(chan struct{}, len(ids)*2)
 	pollTicker := time.NewTicker(subAgentWaitPollInterval)
 	defer pollTicker.Stop()
+	idleTimer := time.NewTimer(timeout)
+	defer idleTimer.Stop()
+
 	for _, id := range ids {
 		runner, err := c.getSubAgent(id)
 		if err != nil {
@@ -1320,38 +1396,22 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 		if isSubAgentFinalStatus(initialStatus) {
 			return c.snapshotSubAgentsByID(ids)
 		}
-		go func(ch <-chan pubsub.Event[subAgentStatus], runner *subAgentRunner) {
+		go func(ch <-chan pubsub.Event[subAgentStatus]) {
 			for {
 				select {
 				case <-waitCtx.Done():
 					return
 				case _, ok := <-ch:
 					if !ok {
-						runner.mu.Lock()
-						status := runner.effectiveStatusLocked()
-						runner.mu.Unlock()
-						if isSubAgentFinalStatus(status) {
-							select {
-							case completed <- struct{}{}:
-							default:
-							}
-						}
 						return
 					}
-					runner.mu.Lock()
-					status := runner.effectiveStatusLocked()
-					runner.mu.Unlock()
-					if !isSubAgentFinalStatus(status) {
-						continue
-					}
 					select {
-					case completed <- struct{}{}:
+					case activityCh <- struct{}{}:
 					default:
 					}
-					return
 				}
 			}
-		}(updates, runner)
+		}(updates)
 	}
 
 	for {
@@ -1359,50 +1419,24 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 		case <-waitCtx.Done():
 			snapshots, _ := c.snapshotSubAgentsByID(ids)
 			return snapshots, true
-		case <-completed:
+		case <-idleTimer.C:
 			snapshots, _ := c.snapshotSubAgentsByID(ids)
-			return snapshots, false
-		case <-pollTicker.C:
-			for _, id := range ids {
-				runner, err := c.getSubAgent(id)
-				if err != nil {
-					continue
-				}
-				now := time.Now().UTC()
-				switch runner.assessHeartbeatHealth(now) {
-				case subAgentHeartbeatHealthy:
-					continue
-				case subAgentHeartbeatDegraded:
-					submissionID, changed, broker, payload := runner.markDegraded(now)
-					if !changed {
-						continue
-					}
-					c.syncRunnerOrchestrationState(context.Background(), runner)
-					c.recordOrchestrationActivity(context.Background(), runner.id, string(SubAgentStageDegraded), map[string]any{
-						"submission_id": submissionID,
-						"status":        subAgentStatusDegraded,
-					})
-					publishSubAgentStatus(broker, subAgentStatusDegraded)
-					publishSubAgentLifecycleEvent(SubAgentDegradedEvent, payload)
-				case subAgentHeartbeatStuck:
-					runner.mu.Lock()
-					submissionID := runner.lastSubmission
-					status := runner.status
-					runner.mu.Unlock()
-					finalStatus := subAgentStatusStuck
-					stage := SubAgentStageStuck
-					eventType := SubAgentStuckEvent
-					if status == subAgentStatusStarting || status == subAgentStatusReady || status == subAgentStatusWaitingOnMail {
-						finalStatus = subAgentStatusTimedOut
-						stage = SubAgentStageTimedOut
-						eventType = SubAgentTimedOutEvent
-					}
-					c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStuckAge), finalStatus, stage, eventType)
-				}
-			}
+			return snapshots, true
+		case <-activityCh:
 			snapshots, allFinal := c.snapshotSubAgentsByID(ids)
-			if allFinal {
+			if allFinal || anyFinal(snapshots) {
 				return snapshots, false
+			}
+			if refreshMarkers(snapshots, markers) {
+				resetTimer(idleTimer)
+			}
+		case <-pollTicker.C:
+			snapshots, allFinal := c.snapshotSubAgentsByID(ids)
+			if allFinal || anyFinal(snapshots) {
+				return snapshots, false
+			}
+			if refreshMarkers(snapshots, markers) {
+				resetTimer(idleTimer)
 			}
 		}
 	}

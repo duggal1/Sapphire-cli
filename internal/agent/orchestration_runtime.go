@@ -120,10 +120,12 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 	}
 	runner.mu.Unlock()
 	if c.stateService != nil {
+		c.countSubAgentLaunchMetric("db.agent_state_upsert", 1)
 		if err := c.stateService.Register(ctx, state); err != nil {
 			slog.Warn("Failed to persist orchestration state", "agent_id", state.AgentID, "error", err)
 		}
 	} else if c.orchestrationStore != nil {
+		c.countSubAgentLaunchMetric("db.agent_state_upsert", 1)
 		if err := c.orchestrationStore.UpsertAgentState(ctx, state); err != nil {
 			slog.Warn("Failed to persist orchestration state", "agent_id", state.AgentID, "error", err)
 		}
@@ -152,6 +154,7 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 				workItem.CreatedAt = existing.CreatedAt
 			}
 		}
+		c.countSubAgentLaunchMetric("db.work_item_upsert", 1)
 		if err := c.orchestrationStore.UpsertWorkItem(ctx, workItem); err != nil {
 			slog.Warn("Failed to persist orchestration work item", "agent_id", state.AgentID, "work_item_id", workItem.ID, "error", err)
 		}
@@ -248,6 +251,7 @@ func (c *coordinator) recordOrchestrationActivity(ctx context.Context, agentID, 
 		detailsJSON = c.orchestrationStore.MarshalDetails(details)
 	}
 	if c.activityService != nil {
+		c.countSubAgentLaunchMetric("db.activity_write", 1)
 		if err := c.activityService.Log(ctx, agentID, agentactivity.EventType(eventType), detailsJSON); err != nil {
 			slog.Warn("Failed to persist orchestration activity", "agent_id", agentID, "event_type", eventType, "error", err)
 		}
@@ -256,6 +260,7 @@ func (c *coordinator) recordOrchestrationActivity(ctx context.Context, agentID, 
 	if c.orchestrationStore == nil {
 		return
 	}
+	c.countSubAgentLaunchMetric("db.activity_write", 1)
 	if err := c.orchestrationStore.RecordActivity(ctx, orchestrationdb.AgentActivity{
 		AgentID:     agentID,
 		EventType:   eventType,
@@ -271,6 +276,7 @@ func (c *coordinator) drainRunnerInboxSummary(ctx context.Context, runner *subAg
 		return ""
 	}
 	items, err := c.mailbox.Inbox(ctx, runner.id, true, 20)
+	c.countSubAgentLaunchMetric("mail.inbox_read", 1)
 	if err != nil || len(items) == 0 {
 		return ""
 	}
@@ -315,6 +321,7 @@ func (c *coordinator) nudgeMailboxRecipient(ctx context.Context, recipient strin
 	if err != nil {
 		return err
 	}
+	c.countSubAgentLaunchMetric("mail.nudge_dispatch_enqueue", 1)
 	c.recordOrchestrationActivity(ctx, recipient, "mail_pending", map[string]any{
 		"recipient":   recipient,
 		"status":      status,
@@ -489,6 +496,7 @@ func (c *coordinator) reportSubAgentOutcomeToParent(ctx context.Context, runner 
 		slog.Warn("Failed to report sub-agent outcome to parent", "agent_id", agentID, "parent_session_id", parentSessionID, "error", err)
 		return
 	}
+	c.countSubAgentLaunchMetric("mail.outcome_report", 1)
 
 	c.recordOrchestrationActivity(ctx, agentID, "reported_to_parent", map[string]any{
 		"subject":       subject,

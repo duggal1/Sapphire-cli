@@ -208,7 +208,7 @@ func TestWaitSubAgentsDoesNotFinishWhileQueuedWorkRemains(t *testing.T) {
 	require.Equal(t, subAgentStatusQueued, snapshots[0].Status)
 }
 
-func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
+func TestWaitSubAgentsTimesOutInactiveRunnerWithoutMutatingStatus(t *testing.T) {
 	t.Parallel()
 
 	coord := &coordinator{
@@ -233,13 +233,13 @@ func TestWaitSubAgentsMarksStaleRunnerStuck(t *testing.T) {
 	}
 	coord.subAgentRegistry.upsert("agent-stale", runner)
 
-	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-stale"}, 8*time.Second)
-	require.False(t, timedOut)
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-stale"}, 150*time.Millisecond)
+	require.True(t, timedOut)
 	require.Len(t, snapshots, 1)
-	require.Equal(t, subAgentStatusStuck, snapshots[0].Status)
+	require.Equal(t, subAgentStatusRunning, snapshots[0].Status)
 }
 
-func TestWaitSubAgentsMarksHeartbeatStaleRunnerDegradedBeforeStuck(t *testing.T) {
+func TestWaitSubAgentsResetsIdleTimeoutWhileHeartbeatProgressContinues(t *testing.T) {
 	t.Parallel()
 
 	coord := &coordinator{
@@ -264,10 +264,32 @@ func TestWaitSubAgentsMarksHeartbeatStaleRunnerDegradedBeforeStuck(t *testing.T)
 	}
 	coord.subAgentRegistry.upsert("agent-degraded", runner)
 
-	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-degraded"}, 3*time.Second)
-	require.True(t, timedOut)
+	go func() {
+		for i := 0; i < 3; i++ {
+			time.Sleep(40 * time.Millisecond)
+			runner.mu.Lock()
+			runner.lastHeartbeat = time.Now().UTC()
+			if submission := runner.submissions["submission-degraded"]; submission != nil {
+				submission.HeartbeatAt = runner.lastHeartbeat
+			}
+			runner.mu.Unlock()
+			publishSubAgentStatus(runner.statusBroker, subAgentStatusRunning)
+		}
+		runner.mu.Lock()
+		runner.status = subAgentStatusCompleted
+		if submission := runner.submissions["submission-degraded"]; submission != nil {
+			submission.Status = subAgentStatusCompleted
+			submission.Result = "done"
+			submission.HeartbeatAt = time.Now().UTC()
+		}
+		runner.mu.Unlock()
+		publishSubAgentStatus(runner.statusBroker, subAgentStatusCompleted)
+	}()
+
+	snapshots, timedOut := coord.waitSubAgents(context.Background(), []string{"agent-degraded"}, 75*time.Millisecond)
+	require.False(t, timedOut)
 	require.Len(t, snapshots, 1)
-	require.Equal(t, subAgentStatusDegraded, snapshots[0].Status)
+	require.Equal(t, subAgentStatusCompleted, snapshots[0].Status)
 }
 
 func TestCollectSubAgentResultsReturnsLatestSubmissionPayload(t *testing.T) {

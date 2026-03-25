@@ -214,6 +214,8 @@ type coordinator struct {
 	planApprovalMu            sync.Mutex
 	planApprovalWaiters       map[string]chan bool
 	indexedSessions           sync.Map
+	subAgentFactory           subAgentFactoryFunc
+	subAgentLaunchProbe       subAgentLaunchProbe
 }
 
 type autonomousSubAgentTask struct {

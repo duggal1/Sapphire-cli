@@ -17,6 +17,7 @@ func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, age
 	if c == nil || c.checkpointService == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(agentID) == "" {
 		return
 	}
+	c.countSubAgentLaunchMetric("db.checkpoint_write", 1)
 	auditTail := ""
 	if auditSource != "" {
 		auditTail = truncateForContext(c.GetLongHorizonAuditTail(auditSource, maxLongHorizonChars), maxLongHorizonChars)

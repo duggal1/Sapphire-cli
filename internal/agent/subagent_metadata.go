@@ -30,6 +30,7 @@ func (c *coordinator) recordSubAgentMetadata(ctx context.Context, sessionID stri
 		return fmt.Errorf("encode sub-agent metadata: %w", err)
 	}
 	text := fmt.Sprintf("<%s>%s</%s>", subAgentMetadataTag, payload, subAgentMetadataTag)
+	c.countSubAgentLaunchMetric("db.message_create", 1)
 	_, err = c.messages.Create(ctx, sessionID, message.CreateMessageParams{
 		Role:  message.System,
 		Parts: []message.ContentPart{message.TextContent{Text: text}},

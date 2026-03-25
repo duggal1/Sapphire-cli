@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"strings"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 )
@@ -20,6 +21,9 @@ var skillsPolicyPromptSection []byte
 
 //go:embed templates/mcp_policy.md
 var mcpPolicyPromptSection []byte
+
+//go:embed templates/modes/plan.md
+var planModePromptSection []byte
 
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
@@ -115,16 +119,24 @@ var mainAgentOrchestrationOverlay = composePromptSections(
 
 // coderPrompt creates a new prompt specifically tailored for the coding agent.
 func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
+	return coderPromptForMode(planmode.DefaultSessionMode, opts...)
+}
+
+func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prompt.Prompt, error) {
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
+	sections := [][]byte{
+		soulPromptSection,
+		coderPromptTmpl,
+		skillsPolicyPromptSection,
+		mcpPolicyPromptSection,
+	}
+	if planmode.NormalizeMode(mode) == planmode.PlanMode {
+		sections = append(sections, planModePromptSection)
+	}
+	sections = append(sections, mainAgentOrchestrationOverlay)
 	systemPrompt, err := prompt.NewPrompt(
 		"coder",
-		string(composePromptSections(
-			soulPromptSection,
-			coderPromptTmpl,
-			skillsPolicyPromptSection,
-			mcpPolicyPromptSection,
-			mainAgentOrchestrationOverlay,
-		)),
+		string(composePromptSections(sections...)),
 		opts...,
 	)
 	if err != nil {
@@ -134,16 +146,24 @@ func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 }
 
 func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
+	return taskPromptForMode(planmode.DefaultSessionMode, opts...)
+}
+
+func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prompt.Prompt, error) {
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
+	sections := [][]byte{
+		soulPromptSection,
+		taskPromptTmpl,
+		skillsPolicyPromptSection,
+		mcpPolicyPromptSection,
+	}
+	if planmode.NormalizeMode(mode) == planmode.PlanMode {
+		sections = append(sections, planModePromptSection)
+	}
+	sections = append(sections, mainAgentOrchestrationOverlay)
 	systemPrompt, err := prompt.NewPrompt(
 		"task",
-		string(composePromptSections(
-			soulPromptSection,
-			taskPromptTmpl,
-			skillsPolicyPromptSection,
-			mcpPolicyPromptSection,
-			mainAgentOrchestrationOverlay,
-		)),
+		string(composePromptSections(sections...)),
 		opts...,
 	)
 	if err != nil {

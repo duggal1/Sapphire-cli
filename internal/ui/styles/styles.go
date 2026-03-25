@@ -1258,16 +1258,16 @@ func DefaultStyles(yellowMode bool) Styles {
 	// Tool calls
 	s.ToolCallPending = lipgloss.NewStyle().Foreground(fgHalfMuted).SetString(ToolPending)
 	s.ToolCallError = lipgloss.NewStyle().Foreground(error).SetString(ToolError)
-	s.ToolCallSuccess = lipgloss.NewStyle().Foreground(greenLight).SetString(ToolSuccess)
+	s.ToolCallSuccess = lipgloss.NewStyle().Foreground(primary).SetString(ToolSuccess)
 	// Cancelled uses muted tone but same glyph as pending
 	s.ToolCallCancelled = s.Muted.SetString(ToolPending)
 	s.EarlyStateMessage = s.Subtle.PaddingLeft(2)
 
 	// Tool rendering styles
 	// Icon palette follows the Codex-like neutral/green/rose state model.
-	s.Tool.IconPending = base.Foreground(greenLight).Bold(true).SetString(ToolPending)
-	s.Tool.IconPendingSkill = base.Foreground(tertiary).Bold(true).SetString(ToolPending)
-	s.Tool.IconSuccess = base.Foreground(greenLight).SetString(ToolSuccess)
+	s.Tool.IconPending = base.Foreground(primary).Bold(true).SetString(ToolPending)
+	s.Tool.IconPendingSkill = base.Foreground(primary).Bold(true).SetString(ToolPending)
+	s.Tool.IconSuccess = base.Foreground(primary).SetString(ToolSuccess)
 	s.Tool.IconError = base.Foreground(error).SetString(ToolError)
 	s.Tool.IconCancelled = s.Muted.SetString(ToolPending)
 
@@ -1309,7 +1309,7 @@ func DefaultStyles(yellowMode bool) Styles {
 	// Job header styles - warm accents
 	s.Tool.JobIconPending = base.Foreground(fgHalfMuted)
 	s.Tool.JobIconError = base.Foreground(error)
-	s.Tool.JobIconSuccess = base.Foreground(greenLight)
+	s.Tool.JobIconSuccess = base.Foreground(primary)
 	s.Tool.JobToolName = base.Foreground(primary)
 	s.Tool.JobAction = base.Foreground(fgHalfMuted)
 	s.Tool.JobPID = s.Muted

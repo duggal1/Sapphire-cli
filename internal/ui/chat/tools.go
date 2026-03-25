@@ -234,6 +234,8 @@ func NewToolMessageItem(
 		item = NewDiagnosticsToolMessageItem(sty, toolCall, result, canceled)
 	case tools.UpdatePlanToolName:
 		item = NewUpdatePlanToolMessageItem(sty, toolCall, result, canceled)
+	case tools.RequestUserInputToolName:
+		item = NewRequestUserInputToolMessageItem(sty, toolCall, result, canceled)
 	case agent.AgentToolName:
 		item = NewAgentToolMessageItem(sty, toolCall, result, canceled)
 	case agent.BackgroundSubAgentsToolName:
@@ -445,9 +447,6 @@ func (t *baseToolMessageItem) OnShimmerTick() bool {
 		return false
 	}
 	frame := toolSpinnerFrame()
-	if frame == t.lastSpinnerFrame {
-		return false
-	}
 	t.lastSpinnerFrame = frame
 	t.clearCache()
 	return true
@@ -484,11 +483,18 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 	if errContent == "" {
 		errContent = "tool execution failed"
 	}
-	lines := wrapPrefixedText(strings.ReplaceAll(errContent, "\n", " "), contentWidth, "", "")
-	rendered := make([]string, 0, len(lines)+1)
-	rendered = append(rendered, sty.Tool.ErrorTag.Render("Error"))
-	for _, line := range lines {
-		rendered = append(rendered, sty.Tool.ErrorMessage.Render(line))
+	rawLines := strings.Split(errContent, "\n")
+	rendered := make([]string, 0, len(rawLines)+1)
+	rendered = append(rendered, sty.Tool.ErrorTag.Width(contentWidth).Render("Error"))
+	for _, rawLine := range rawLines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			rendered = append(rendered, sty.Tool.ErrorMessage.Width(contentWidth).Render(""))
+			continue
+		}
+		for _, wrapped := range wrapPrefixedText(line, contentWidth, "", "") {
+			rendered = append(rendered, sty.Tool.ErrorMessage.Width(contentWidth).Render(wrapped))
+		}
 	}
 	block := lipgloss.NewStyle().
 		BorderLeft(true).
@@ -500,7 +506,7 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 // toolIcon returns the status icon for a tool call.
 // toolIcon returns the status icon for a tool call based on its status.
 func toolSpinnerFrame() string {
-	return shimmer.CurrentSpinnerFrame()
+	return shimmer.Spinner(nil, true)
 }
 
 func isSkillToolLabel(name string) bool {
@@ -516,11 +522,9 @@ func toolIcon(sty *styles.Styles, status ToolStatus, name string) string {
 	case ToolStatusCanceled:
 		return sty.Tool.IconCancelled.SetString("−").String()
 	default:
-		iconStyle := sty.Tool.IconPending
-		if isSkillToolLabel(name) {
-			iconStyle = sty.Tool.IconPendingSkill
-		}
-		return iconStyle.SetString(toolSpinnerFrame()).String()
+		_ = sty
+		_ = name
+		return toolSpinnerFrame()
 	}
 }
 

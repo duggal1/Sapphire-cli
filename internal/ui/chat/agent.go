@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -70,6 +72,29 @@ func (a *AgentToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	}
 	a.nestedTools = append(a.nestedTools, tool)
 	a.clearCache()
+}
+
+func (a *AgentToolMessageItem) StartAnimation() tea.Cmd {
+	if a.baseToolMessageItem.StartAnimation() != nil {
+		return shimmer.ShimmerTickCmd()
+	}
+	if nestedToolsAnimating(a.nestedTools) {
+		return shimmer.ShimmerTickCmd()
+	}
+	return nil
+}
+
+func (a *AgentToolMessageItem) OnShimmerTick() bool {
+	changed := a.baseToolMessageItem.OnShimmerTick()
+	if nestedToolsOnShimmerTick(a.nestedTools) {
+		a.clearCache()
+		changed = true
+	}
+	return changed
+}
+
+func (a *AgentToolMessageItem) HasActiveAnimation() bool {
+	return a.baseToolMessageItem.HasActiveAnimation() || nestedToolsAnimating(a.nestedTools)
 }
 
 // AgentToolRenderContext renders agent tool messages.
@@ -244,6 +269,29 @@ func (a *AgenticFetchToolMessageItem) AddNestedTool(tool ToolMessageItem) {
 	a.clearCache()
 }
 
+func (a *AgenticFetchToolMessageItem) StartAnimation() tea.Cmd {
+	if a.baseToolMessageItem.StartAnimation() != nil {
+		return shimmer.ShimmerTickCmd()
+	}
+	if nestedToolsAnimating(a.nestedTools) {
+		return shimmer.ShimmerTickCmd()
+	}
+	return nil
+}
+
+func (a *AgenticFetchToolMessageItem) OnShimmerTick() bool {
+	changed := a.baseToolMessageItem.OnShimmerTick()
+	if nestedToolsOnShimmerTick(a.nestedTools) {
+		a.clearCache()
+		changed = true
+	}
+	return changed
+}
+
+func (a *AgenticFetchToolMessageItem) HasActiveAnimation() bool {
+	return a.baseToolMessageItem.HasActiveAnimation() || nestedToolsAnimating(a.nestedTools)
+}
+
 // AgenticFetchToolRenderContext renders agentic fetch tool messages.
 type AgenticFetchToolRenderContext struct {
 	fetch *AgenticFetchToolMessageItem
@@ -337,4 +385,23 @@ func renderNestedToolPreview(sty *styles.Styles, nestedTools []ToolMessageItem, 
 		})
 	}
 	return childNodes
+}
+
+func nestedToolsAnimating(nestedTools []ToolMessageItem) bool {
+	for _, nestedTool := range nestedTools {
+		if animating, ok := nestedTool.(AnimationActive); ok && animating.HasActiveAnimation() {
+			return true
+		}
+	}
+	return false
+}
+
+func nestedToolsOnShimmerTick(nestedTools []ToolMessageItem) bool {
+	changed := false
+	for _, nestedTool := range nestedTools {
+		if tickable, ok := nestedTool.(ShimmerTickable); ok && tickable.OnShimmerTick() {
+			changed = true
+		}
+	}
+	return changed
 }

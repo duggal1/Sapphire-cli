@@ -84,7 +84,6 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/x/editor"
-	agentformula "github.com/duggal1/Sapphire-cli/internal/agent/formula"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
@@ -3586,20 +3585,12 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	if cmd := m.showPendingAssistantPlaceholder(sessionID); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	sessionMode := planmode.NormalizeMode(m.session.Mode)
-	planContext := buildPlanModeContext(attachments)
 	cmds = append(cmds, func() tea.Msg {
-		var err error
-		if sessionMode == planmode.PlanMode {
-			_, err = m.com.App.AgentCoordinator.RunPlanMode(context.Background(), sessionID, content, planContext)
-		} else {
-			_, err = m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
-		}
+		_, err := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
-			isApprovalDenied := errors.Is(err, agentformula.ErrApprovalDenied)
-			if isCancelErr || isPermissionErr || isApprovalDenied {
+			if isCancelErr || isPermissionErr {
 				return clearPendingAssistantPlaceholderMsg{}
 			}
 			return pendingAssistantErrorMsg{err: err.Error()}

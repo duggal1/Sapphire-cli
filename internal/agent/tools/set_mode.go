@@ -99,7 +99,7 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 			// Add mode-specific guidance
 			switch newMode {
 			case planmode.PlanMode:
-				message.WriteString("\n\n**Plan Mode Active**\n- Formula-driven planning is active\n- Planning stays read-only until approval\n- Approval is required before execution phases continue")
+				message.WriteString("\n\n**Plan Mode Active**\n- Conversation-first planning is active\n- The normal agent runtime stays active\n- Planning remains read-only until you switch back to default mode")
 			default:
 				message.WriteString("\n\n**Default Mode Active**\n- Normal coding flow is active\n- Full tool access is available")
 			}

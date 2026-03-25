@@ -31,6 +31,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	agentscheduler "github.com/duggal1/Sapphire-cli/internal/agent/scheduler"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
@@ -1446,7 +1447,13 @@ func (c *coordinator) refreshSystemPrompt(ctx context.Context) error {
 		return nil
 	}
 	model := c.currentAgent.Model()
-	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.mainWorkingDir()))
+	mode := planmode.DefaultSessionMode
+	if c.sessions != nil {
+		if sessionMode, err := c.sessions.GetMode(ctx, c.currentAgent.SessionID()); err == nil {
+			mode = planmode.NormalizeMode(sessionMode)
+		}
+	}
+	prompt, err := coderPromptForMode(mode, promptpkg.WithWorkingDir(c.mainWorkingDir()))
 	if err != nil {
 		return err
 	}

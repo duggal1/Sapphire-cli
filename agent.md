@@ -1,1864 +1,1431 @@
-# Sapphire CLI - Agent.md (Source of Truth)
+# Sapphire CLI - Agent Codebase Documentation
 
-**Repository:** https://github.com/charmbracelet/sapphire
+**Location:** `/Users/harshitduggal/workspace/Sapphire-cli`
+
 **Language:** Go 1.26.1
-**Last Updated:** 2026-03-17
+
+**Architecture:** Terminal-first AI assistant with multi-agent orchestration
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [File Inventory](#file-inventory)
-4. [Core Components](#core-components)
-5. [Agent System](#agent-system)
-6. [Sub-Agent System](#sub-agent-system)
-7. [Tool System](#tool-system)
-8. [UI System](#ui-system)
-9. [Configuration System](#configuration-system)
-10. [Database Schema](#database-schema)
-11. [Event System](#event-system)
-12. [MCP Integration](#mcp-integration)
-13. [LSP Integration](#lsp-integration)
-14. [Skills System](#skills-system)
-15. [Long-Horizon Tasks](#long-horizon-tasks)
-16. [Shell System](#shell-system)
+1. [High-Level Architecture](#1-high-level-architecture)
+2. [Entry Point & CLI](#2-entry-point--cli)
+3. [Application Layer](#3-application-layer)
+4. [Agent Orchestration](#4-agent-orchestration)
+5. [UI/TUI Layer](#5-uitui-layer)
+6. [Tools System](#6-tools-system)
+7. [Memory & Persistence](#7-memory--persistence)
+8. [Protocol Integrations (MCP/LSP)](#8-protocol-integrations-mcplsp)
+9. [Background Agent Systems](#9-background-agent-systems)
+10. [Database Schema](#10-database-schema)
+11. [Operational Characteristics](#11-operational-characteristics)
+12. [Quick Reference](#12-quick-reference)
 
 ---
 
-## Overview
+## 1. High-Level Architecture
 
-Sapphire CLI is a terminal-first AI assistant for software development. It provides session-based AI agent functionality with support for:
+### System Overview
 
-- Multi-provider LLM integration (OpenAI, Anthropic, Google Gemini, Azure, Bedrock, OpenRouter, Vercel)
-- Sub-agent spawning and coordination with worktree isolation
-- Tool execution with permission management
-- Automatic snapshot commits for recoverability
-- Git safety policy (no autonomous push/merge/rebase)
-- Model Context Protocol (MCP) integration
-- Language Server Protocol (LSP) integration
-- Skills system (Agent Skills open standard)
-- Long-horizon task management
-- Worktree-based parallel execution
-- Validation gate for sub-agent output (build, test, lint, security)
-- TUI and non-interactive modes
+Sapphire CLI is a production-grade AI agent system providing:
+- Interactive TUI (Bubble Tea) and non-interactive CLI modes
+- Multi-agent orchestration with sub-agent spawning and coordination
+- Git worktree isolation for parallel agent execution
+- Model Context Protocol (MCP) integration for extensible tooling
+- Language Server Protocol (LSP) integration for code intelligence
+- Persistent memory system for long-horizon task management
+- Background agent dispatch with capacity control
+- Permission-based tool execution with user approval workflows
 
----
-
-## Architecture
-
-### High-Level Architecture
+### Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Sapphire CLI                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   main.go   │  │  cmd/root   │  │  app/app    │  │  config/config      │ │
-│  │  (Entry)    │─▶│  (CLI)      │─▶│  (Wire)     │─▶│  (Load/Init)        │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                         Agent Coordinator                                │ │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │ │
-│  │  │ SessionAgent │  │ SubAgentMgr  │  │ ToolRegistry │                  │ │
-│  │  │ (Run/Queue)  │  │ (Spawn/Wait) │  │ (MCP/Built)  │                  │ │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘                  │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                          Services Layer                                  │ │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │ │
-│  │  │ Session  │  │ Message  │  │ History  │  │ Permission│  │ FileTrack│  │ │
-│  │  │ Service  │  │ Service  │  │ Service  │  │ Service  │  │ Service  │  │ │
-│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                          Data Layer                                      │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐      │ │
-│  │  │  SQLite (sqlc)   │  │  Memory Store    │  │  Config Files    │      │ │
-│  │  │  (db/*.sql.go)   │  │  (vector search) │  │  (crush.json)    │      │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘      │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                          UI Layer                                        │ │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │ │
-│  │  │  ui/model    │  │  ui/chat     │  │  ui/dialog   │  │ ui/common  │  │ │
-│  │  │  (BubbleTea) │  │  (Messages)  │  │  (Overlays)  │  │ (Helpers)  │  │ │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘  └────────────┘  │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────────┘
+main.go (entry point)
+    └── internal/cmd/root.go (CLI commands)
+            └── internal/app/app.go (application container)
+                    ├── internal/agent/coordinator.go (agent orchestration)
+                    │       └── internal/agent/agent.go (session agent)
+                    ├── internal/orchestration/db/db.go (SQLite store)
+                    ├── internal/lsp/manager.go (language servers)
+                    ├── internal/agent/tools/mcp/ (MCP clients)
+                    ├── internal/memory/ (persistent memory)
+                    └── internal/agent/daemon/ (background dispatch)
 ```
 
-### Request Flow
+### Layered Architecture
 
 ```
-User Input (TUI or CLI)
-         │
-         ▼
-┌─────────────────┐
-│  cmd/root.go    │ ──▶ setupApp() ──▶ config.Init()
-└─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  app/app.go     │ ──▶ InitCoderAgent() ──▶ agent.NewCoordinator()
-└─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  coordinator.go │ ──▶ Run() / Submit()
-└─────────────────┘
-         │
-         ├─────────────────────┐
-         │                     │
-         ▼                     ▼
-┌─────────────────┐   ┌─────────────────┐
-│  sessionAgent   │   │  subAgentMgr    │
-│  .Run()         │   │  .spawnSubAgent()│
-└─────────────────┘   └─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  fantasy.Agent  │ ──▶ LLM Stream
-└─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Tool Execution │ ──▶ MCP / Bash / Edit / etc.
-└─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Message Update │ ──▶ DB + PubSub ──▶ UI
-└─────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      UI Layer                                │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ TUI (Bubble │  │ CLI (Cobra)  │  │ Dialog System    │   │
+│  │  Tea)       │  │              │  │                  │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Application Layer                          │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ App         │  │ Session Mgr  │  │ Message Service  │   │
+│  │ Container   │  │              │  │                  │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Agent Layer                             │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ Coordinator │  │ SessionAgent │  │ Tool Orchestrator│   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ Sub-Agent   │  │ Background   │  │ Supervisor       │   │
+│  │ Registry    │  │ Dispatcher   │  │ Patrol           │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Tools Layer                             │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ File Ops    │  │ Shell Exec   │  │ MCP Tools        │   │
+│  │ (view/edit) │  │ (bash/jobs)  │  │                  │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ Search      │  │ Agent Ops    │  │ Memory/Diag      │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Protocol Layer                             │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ MCP Client  │  │ LSP Client   │  │ Fantasy Framework│   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Persistence Layer                           │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ SQLite DB   │  │ Memory Store │  │ Worktrees        │   │
+│  │ (orchestration)│ (embeddings) │  │ (git isolation)  │   │
+│  └─────────────┘  └──────────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## File Inventory
-
-### Root Level Files
-
-| File | Purpose |
-|------|---------|
-| `main.go` | Entry point; starts profiling server and executes root CLI command |
-| `crush.json` | Main configuration file (providers, models, MCP, LSP, options) |
-| `schema.json` | JSON Schema for crush.json validation |
-| `Taskfile.yaml` | Task runner configuration |
-| `go.mod` / `go.sum` | Go module dependencies |
-| `README.md` | Project documentation |
-| `LICENSE.md` | MIT License |
-| `install.sh` | Installation script |
-| `testing.go` | Test helpers |
-| `sqlc.yaml` | sqlc configuration for database queries |
-
-### `/internal/agent/` - Agent Core
-
-| File | Purpose |
-|------|---------|
-| `coordinator.go` | Agent coordinator; manages multiple AI agents, sub-agents, MCP selection, skill matching |
-| `agent.go` | Session agent implementation; handles LLM streaming, tool execution, message management |
-| `subagent_manager.go` | Sub-agent lifecycle management; spawn, resume, wait, close operations |
-| `subagent_coordination.go` | Sub-agent coordination helpers |
-| `subagent_events.go` / `subagent_events_helpers.go` | Sub-agent event publishing |
-| `subagent_guardrails.go` | Sub-agent spawn limits and validation |
-| `subagent_metadata.go` | Sub-agent metadata persistence |
-| `subagent_supervisor.go` | Sub-agent supervision |
-| `subagent_worktree.go` | Sub-agent worktree preparation, lifecycle, cleanup, quarantine |
-| `subagent_validation_gate.go` | Validation gate for completed sub-agent work (diff, build, test, lint, security) |
-| `agent_tool.go` | Agent tool definitions |
-| `agent_job_manager.go` | Background agent job management |
-| `agent_job_runner.go` | Agent job execution |
-| `agent_job_tools.go` | Agent job tool implementations |
-| `background_subagents.go` | Autonomous sub-agent priming |
-| `background_wait.go` | Background sub-agent wait handling |
-| `collab_tools.go` | Collaboration tool handlers |
-| `worktree_orchestrator.go` | Worktree orchestration for parallel execution |
-| `mcp_registry.go` | MCP registry management |
-| `mcp_selection.go` | MCP selection based on user prompts |
-| `mcp_preflight.go` | MCP preflight discovery |
-| `mcp_inventory.go` | MCP inventory building |
-| `mcp_async.go` | Async MCP operations |
-| `mcp_autonomy.go` | MCP autonomy settings |
-| `skill_tool.go` | Skill loading and execution |
-| `prompts.go` | System prompt templates |
-| `loop_detection.go` | Agent loop detection |
-| `indexer.go` | Codebase indexer |
-| `tool_cache.go` | Tool caching |
-| `tool_filter.go` | Tool filtering |
-| `runtime_control.go` | Runtime control for tool execution |
-| `errors.go` | Agent error definitions |
-| `event.go` | Agent event definitions |
-
-### `/internal/agent/tools/` - Built-in Tools
-
-| File | Purpose |
-|------|---------|
-| `tools.go` | Tool context keys and helpers |
-| `bash.go` | Bash command execution tool |
-| `edit.go` | File edit tool (multi-edit support) |
-| `write.go` | File write tool |
-| `view.go` / `fast_view.go` | File view tools |
-| `glob.go` | Glob pattern file search |
-| `grep.go` / `rg.go` | Grep/ripgrep text search |
-| `ls.go` | Directory listing |
-| `fetch.go` | Web fetching |
-| `web_fetch.go` / `web_search.go` | Web search tools |
-| `download.go` | File download |
-| `python.go` | Python code execution |
-| `todos.go` | Todo management |
-| `references.go` | Reference management |
-| `search.go` | Code search |
-| `sourcegraph.go` | Sourcegraph integration |
-| `google_search.go` | Google search |
-| `diagnostics.go` | LSP diagnostics |
-| `lsp_restart.go` | LSP restart tool |
-| `multiedit.go` | Multi-edit operations |
-| `job_output.go` / `job_kill.go` | Background job management |
-| `mcp-tools.go` | MCP tool execution |
-| `call_mcp_tool.go` | MCP tool calling |
-| `list_mcp_tools.go` / `list_mcp_resources.go` | MCP listing |
-| `memory_query.go` | Memory query tool |
-| `tool_suggest.go` | Tool suggestion |
-| `edit_guard.go` | Edit protection |
-| `tool_call_validation.go` | Tool call validation |
-| `tool_call_preflight.go` | Tool call preflight |
-| `safe.go` | Safe execution helpers |
-| `dispatcher.go` / `fast_dispatcher.go` | Tool dispatch |
-
-### `/internal/agent/tools/mcp/` - MCP Tools
-
-| File | Purpose |
-|------|---------|
-| `init.go` | MCP client initialization |
-| `manage.go` | MCP client management |
-| `tools.go` | MCP tool execution |
-| `resources.go` | MCP resource handling |
-| `prompts.go` | MCP prompt handling |
-| `timeout.go` | MCP timeout handling |
-
-### `/internal/agent/memory/` - Agent Memory
-
-| File | Purpose |
-|------|---------|
-| `memory.go` | Memory service for agent context |
-
-### `/internal/agent/prompt/` - Prompt System
-
-| File | Purpose |
-|------|---------|
-| `prompt.go` | Prompt building and management |
-
-### `/internal/agent/longhorizon/` - Long-Horizon Tasks
-
-| File | Purpose |
-|------|---------|
-| `manager.go` | Long-horizon task manager; spec/plan/runbook/audit |
-
-### `/internal/agent/hyper/` - Hyper Provider
-
-| File | Purpose |
-|------|---------|
-| `provider.go` | Hyper provider configuration |
-
-### `/internal/app/` - Application Wire
-
-| File | Purpose |
-|------|---------|
-| `app.go` | Application container; wires services, coordinates agents |
-| `lsp_events.go` | LSP event subscription |
-| `provider.go` | Provider helpers |
-
-### `/internal/cmd/` - CLI Commands
-
-| File | Purpose |
-|------|---------|
-| `root.go` | Root CLI command; setup, TUI initialization |
-| `run.go` | Non-interactive run command |
-| `login.go` | OAuth login |
-| `mcp.go` | MCP management commands |
-| `models.go` | Model listing |
-| `projects.go` | Project management |
-| `dirs.go` | Directory commands |
-| `logs.go` | Log viewing |
-| `stats.go` | Usage statistics |
-| `worktrees.go` | Worktree management (orchestrate, clean --merged) |
-| `update_providers.go` | Provider updates |
-| `schema.go` | Schema generation |
-
-### `/internal/config/` - Configuration
-
-| File | Purpose |
-|------|---------|
-| `config.go` | Config types and methods |
-| `load.go` | Config loading from files |
-| `init.go` | Config initialization |
-| `provider.go` | Provider configuration |
-| `mcp.go` | MCP configuration |
-| `mcp_registry.go` | MCP registry |
-| `mcp_catalog.go` | MCP catalog |
-| `lsp_defaults.go` | LSP defaults |
-| `hyper.go` | Hyper configuration |
-| `copilot.go` | GitHub Copilot OAuth |
-| `catwalk.go` | Catwalk provider catalog |
-| `resolve.go` | Variable resolution |
-| `recent_models.go` | Recent model tracking |
-
-### `/internal/db/` - Database Layer
-
-| File | Purpose |
-|------|---------|
-| `db.go` | Database connection |
-| `connect.go` | Connection helpers |
-| `models.go` | Database models |
-| `querier.go` | Querier interface |
-| `files.sql.go` | File queries (sqlc generated) |
-| `messages.sql.go` | Message queries |
-| `sessions.sql.go` | Session queries |
-| `read_files.sql.go` | Read file tracking |
-| `tiered_memory.sql.go` | Tiered memory |
-| `stats.sql.go` | Statistics queries |
-| `embed.go` | Embedded migrations |
-| `supabase.go` | Supabase integration |
-
-### `/internal/db/sql/` - SQL Queries
-
-| File | Purpose |
-|------|---------|
-| `files.sql` | File table queries |
-| `messages.sql` | Message table queries |
-| `sessions.sql` | Session table queries |
-| `read_files.sql` | Read file tracking queries |
-| `tiered_memory.sql` | Tiered memory queries |
-| `stats.sql` | Statistics queries |
-
-### `/internal/db/migrations/` - Database Migrations
-
-| File | Purpose |
-|------|---------|
-| `*.sql` | SQLite migrations |
-
-### `/internal/session/` - Session Service
-
-| File | Purpose |
-|------|---------|
-| `session.go` | Session service; CRUD, todos, pubsub |
-
-### `/internal/message/` - Message Service
-
-| File | Purpose |
-|------|---------|
-| `message.go` | Message service; CRUD, parts marshaling |
-| `content.go` | Message content types |
-| `attachment.go` | Attachment handling |
-
-### `/internal/history/` - File History Service
-
-| File | Purpose |
-|------|---------|
-| `file.go` | File history service |
-
-### `/internal/permission/` - Permission Service
-
-| File | Purpose |
-|------|---------|
-| `permission.go` | Permission service; tool approval |
-
-### `/internal/filetracker/` - File Tracker Service
-
-| File | Purpose |
-|------|---------|
-| `service.go` | File tracking service |
-
-### `/internal/skills/` - Skills System
-
-| File | Purpose |
-|------|---------|
-| `skills.go` | Skill discovery and parsing |
-| `bundle.go` | Skill bundling |
-| `embedding.go` | Embedding-based skill retrieval |
-| `fast_loader.go` | Fast skill loading |
-
-### `/internal/shell/` - Shell Execution
-
-| File | Purpose |
-|------|---------|
-| `shell.go` | Shell execution (POSIX via mvdan.cc/sh) |
-| `background.go` | Background shell management |
-| `fast_background.go` | Fast background execution |
-| `coreutils.go` | Coreutils integration |
-| `ringbuffer.go` | Output ring buffer |
-
-### `/internal/lsp/` - LSP Integration
-
-| File | Purpose |
-|------|---------|
-| `client.go` | LSP client |
-| `manager.go` | LSP manager; lifecycle |
-| `handlers.go` | LSP handlers |
-| `util/edit.go` | LSP edit helpers |
-
-### `/internal/memory/` - Persistent Memory
-
-| File | Purpose |
-|------|---------|
-| `system.go` | Persistent memory system |
-| `store.go` | Memory store |
-| `embedding.go` | Memory embedding |
-| `extraction.go` | Memory extraction |
-| `pipeline.go` | Memory pipeline |
-| `tools.go` | Memory tools |
-
-### `/internal/llm/` - LLM Providers
-
-| Directory | Purpose |
-|-----------|---------|
-| `provider/gemini/` | Google Gemini provider |
-
-### `/internal/oauth/` - OAuth Integration
-
-| Directory | Purpose |
-|-----------|---------|
-| `copilot/` | GitHub Copilot OAuth |
-| `hyper/` | Hyper OAuth |
-
-### `/internal/ui/` - User Interface
-
-| Directory | Purpose |
-|-----------|---------|
-| `model/` | Main UI model (Bubble Tea) |
-| `chat/` | Chat message rendering |
-| `dialog/` | Dialog overlays |
-| `common/` | Common UI components |
-| `list/` | List components |
-| `diffview/` | Diff viewing |
-| `styles/` | Styling |
-| `anim/` | Animations |
-| `logo/` | Logo rendering |
-| `completions/` | Completions UI |
-| `attachments/` | Attachment UI |
-| `image/` | Image rendering |
-| `util/` | UI utilities |
-| `notification/` | Notifications |
-
-### `/internal/event/` - Event System
-
-| File | Purpose |
-|------|---------|
-| `event.go` | PostHog analytics events |
-| `logger.go` | Event logger |
-| `identifier.go` | User identification |
-| `all.go` | Event helpers |
-
-### `/internal/pubsub/` - Pub/Sub System
-
-| File | Purpose |
-|------|---------|
-| `broker.go` | Pub/sub broker |
-| `events.go` | Event types |
-
-### `/internal/csync/` - Concurrent Collections
-
-| File | Purpose |
-|------|---------|
-| `maps.go` | Concurrent maps |
-| `slices.go` | Concurrent slices |
-| `value.go` | Concurrent value |
-| `versionedmap.go` | Versioned maps |
-
-### `/internal/fsext/` - Filesystem Extensions
-
-| File | Purpose |
-|------|---------|
-| `fileutil.go` | File utilities |
-| `lookup.go` | File lookup |
-| `ls.go` | Directory listing |
-| `expand.go` | Path expansion |
-| `ignore.go` | Gitignore handling |
-| `paste.go` | Clipboard paste |
-
-### `/internal/format/` - Formatting
-
-| File | Purpose |
-|------|---------|
-| `spinner.go` | Progress spinner |
-
-### `/internal/diff/` - Diff Utilities
-
-| File | Purpose |
-|------|---------|
-| `diff.go` | Diff generation |
-
-### `/internal/ansiext/` - ANSI Extensions
-
-| File | Purpose |
-|------|---------|
-| `ansi.go` | ANSI escape codes |
-
-### `/internal/stringext/` - String Extensions
-
-| File | Purpose |
-|------|---------|
-| `string.go` | String utilities |
-
-### `/internal/filepathext/` - Filepath Extensions
-
-| File | Purpose |
-|------|---------|
-| `filepath.go` | Filepath utilities |
-
-### `/internal/env/` - Environment
-
-| File | Purpose |
-|------|---------|
-| `env.go` | Environment helpers |
-
-### `/internal/home/` - Home Directory
-
-| File | Purpose |
-|------|---------|
-| `home.go` | Home directory helpers |
-
-### `/internal/version/` - Version
-
-| File | Purpose |
-|------|---------|
-| `version.go` | Version information |
-
-### `/internal/update/` - Update Checking
-
-| File | Purpose |
-|------|---------|
-| `update.go` | Update checking |
-
-### `/internal/log/` - Logging
-
-| File | Purpose |
-|------|---------|
-| `log.go` | Logging setup |
-| `http.go` | HTTP logging |
-
-### `/internal/projects/` - Project Management
-
-| File | Purpose |
-|------|---------|
-| `projects.go` | Project registration |
-
-### `/internal/runtimeopt/` - Runtime Options
-
-| File | Purpose |
-|------|---------|
-| `runtime.go` | Runtime options |
-
-### `/internal/commands/` - Custom Commands
-
-| File | Purpose |
-|------|---------|
-| `commands.go` | Custom command loading |
-
-### `/long_horizon/` - Long-Horizon Artifacts
-
-| Directory | Purpose |
-|-----------|---------|
-| `<session-id>/` | Per-session long-horizon artifacts |
-
-### `/.sapphire/` - Data Directory
-
-| Directory | Purpose |
-|-----------|---------|
-| `skills/` | Skill definitions |
-| `subagents/` | Sub-agent worktrees |
-| `logs/` | Application logs |
-
----
-
-## Core Components
+## 2. Entry Point & CLI
+
+### File Inventory
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `main.go` | ~30 | Entry point; starts pprof server if enabled, executes root CLI command |
+| `internal/cmd/root.go` | ~324 | Root CLI command setup; initializes app, TUI, metrics, project registration |
+| `internal/cmd/run.go` | ~95 | Non-interactive mode execution; single prompt processing |
+| `internal/cmd/models.go` | ~110 | List/search available models from configured providers |
+| `internal/cmd/mcp.go` | ~57 | MCP server management commands (sync from registry) |
+| `internal/cmd/worktrees.go` | ~398 | Git worktree orchestration commands |
+| `internal/cmd/projects.go` | ~77 | List project directories |
+| `internal/cmd/logs.go` | ~216 | View/debug logs with follow mode |
+| `internal/cmd/stats.go` | ~387 | Usage statistics HTML report |
+| `internal/cmd/login.go` | ~203 | Authenticate with Hyper/Copilot |
+| `internal/cmd/dirs.go` | ~66 | Show directory paths |
+| `internal/cmd/jina.go` | ~77 | Jina AI integration |
+| `internal/cmd/schema.go` | ~26 | Database schema operations |
+| `internal/cmd/update-providers.go` | ~82 | Update provider configurations |
 
 ### Entry Point (`main.go`)
 
 ```go
 func main() {
-    // Optional profiling server
+    // Optional pprof server for profiling
     if os.Getenv("CRUSH_PROFILE") != "" {
-        go http.ListenAndServe("localhost:6060", nil)
+        go func() {
+            http.ListenAndServe("localhost:6060", nil)
+        }()
     }
-    cmd.Execute()
+    cmd.Execute()  // Cobra CLI execution
 }
 ```
 
-### CLI Root (`internal/cmd/root.go`)
+### Root Command Structure
 
-**Purpose:** CLI command setup and TUI initialization.
+```go
+var rootCmd = &cobra.Command{
+    Use:   "sapphire",
+    Short: "A terminal-first AI assistant for software development",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // Initialize app container
+        app := setupAppWithProgressBar(cmd)
+        defer app.Shutdown()
+        
+        // Setup Bubble Tea TUI
+        model := ui.New(common.DefaultCommon(app))
+        program := tea.NewProgram(model, tea.WithAltScreen())
+        
+        // Subscribe to pubsub events
+        go app.Subscribe(program)
+        
+        return program.Run()
+    },
+}
+```
 
-**Key Functions:**
-- `Execute()` - Runs root command with fang wrapper
-- `setupApp()` - Creates app instance with config, DB, services
-- `setupAppWithProgressBar()` - Adds progress bar for TUI
+### Global Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--cwd` | `-c` | Current working directory |
+| `--data-dir` | `-D` | Custom sapphire data directory |
+| `--debug` | `-d` | Enable debug logging |
+| `--yolo` | `-y` | Auto-accept all permissions (DANGEROUS) |
+| `--help` | `-h` | Show help |
+
+### Non-Interactive Mode (`run` command)
+
+```bash
+sapphire run [prompt...] [flags]
+```
 
 **Flags:**
-- `--cwd` / `-c` - Working directory
-- `--data-dir` / `-D` - Custom data directory
-- `--debug` / `-d` - Debug logging
-- `--yolo` / `-y` - Auto-approve permissions
+- `-q, --quiet`: Hide spinner
+- `-v, --verbose`: Show logs
+- `-m, --model string`: Model override
+- `--small-model string`: Small model override
+
+**Features:**
+- Stdin piping support
+- Direct stdout/stderr output
+- No TUI overhead
+
+### Worktrees Subcommands
+
+```bash
+sapphire worktrees orchestrate -s spec.json
+sapphire worktrees clean --merged
+sapphire worktrees list [--session ID] [--status STATUS] [--limit N]
+sapphire worktrees land <id> --strategy merge|squash|cherry_pick|manual_review
+sapphire worktrees repair <id>
+sapphire worktrees remove <id> [--force]
+```
+
+### Logs Command
+
+```bash
+sapphire logs [flags]
+```
+
+**Flags:**
+- `-f, --follow`: Follow log output (tail -f)
+- `-t, --tail N`: Show last N lines (default: 1000)
+
+---
+
+## 3. Application Layer
+
+### File Inventory
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/app/app.go` | ~650 | Application container wiring services; manages lifecycle, events, shutdown |
+| `internal/app/provider.go` | ~100 | Model string parsing and provider/model resolution for CLI overrides |
+| `internal/app/lsp_events.go` | ~100 | LSP event pub/sub system for tracking language server state changes |
 
 ### Application Container (`internal/app/app.go`)
 
-**Purpose:** Wires together services, coordinates agents, manages lifecycle.
+**Core Structure:**
+```go
+type App struct {
+    cfg            *config.Config
+    Sessions       *session.Service
+    Messages       *message.Service
+    History        *history.Service
+    Permissions    *permission.Service
+    FileTracker    *filetracker.Service
+    LSPManager     *lsp.Manager
+    AgentCoordinator *agent.Coordinator
+    
+    events         chan tea.Msg
+    pubsub         *pubsub.Broker
+    shutdownFuncs  []func()
+}
+```
 
-**Key Types:**
-- `App` - Main application struct
+**Service Wiring (`app.New()`):**
+```go
+// Database connection
+conn := db.Connect(ctx, cfg.Options.DataDirectory)
+q := db.New(conn)
 
-**Fields:**
-- `Sessions` - Session service
-- `Messages` - Message service
-- `History` - File history service
-- `Permissions` - Permission service
-- `FileTracker` - File tracker service
-- `Conn` - Database connection
-- `AgentCoordinator` - Agent coordinator
-- `LSPManager` - LSP manager
-- `config` - Configuration
+// Core services
+sessions := session.NewService(q, conn)
+messages := message.NewService(q)
+files := history.NewService(q, conn)
+permissions := permission.NewPermissionService(cfg.WorkingDir(), skipPermissionsRequests, allowedTools)
 
-**Key Methods:**
-- `New()` - Initialize app with services
-- `InitCoderAgent()` - Initialize coder agent
-- `RunNonInteractive()` - Headless execution
-- `Subscribe()` - Forward events to TUI
-- `Shutdown()` - Graceful termination
+// Agent coordinator
+coordinator, err := agent.NewCoordinator(ctx, cfg, sessions, messages, permissions, files, filetracker, lspManager, conn)
+
+// App container
+app := &App{
+    cfg:              cfg,
+    Sessions:         sessions,
+    Messages:         messages,
+    History:          files,
+    Permissions:      permissions,
+    FileTracker:      filetracker,
+    LSPManager:       lspManager,
+    AgentCoordinator: coordinator,
+    events:           make(chan tea.Msg, 100),
+    pubsub:           pubsub.NewBroker[pubsub.Event](),
+}
+```
+
+**Lifecycle Management:**
+- `Startup(ctx)`: Initializes all services
+- `Shutdown()`: Executes registered cleanup functions
+- `Subscribe(program *tea.Program)`: Routes pubsub events to TUI
+
+### Event System
+
+**PubSub Broker:**
+```go
+type Broker[T any] struct {
+    subscribers map[string][]chan T
+    mu          sync.RWMutex
+}
+
+func (b *Broker[T]) Subscribe(id string) chan T
+func (b *Broker[T]) Publish(id string, msg T)
+func (b *Broker[T]) Unsubscribe(id string, ch chan T)
+```
+
+**Event Types:**
+- `SessionEvent`: Session created/updated/closed
+- `MessageEvent`: Message created/updated
+- `AgentEvent`: Agent spawned/completed/failed
+- `LSPEvent`: Diagnostics changed
+- `MCPEvent`: MCP state changed
+
+### Model Provider Resolution (`internal/app/provider.go`)
+
+**Model String Parsing:**
+```go
+// Parses "provider:model" or "model" format
+func ParseModelString(model string) (provider, modelName string)
+
+// Resolves provider from configured options
+func ResolveProvider(cfg *config.Config, provider string) (*ProviderConfig, error)
+```
 
 ---
 
-## Agent System
+## 4. Agent Orchestration
 
-### Agent Coordinator (`internal/agent/coordinator.go`)
+### File Inventory
 
-**Purpose:** Manages multiple AI agents, sub-agents, MCP selection, skill matching.
-
-**Key Types:**
-- `Coordinator` interface - Agent management API
-- `coordinator` struct - Implementation
-
-**Methods:**
-- `Run(ctx, sessionID, prompt)` - Execute agent synchronously
-- `Submit(ctx, sessionID, prompt)` - Submit for async execution
-- `Cancel(sessionID)` - Cancel session
-- `CancelAll()` - Cancel all sessions
-- `IsSessionBusy(sessionID)` - Check if session is busy
-- `Summarize(ctx, sessionID)` - Summarize conversation
-- `UpdateModels(ctx)` - Update model configurations
-- `spawnSubAgent()` - Spawn sub-agent
-- `waitSubAgents()` - Wait for sub-agents
-- `closeSubAgent()` - Close sub-agent
-- `OrchestrateWorktrees()` - Worktree orchestration
-
-**Key Logic:**
-- Skill keyword matching via `skillKeywordMap`
-- MCP preflight and selection
-- Google Search failure tracking
-- Background sub-agent limiting
-- Tool caching
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/agent/agent.go` | ~2553 | Session agent implementation; message streaming, tool execution, memory injection |
+| `internal/agent/coordinator.go` | ~2560 | Agent coordinator; multi-agent management, submission execution, orchestration context |
+| `internal/agent/orchestration_runtime.go` | ~750 | Orchestration memory context building; mailbox, agent states, work items, activity feed |
+| `internal/agent/agent_tool.go` | ~100 | `agent` tool for spawning sub-agents with worktree isolation options |
+| `internal/agent/agent_job_manager.go` | ~200 | Batch job management for parallel sub-agent task processing |
+| `internal/agent/memory/checkpoint.go` | ~430 | Session checkpointing; structured state extraction, user preferences, decision records |
+| `internal/agent/mailbox/mailbox.go` | ~70 | Inter-agent mail service; send, inbox, thread, read marking |
+| `internal/agent/state/state.go` | ~80 | Agent state persistence service; heartbeat, status snapshots |
 
 ### Session Agent (`internal/agent/agent.go`)
 
-**Purpose:** Session-based AI agent with LLM streaming and tool execution.
-
-**Key Types:**
-- `SessionAgent` interface
-- `sessionAgent` struct
-
-**Fields:**
-- `largeModel` / `smallModel` - Model configurations
-- `systemPrompt` - System prompt
-- `tools` - Available tools
-- `sessions` / `messages` - Services
-- `memory` - Memory service
-- `pmem` - Persistent memory
-- `longHorizon` - Long-horizon manager
-
-**Key Methods:**
-- `Run(ctx, call)` - Execute agent turn
-- `Enqueue(call)` - Queue prompt
-- `SetModels()` / `SetTools()` / `SetSystemPrompt()` - Configuration
-- `Summarize()` - Auto-summarization
-
-**Stream Handling:**
-- `PrepareStep` - Message preparation
-- `OnTextDelta` - Text streaming
-- `OnToolCallStart` / `OnToolCallEnd` - Tool lifecycle
-- `OnReasoningStart` / `OnReasoningDelta` / `OnReasoningEnd` - Reasoning content
-
-**Auto-Summarization:**
-- Large context: 200K tokens, 20K buffer
-- Small context: 20% ratio, 3K min buffer
-
-### Sub-Agent Manager (`internal/agent/subagent_manager.go`)
-
-**Purpose:** Sub-agent lifecycle management.
-
-**Key Types:**
-- `subAgentRunner` - Sub-agent execution context
-- `subAgentRegistry` - Sub-agent tracking
-- `subAgentSnapshot` - Sub-agent state
-
-**Status Values:**
-- `subAgentStatusQueued`
-- `subAgentStatusRunning`
-- `subAgentStatusCompleted`
-- `subAgentStatusError`
-- `subAgentStatusClosed`
-
-**Key Methods:**
-- `spawnSubAgent()` - Create sub-agent
-- `runSubAgentLoop()` - Execution loop
-- `runSubAgentTurn()` - Single turn execution
-- `resumeSubAgent()` - Resume closed agent
-- `waitSubAgents()` - Wait for completion
-- `closeSubAgent()` - Terminate agent
-- `sendSubAgentInput()` - Send follow-up
-
-**Worktree Integration:**
-- Isolated worktrees per sub-agent
-- Branch management
-- Write scope enforcement
-
----
-
-## Sub-Agent System
-
-### Architecture
-
-Sapphire implements a multi-agent orchestration system with:
-
-- Worktree-based isolation for sub-agents
-- Automatic snapshot commits for recoverability
-- Destructive Git command denial for safety
-- Human-controlled integration (no auto-push/merge)
-- Hierarchical spawning with depth limits
-- Status tracking and pub/sub
-- Context forking
-- Completion signals
-
-### Worktree Isolation
-
-Each sub-agent operates in an isolated Git worktree under `.sapphire/worktrees/agent/<agent-id>/<task-slug>/`.
-
-**Worktree structure:**
-```
-repo-root/
-├── .sapphire/
-│   ├── worktrees/
-│   │   └── agent/
-│   │       ├── <agent-id-1>/
-│   │       │   └── <task-slug>/
-│   │       └── <agent-id-2>/
-│   │           └── <task-slug>/
-│   └── quarantine/
-│       └── <failed-worktree>/
-```
-
-**Branch naming:** `agent/<agent-id>/<task-slug>`
-
-**Base branch selection:**
-1. `main` if it exists
-2. `master` if `main` does not exist
-3. `origin/HEAD` if remote tracking exists
-4. `HEAD` as final fallback
-
-### Snapshot Commits
-
-Automatic local snapshot commits are created after meaningful file writes with a 1.5-second debounce.
-
-**Snapshot manager:** `internal/agent/tools/git_snapshot.go`
-
-**Behavior:**
-- Triggered after file writes in any Git worktree
-- Debounced to batch rapid writes
-- Flushable on demand before task completion
-- Local-only commits (never auto-pushed)
-- Actor naming: `main-agent` for main workspace, `<agent-id>-<task-slug>` for sub-agents
-
-**Commit format:**
-```
-snapshot: <actor-name> <timestamp>
-```
-
-**Example:**
-```
-snapshot: main-agent 20260319-143022
-snapshot: agent-1-render-fix 20260319-143045
-```
-
-### Git Safety Policy
-
-All agents are blocked from destructive Git operations by default.
-
-**Blocked commands:**
-- `git push` - agents never push autonomously
-- `git merge` - integration is human-controlled
-- `git rebase` - history rewriting blocked
-- `git restore` - destructive recovery blocked
-- `git clean` - file deletion blocked
-- `git reset --hard` - hard reset blocked
-- `git worktree remove` - worktree deletion blocked
-- `git branch -d/-D` - branch deletion blocked
-
-**Implementation:** `internal/agent/tools/bash.go::isForbiddenGitAgentCommand()`
-
-### Spawn Flow
-
-```
-Model calls spawn_agent tool
-         │
-         ▼
-validateSubAgentLaunch() - Check depth limit
-         │
-         ▼
-prepareSubAgentWorktree() - Create isolated worktree
-         │
-         ▼
-buildAgentWithWorkingDirOverrides() - Configure agent
-         │
-         ▼
-sessions.CreateTaskSession() - Create DB session
-         │
-         ▼
-subAgentRunner initialization
-         │
-         ▼
-runSubAgentLoop() - Start execution goroutine
-         │
-         ▼
-enqueue() - Submit initial prompt
-```
-
-### Depth Tracking
-
-Depth encoded in session metadata:
-```
-CLI session (depth=0)
-  └─ spawn_agent → depth=1
-       └─ spawn_agent → depth=2
-            └─ spawn_agent → depth=3 (max)
-```
-
-### Context Forking
-
-- Copies last N messages from parent
-- Excludes tool history
-- Includes summary message if present
-- Maximum 40 messages
-
-### Status Subscription
-
+**Core Interface:**
 ```go
-runner.subscribeStatus(ctx) <-chan pubsub.Event[subAgentStatus]
+type SessionAgent interface {
+    Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
+    SetModels(large Model, small Model)
+    SetTools(tools []fantasy.AgentTool)
+    SetSystemPrompt(systemPrompt string)
+    Cancel(sessionID string)
+    CancelAll()
+    Enqueue(call SessionAgentCall) error
+    Summarize(context.Context, string, fantasy.ProviderOptions) error
+}
 ```
 
-Events published on:
-- Spawn
-- Running
-- Completed
-- Failed
-- Closed
+**SessionAgentCall Structure:**
+```go
+type SessionAgentCall struct {
+    SessionID       string
+    Prompt          string
+    SkillContext    string          // Injected context (MCP, sub-agents, orchestration)
+    ActiveSkills    []string        // Enabled skill names
+    ActiveTools     []string        // Enabled tool names
+    ProviderOptions fantasy.ProviderOptions
+    Attachments     []message.Attachment
+    PrecreatedUser  *message.Message
+    SkipUserMessage bool
+    MaxOutputTokens int64
+    Temperature     *float64
+    TopP            *float64
+}
+```
 
-### Worktree Lifecycle
+**Streaming Execution (`Run()`):**
+```go
+streamCall := fantasy.AgentStreamCall{
+    PrepareStep: func(...) {
+        // Create assistant message in DB
+        currentAssistant = &assistantMsg
+    },
+    OnReasoningDelta: func(id, text string) {
+        currentAssistant.AppendReasoningContent(text)
+        updateAssistant(ctx, currentAssistant, messageUpdateTimeout, false)
+    },
+    OnToolCallStart: func(id, name string, input json.RawMessage) {
+        // Track tool execution
+    },
+    OnToolCallEnd: func(id string, response fantasy.ToolResponse) {
+        // Store tool result in message
+    },
+}
+result, err := agent.Stream(genCtx, streamCall)
+```
 
-**Creation:**
-1. Validate worktree path format (`.sapphire/worktrees/agent/<id>/<slug>`)
-2. Validate branch format (`agent/<id>/<task-slug>`)
-3. Ensure base worktree is clean
-4. Create worktree from base branch
-5. Add `.sapphire/worktrees/` to `.gitignore`
+**Update Throttling:**
+- `messageUpdateTimeout`: 750ms for streaming updates
+- `messageFinalUpdateTimeout`: 5s for final update
+- `messageUpdateMinInterval`: 50ms minimum between updates
+- Retry logic for database lock errors
 
-**Cleanup:**
-- Zero-change worktrees: deleted immediately
-- Failed worktrees with changes: quarantined to `.sapphire/quarantine/`
-- Merged worktrees: removed via human-triggered `sapphire worktree clean --merged`
-- Crashed worktrees: preserved for `--resume` flow
+### Agent Coordinator (`internal/agent/coordinator.go`)
 
-**Review branch archival:**
-Failed worktrees with validation failures can be archived to `review/<task-slug>` branches for later inspection.
+**Core Interface:**
+```go
+type Coordinator interface {
+    Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+    Submit(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (SubmissionResult, error)
+    OrchestrateWorktrees(ctx context.Context, sessionID string, params OrchestrateWorktreesParams) (OrchestrateWorktreesResult, error)
+    ResumeWorktree(ctx context.Context, sessionID, worktreePath, prompt, agentKey, model, reasoningEffort string) (OrchestrationAgentRef, error)
+    Cancel(sessionID string)
+    CancelAll()
+    IsSessionBusy(sessionID string) bool
+    IsBusy() bool
+    UpdateModels(ctx context.Context) error
+    DispatchBackground(ctx context.Context, spec agentbackground.TaskSpec) (string, error)
+    WaitForCompletion(ctx context.Context, agentIDs []string) ([]agentbackground.SubAgent, error)
+    RunPlanMode(ctx context.Context, sessionID, task, taskContext string) (*agentformula.ExecutionState, error)
+}
+```
 
-### Validation Gate
+**Agent Building:**
+```go
+func (c *Coordinator) buildAgent(ctx context.Context, sessionID string, opts SessionAgentOptions) (SessionAgent, error) {
+    // Build tool registry
+    tools := []fantasy.AgentTool{
+        bashTool, editTool, writeTool, viewTool,
+        globTool, grepTool, agentTool,
+        mcpTools..., skillTools...,
+    }
+    
+    // Build system prompt with skill context
+    systemPrompt := buildSystemPrompt(session, opts.SkillContext)
+    
+    // Create session agent
+    agent := sessionAgent.NewSessionAgent(agentOpts)
+    agent.SetTools(tools)
+    agent.SetSystemPrompt(systemPrompt)
+    
+    return agent, nil
+}
+```
 
-**File:** `internal/agent/subagent_validation_gate.go`
+### Sub-Agent Lifecycle
 
-**Validation phases:**
-1. Git diff stat against base branch
-2. Build verification (auto-detected: `go build`, `npm run build`, `cargo build`)
-3. Test verification (auto-detected: `go test`, `npm test`, `cargo test`)
-4. Lint verification (auto-detected: `golangci-lint`, `npm run lint`, `task lint`)
-5. Security scan (auto-detected: `gosec`, `npm run security`, `task security`)
+**Explicit Lifecycle:**
+```
+spawn_agent → resume_agent → send_input → wait → collect_result → close_agent
+```
 
-**Output:** Validation report with pass/fail status, diff summary, and error messages.
+**Spawn Flow (`internal/agent/agent_tool.go`):**
+```go
+func agentTool(ctx context.Context, invocation ToolInvocation) (fantasy.ToolResponse, error) {
+    var params AgentParams
+    json.Unmarshal(invocation.Input, &params)
+    
+    // Spawn sub-agent
+    agentID, err := control.spawn(ctx, sessionID, spawnAgentOptions{
+        Prompt:         params.Prompt,
+        Worktree:       params.Worktree,
+        WorktreePath:   params.WorktreePath,
+        Branch:         params.Branch,
+        WriteManifest:  params.WriteManifest,
+        DefinitionOfDone: params.DefinitionOfDone,
+        Background:     params.Background,
+    })
+    
+    if !params.Background {
+        // Wait for completion
+        err = control.wait(ctx, []string{agentID}, 0)
+        // Collect result
+        result, err = control.collectResult([]string{agentID})
+        // Close agent
+        err = control.close(agentID)
+    }
+    
+    return fantasy.NewTextResponse(fmt.Sprintf("Agent %s completed", agentID)), nil
+}
+```
 
-### Worktree Orchestration CLI
+**Worktree Isolation:**
+- Path: `.sapphire/worktrees/agent/<id>/<task-slug>`
+- Branch: `agent/<id>/<task-slug>`
+- Managed by `worktreeManager` in coordinator
+- Validation gate before completion: diff, build, tests, lint, security checks
 
-**Command:** `sapphire worktrees` (alias: `sapphire worktree`)
+### Session Checkpointing (`internal/agent/memory/checkpoint.go`)
 
-**Subcommands:**
-- `sapphire worktrees orchestrate` - Spawn sub-agents from spec file
-- `sapphire worktrees clean --merged` - Remove merged worktrees
+**Checkpoint Structure:**
+```go
+type SessionCheckpoint struct {
+    ID                 string
+    SessionID          string
+    AgentID            string
+    WorkItemID         string
+    ParentCheckpointID   string
+    MessageCount       int
+    SummaryJSON        string
+    AuditTail          string
+    PendingTasksJSON   string
+    FilesModifiedJSON  string
+    MailCursor         int64
+    ActivityCursor     int64
+    CreatedAt          time.Time
+}
+```
 
-**File:** `internal/cmd/worktrees.go`
+**Checkpoint Service:**
+```go
+type CheckpointService struct {
+    db *orchestrationdb.Store
+}
+
+func (s *CheckpointService) Record(ctx context.Context, sessionID string) error
+func (s *CheckpointService) Resume(ctx context.Context, sessionID string) (*SessionCheckpoint, error)
+func (s *CheckpointService) ExtractUserPreferences(ctx context.Context, sessionID string) ([]UserPreference, error)
+func (s *CheckpointService) ExtractDecisions(ctx context.Context, sessionID string) ([]ArchitecturalDecision, error)
+```
 
 ---
 
-## Tool System
+## 5. UI/TUI Layer
 
-### Tool Architecture
+### File Inventory
 
-Tools are implemented using `fantasy.AgentTool` from charm.land/fantasy.
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/ui/model/ui.go` | ~4415 | Main TUI model orchestrating chat, dialogs, sub-agent display, and message handling |
+| `internal/ui/model/chat.go` | ~850 | Chat component with mouse interaction, multi-click detection, and text selection |
+| `internal/ui/model/onboarding.go` | ~150 | Project initialization prompt with Yes/No buttons |
+| `internal/ui/chat/messages.go` | ~650 | Message item extraction, tool result mapping, and message rendering utilities |
+| `internal/ui/chat/assistant.go` | ~750 | Assistant message rendering with thinking sections, live loaders, and error display |
+| `internal/ui/chat/user.go` | ~150 | User message rendering with attachment support |
+| `internal/ui/chat/tools.go` | ~1549 | Tool call rendering infrastructure with 40+ specialized tool renderers |
+| `internal/ui/dialog/dialog.go` | ~200 | Dialog overlay management with stack-based dialog handling |
+| `internal/ui/list/list.go` | ~750 | Lazy-loaded list with virtualized rendering and scroll optimization |
+| `internal/ui/common/common.go` | ~100 | Shared utilities including clipboard operations and rectangle helpers |
+| `internal/ui/common/elements.go` | ~250 | Reusable UI elements (status lines, sections, model info) |
+| `internal/ui/styles/styles.go` | ~1635 | Comprehensive style definitions with semantic color palette |
 
-**Context Keys:**
-- `SessionIDContextKey` - Session ID
-- `MessageIDContextKey` - Message ID
-- `WorkingDirContextKey` - Working directory
-- `WriteScopeContextKey` - Sub-agent write constraints
-- `RuntimeControlContextKey` - Runtime control
+### TUI Application Structure
 
-### Built-in Tools
-
-#### Bash Tool (`internal/agent/tools/bash.go`)
-
-**Purpose:** Execute shell commands.
-
-**Parameters:**
-- `command` - Command to execute
-- `description` - Brief description
-- `working_dir` - Working directory
-- `run_in_background` - Background execution
-- `backend` - Execution backend (posix/native)
-- `justification` - Audit trail
-- `prefix_rule` - Commands to prepend
-
-**Banned Commands:**
-- Network tools: curl, wget, ssh, scp
-- Package managers: apt, yum, pacman, brew
-- System modification: sudo, systemctl, mount
-- Network config: iptables, ifconfig
-
-**Git Safety Policy:**
-The following Git commands are blocked for all agents:
-- `git push` - push remains human-controlled
-- `git merge` - integration remains human-controlled
-- `git rebase` - history rewriting blocked
-- `git restore` - destructive recovery blocked
-- `git clean` - file deletion blocked
-- `git reset --hard` - hard reset blocked
-- `git worktree remove` - worktree deletion blocked
-- `git branch -d/-D` - branch deletion blocked
-
-**Implementation:** `isForbiddenGitAgentCommand()`
-
-#### Edit Tool (`internal/agent/tools/edit.go`)
-
-**Purpose:** File editing with precision matching.
-
-**Parameters:**
-- `file_path` - Target file
-- `old_string` - Text to replace
-- `new_string` - Replacement text
-- `replace_all` - Replace all occurrences
-
-**Errors:**
-- `old_string not found` - Precision violation
-- `old_string matches multiple` - Ambiguity
-
-**Features:**
-- Edit guard for file locking
-- LSP diagnostics integration
-- Diff generation
-- File creation support
-- Automatic snapshot commit queuing
-
-#### Git Snapshot Tool (`internal/agent/tools/git_snapshot.go`)
-
-**Purpose:** Automatic local snapshot commits for recoverability.
-
-**Behavior:**
-- Automatically triggered after file writes
-- 1.5-second debounce for batched writes
-- Flushable on demand before task completion
-- Creates local-only commits (never pushed)
-- Actor naming based on worktree type
-
-**Functions:**
-- `QueueGitSnapshot(ctx, mutatedPath)` - Queue a snapshot commit
-- `FlushGitSnapshot(ctx, worktreeDir)` - Flush pending snapshots
-- `commitGitSnapshot(worktreeDir)` - Create snapshot commit
-
-**Commit format:**
+**Component Hierarchy:**
 ```
-snapshot: <actor-name> <timestamp>
+UI (internal/ui/model/ui.go)
+├── header (status bar with working dir, model info)
+├── status (info/error messages)
+├── dialog.Overlay (modal dialogs stack)
+│   ├── ModelsDialog, SessionsDialog, CommandsDialog
+│   ├── PermissionsDialog, PlanApprovalDialog
+│   └── MCPManagerDialog, FilePickerDialog
+├── chat (internal/ui/model/chat.go)
+│   └── list.List (virtualized message list)
+│       ├── UserMessageItem
+│       ├── AssistantMessageItem
+│       └── ToolMessageItem (40+ specialized renderers)
+├── textarea (user input)
+├── attachments (file/image attachments)
+└── completions (@-mentions popup)
 ```
 
-**Actor naming:**
-- Main workspace: `main-agent`
-- Sub-agent worktrees: `<agent-id>-<task-slug>`
+### Bubble Tea Components
 
-#### View Tool (`internal/agent/tools/view.go`)
+**Main Model (`UI` struct):**
+- 80+ fields coordinating all sub-components
+- `Update(msg tea.Msg)`: 1354+ lines handling 30+ message types
+- `View() string`: Composes header, chat, editor, pills, status
 
-**Purpose:** File viewing with smart truncation.
+**Message Types:**
+- `tea.KeyPressMsg`: Keyboard input
+- `tea.MouseMsg`: Mouse events (click, motion, release, wheel)
+- `pubsub.Event[T]`: Session, message, agent updates
+- Custom: `sendMessageMsg`, `closeDialogMsg`, `copyChatHighlightMsg`
 
-#### Write Tool (`internal/agent/tools/write.go`)
+**Commands (`tea.Cmd`):**
+- `scrollToBottomAndAnimate()`: Scroll with animation restart
+- `CopyToClipboard()`: Dual OSC 52 + native clipboard
+- `loadCustomCommands()`, `loadPromptHistory()`: Async data loading
+- `shimmer.ShimmerTickCmd()`: Animation timer for loaders
 
-**Purpose:** Full file write.
-
-#### Glob Tool (`internal/agent/tools/glob.go`)
-
-**Purpose:** Pattern-based file search.
-
-#### Grep Tool (`internal/agent/tools/grep.go`)
-
-**Purpose:** Text search with regex.
-
-#### LS Tool (`internal/agent/tools/ls.go`)
-
-**Purpose:** Directory listing.
-
-**Limits:**
-- Max depth (default 0, configurable)
-- Max items (default 1000)
-
-#### Python Tool (`internal/agent/tools/python.go`)
-
-**Purpose:** Python code execution.
+### Chat Component
 
 **Features:**
-- Sandboxed execution
-- Failure tracking (quit after 3 failures)
-- Output capture
+- Mouse interaction with multi-click detection (400ms threshold)
+- Double-click: word selection
+- Triple-click: line selection
+- Drag: range selection
 
-#### Todo Tool (`internal/agent/tools/todos.go`)
+**Message Rendering:**
+- User messages: `>` prefix
+- Assistant messages: `•` prefix
+- Tool calls: indented with specialized renderers
 
-**Purpose:** Todo management.
+**Thinking Sections:**
+- Collapsible reasoning content
+- Max 10 lines collapsed by default
+- Expandable via `Ctrl+K`
 
-**Operations:**
-- Create
-- Update status
-- List
+### Tool Rendering (40+ types)
 
-#### MCP Tools (`internal/agent/tools/mcp-*.go`)
+**File Operations:**
+- `view`, `write`, `edit`, `multi-edit`, `glob`, `grep`, `ls`
 
-**Purpose:** Model Context Protocol integration.
+**Code Intelligence:**
+- `diagnostics`, `lsp_restart`, `references`
 
-**Tools:**
-- `call_mcp_tool` - Execute MCP tool
-- `list_mcp_tools` - List available tools
-- `list_mcp_resources` - List resources
-- `read_mcp_resource` - Read resource
-- `connect_mcp` - Connect server
+**Web:**
+- `fetch`, `web_search`, `agentic_fetch`, `sourcegraph`
+
+**Agent Tools:**
+- `spawn_agent`, `resume_agent`, `send_input`, `wait`, `collect_result`, `close_agent`
+
+**MCP:**
+- `install_mcp`, `connect_mcp`, `list_mcp_tools`, `read_mcp_resource`
+
+**Shell:**
+- `bash`, `job_output`, `job_kill`, `job_list`, `job_start`
+
+**Skills:**
+- `load_skill`, `list_skills`, `search_skills`
+
+**Other:**
+- `python`, `google_search`, `todos`, `update_plan`, `download`
+
+### Dialog System
+
+**Stack-Based Management:**
+```go
+type Overlay struct {
+    dialogs []Dialog
+    front   int
+}
+
+func (o *Overlay) Push(d Dialog)
+func (o *Overlay) Pop() Dialog
+func (o *Overlay) Front() Dialog
+```
+
+**Dialog Types:**
+- `ModelsDialog`: Model selection
+- `SessionsDialog`: Session list
+- `CommandsDialog`: Custom commands
+- `PermissionsDialog`: Tool approval
+- `PlanApprovalDialog`: Plan mode approval
+- `MCPManagerDialog`: MCP server management
+- `FilePickerDialog`: File selection
+
+### Status Indicators
+
+**LSP States:**
+- Error/Warning/Info/Hint icons in header
+
+**MCP States:**
+- Online/Offline/Busy indicators
+
+**Todo Spinner:**
+- Mini-dot spinner for in-progress todos
+
+**Indexing Progress:**
+- Shimmer animation during code indexing
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Enter` | Send message |
+| `Shift+Enter` | Newline in input |
+| `Ctrl+D` | Clear input |
+| `Ctrl+K` | Expand selected thinking section |
+| `Ctrl+L` | Clear chat |
+| `Ctrl+H` | Show history |
+| `Ctrl+J/K` | Navigate messages |
+| `Esc` | Close dialog |
+| `Tab` | Cycle dialog focus |
+| `Enter` | Confirm dialog |
+
+---
+
+## 6. Tools System
+
+### File Inventory
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/agent/tools/tools.go` | ~104 | Context keys, helpers, plan-mode registry with read-only tools |
+| `internal/agent/tools/registry.go` | ~636 | Tool registry with registration, execution, and fantasy framework integration |
+| `internal/agent/tools/list_tools.go` | ~57 | Lists available tools with query filtering |
+| `internal/agent/tools/tool_call_validation.go` | ~283 | Input validation for tool calls (view, bash, edit, update_plan) |
+| `internal/agent/tools/safe.go` | ~70 | List of safe read-only commands |
+| `internal/agent/tools/bash.go` | ~594 | Bash command execution with permission system, background jobs |
+| `internal/agent/tools/edit.go` | ~503 | Single file edit with LSP diagnostics, file history tracking |
+| `internal/agent/tools/view.go` | ~884 | File viewing with indentation-aware reading, image support |
+| `internal/agent/tools/write.go` | ~184 | Full file overwrite with permission checks, history tracking |
+| `internal/agent/tools/python.go` | ~203 | Python code execution via Gemini API with timeout |
+| `internal/agent/tools/grep.go` | ~447 | File content search with ripgrep fallback, regex caching |
+| `internal/agent/tools/glob.go` | ~141 | File pattern matching with ripgrep acceleration |
+| `internal/agent/tools/ls.go` | ~266 | Directory tree listing with depth control |
+| `internal/agent/tools/search.go` | ~218 | Web search helpers and DuckDuckGo integration |
+| `internal/agent/tools/rg.go` | ~54 | Ripgrep binary initialization and command builders |
+| `internal/agent/tools/update_plan.go` | ~226 | Codex-style plan updates with session.Todos integration |
+| `internal/agent/tools/mcp-tools.go` | ~177 | MCP tool wrapper with permission integration |
+| `internal/agent/tools/search_tools.go` | ~141 | Tool search by name/description/parameters with scoring |
+| `internal/agent/tools/job_list.go` | ~64 | List background shell jobs |
+| `internal/agent/tools/job_output.go` | ~133 | Retrieve background job output with cursor-based streaming |
+| `internal/agent/tools/job_kill.go` | ~76 | Terminate background jobs |
+| `internal/agent/tools/background_jobs.go` | ~150 | Background job session tracking and cleanup |
+| `internal/agent/tools/connect_mcp.go` | ~159 | Connect installed MCP servers with permission checks |
+| `internal/agent/tools/install_mcp.go` | ~89 | Install MCP servers from registry |
+| `internal/agent/tools/list_available_mcps.go` | ~269 | List MCP registry with inventory summary and search |
+| `internal/agent/tools/web_search.go` | ~55 | DuckDuckGo web search for sub-agents |
+| `internal/agent/tools/google_search.go` | ~137 | Google Grounding search with DuckDuckGo fallback |
+| `internal/agent/tools/download.go` | ~176 | URL file downloads with timeout and permission checks |
+| `internal/agent/tools/request_user_input.go` | ~93 | Plan Mode structured questions (Codex-style) |
+| `internal/agent/tools/tool_suggest.go` | ~170 | MCP server suggestions based on capability queries |
+| `internal/agent/tools/multiedit.go` | ~890 | Multi-file batch edits with sequential operations |
+| `internal/agent/tools/apply_patch.go` | ~176 | Unified diff patch application (direct/delegate modes) |
+| `internal/agent/tools/diagnostics.go` | ~274 | LSP diagnostic retrieval with compiler diagnostics |
+| `internal/agent/tools/set_mode.go` | ~110 | Session mode switching (default/plan) |
+| `internal/agent/tools/fast_view.go` | ~409 | Optimized single-file viewing |
+| `internal/agent/tools/git_snapshot.go` | ~293 | Git state snapshots for file changes |
+| `internal/agent/tools/compiler_diagnostics.go` | ~152 | Compiler-specific diagnostic collection |
+| `internal/agent/tools/fetch.go` | ~194 | URL content fetching with content-type handling |
+| `internal/agent/tools/references.go` | ~194 | Code reference finding |
+| `internal/agent/tools/semantic_search.go` | ~59 | Semantic code search |
+| `internal/agent/tools/sourcegraph.go` | ~269 | Sourcegraph integration |
+| `internal/agent/tools/write_scope.go` | ~136 | Sub-agent write scope constraints |
+| `internal/agent/tools/plan_mode_filter.go` | ~84 | Plan Mode tool filtering |
+| `internal/agent/tools/lsp_restart.go` | ~80 | LSP server restart |
+| `internal/agent/tools/edit_guard.go` | ~59 | Edit permission guards |
+| `internal/agent/tools/call_mcp_tool.go` | ~157 | Direct MCP tool invocation |
+| `internal/agent/tools/list_mcp_tools.go` | ~199 | List tools from connected MCP servers |
+| `internal/agent/tools/list_mcp_resources.go` | ~99 | List resources from MCP servers |
+| `internal/agent/tools/read_mcp_resource.go` | ~102 | Read MCP server resources |
+| `internal/agent/tools/mcp_snapshot.go` | ~274 | MCP state snapshots |
+| `internal/agent/tools/tool_call_normalize.go` | ~208 | Tool call parameter normalization |
+| `internal/agent/tools/tool_call_preflight.go` | ~1007 | Pre-flight tool call validation |
+
+### Tool Registry
+
+**Core Registry (`internal/agent/tools/registry.go`):**
+```go
+type Registry struct {
+    tools map[string]ToolSpec
+    mu    sync.RWMutex
+}
+
+type ToolSpec struct {
+    Name        string
+    Description string
+    Parameters  jsonschema.Schema
+    Required    []string
+    Handler     ToolHandler
+}
+
+func (r *Registry) Register(spec ToolSpec)
+func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage) (fantasy.ToolResponse, error)
+func (r *Registry) AgentTools() []fantasy.AgentTool
+func NewPlanModeRegistry() *Registry  // Read-only tool subset
+```
+
+### Tool Categories
+
+#### File Operations
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `view` / `single_view` / `agentic_view` | Read files with line ranges, indentation mode, image support | No (except outside working dir) |
+| `edit` / `single_edit` | Single find-and-replace edits with LSP diagnostics | Yes |
+| `agentic_edit` | Multi-file batch edits with sequential operations per file | Yes |
+| `write` | Full file overwrite/creation | Yes |
+| `apply_patch` | Apply unified diff patches (direct/delegate modes) | Yes |
+| `ls` | List directory trees with depth control | No (except outside working dir) |
+| `glob` | Find files by glob pattern | No |
+| `grep` | Search file contents with regex | No |
+
+#### Command Execution
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `bash` | Execute shell commands with background job support, auto-background for long-running | Yes (except safe commands) |
+| `job_list` | List background jobs | No |
+| `job_output` | Stream background job output with cursors | No |
+| `job_kill` | Terminate background jobs | No |
+| `python` | Execute Python via Gemini API with 2-min timeout | No |
+
+#### Search & Discovery
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `search_codebase` | Ripgrep-based code search | No |
+| `web_search` | DuckDuckGo web search | No |
+| `google_search` | Google Grounding with DDG fallback | No |
+| `web_fetch` | Fetch web page content | No |
+| `fetch` | Generic URL fetching | No |
+| `download` | Download files from URLs | Yes |
+| `references` | Find code references | No |
+| `semantic_search` | Semantic code search | No |
+| `sourcegraph` | Sourcegraph integration | No |
+
+#### MCP (Model Context Protocol)
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `list_available_mcps` | List MCP registry with search | No |
+| `install_mcp` | Install MCP from registry | Yes |
+| `connect_mcp` | Connect installed MCP servers | Yes |
+| `list_mcp_tools` | List tools from connected MCPs | No |
+| `call_mcp_tool` | Execute MCP tool directly | Yes |
+| `list_mcp_resources` | List MCP resources | No |
+| `read_mcp_resource` | Read MCP resource content | No |
+| `tool_suggest` | Suggest MCPs by capability | No |
+
+#### Agent Operations
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `update_plan` | Codex-style plan updates with session.Todos | No |
+| `set_mode` | Switch session mode (default/plan) | No |
+| `request_user_input` | Plan Mode structured questions | No |
+| `launch_exploration_agent` | Spawn read-only sub-agent | No |
+| `agent_mail_send` | Send inter-agent mail | No |
+| `agent_mail_inbox` | Check agent inbox | No |
+| `spawn_agent` | Create sub-agent with worktree isolation | No |
+| `resume_agent` | Resume suspended sub-agent | No |
+| `send_input` | Send input to sub-agent | No |
+| `wait` | Wait for sub-agent completion | No |
+| `collect_result` | Collect sub-agent output | No |
+| `close_agent` | Clean up sub-agent resources | No |
+
+#### Memory & Diagnostics
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `memory_query` | Query persistent memory (disabled) | No |
+| `lsp_diagnostics` | Get LSP diagnostics for files | No |
+| `compiler_diagnostics` | Compiler-specific diagnostics | No |
+| `git_snapshot` | Capture git state snapshots | No |
+| `lsp_restart` | Restart LSP servers | No |
+
+#### Utility
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `list_tools` | List available tools with query filter | No |
+| `search_tools` | Search tools by name/description | No |
+| `tool_suggest` | AI-assisted tool suggestions | No |
+
+### Permission/Approval System
+
+**Permission Service:**
+```go
+type Service interface {
+    Request(ctx context.Context, req PermissionRequest) (bool, error)
+    AutoApproveSession(sessionID string)
+    SkipRequests() bool  // YOLO mode
+}
+
+type PermissionRequest struct {
+    SessionID string
+    ToolName  string
+    Action    string
+    Params    any
+}
+```
+
+**Safe Commands (`internal/agent/tools/safe.go`):**
+- Builtins: `cal`, `date`, `ls`, `ps`, `pwd`, etc.
+- Git read-only: `git blame`, `git branch`, `git diff`, `git log`, `git status`, etc.
+- Windows: `ipconfig`, `tasklist`, etc.
+
+**Permission Flow:**
+```go
+sessionID := GetSessionFromContext(ctx)
+granted, err := permissions.Request(ctx, PermissionRequest{
+    SessionID: sessionID,
+    ToolName:  "edit",
+    Action:    "write",
+    Params:    EditPermissionsParams{...},
+})
+if !granted {
+    return fantasy.ToolResponse{}, permission.ErrorPermissionDenied
+}
+```
 
 ### Tool Execution Flow
 
 ```
-Model invokes tool call
-         │
-         ▼
-PrepareToolCall() - Validate and normalize
-         │
-         ▼
-permission.Request() - Request approval (if needed)
-         │
-         ▼
-Tool execution
-         │
-         ▼
-LSP diagnostics (for file edits)
-         │
-         ▼
-Response formatting
-         │
-         ▼
-Tool result to LLM
+User Input → TUI/CLI → app.AgentCoordinator.Run()
+                    ↓
+              sessionAgent.Run() (fantasy framework)
+                    ↓
+              Tool Registry Lookup
+                    ↓
+              Permission Check (if required)
+                    ↓
+              Tool Handler Execution
+                    ↓
+              Response → PubSub → TUI Render
 ```
 
----
+### Background Job System
 
-## UI System
+**Auto-Background Logic (`internal/agent/tools/bash.go`):**
+1. Start command with 750ms grace period
+2. If still running → move to background
+3. Return shell ID for `job_output`/`job_kill`
 
-### Architecture
+**Session Tracking:**
+```go
+var (
+    backgroundShellsBySession = map[string]map[string]bool{}
+    lastBackgroundShellBySession = map[string]string{}
+)
+```
 
-Built with Bubble Tea (charm.land/bubbletea/v2).
+### Plan Mode Restrictions
 
-**Main Model:** `internal/ui/model/ui.go`
+**Plan Mode Registry:**
+- Read-only tools only: `read_file`, `search_codebase`, `list_directory`, `run_command`
+- Planning tools: `update_plan`, `request_user_input`, `launch_exploration_agent`
+- **Forbidden:** `edit`, `write`, `bash` (except read-only), `download`
 
-**States:**
-- `uiOnboarding` - First-run setup
-- `uiInitialize` - Loading state
-- `uiLanding` - Session selection
-- `uiChat` - Active chat
-
-**Focus States:**
-- `uiFocusNone`
-- `uiFocusEditor`
-- `uiFocusMain`
-
-### Components
-
-#### Chat (`internal/ui/chat/`)
-
-**Files:**
-- `assistant.go` - Assistant messages
-- `user.go` - User messages
-- `tools.go` - Tool call rendering
-- `bash.go` - Bash output
-- `file.go` - File attachments
-- `todos.go` - Todo rendering
-- `agent.go` - Sub-agent messages
-- `mcp.go` - MCP messages
-- `search.go` - Search results
-- `fetch.go` - Fetch results
-- `diagnostics.go` - LSP diagnostics
-- `messages.go` - Message helpers
-
-#### Dialogs (`internal/ui/dialog/`)
-
-**Overlays:**
-- `filepicker.go` - File selection
-- `models.go` - Model selection
-- `sessions.go` - Session list
-- `permissions.go` - Permission prompts
-- `api_key_input.go` - API key entry
-- `oauth.go` - OAuth flow
-- `mcp_config.go` - MCP configuration
-- `commands.go` - Custom commands
-- `reasoning.go` - Reasoning settings
-
-#### Common (`internal/ui/common/`)
-
-**Components:**
-- `button.go` - Buttons
-- `markdown.go` - Markdown rendering
-- `diff.go` - Diff viewing
-- `scrollbar.go` - Scrollbars
-- `highlight.go` - Syntax highlighting
-
-### Event Handling
-
-UI receives events via `app.Subscribe(program)`:
-
-- Session events (created, updated, deleted)
-- Message events (created, updated)
-- Permission events (requested, approved, denied)
-- MCP events (connected, disconnected)
-- LSP events (diagnostics, state changes)
-
----
-
-## Configuration System
-
-### Configuration File (`crush.json`)
-
-**Schema:** `schema.json`
-
-**Structure:**
-
-```json
-{
-  "$schema": "https://charm.land/crush.json",
-  "models": {
-    "large": {"model": "gpt-4o", "provider": "openai"},
-    "small": {"model": "gpt-4o-mini", "provider": "openai"}
-  },
-  "providers": {
-    "openai": {
-      "api_key": "$OPENAI_API_KEY",
-      "models": [...]
-    }
-  },
-  "mcp": {...},
-  "lsp": {...},
-  "options": {...},
-  "permissions": {...}
+**Mode Enforcement:**
+```go
+if currentSession.Mode == planmode.PlanMode {
+    return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode")
 }
 ```
 
-### Config Loading (`internal/config/load.go`)
+---
 
-**Flow:**
-1. Lookup config paths (project, home, global)
-2. Load and merge configs
-3. Set defaults
-4. Load known providers from Catwalk
-5. Configure providers (API keys, headers)
-6. Configure selected models
-7. Setup agents
+## 7. Memory & Persistence
 
-### Provider Configuration
+### File Inventory
 
-**Supported Providers:**
-- OpenAI
-- Anthropic
-- Google Gemini
-- Azure
-- AWS Bedrock
-- OpenRouter
-- Vercel
-- Hyper
-- GitHub Copilot (OAuth)
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/orchestration/db/db.go` | ~1973 | SQLite orchestration store; mail, state, activity, work items, convoys, hooks, checkpoints |
+| `internal/orchestration/db/models.go` | ~150 | Data models for orchestration entities (AgentMail, AgentState, WorkItem, Convoy, etc.) |
+| `internal/orchestration/db/migrations.go` | ~250 | Schema creation and migration logic for orchestration database |
 
-**Configuration:**
-- `base_url` - API endpoint
-- `api_key` - API key (supports env vars)
-- `type` - Provider type
-- `models` - Available models
-- `extra_headers` - Custom headers
-- `extra_body` - Custom body fields
+### Database Connection
 
-### MCP Configuration
-
-```json
-{
-  "mcp": {
-    "server-name": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server"],
-      "type": "stdio",
-      "env": {...},
-      "disabled_tools": [...]
-    }
-  }
+```go
+func Connect(ctx context.Context, dataDir string) *sql.DB {
+    dbPath := filepath.Join(dataDir, "orchestration.db")
+    conn, err := sql.Open("sqlite", dbPath)
+    
+    // PRAGMA settings
+    conn.Exec("PRAGMA journal_mode=WAL")
+    conn.Exec("PRAGMA foreign_keys=ON")
+    conn.Exec("PRAGMA page_size=4096")
+    conn.Exec("PRAGMA cache_size=-8000")
+    conn.Exec("PRAGMA synchronous=NORMAL")
+    
+    conn.SetMaxOpenConns(1)  // Single connection
+    
+    return conn
 }
 ```
 
-### LSP Configuration
+---
 
-```json
-{
-  "lsp": {
-    "gopls": {
-      "command": "gopls",
-      "filetypes": ["go", "mod"],
-      "root_markers": ["go.mod"],
-      "options": {...}
-    }
-  }
+## 8. Protocol Integrations (MCP/LSP)
+
+### File Inventory
+
+#### MCP Files
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/agent/tools/mcp/init.go` | ~400 | MCP client session management, initialization, transport creation |
+| `internal/agent/tools/mcp/manage.go` | ~100 | MCP lifecycle management: ApplyConfig, DisableClient, RemoveClient |
+| `internal/agent/tools/mcp/tools.go` | ~180 | MCP tool discovery, execution, and filtering |
+| `internal/agent/tools/mcp/prompts.go` | ~100 | MCP prompt listing and retrieval |
+| `internal/agent/tools/mcp/resources.go` | ~130 | MCP resource listing and reading |
+| `internal/agent/tools/mcp/timeout.go` | - | MCP timeout configuration |
+| `internal/agent/tools/list_mcp_tools.go` | ~200 | Tool for listing MCP tools with query filtering |
+| `internal/agent/tools/list_available_mcps.go` | ~280 | Tool for discovering available MCP servers from registry |
+| `internal/agent/tools/mcp_snapshot.go` | ~250 | MCP server snapshot building for UI display |
+| `internal/agent/mcp_async.go` | ~130 | Async MCP discovery and selection caching |
+| `internal/agent/mcp_autonomy.go` | ~120 | MCP discovery preflight checks |
+| `internal/agent/mcp_inventory.go` | ~80 | MCP inventory context generation |
+| `internal/agent/mcp_prompt.go` | ~100 | Prompt sanitization and MCP inventory detection |
+| `internal/agent/mcp_registry.go` | ~120 | Registry definition loading and MCP installation |
+| `internal/agent/mcp_runtime.go` | ~200 | MCP policy blocks, capability maps |
+| `internal/agent/mcp_selection.go` | ~250 | MCP server selection scoring |
+| `internal/config/mcp.go` | ~60 | MCP config persistence |
+| `internal/config/mcp_catalog.go` | ~350 | Registry MCP categorization with 9 categories |
+| `internal/config/mcp_registry.go` | ~650 | Registry fetching from modelcontextprotocol.io |
+
+#### LSP Files
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/lsp/client.go` | ~450 | Core LSP client using powernap library |
+| `internal/lsp/client_test.go` | ~70 | Unit tests for LSP client |
+| `internal/lsp/handlers.go` | ~110 | LSP notification and request handlers |
+| `internal/lsp/manager.go` | ~350 | Lazy initialization manager for multiple LSP clients |
+| `internal/lsp/util/edit.go` | ~280 | Workspace edit application with encoding support |
+
+### MCP Architecture
+
+**Connection Management:**
+```go
+var (
+    sessions = csync.NewMap[string, *ClientSession]()
+    states   = csync.NewMap[string, ClientInfo]()
+    broker   = pubsub.NewBroker[Event]()
+)
+```
+
+**Transport Types:**
+- **Stdio:** `mcp.CommandTransport` - spawns subprocess
+- **HTTP:** `mcp.StreamableClientTransport` - streamable HTTP
+- **SSE:** `mcp.SSEClientTransport` - Server-Sent Events
+
+**State Machine:**
+```go
+type State int
+const (
+    StateDisabled State = iota  // "disabled"
+    StateStarting               // "starting"
+    StateConnected              // "connected"
+    StateError                  // "error"
+)
+```
+
+**Tool Execution:**
+```go
+func RunTool(ctx context.Context, cfg *config.Config, name, toolName string, input string) (ToolResult, error) {
+    c, err := getOrRenewClient(ctx, cfg, name)  // Auto-renew on ping failure
+    result, err := c.CallTool(callCtx, &mcp.CallToolParams{
+        Name:      toolName,
+        Arguments: args,  // JSON-parsed input
+    })
+    // Handles TextContent, ImageContent, AudioContent
 }
 ```
 
-### Options
+### LSP Architecture
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `context_paths` | []string | [...] | Context file paths |
-| `skills_paths` | []string | [...] | Skill directories |
-| `data_directory` | string | `.sapphire` | Data storage |
-| `disabled_tools` | []string | [] | Disabled built-in tools |
-| `debug` | bool | false | Debug logging |
-| `debug_lsp` | bool | false | LSP debug logging |
-| `auto_lsp` | *bool | true | Auto-setup LSP |
-| `progress` | *bool | true | Show progress |
-| `google_grounding` | bool | false | Gemini grounding |
-| `agent_max_depth` | int | 2 | Max sub-agent depth |
-| `agent_max_threads` | int | 6 | Max concurrent sub-agents |
+**Client Initialization:**
+```go
+func New(ctx context.Context, name string, cfg config.LSPConfig, resolver config.VariableResolver, cwd string, debug bool) (*Client, error) {
+    client := &Client{
+        name:        name,
+        fileTypes:   cfg.FileTypes,
+        diagnostics: csync.NewVersionedMap[protocol.DocumentURI, []protocol.Diagnostic](),
+        openFiles:   csync.NewMap[string, *OpenFileInfo](),
+        config:      cfg,
+        cwd:         cwd,
+    }
+    client.serverState.Store(StateStopped)
+    client.createPowernapClient()
+    return client, nil
+}
+```
+
+**Server State Machine:**
+```go
+type ServerState int
+const (
+    StateUnstarted ServerState = iota
+    StateStarting
+    StateReady
+    StateError
+    StateStopped
+    StateDisabled
+)
+```
+
+**Code Intelligence Features:**
+- `OpenFile(ctx, filepath)`: Open file for LSP tracking
+- `NotifyChange(ctx, filepath)`: Notify file change
+- `FindReferences(ctx, filepath, line, char, includeDecl)`: Find references (5s timeout)
+- `RequestHover(ctx, filepath, line, char)`: Get hover information
+- `GetDiagnostics()`: Get cached diagnostic counts
 
 ---
 
-## Database Schema
-
-### Tables
-
-#### `sessions`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `parent_session_id` | TEXT | Parent session (sub-agents) |
-| `title` | TEXT | Session title |
-| `message_count` | INTEGER | Message count |
-| `prompt_tokens` | INTEGER | Prompt tokens used |
-| `completion_tokens` | INTEGER | Completion tokens |
-| `cost` | REAL | Total cost |
-| `summary_message_id` | TEXT | Summary message reference |
-| `todos` | TEXT | JSON todo list |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-
-#### `messages`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `session_id` | TEXT | Foreign key to sessions |
-| `role` | TEXT | user/assistant/system |
-| `parts` | TEXT | JSON message parts |
-| `model` | TEXT | Model used |
-| `provider` | TEXT | Provider used |
-| `is_summary_message` | INTEGER | Summary flag |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-| `finished_at` | INTEGER | Completion timestamp |
-
-#### `files`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `session_id` | TEXT | Foreign key |
-| `path` | TEXT | File path |
-| `content` | TEXT | File content |
-| `version` | INTEGER | Version number |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-
-#### `codebase_knowledge`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `file_path` | TEXT | File path |
-| `symbol_name` | TEXT | Symbol name |
-| `symbol_type` | TEXT | Symbol type |
-| `signature` | TEXT | Symbol signature |
-| `documentation` | TEXT | Documentation |
-| `location_range` | TEXT | Location range |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-
-#### `read_files`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `session_id` | TEXT | Session ID |
-| `path` | TEXT | File path |
-| `read_at` | INTEGER | Read timestamp |
-
-#### `project_constitution`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `content` | TEXT | Constitution content |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-
-#### `structured_summaries`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key |
-| `session_id` | TEXT | Session ID |
-| `summary_data` | TEXT | Summary JSON |
-| `created_at` | INTEGER | Unix timestamp |
-| `updated_at` | INTEGER | Unix timestamp |
-
-### Migrations
-
-Located in `internal/db/migrations/`:
-
-1. `20250424200609_initial.sql` - Initial schema
-2. `20250515105448_add_summary_message_id.sql` - Summary message reference
-3. `20250624000000_add_created_at_indexes.sql` - Index additions
-4. `20250627000000_add_provider_to_messages.sql` - Provider tracking
-5. `20250810000000_add_is_summary_message.sql` - Summary flag
-6. `20250812000000_add_todos_to_sessions.sql` - Todo support
-7. `20260127000000_add_read_files_table.sql` - Read file tracking
-8. `20260309000000_add_tiered_memory_tables.sql` - Tiered memory
-
----
-
-## Event System
-
-### PostHog Analytics (`internal/event/event.go`)
-
-**Events Tracked:**
-- `SessionCreated`
-- `SessionDeleted`
-- `MessageCreated`
-- `ToolExecuted`
-- `AppInitialized`
-- `AppExited`
-- `Error`
-
-**Properties:**
-- GOOS / GOARCH
-- TERM
-- SHELL
-- Version
-- GoVersion
-- NonInteractive flag
-
-**User Identification:**
-- Machine ID (distinct_id)
-- Optional user ID aliasing
-
-### Pub/Sub System (`internal/pubsub/`)
-
-**Broker Pattern:**
-```go
-broker := pubsub.NewBroker[T]()
-broker.Subscribe(ctx) <-chan Event[T]
-broker.Publish(eventType, payload)
-```
-
-**Event Types:**
-- `CreatedEvent`
-- `UpdatedEvent`
-- `DeletedEvent`
-
-**Subscribers:**
-- Sessions
-- Messages
-- Permissions
-- History
-- MCP
-- LSP
-
----
-
-## MCP Integration
-
-### Architecture (`internal/agent/tools/mcp/`)
-
-**Components:**
-- `ClientSession` - MCP client connection
-- `sessions` - Global session registry
-- `allTools` - Tool registry
-
-**Lifecycle:**
-1. Initialize client (stdio/HTTP/SSE)
-2. List available tools
-3. Filter disabled tools
-4. Register in global tool registry
-5. Handle tool calls
-
-### MCP Operations
-
-**Initialize:**
-```go
-mcp.Initialize(ctx, &mcp.InitializeParams{...})
-```
-
-**List Tools:**
-```go
-mcp.ListTools(ctx, &mcp.ListToolsParams{})
-```
-
-**Call Tool:**
-```go
-mcp.CallTool(ctx, &mcp.CallToolParams{
-    Name: "tool-name",
-    Arguments: map[string]any{...},
-})
-```
-
-### MCP Registry
-
-**Purpose:** Dynamic MCP discovery and selection.
-
-**Flow:**
-1. User prompt analysis
-2. MCP preflight discovery
-3. MCP selection based on relevance
-4. Tool injection into agent context
-
----
-
-## LSP Integration
-
-### Architecture (`internal/lsp/`)
-
-**Components:**
-- `Client` - LSP client
-- `Manager` - LSP lifecycle manager
-
-**Lifecycle:**
-1. Detect file type
-2. Find root marker
-3. Start server
-4. Initialize
-5. Open documents
-6. Handle diagnostics
-
-### Diagnostics
-
-**Callback:**
-```go
-client.SetDiagnosticsCallback(func(uri string, diagnostics []Diagnostic) {
-    updateLSPDiagnostics(uri, diagnostics)
-})
-```
-
-**Integration:**
-- Edit tool triggers diagnostics
-- Diagnostics injected into tool response
-- Edit guard locks files with errors
-
----
-
-## Skills System
-
-### Specification (`internal/skills/skills.go`)
-
-**Standard:** Agent Skills open standard (https://agentskills.io)
-
-**Skill Structure:**
-```yaml
----
-name: skill-name
-description: Skill description
-license: MIT
-compatibility: sapphire>=1.0
-metadata:
-  key: value
----
-# Skill instructions (markdown)
-```
-
-### Discovery
-
-```go
-skills.Discover(paths []string) []*Skill
-```
-
-**Process:**
-1. Walk directories (follows symlinks)
-2. Find SKILL.md files
-3. Parse frontmatter
-4. Validate (name, description, path match)
-5. Return valid skills
-
-### Skill Matching
-
-**Keyword-based matching:**
-- `skillKeywordMap` defines category keywords
-- Whole-word matching
-- Folder path matching
-- Category aliases
-
-**Categories:**
-- frontend
-- backend
-- debugging
-- architect
-- devops
-- security
-
-### Embedding-based Retrieval
-
-**Requirements:**
-- Gemini API key
-- Embedding service initialization
-
-**Flow:**
-1. User prompt embedding
-2. Similarity search against skill embeddings
-3. Return top matches above threshold
-
----
-
-## Long-Horizon Tasks
-
-### Architecture (`internal/agent/longhorizon/`)
-
-**Purpose:** Structured long-horizon task management.
-
-**Artifacts:**
-- `frozen_spec.md` - Task specification
-- `milestones.json` - Milestone plan
-- `runbook.md` - Operating procedures
-- `audit.log` - Decision audit trail
-
-### Manager
-
-**Methods:**
-- `Ensure(ctx, sessionID, prompt)` - Initialize artifacts
-- `AppendAudit(ctx, sessionID, lines)` - Log decisions
-- `BuildInjection(sessionID)` - Build context block
-
-### Runbook Rules
-
-- Work milestone-by-milestone
-- Keep diffs scoped to active milestone
-- Validate completion before moving on
-- Write decisions to audit log
-- Handle failures with recovery attempts
-
-### Context Injection
-
-```xml
-<long_horizon_runbook>
-  ...runbook content...
-</long_horizon_runbook>
-
-<long_horizon_frozen_spec>
-  ...spec content...
-</long_horizon_frozen_spec>
-
-<long_horizon_milestones>
-  ...milestones JSON...
-</long_horizon_milestones>
-
-<long_horizon_audit>
-  ...audit log tail...
-</long_horizon_audit>
-```
-
----
-
-## Shell System
-
-### Architecture (`internal/shell/`)
-
-**Implementation:** POSIX shell via mvdan.cc/sh/v3
-
-**Features:**
-- Cross-platform (POSIX emulation on Windows)
-- Environment variable management
-- Working directory tracking
-- Command blocking
-- Background execution
-- Streaming output
-
-### Shell Instance
-
-```go
-shell := NewShell(&Options{
-    WorkingDir: "/path",
-    Env: []string{"VAR=value"},
-    BlockFuncs: []BlockFunc{...},
-})
-```
-
-### Execution
-
-**Foreground:**
-```go
-stdout, stderr, err := shell.Exec(ctx, "command")
-```
-
-**Streaming:**
-```go
-err := shell.ExecStream(ctx, "command", stdoutWriter, stderrWriter)
-```
-
-**Background:**
-```go
-jobID, err := backgroundManager.Start(ctx, "command")
-```
-
-### Command Blocking
-
-**BlockFunc:**
-```go
-type BlockFunc func(args []string) bool
-```
-
-**Built-in Blockers:**
-- `CommandsBlocker([]string)` - Exact command match
-- `ArgumentsBlocker(cmd, args, flags)` - Subcommand/flag match
-
-**Banned Commands:**
-- Network: curl, wget, ssh, scp
-- Package managers: apt, yum, pacman
-- System: sudo, systemctl, mount
-
----
-
-## Key Integration Points
-
-### Permission System
-
-**Service:** `internal/permission/permission.go`
-
-**Flow:**
-1. Tool requests permission
-2. Permission service checks policy
-3. If YOLO mode: auto-approve
-4. Otherwise: prompt user (TUI)
-5. Store decision
-6. Execute or deny
-
-**Session-based Approval:**
-```go
-permissions.AutoApproveSession(sessionID)
-```
-
-### File Tracker
-
-**Service:** `internal/filetracker/service.go`
-
-**Purpose:** Track file modifications per session.
-
-### History Service
-
-**Service:** `internal/history/file.go`
-
-**Purpose:** File version history.
-
-### Memory System
-
-**Service:** `internal/memory/system.go`
-
-**Purpose:** Persistent memory with vector search.
-
-**Requirements:**
-- Gemini API key
-- Embedding model
+## 9. Background Agent Systems
+
+### File Inventory
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `internal/agent/daemon/daemon.go` | ~124 | Main daemon service orchestrating dispatch and patrol cycles |
+| `internal/agent/background/dispatcher.go` | ~192 | Capacity-controlled agent dispatcher with async execution |
+| `internal/agent/background/capacity.go` | ~50 | Semaphore-based concurrency controller |
+| `internal/agent/background/registry.go` | ~203 | In-memory registry tracking sub-agent state |
+| `internal/agent/background/monitor.go` | ~51 | Monitor polling completed agents every 5s |
+| `internal/agent/background/leg_prompts.go` | ~149 | Leg type system for structured analysis tasks |
+| `internal/agent/supervisor/service.go` | ~563 | Supervisor with stuck detection, loop detection, validation |
+| `internal/agent/supervisor/patrol.go` | ~11 | Exposes RunPatrolCycle for supervisor |
+| `internal/agent/mailbox/mailbox.go` | ~59 | Inter-agent mail service |
+| `internal/agent/mailbox/types.go` | ~17 | Message type alias and send options |
+| `internal/agent/hook/service.go` | ~194 | Agent-to-work-item assignment service |
+| `internal/agent/convoy/service.go` | ~319 | Grouped work item management |
+| `internal/agent/activity/activity.go` | ~45 | Activity logging service |
+| `internal/agent/activity/types.go` | ~17 | Event type constants |
+| `internal/agent/scheduler/dispatcher.go` | ~96 | Scheduler dispatcher with configurable intervals |
+
+### Daemon System
+
+**Dispatch Cycle:**
+- Default interval: **3 minutes**
+- Calls `dispatcher.RunDispatchCycle()` → processes queued agents
+- Calls `dispatcher.RunPatrolCycle()` → reconciles agent state
+- Calls `supervisor.RunPatrolCycle()` → patrols for stuck/looping agents
+
+**Process Management:**
+- `Start(ctx)`: Launches goroutine with ticker-based execution
+- `Stop()`: Cancels context
+- `RunCycle(ctx)`: Manual single-cycle execution
+
+### Background Dispatcher
+
+**Capacity Management:**
+- Default max concurrent: **5 agents**
+- Uses semaphore-based `CapacityController`
+- `Acquire(ctx)`: Blocks until slot available
+- `Release()`: Returns slot to pool
+
+**Dispatch Flow:**
+1. `Dispatch(ctx, spec)` → generates agent ID (`bg-<uuid>`)
+2. Registers agent in `Registry` with status `queued`
+3. Spawns goroutine `runBackgroundWorker(spec)`
+4. Worker acquires capacity slot
+5. Executes via `hooks.Execute(ctx, spec)`
+6. Updates status: `running` → `completed`/`failed`
+
+**Wait Mechanism:**
+- `WaitForCompletion(ctx, agentIDs)`: Polls every **250ms** until completion
+
+### Supervisor
+
+**Patrol Mechanism:**
+- Interval: **2 minutes**
+- Checks: heartbeat age, loop patterns, silent completions, unread mail
+
+**Stuck Detection:**
+- Threshold: **15 minutes** without heartbeat
+- Action: Sends nudge mail, logs `supervisor_intervention`
+- Escalation: **20 minutes** → marks as `needs_reassignment`
+
+**Loop Detection:**
+- Window size: **10 events**
+- Repeat count: **5 identical events**
+- Mechanism: Compares `EventType + DetailsJSON` patterns
+- Action: Sends "LOOP DETECTED" mail
+
+### Mailbox Service
 
 **Operations:**
-- Extract memories from conversations
-- Store with embeddings
-- Query by similarity
+- `Send(ctx, to, from, subject, body, opts)`: Sends mail, triggers nudge
+- `Inbox(ctx, agentID, unreadOnly, limit)`: Lists messages
+- `MarkRead(ctx, agentID, messageID)`: Marks message as read
+- `Thread(ctx, agentID, threadID, limit)`: Lists thread messages
 
----
-
-## Testing
-
-### Test Files
-
-Located alongside source files with `_test.go` suffix.
-
-**Key Test Files:**
-- `internal/agent/agent_test.go`
-- `internal/agent/coordinator_test.go`
-- `internal/agent/tools/*.go`
-- `internal/config/*_test.go`
-- `internal/db/*_test.go`
-- `internal/ui/chat/*_test.go`
-
-### Test Data
-
-- `internal/agent/testdata/` - Agent test fixtures
-- `internal/agent/tools/testdata/` - Tool test data
-
----
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `CRUSH_PROFILE` | Enable profiling server |
-| `CRUSH_DISABLE_METRICS` | Disable analytics |
-| `DO_NOT_TRACK` | Disable analytics |
-| `SAPPHIRE_NON_INTERACTIVE` | Non-interactive mode flag |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `GEMINI_API_KEY` | Google API key |
-| `AZURE_API_KEY` | Azure API key |
-| `AWS_*` | AWS credentials |
-
----
-
-## Dependencies
-
-### Core
-
-- `charm.land/bubbletea/v2` - TUI framework
-- `charm.land/bubbles/v2` - TUI components
-- `charm.land/fantasy` - Agent framework
-- `charm.land/catwalk` - Provider catalog
-- `charm.land/lipgloss/v2` - Styling
-- `charm.land/glamour/v2` - Markdown rendering
-
-### Database
-
-- `modernc.org/sqlite` - SQLite driver
-- `github.com/ncruces/go-sqlite3` - Alternative SQLite
-- `github.com/pressly/goose/v3` - Migrations
-
-### LLM Providers
-
-- `github.com/openai/openai-go/v3` - OpenAI
-- `github.com/charmbracelet/anthropic-sdk-go` - Anthropic
-- `google.golang.org/genai` - Google Gemini
-- `github.com/aws/aws-sdk-go-v2` - AWS Bedrock
-
-### MCP
-
-- `github.com/modelcontextprotocol/go-sdk` - MCP SDK
-
-### LSP
-
-- `github.com/sourcegraph/jsonrpc2` - JSON-RPC
-- `github.com/charmbracelet/x/ansi` - ANSI handling
-
-### Shell
-
-- `mvdan.cc/sh/v3` - POSIX shell
-- `mvdan.cc/sh/moreinterp` - Shell interpreter
-
-### Utilities
-
-- `github.com/spf13/cobra` - CLI framework
-- `github.com/charmbracelet/fang` - Command wrapper
-- `github.com/posthog/posthog-go` - Analytics
-- `github.com/google/uuid` - UUID generation
-- `gopkg.in/yaml.v3` - YAML parsing
-- `github.com/bmatcuk/doublestar/v4` - Glob patterns
-
----
-
-## Build and Release
-
-### Build
-
-```bash
-go build -o sapphire .
+**Send Options:**
+```go
+type SendOptions struct {
+    Priority  int      // 0 = high, 1 = normal
+    ThreadID  string   // Groups messages in thread
+    SkipNudge bool     // Suppress notification
+}
 ```
 
-### Release
+### Hook Service
 
-**Tool:** GoReleaser
+**Hook Lifecycle:**
+1. `AssignHook(ctx, agentID, workItemID)`: Creates hook
+2. `MarkInProgress(ctx, agentID, workItemID)`: Updates status
+3. `ClearHook(ctx, agentID, workItemID)`: Releases hook
 
-**Config:** `.goreleaser.yml`
+**Hook States:**
+- `hooked`: Assigned but not started
+- `in_progress`: Actively working
+- `idle`: Released
 
-**Platforms:**
-- darwin/amd64
-- darwin/arm64
-- linux/amd64
-- linux/arm64
-- windows/amd64
+### Convoy Service
 
-### Linting
+**Convoy Lifecycle:**
+1. `CreateConvoy(ctx, name, owner, mergeStrategy)`: Creates convoy
+2. `AddWorkItems(ctx, convoyID, workItemIDs)`: Links work items
+3. `StageConvoy(ctx, convoyID)`: Validates readiness
+4. `LaunchConvoy(ctx, convoyID)`: Dispatches ready work items
+5. `CheckConvoyCompletion(ctx, convoyID)`: Auto-lands when complete
 
-**Tool:** golangci-lint
+**Convoy Statuses:**
+- `open`: Active, dispatching work
+- `staged_ready`: All items ready for dispatch
+- `staged_warnings`: Has blocked items
+- `closed`: All items completed
 
-**Config:** `.golangci.yml`
+### Activity Service
 
-```bash
-golangci-lint run
+**Event Types:**
+```go
+const (
+    EventSpawned      EventType = "spawned"
+    EventHeartbeat    EventType = "heartbeat"
+    EventMailSent     EventType = "mail_sent"
+    EventMailReceived EventType = "mail_received"
+    EventRunning      EventType = "running"
+    EventStuck        EventType = "stuck"
+    EventCompleted    EventType = "completed"
+    EventError        EventType = "error"
+)
+```
+
+**Operations:**
+- `Log(ctx, agentID, eventType, detailsJSON)`: Records activity
+- `Recent(ctx, agentID, limit)`: Lists recent events for loop detection
+- `Feed(ctx, agentIDs, limit)`: Multi-agent activity feed
+
+---
+
+## 10. Database Schema
+
+### Core Tables
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `agent_mail` | Inter-agent communication | `id`, `to_agent`, `from_agent`, `subject`, `body`, `thread_id`, `read`, `created_at` |
+| `agent_state` | Agent runtime state | `agent_id`, `role`, `status`, `session_id`, `worktree_path`, `branch`, `hook_bead_id`, `parent_agent_id`, `last_heartbeat` |
+| `agent_activity` | Audit log | `id`, `agent_id`, `event_type`, `details_json`, `created_at` |
+| `work_items` | Task tracking | `id`, `type`, `title`, `description`, `status`, `assignee`, `parent_id`, `convoy_id`, `dependencies` |
+| `convoys` | Grouped work items | `id`, `name`, `owner`, `notify`, `merge_strategy`, `status` |
+| `convoy_tracks` | Convoy-work item mapping | `convoy_id`, `work_item_id`, `added_at` |
+| `agent_hooks` | Agent-to-work assignment | `agent_id`, `hook_bead_id`, `hooked_at`, `status` |
+| `dispatch_queue` | Background dispatch queue | `id`, `session_id`, `work_item_id`, `status`, `priority`, `payload_json`, `leased_by`, `assigned_agent_id` |
+| `session_checkpoints` | Session state snapshots | `id`, `session_id`, `agent_id`, `message_count`, `summary_json`, `pending_tasks_json`, `files_modified_json` |
+| `worktree_runs` | Worktree lifecycle tracking | `id`, `session_id`, `agent_id`, `worktree_path`, `branch`, `status`, `landed_at`, `removed_at` |
+| `decisions` | Architectural decisions | `id`, `session_id`, `category`, `key`, `value`, `confidence`, `source_checkpoint_id` |
+| `user_preferences` | Learned preferences | `key`, `value`, `confidence`, `source_session_id` |
+
+### Key Entities
+
+**Inter-agent Mail:**
+```go
+type AgentMail struct {
+    ID, ToAgent, FromAgent, Subject, Body, ThreadID string
+    Priority int
+    Read bool
+    CreatedAt, ReadAt time.Time
+}
+```
+
+**Agent Runtime State:**
+```go
+type AgentState struct {
+    AgentID, Role, Status, SessionID string
+    WorktreePath, Branch string
+    HookBeadID, ParentAgentID string
+    LastHeartbeat, CreatedAt, UpdatedAt time.Time
+}
+```
+
+**Work Item (Task):**
+```go
+type WorkItem struct {
+    ID, Type, Title, Description, Status string
+    Assignee, ParentID, ConvoyID string
+    Dependencies string // JSON array
+    CreatedAt, ClosedAt time.Time
+}
+```
+
+**Session Checkpoint:**
+```go
+type SessionCheckpoint struct {
+    ID, SessionID, AgentID, WorkItemID string
+    ParentCheckpointID string
+    MessageCount int
+    SummaryJSON, AuditTail, PendingTasksJSON, FilesModifiedJSON string
+    MailCursor, ActivityCursor int64
+    CreatedAt time.Time
+}
 ```
 
 ---
 
-## Directory Conventions
+## 11. Operational Characteristics
 
-- `/internal/` - Private application code
-- `/long_horizon/` - Long-horizon artifacts
-- `/.sapphire/` - Data directory (gitignored)
-- `/worktrees/` - Sub-agent worktrees (gitignored)
-- `/crush-repo/` - Reference Crush CLI code (for alignment)
+### Concurrency
+
+| Component | Limit |
+|-----------|-------|
+| Background sub-agents | 8 active (configurable) |
+| Dispatcher capacity | 5 concurrent (default) |
+| Message queue per session | FIFO processing |
+| Active request cancellation | Per session |
+
+### Timeouts
+
+| Operation | Timeout |
+|-----------|---------|
+| Database operations | 2s (5s for long ops) |
+| Message updates | 750ms streaming, 5s final |
+| Memory calls | 500ms |
+| Stream retries | 2 attempts, 500ms backoff |
+| Agent heartbeat stale | 15 minutes |
+| LSP operations | 5s |
+| MCP timeout | 15s (configurable) |
+
+### Persistence
+
+**SQLite Settings:**
+- WAL mode enabled
+- Foreign keys enabled
+- `page_size=4096`
+- `cache_size=-8000`
+- `synchronous=NORMAL`
+- Single connection (`SetMaxOpenConns=1`)
+
+### Error Handling
+
+| Scenario | Handling |
+|----------|----------|
+| Python tool failure | Quits after 3 consecutive failures |
+| Validation failure | Quarantines worktree (doesn't delete) |
+| Stuck agents | Supervisor patrol via stale heartbeats |
+| OAuth/API key refresh | On 401 errors |
 
 ---
 
-## Unimplemented / Incomplete Features
+## 12. Quick Reference
 
-1. **Multi-agent coordination** - Multiple main agents not yet implemented
-2. **Guardian review** - Approval review sub-agent not implemented
-3. **Memory consolidation** - Phase-2 memory consolidation not implemented
-4. **Role-based config** - Role configuration system referenced but not fully implemented
-5. **Thread forking** - Context forking partially implemented
+### Service Dependencies
+
+```
+App (internal/app/app.go)
+├── session.Service
+├── message.Service
+├── history.Service
+├── permission.Service
+├── filetracker.Service
+├── LSPManager
+└── AgentCoordinator
+    ├── session.Service
+    ├── message.Service
+    ├── permission.Service
+    ├── history.Service
+    ├── filetracker.Service
+    ├── LSPManager
+    ├── orchestrationdb.Store
+    │   ├── Mailbox Service
+    │   ├── State Service
+    │   ├── Activity Service
+    │   ├── Hook Service
+    │   └── Convoy Service
+    ├── memory.MemoryService
+    ├── pmem.System
+    ├── longhorizon.Manager
+    ├── background.Dispatcher
+    ├── background.Monitor
+    ├── scheduler.Dispatcher
+    ├── daemon.Service
+    └── supervisor.Service
+```
+
+### Build Commands
+
+```bash
+# Build
+go build -o sapphire
+
+# Test
+go test ./...
+
+# Run
+./sapphire run "your prompt"
+
+# Interactive TUI
+./sapphire
+
+# With profiling
+CRUSH_PROFILE=1 ./sapphire
+# Access pprof at http://localhost:6060
+```
+
+### Key Interfaces
+
+**Coordinator:**
+```go
+type Coordinator interface {
+    Run(ctx, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+    Submit(ctx, sessionID, prompt string, attachments ...message.Attachment) (SubmissionResult, error)
+    DispatchBackground(ctx, spec agentbackground.TaskSpec) (string, error)
+    WaitForCompletion(ctx, agentIDs []string) ([]agentbackground.SubAgent, error)
+    RunPlanMode(ctx, sessionID, task, taskContext string) (*agentformula.ExecutionState, error)
+    // ... more methods
+}
+```
+
+**SessionAgent:**
+```go
+type SessionAgent interface {
+    Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
+    SetModels(large Model, small Model)
+    SetTools(tools []fantasy.AgentTool)
+    SetSystemPrompt(systemPrompt string)
+    Cancel(sessionID string)
+    CancelAll()
+    // ... more methods
+}
+```
+
+### File Counts by Module
+
+| Module | File Count |
+|--------|-----------|
+| `internal/agent/tools/` | 50+ |
+| `internal/ui/` | 30+ |
+| `internal/agent/` | 25+ |
+| `internal/cmd/` | 15+ |
+| `internal/orchestration/db/` | 5 |
+| `internal/lsp/` | 6 |
+| `internal/agent/tools/mcp/` | 8 |
+| `internal/agent/background/` | 8 |
+| `internal/agent/supervisor/` | 4 |
 
 ---
 
-## Notes
+**Document Generated:** Based on analysis of Sapphire CLI source code
 
-- YOLO mode (auto-approve) is enabled by default
-- Non-interactive mode bypasses MCP init wait (1s timeout)
-- Progress bars shown only in supported terminals
-- Transparent mode auto-enabled for Apple Terminal
-- Git repository detection limits file walk operations
-- Database uses WAL mode for concurrency
-- LSP clients start lazily on first file open
-- MCP clients start lazily on first use
-
----
-
-**End of agent.md**
+**Source of Truth:** All information derived directly from source code analysis - zero fabrication

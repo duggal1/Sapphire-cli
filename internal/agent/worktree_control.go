@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
@@ -80,7 +81,13 @@ func (c *coordinator) mainAgentForSession(ctx context.Context, sessionID string)
 	if !ok {
 		return nil, fmt.Errorf("coder agent not configured")
 	}
-	prompt, err := coderPrompt(promptpkg.WithWorkingDir(c.mainWorkingDir()))
+	mode := planmode.DefaultSessionMode
+	if c.sessions != nil {
+		if sessionMode, err := c.sessions.GetMode(ctx, sessionID); err == nil {
+			mode = planmode.NormalizeMode(sessionMode)
+		}
+	}
+	prompt, err := coderPromptForMode(mode, promptpkg.WithWorkingDir(c.mainWorkingDir()))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +124,13 @@ func (c *coordinator) prepareCurrentAgentForSession(ctx context.Context, session
 	if !ok {
 		return "", "", fmt.Errorf("coder agent not configured")
 	}
-	prompt, err := coderPrompt(promptpkg.WithWorkingDir(workingDir))
+	mode := planmode.DefaultSessionMode
+	if c.sessions != nil {
+		if sessionMode, err := c.sessions.GetMode(ctx, sessionID); err == nil {
+			mode = planmode.NormalizeMode(sessionMode)
+		}
+	}
+	prompt, err := coderPromptForMode(mode, promptpkg.WithWorkingDir(workingDir))
 	if err != nil {
 		return "", "", err
 	}

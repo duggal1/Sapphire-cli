@@ -3,6 +3,8 @@ package mailbox
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 )
@@ -10,10 +12,19 @@ import (
 type Service struct {
 	store *orchestrationdb.Store
 	nudge NudgeFunc
+
+	mu            sync.RWMutex
+	nudgeFailures map[string]int
+	nudgeLastFail map[string]time.Time
 }
 
 func NewService(store *orchestrationdb.Store, nudge NudgeFunc) *Service {
-	return &Service{store: store, nudge: nudge}
+	return &Service{
+		store:         store,
+		nudge:         nudge,
+		nudgeFailures: make(map[string]int),
+		nudgeLastFail: make(map[string]time.Time),
+	}
 }
 
 func (s *Service) Send(ctx context.Context, to, from, subject, body string, opts SendOptions) (Message, error) {
@@ -31,8 +42,8 @@ func (s *Service) Send(ctx context.Context, to, from, subject, body string, opts
 	if err != nil {
 		return Message{}, err
 	}
-	if !opts.SkipNudge && s.nudge != nil && to != "" && to != from {
-		_ = s.nudge(ctx, to)
+	if !opts.SkipNudge && to != "" && to != from {
+		_ = s.Nudge(ctx, to)
 	}
 	return msg, nil
 }

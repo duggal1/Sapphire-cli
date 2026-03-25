@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"strings"
 	"context"
 	"testing"
 	"time"
@@ -145,4 +146,151 @@ func TestSupervisorReassignsRecoverableAgents(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "open", item.Status)
 	require.Equal(t, 1, dispatchCalls)
+}
+
+func TestSupervisorHandleStuckAgentThrottleSendsSingleMail(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	service := NewService(
+		store,
+		agentstate.NewService(store),
+		agentactivity.NewService(store),
+		agentmailbox.NewService(store, nil),
+		Hooks{},
+	)
+
+	tracker := &AgentTracker{
+		AgentID:       "agent-1",
+		SessionID:     "session-1",
+		WorkItemID:    "work-1",
+		Status:        "running",
+		SpawnedAt:     time.Now().UTC().Add(-30 * time.Minute),
+		LastHeartbeat: time.Now().UTC().Add(-20 * time.Minute),
+	}
+	service.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		*existing = *tracker
+	})
+
+	service.handleStuckAgent(ctx, tracker)
+	service.handleStuckAgent(ctx, tracker)
+
+	inbox, err := store.ListInbox(ctx, tracker.AgentID, false, 10)
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	require.Equal(t, "SUPERVISOR", inbox[0].Subject)
+}
+
+func TestSupervisorDoesNotSendUnreadMailReminderLoop(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	mailbox := agentmailbox.NewService(store, nil)
+	_, err = mailbox.Send(ctx, "agent-1", "supervisor", "SUPERVISOR", "Existing unread mail", agentmailbox.SendOptions{SkipNudge: true})
+	require.NoError(t, err)
+
+	service := NewService(
+		store,
+		agentstate.NewService(store),
+		agentactivity.NewService(store),
+		mailbox,
+		Hooks{
+			GetRuntimeSnapshot: func(agentID string) (AgentRuntimeSnapshot, bool) {
+				return AgentRuntimeSnapshot{
+					AgentID:       agentID,
+					SessionID:     "session-1",
+					WorkItemID:    "work-1",
+					Status:        "idle",
+					LastHeartbeat: time.Now().UTC(),
+				}, true
+			},
+		},
+	)
+
+	tracker := &AgentTracker{
+		AgentID:       "agent-1",
+		SessionID:     "session-1",
+		WorkItemID:    "work-1",
+		Status:        "idle",
+		SpawnedAt:     time.Now().UTC().Add(-5 * time.Minute),
+		LastHeartbeat: time.Now().UTC(),
+	}
+	service.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		*existing = *tracker
+	})
+
+	service.superviseAgent(ctx, tracker)
+
+	inbox, err := store.ListInbox(ctx, tracker.AgentID, false, 10)
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	require.Equal(t, "Existing unread mail", inbox[0].Body)
+}
+
+func TestSupervisorReportsHeartbeatContext(t *testing.T) {
+    ctx := context.Background()
+    store, err := orchestrationdb.Open(ctx, t.TempDir())
+    require.NoError(t, err)
+    t.Cleanup(func() {
+        require.NoError(t, store.Close())
+    })
+
+    mainMailboxID := "main-mailbox"
+    runtime := AgentRuntimeSnapshot{
+        AgentID:          "agent-1",
+        SessionID:        "session-1",
+        WorkItemID:       "work-1",
+        Status:           "running",
+        LastHeartbeat:    time.Now().UTC().Add(-20 * time.Minute),
+        HeartbeatContext: "Executing tool: single_view",
+    }
+
+    service := NewService(
+        store,
+        agentstate.NewService(store),
+        agentactivity.NewService(store),
+        agentmailbox.NewService(store, nil),
+        Hooks{
+            GetRuntimeSnapshot: func(agentID string) (AgentRuntimeSnapshot, bool) {
+                return runtime, true
+            },
+            ResolveMainMailboxID: func(sessionID string) string {
+                return mainMailboxID
+            },
+        },
+    )
+
+    tracker := &AgentTracker{
+        AgentID:       "agent-1",
+        SessionID:     "session-1",
+        WorkItemID:    "work-1",
+        Status:        "running",
+        SpawnedAt:     time.Now().UTC().Add(-30 * time.Minute),
+        LastHeartbeat: time.Now().UTC().Add(-20 * time.Minute),
+    }
+    service.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+        *existing = *tracker
+    })
+
+    service.superviseAgent(ctx, tracker)
+
+    inbox, err := store.ListInbox(ctx, mainMailboxID, false, 10)
+    require.NoError(t, err)
+    
+    found := false
+    for _, msg := range inbox {
+        if strings.Contains(msg.Body, "Executing tool: single_view") {
+            found = true
+            break
+        }
+    }
+    require.True(t, found, "Heartbeat context should be included in escalation message")
 }

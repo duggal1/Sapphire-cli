@@ -299,17 +299,18 @@ func (c *coordinator) nudgeMailboxRecipient(ctx context.Context, recipient strin
 	}
 	runner.mu.Lock()
 	closed := runner.closed
-	status := runner.status
-	pending := runner.pending
+	status := runner.effectiveStatusLocked()
 	runner.mu.Unlock()
-	if closed || status == subAgentStatusRunning || pending > 0 {
+	if closed {
 		return nil
 	}
-	if runner.enqueue(mailboxNudgePrompt, nil) == "" {
-		return nil
-	}
-	c.publishSubAgentEvent(SubAgentWaitingEvent, runner, runner.snapshot().LastSubmission, SubAgentStageWaiting, "")
-	c.recordOrchestrationActivity(ctx, runner.id, "mail_nudged", map[string]any{"recipient": recipient})
+	// Lifecycle sub-agents do not have a tmux-style live nudge channel. Re-enqueuing
+	// a hidden prompt here creates runaway queued/degraded loops and distorts wait
+	// semantics. Durable mail is enough; the next explicit turn will drain it.
+	c.recordOrchestrationActivity(ctx, runner.id, "mail_pending", map[string]any{
+		"recipient": recipient,
+		"status":    status,
+	})
 	return nil
 }
 

@@ -221,9 +221,6 @@ func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 	if s.detectSilentCompletion(runtime) {
 		s.forceCompletionReport(ctx, tracker)
 	}
-	if normalizeStatus(currentState.Status) == "idle" && s.hasUnreadMail(ctx, tracker.AgentID) {
-		s.nudgeAgent(ctx, tracker, "You have unread supervisor mail. Read it now and continue your assigned task.")
-	}
 	if s.isBlockedOnDependency(ctx, tracker.WorkItemID) {
 		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
 			existing.Status = "blocked"
@@ -240,6 +237,7 @@ func (s *Service) handleStuckAgent(ctx context.Context, tracker *AgentTracker) {
 		return
 	}
 	now := time.Now().UTC()
+	shouldNudge := false
 	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
 		if existing.Status != "stuck" {
 			existing.Status = "stuck"
@@ -247,16 +245,19 @@ func (s *Service) handleStuckAgent(ctx context.Context, tracker *AgentTracker) {
 		if existing.LastInterventionAt.IsZero() || now.Sub(existing.LastInterventionAt) > 5*time.Minute {
 			existing.LastInterventionAt = now
 			existing.RetryCount++
+			shouldNudge = true
 		}
 		if now.Sub(firstNonZeroTime(existing.LastHeartbeat, tracker.LastHeartbeat, existing.SpawnedAt)) > stuckEscalationThreshold {
 			existing.Status = "needs_reassignment"
 			existing.CriticalIssue = "sub-agent stuck beyond supervisor threshold"
 		}
 	})
-	s.nudgeAgent(ctx, tracker, "Progress check — heartbeat is stale. Report status or request help immediately.")
-	s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
-		"action": "stuck_nudge",
-	})
+	if shouldNudge {
+		s.nudgeAgent(ctx, tracker, "Progress check — heartbeat is stale. Report status or request help immediately.")
+		s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
+			"action": "stuck_nudge",
+		})
+	}
 }
 
 func (s *Service) detectLoop(ctx context.Context, agentID string) bool {
@@ -494,7 +495,10 @@ func (s *Service) nudgeAgent(ctx context.Context, tracker *AgentTracker, body st
 	if tracker == nil || s.mailbox == nil {
 		return
 	}
-	_, _ = s.mailbox.Send(ctx, tracker.AgentID, "supervisor", "SUPERVISOR", body, agentmailbox.SendOptions{Priority: 0})
+	_, _ = s.mailbox.Send(ctx, tracker.AgentID, "supervisor", "SUPERVISOR", body, agentmailbox.SendOptions{
+		Priority:  0,
+		SkipNudge: true,
+	})
 }
 
 func (s *Service) isBlockedOnDependency(ctx context.Context, workItemID string) bool {

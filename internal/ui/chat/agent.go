@@ -167,9 +167,7 @@ func (r *AgentToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 }
 
 func pendingAgentTool(sty *styles.Styles) string {
-	icon := sty.Tool.IconPending.Render()
-	label := styles.ShimmerTextWarm(sty, "Agent", 0)
-	return fmt.Sprintf("%s %s", icon, label)
+	return pendingTool(sty, "Agent")
 }
 
 func renderBackgroundAgentIndicator(sty *styles.Styles, opts *ToolRenderOpts) string {

@@ -138,7 +138,7 @@ func TestAssistantMessageItemRendersInlineLoaderWithVerticalSpacing(t *testing.T
 	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "" || strings.TrimSpace(lines[len(lines)-1]) != "" {
 		t.Fatalf("expected top and bottom padding around inline loader, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "• "+label) {
+	if !strings.Contains(lines[1], label) {
 		t.Fatalf("expected vertical padding around inline loader, got %q", rendered)
 	}
 }

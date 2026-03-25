@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	sweepDuration  = 1450 * time.Millisecond
-	bandHalfWidth  = 18.0
-	shimmerPadding = 10
+	sweepDuration  = 1650 * time.Millisecond
+	bandHalfWidth  = 8.0
+	shimmerPadding = 8
 )
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -247,36 +247,56 @@ func intensityAt(index int, position float64) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		// Very dark grey-purple base (almost grey)
-		baseColor := [3]uint8{60, 45, 75}
-		// Extremely bright, almost white purple highlight
-		highlightColor := [3]uint8{245, 220, 255}
-		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
+		baseColor := [3]uint8{118, 109, 143}
+		midColor := [3]uint8{156, 117, 242}
+		highlightColor := [3]uint8{217, 204, 247}
+		intensity = clamp01(intensity)
+		var r, g, b uint8
+		if intensity < 0.6 {
+			t := intensity / 0.6
+			r, g, b = blend(midColor, baseColor, t)
+		} else {
+			t := (intensity - 0.6) / 0.4
+			r, g, b = blend(highlightColor, midColor, t)
+		}
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		// Map intensity to bright purple range (light lavenders to bright purples)
-		index := 225 + int(math.Round(float64(intensity)*25))
-		if index < 225 {
-			index = 225
+		switch {
+		case intensity < 0.18:
+			return renderIndexedColor(60, false, ch)
+		case intensity < 0.45:
+			return renderIndexedColor(99, false, ch)
+		case intensity < 0.75:
+			return renderIndexedColor(141, false, ch)
+		default:
+			return renderIndexedColor(183, true, ch)
 		}
-		if index > 255 {
-			index = 255
-		}
-		return renderIndexedColor(index, intensity > 0.7, ch)
 	case renderDecorated:
 		switch {
-		case intensity < 0.2:
-			// Dark grey-purple
-			return "\033[2m\033[38;5;243m" + ch + "\033[0m"
-		case intensity < 0.6:
-			// Medium bright purple
-			return "\033[38;5;183m" + ch + "\033[0m"
+		case intensity < 0.18:
+			return "\033[2m\033[38;5;60m" + ch + "\033[0m"
+		case intensity < 0.45:
+			return "\033[38;5;99m" + ch + "\033[0m"
+		case intensity < 0.75:
+			return "\033[38;5;141m" + ch + "\033[0m"
 		default:
-			// Very bright purple (almost white)
-			return "\033[1m\033[38;5;231m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;183m" + ch + "\033[0m"
 		}
 	default:
 		return ch
+	}
+}
+
+func renderSpinnerFrame(mode renderMode, frame string) string {
+	switch mode {
+	case renderTrueColor:
+		return renderRGB(164, 95, 255, frame)
+	case renderANSI256:
+		return renderIndexedColor(135, true, frame)
+	case renderDecorated:
+		return "\033[1m\033[38;5;135m" + frame + "\033[0m"
+	default:
+		return frame
 	}
 }
 
@@ -322,16 +342,9 @@ func Spinner(startTime *time.Time, animationsEnabled bool) string {
 		return renderDim(frame)
 	}
 
-	var elapsed time.Duration
-	if startTime != nil {
-		elapsed = time.Since(*startTime)
-	} else {
-		elapsed = elapsedSinceStart()
-	}
-
 	mode := currentRenderMode()
 	if mode != renderPlain {
-		return renderRune(mode, intensityAt(0, shimmerPosition(1, elapsed)), frame)
+		return renderSpinnerFrame(mode, frame)
 	}
 	return frame
 }

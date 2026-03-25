@@ -16,8 +16,13 @@ import (
 
 const (
 	defaultPatrolInterval     = 2 * time.Minute
+	startupFailureThreshold   = 45 * time.Second
+	slowThreshold             = 5 * time.Minute
+	degradedThreshold         = 10 * time.Minute
 	stuckThreshold            = 15 * time.Minute
 	stuckEscalationThreshold  = 20 * time.Minute
+	statusRequestSpacing      = 6 * time.Minute
+	recoveryInterventionGap   = 8 * time.Minute
 	loopDetectionWindowSize   = 10
 	loopDetectionRepeatCount  = 5
 	criticalEscalationSpacing = 10 * time.Minute
@@ -49,20 +54,24 @@ type ValidationState struct {
 }
 
 type AgentTracker struct {
-	AgentID            string
-	SessionID          string
-	ParentSessionID    string
-	WorkItemID         string
-	Status             string
-	SpawnedAt          time.Time
-	LastHeartbeat      time.Time
-	LastProgressAt     time.Time
-	RetryCount         int
-	LastError          string
-	LastInterventionAt time.Time
-	LastEscalatedAt    time.Time
-	CriticalIssue      string
-	ValidationState    ValidationState
+	AgentID             string
+	SessionID           string
+	ParentSessionID     string
+	WorkItemID          string
+	Status              string
+	SpawnedAt           time.Time
+	LastHeartbeat       time.Time
+	LastProgressAt      time.Time
+	RetryCount          int
+	StatusRequests      int
+	RecoveryAttempts    int
+	LastError           string
+	LastInterventionAt  time.Time
+	LastStatusRequestAt time.Time
+	LastRecoveryAt      time.Time
+	LastEscalatedAt     time.Time
+	CriticalIssue       string
+	ValidationState     ValidationState
 }
 
 type Hooks struct {
@@ -142,6 +151,7 @@ func (s *Service) TrackAgent(snapshot AgentRuntimeSnapshot) {
 		}
 		s.agents[snapshot.AgentID] = tracker
 	}
+	previousStatus := tracker.Status
 	tracker.SessionID = firstNonEmpty(snapshot.SessionID, tracker.SessionID)
 	tracker.ParentSessionID = firstNonEmpty(snapshot.ParentSessionID, tracker.ParentSessionID)
 	tracker.WorkItemID = firstNonEmpty(snapshot.WorkItemID, tracker.WorkItemID)
@@ -151,8 +161,15 @@ func (s *Service) TrackAgent(snapshot AgentRuntimeSnapshot) {
 	}
 	if strings.TrimSpace(snapshot.LastProgress) != "" {
 		tracker.LastProgressAt = now
+		tracker.StatusRequests = 0
+		tracker.RecoveryAttempts = 0
+		tracker.CriticalIssue = ""
 	}
 	tracker.LastError = strings.TrimSpace(snapshot.LastError)
+	if previousStatus != "" && tracker.Status != previousStatus && (tracker.Status == "running" || tracker.Status == "ready" || tracker.Status == "starting" || tracker.Status == "waiting_on_mail" || tracker.Status == "completed") {
+		tracker.StatusRequests = 0
+		tracker.RecoveryAttempts = 0
+	}
 }
 
 func (s *Service) NotifyCompletion(snapshot AgentRuntimeSnapshot) {
@@ -193,14 +210,75 @@ func (s *Service) snapshotTrackers() []*AgentTracker {
 	return items
 }
 
+func (s *Service) classifyHealthStage(ctx context.Context, tracker *AgentTracker, currentState orchestrationdb.AgentState, runtime AgentRuntimeSnapshot) string {
+	status := normalizeStatus(firstNonEmpty(currentState.Status, runtime.Status, tracker.Status))
+	if status == "completed" || status == "closed" {
+		return "completed"
+	}
+	if status == "blocked" {
+		return "blocked"
+	}
+	if status == "timed_out" || status == "stuck" || status == "error" {
+		return "timed_out"
+	}
+	if s.isBlockedOnDependency(ctx, tracker.WorkItemID) {
+		return "waiting_on_dependency"
+	}
+	heartbeatAt := firstNonZeroTime(currentState.LastHeartbeat, runtime.LastHeartbeat, tracker.LastHeartbeat, tracker.SpawnedAt)
+	if heartbeatAt.IsZero() {
+		return "timed_out"
+	}
+	age := time.Since(heartbeatAt)
+	if status == "starting" || status == "ready" {
+		if age > startupFailureThreshold {
+			return "timed_out"
+		}
+		return "healthy"
+	}
+	switch {
+	case age > stuckEscalationThreshold:
+		return "timed_out"
+	case age > stuckThreshold:
+		return "stalled"
+	case age > degradedThreshold:
+		return "degraded"
+	case age > slowThreshold:
+		return "slow"
+	default:
+		return "healthy"
+	}
+}
+
+func (s *Service) maybeRequestStatus(ctx context.Context, tracker *AgentTracker, body string) bool {
+	if tracker == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	shouldSend := false
+	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		if existing.StatusRequests > 0 && now.Sub(existing.LastStatusRequestAt) < statusRequestSpacing {
+			return
+		}
+		existing.StatusRequests++
+		existing.LastStatusRequestAt = now
+		existing.LastInterventionAt = now
+		shouldSend = true
+	})
+	if shouldSend {
+		s.nudgeAgent(ctx, tracker, body)
+	}
+	return shouldSend
+}
+
 func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 	if tracker == nil {
 		return
 	}
 	currentState, runtime := s.currentSnapshot(ctx, tracker.AgentID)
+	currentStatus := normalizeStatus(firstNonEmpty(currentState.Status, runtime.Status, tracker.Status))
 	if currentState.AgentID != "" {
 		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
-			existing.Status = normalizeStatus(firstNonEmpty(currentState.Status, runtime.Status))
+			existing.Status = currentStatus
 			if !currentState.LastHeartbeat.IsZero() {
 				existing.LastHeartbeat = currentState.LastHeartbeat
 			}
@@ -211,9 +289,26 @@ func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 		})
 	}
 
-	heartbeatAge := time.Since(firstNonZeroTime(currentState.LastHeartbeat, runtime.LastHeartbeat, tracker.LastHeartbeat))
-	if heartbeatAge > stuckThreshold {
+	heartbeatAge := time.Since(firstNonZeroTime(currentState.LastHeartbeat, runtime.LastHeartbeat, tracker.LastHeartbeat, tracker.SpawnedAt))
+	healthStage := s.classifyHealthStage(ctx, tracker, currentState, runtime)
+	switch healthStage {
+	case "slow":
+		if s.maybeRequestStatus(ctx, tracker, "Status check. Briefly report concrete progress or the blocker, then continue.") {
+			s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
+				"action": "status_request",
+			})
+		}
+	case "degraded", "stalled":
 		s.handleStuckAgent(ctx, tracker)
+	case "timed_out":
+		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+			existing.Status = "needs_reassignment"
+			existing.CriticalIssue = "sub-agent timed out or failed startup"
+		})
+	case "waiting_on_dependency":
+		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+			existing.Status = "waiting_on_dependency"
+		})
 	}
 	if s.detectLoop(ctx, tracker.AgentID) {
 		s.handleLoopDetection(ctx, tracker)
@@ -221,13 +316,9 @@ func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 	if s.detectSilentCompletion(runtime) {
 		s.forceCompletionReport(ctx, tracker)
 	}
-	if s.isBlockedOnDependency(ctx, tracker.WorkItemID) {
-		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
-			existing.Status = "blocked"
-		})
-	}
 	s.logActivity(ctx, tracker.AgentID, "supervisor_check", map[string]any{
-		"status":        normalizeStatus(firstNonEmpty(currentState.Status, runtime.Status, tracker.Status)),
+		"status":        currentStatus,
+		"health_stage":  healthStage,
 		"heartbeat_age": heartbeatAge.String(),
 	})
 }
@@ -239,10 +330,12 @@ func (s *Service) handleStuckAgent(ctx context.Context, tracker *AgentTracker) {
 	now := time.Now().UTC()
 	shouldNudge := false
 	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
-		if existing.Status != "stuck" {
-			existing.Status = "stuck"
+		if existing.Status != "degraded" && existing.Status != "stalled" {
+			existing.Status = "degraded"
 		}
-		if existing.LastInterventionAt.IsZero() || now.Sub(existing.LastInterventionAt) > 5*time.Minute {
+		if existing.RecoveryAttempts == 0 || now.Sub(existing.LastRecoveryAt) > recoveryInterventionGap {
+			existing.RecoveryAttempts++
+			existing.LastRecoveryAt = now
 			existing.LastInterventionAt = now
 			existing.RetryCount++
 			shouldNudge = true
@@ -253,9 +346,9 @@ func (s *Service) handleStuckAgent(ctx context.Context, tracker *AgentTracker) {
 		}
 	})
 	if shouldNudge {
-		s.nudgeAgent(ctx, tracker, "Progress check — heartbeat is stale. Report status or request help immediately.")
+		s.nudgeAgent(ctx, tracker, "Recovery required. Heartbeat is stale. Report current state, blocker, or next action immediately.")
 		s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
-			"action": "stuck_nudge",
+			"action": "recovery_nudge",
 		})
 	}
 }
@@ -286,7 +379,7 @@ func (s *Service) handleLoopDetection(ctx context.Context, tracker *AgentTracker
 		return
 	}
 	body := "Loop detected.\n\nBreak the repetition immediately.\n1. Stop the current repeated action.\n2. Report current state.\n3. Wait for updated instructions if blocked."
-	_, _ = s.mailbox.Send(ctx, tracker.AgentID, "supervisor", "LOOP DETECTED", body, agentmailbox.SendOptions{Priority: 0})
+	_, _ = s.mailbox.Send(ctx, tracker.AgentID, "supervisor", "LOOP DETECTED", body, agentmailbox.SendOptions{Priority: 0, SkipNudge: true})
 	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
 		existing.Status = "needs_reassignment"
 		existing.CriticalIssue = "loop detected"

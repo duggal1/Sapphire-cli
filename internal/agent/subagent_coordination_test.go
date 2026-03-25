@@ -10,8 +10,8 @@ func TestClassifySubAgentTurnBlocked(t *testing.T) {
 		Summary:  "Need dependency state",
 		Blockers: "Waiting on dependency",
 	})
-	if outcome.Status != subAgentStatusStuck {
-		t.Fatalf("expected blocked report to map to stuck status, got %q", outcome.Status)
+	if outcome.Status != subAgentStatusBlocked {
+		t.Fatalf("expected blocked report to map to blocked status, got %q", outcome.Status)
 	}
 	if outcome.ReportStatus != "blocked" {
 		t.Fatalf("expected blocked report status, got %q", outcome.ReportStatus)

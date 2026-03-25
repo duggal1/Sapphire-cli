@@ -25,13 +25,19 @@ import (
 type subAgentStatus string
 
 const (
-	subAgentStatusQueued    subAgentStatus = "queued"
-	subAgentStatusRunning   subAgentStatus = "running"
-	subAgentStatusDegraded  subAgentStatus = "degraded"
-	subAgentStatusStuck     subAgentStatus = "stuck"
-	subAgentStatusCompleted subAgentStatus = "completed"
-	subAgentStatusError     subAgentStatus = "error"
-	subAgentStatusClosed    subAgentStatus = "closed"
+	subAgentStatusQueued        subAgentStatus = "queued"
+	subAgentStatusStarting      subAgentStatus = "starting"
+	subAgentStatusReady         subAgentStatus = "ready"
+	subAgentStatusWaitingOnMail subAgentStatus = "waiting_on_mail"
+	subAgentStatusRetrying      subAgentStatus = "retrying"
+	subAgentStatusRunning       subAgentStatus = "running"
+	subAgentStatusDegraded      subAgentStatus = "degraded"
+	subAgentStatusBlocked       subAgentStatus = "blocked"
+	subAgentStatusTimedOut      subAgentStatus = "timed_out"
+	subAgentStatusStuck         subAgentStatus = "stuck"
+	subAgentStatusCompleted     subAgentStatus = "completed"
+	subAgentStatusError         subAgentStatus = "error"
+	subAgentStatusClosed        subAgentStatus = "closed"
 
 	maxForkedContextMessages     = 40
 	subAgentSessionCreateTimeout = 10 * time.Second
@@ -54,8 +60,10 @@ type subAgentSubmission struct {
 	Result      string
 	Err         string
 	StartedAt   time.Time
+	ReadyAt     time.Time
 	HeartbeatAt time.Time
 	EndedAt     time.Time
+	Attempts    int
 	Notified    bool
 }
 
@@ -214,8 +222,13 @@ func (c *coordinator) ensureSubAgentRegistry() *subAgentRegistry {
 func (r *subAgentRunner) snapshot() subAgentSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	startedAt := r.assignment.CreatedAt
+	if submission := r.currentSubmissionLocked(); submission != nil && !submission.StartedAt.IsZero() {
+		startedAt = submission.StartedAt
+	}
 	return subAgentSnapshot{
 		ID:                   r.id,
+		Title:                firstNonEmptyString(strings.TrimSpace(r.assignment.Title), strings.TrimSpace(r.assignment.TaskKey), strings.TrimSpace(r.assignment.Task)),
 		Status:               r.effectiveStatusLocked(),
 		LastResult:           r.lastResult,
 		LastError:            r.lastError,
@@ -229,7 +242,7 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		Task:                 r.assignment.Task,
 		TaskKey:              r.assignment.TaskKey,
 		Domains:              r.assignment.Domains,
-		StartedAt:            r.assignment.CreatedAt,
+		StartedAt:            startedAt,
 		UpdatedAt:            r.assignment.UpdatedAt,
 		ValidationPassed:     r.validationPassed,
 		ValidationErrors:     r.validationErrors,
@@ -244,12 +257,12 @@ func (r *subAgentRunner) effectiveStatusLocked() subAgentStatus {
 		return subAgentStatusClosed
 	}
 	switch r.status {
-	case subAgentStatusDegraded, subAgentStatusStuck, subAgentStatusError:
+	case subAgentStatusDegraded, subAgentStatusBlocked, subAgentStatusTimedOut, subAgentStatusStuck, subAgentStatusError:
 		return r.status
 	}
 	if r.pending > 0 {
 		switch r.status {
-		case subAgentStatusRunning, subAgentStatusDegraded:
+		case subAgentStatusStarting, subAgentStatusReady, subAgentStatusWaitingOnMail, subAgentStatusRetrying, subAgentStatusRunning, subAgentStatusDegraded:
 			return r.status
 		default:
 			return subAgentStatusQueued
@@ -265,6 +278,56 @@ func (r *subAgentRunner) effectiveStatusLocked() subAgentStatus {
 		return submission.Status
 	}
 	return r.status
+}
+
+func (r *subAgentRunner) currentSubmissionLocked() *subAgentSubmission {
+	if r == nil {
+		return nil
+	}
+	if submission := r.submissions[r.lastSubmission]; submission != nil {
+		return submission
+	}
+	return nil
+}
+
+func (c *coordinator) transitionSubAgentSubmission(runner *subAgentRunner, submissionID string, status subAgentStatus, stage SubAgentLifecycleStage, eventType pubsub.EventType, heartbeatContext string) {
+	if runner == nil || submissionID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	runner.mu.Lock()
+	submission := runner.submissions[submissionID]
+	if submission == nil {
+		submission = &subAgentSubmission{ID: submissionID}
+		runner.submissions[submissionID] = submission
+	}
+	if isSubAgentFinalStatus(submission.Status) {
+		runner.mu.Unlock()
+		return
+	}
+	submission.Status = status
+	if submission.StartedAt.IsZero() {
+		submission.StartedAt = now
+	}
+	if status == subAgentStatusReady && submission.ReadyAt.IsZero() {
+		submission.ReadyAt = now
+	}
+	submission.HeartbeatAt = now
+	runner.status = status
+	runner.lastHeartbeat = now
+	runner.heartbeatContext = heartbeatContext
+	runner.assignment.UpdatedAt = now
+	broker := runner.statusBroker
+	payload := runner.lifecycleEventLocked(submissionID, stage, "")
+	runner.mu.Unlock()
+
+	publishSubAgentStatus(broker, status)
+	c.syncRunnerOrchestrationState(context.Background(), runner)
+	c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
+		"submission_id": submissionID,
+		"status":        status,
+	})
+	publishSubAgentLifecycleEvent(eventType, payload)
 }
 
 func (r *subAgentRunner) hasOutstandingWorkLocked() bool {
@@ -356,7 +419,7 @@ func (c *coordinator) startSubAgentHeartbeat(runner *subAgentRunner, submissionI
 				return
 			case <-ticker.C:
 				runner.mu.Lock()
-				if runner.closed || runner.lastSubmission != submissionID || (runner.status != subAgentStatusRunning && runner.status != subAgentStatusDegraded) {
+				if runner.closed || runner.lastSubmission != submissionID || (runner.status != subAgentStatusRunning && runner.status != subAgentStatusDegraded && runner.status != subAgentStatusWaitingOnMail) {
 					runner.mu.Unlock()
 					return
 				}
@@ -460,7 +523,7 @@ func (r *subAgentRunner) assessHeartbeatHealth(now time.Time) subAgentHeartbeatH
 		r.firstStaleObservedAt = time.Time{}
 		return subAgentHeartbeatHealthy
 	}
-	if r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
+	if r.status != subAgentStatusStarting && r.status != subAgentStatusReady && r.status != subAgentStatusWaitingOnMail && r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
 		r.staleMisses = 0
 		r.firstStaleObservedAt = time.Time{}
 		return subAgentHeartbeatHealthy
@@ -484,7 +547,7 @@ func (r *subAgentRunner) assessHeartbeatHealth(now time.Time) subAgentHeartbeatH
 func (r *subAgentRunner) markDegraded(now time.Time) (string, bool, *pubsub.Broker[subAgentStatus], SubAgentLifecycleEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
+	if r.status != subAgentStatusStarting && r.status != subAgentStatusReady && r.status != subAgentStatusWaitingOnMail && r.status != subAgentStatusRunning && r.status != subAgentStatusDegraded {
 		return "", false, nil, SubAgentLifecycleEvent{}
 	}
 	if r.lastSubmission == "" {
@@ -548,6 +611,7 @@ func (r *subAgentRunner) close() {
 
 type subAgentSnapshot struct {
 	ID                   string         `json:"id"`
+	Title                string         `json:"title,omitempty"`
 	Status               subAgentStatus `json:"status"`
 	LastResult           string         `json:"last_result,omitempty"`
 	LastError            string         `json:"last_error,omitempty"`
@@ -571,15 +635,18 @@ type subAgentSnapshot struct {
 }
 
 type subAgentStatusEntry struct {
-	ID           string         `json:"id"`
-	Status       subAgentStatus `json:"status"`
-	SubmissionID string         `json:"submission_id,omitempty"`
-	WorkDir      string         `json:"work_dir,omitempty"`
-	StartedAt    time.Time      `json:"started_at,omitempty"`
+	ID               string         `json:"id"`
+	Title            string         `json:"title,omitempty"`
+	Status           subAgentStatus `json:"status"`
+	SubmissionID     string         `json:"submission_id,omitempty"`
+	WorkDir          string         `json:"work_dir,omitempty"`
+	StartedAt        time.Time      `json:"started_at,omitempty"`
+	HeartbeatContext string         `json:"heartbeat_context,omitempty"`
 }
 
 type subAgentCollectedResult struct {
 	ID                   string         `json:"id"`
+	Title                string         `json:"title,omitempty"`
 	SubmissionID         string         `json:"submission_id,omitempty"`
 	Status               subAgentStatus `json:"status"`
 	Result               string         `json:"result,omitempty"`
@@ -801,15 +868,16 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				submission = &subAgentSubmission{ID: input.submissionID, Prompt: input.prompt}
 				runner.submissions[input.submissionID] = submission
 			}
-			if submission.Status == subAgentStatusRunning || isSubAgentFinalStatus(submission.Status) {
+			if submission.Status == subAgentStatusStarting || submission.Status == subAgentStatusReady || submission.Status == subAgentStatusWaitingOnMail || submission.Status == subAgentStatusRunning || isSubAgentFinalStatus(submission.Status) {
 				runner.mu.Unlock()
 				return
 			}
 			now := time.Now().UTC()
-			submission.Status = subAgentStatusRunning
+			submission.Status = subAgentStatusStarting
 			submission.StartedAt = now
 			submission.HeartbeatAt = now
-			runner.status = subAgentStatusRunning
+			submission.Attempts++
+			runner.status = subAgentStatusStarting
 			if runner.pending > 0 {
 				runner.pending--
 			}
@@ -819,11 +887,11 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.staleMisses = 0
 			runner.firstStaleObservedAt = time.Time{}
 			runner.lastHeartbeat = now
-			runner.heartbeatContext = "starting sub-agent run"
+			runner.heartbeatContext = "booting sub-agent runtime"
 			runner.assignment.UpdatedAt = now
 			broker := runner.statusBroker
 			runner.mu.Unlock()
-			publishSubAgentStatus(broker, subAgentStatusRunning)
+			publishSubAgentStatus(broker, subAgentStatusStarting)
 			c.syncRunnerOrchestrationState(context.Background(), runner)
 			c.markRunnerHookInProgress(context.Background(), runner)
 			c.writeSessionCheckpoint(context.Background(), runner.sessionID, runner.id, runner.assignment.ID, runner.parentSession, buildCheckpointSummary("subagent_turn_started", input.prompt, "", "running", map[string]any{
@@ -832,7 +900,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				"task_key":      runner.assignment.TaskKey,
 			}))
 
-			c.publishSubAgentEvent(SubAgentRunningEvent, runner, submission.ID, SubAgentStageRunning, "")
+			c.publishSubAgentEvent(SubAgentStartingEvent, runner, submission.ID, SubAgentStageStarting, "")
 
 			runCtx, cancel := context.WithTimeout(context.Background(), subAgentTurnTimeout)
 			runner.mu.Lock()
@@ -842,9 +910,12 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 
 			prompt := input.prompt
 			if mailboxSummary := c.drainRunnerInboxSummary(context.Background(), runner); mailboxSummary != "" {
+				c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusWaitingOnMail, SubAgentStageWaitingOnMail, SubAgentWaitingOnMailEvent, "processing coordination mail")
 				prompt = mailboxSummary + "\n\n" + prompt
 			}
 			skillContext := c.buildSubAgentPersistentMemoryContext(context.Background(), runner)
+			c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusReady, SubAgentStageReady, SubAgentReadyEvent, "runtime ready")
+			c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusRunning, SubAgentStageRunning, SubAgentRunningEvent, "executing assigned task")
 			result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt, skillContext)
 			stopHeartbeat()
 			cancel()
@@ -924,7 +995,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				runner.submissions[input.submissionID] = submission
 			}
 			now = time.Now().UTC()
-			if submission.Status == subAgentStatusStuck || submission.Status == subAgentStatusClosed {
+			if isSubAgentFinalStatus(submission.Status) {
 				runner.mu.Unlock()
 				return
 			}
@@ -933,16 +1004,16 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.lastHeartbeat = now
 			if timedOut {
 				timeoutErr := fmt.Sprintf("sub-agent turn timed out after %s", subAgentTurnTimeout)
-				submission.Status = subAgentStatusStuck
+				submission.Status = subAgentStatusTimedOut
 				submission.Err = timeoutErr
-				runner.status = subAgentStatusStuck
+				runner.status = subAgentStatusTimedOut
 				runner.lastError = timeoutErr
 				runner.lastProgress = ""
 				runner.staleMisses = 0
 				runner.firstStaleObservedAt = time.Time{}
 				runner.heartbeatContext = timeoutErr
-				eventType = SubAgentStuckEvent
-				stage = SubAgentStageStuck
+				eventType = SubAgentTimedOutEvent
+				stage = SubAgentStageTimedOut
 				errMsg = timeoutErr
 			} else if err != nil {
 				submission.Status = subAgentStatusError
@@ -995,7 +1066,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			payload = runner.lifecycleEventLocked(submission.ID, stage, errMsg)
 			runner.mu.Unlock()
 			c.syncRunnerOrchestrationState(context.Background(), runner)
-			if payload.Status == subAgentStatusCompleted || payload.Status == subAgentStatusClosed {
+			if isSubAgentFinalStatus(payload.Status) {
 				c.clearRunnerHook(context.Background(), runner)
 			}
 			c.recordOrchestrationActivity(context.Background(), runner.id, string(stage), map[string]any{
@@ -1304,8 +1375,17 @@ func (c *coordinator) waitSubAgents(ctx context.Context, ids []string, timeout t
 				case subAgentHeartbeatStuck:
 					runner.mu.Lock()
 					submissionID := runner.lastSubmission
+					status := runner.status
 					runner.mu.Unlock()
-					c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStuckAge), subAgentStatusStuck, SubAgentStageStuck, SubAgentStuckEvent)
+					finalStatus := subAgentStatusStuck
+					stage := SubAgentStageStuck
+					eventType := SubAgentStuckEvent
+					if status == subAgentStatusStarting || status == subAgentStatusReady || status == subAgentStatusWaitingOnMail {
+						finalStatus = subAgentStatusTimedOut
+						stage = SubAgentStageTimedOut
+						eventType = SubAgentTimedOutEvent
+					}
+					c.failSubAgentSubmission(runner, submissionID, fmt.Sprintf("sub-agent heartbeat stale for more than %s", subAgentHeartbeatStuckAge), finalStatus, stage, eventType)
 				}
 			}
 			snapshots, allFinal := c.snapshotSubAgentsByID(ids)
@@ -1338,8 +1418,14 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	startedAt := r.assignment.CreatedAt
+	if submission := r.currentSubmissionLocked(); submission != nil && !submission.StartedAt.IsZero() {
+		startedAt = submission.StartedAt
+	}
+
 	result := subAgentCollectedResult{
 		ID:                   r.id,
+		Title:                firstNonEmptyString(strings.TrimSpace(r.assignment.Title), strings.TrimSpace(r.assignment.TaskKey), strings.TrimSpace(r.assignment.Task)),
 		SubmissionID:         r.lastSubmission,
 		Status:               r.status,
 		Result:               r.lastResult,
@@ -1347,7 +1433,7 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 		Progress:             r.lastProgress,
 		WorkDir:              r.workDir,
 		Branch:               r.assignment.Branch,
-		StartedAt:            r.assignment.CreatedAt,
+		StartedAt:            startedAt,
 		ValidationPassed:     r.validationPassed,
 		ValidationErrors:     r.validationErrors,
 		ValidationHasChanges: r.validationHasChanges,
@@ -1373,11 +1459,13 @@ func (c *coordinator) waitSubAgentStatuses(ctx context.Context, ids []string, ti
 	statuses := make([]subAgentStatusEntry, 0, len(snapshots))
 	for _, snap := range snapshots {
 		statuses = append(statuses, subAgentStatusEntry{
-			ID:           snap.ID,
-			Status:       snap.Status,
-			SubmissionID: snap.LastSubmission,
-			WorkDir:      snap.WorkDir,
-			StartedAt:    snap.StartedAt,
+			ID:               snap.ID,
+			Title:            snap.Title,
+			Status:           snap.Status,
+			SubmissionID:     snap.LastSubmission,
+			WorkDir:          snap.WorkDir,
+			StartedAt:        snap.StartedAt,
+			HeartbeatContext: snap.HeartbeatContext,
 		})
 	}
 	return statuses, timedOut
@@ -1415,7 +1503,7 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 
 	if workDir != "" && isSubAgentWorktree(workDir) {
 		// If the agent is in a non-success state, consider quarantine
-		if status == subAgentStatusError || status == subAgentStatusClosed || status == subAgentStatusQueued {
+		if status == subAgentStatusError || status == subAgentStatusTimedOut || status == subAgentStatusClosed || status == subAgentStatusQueued {
 			if root := c.cfg.WorkingDir(); root != "" {
 				// quarantineWorktree helper checks for changes internally;
 				// if changes exist, it moves to quarantine and we clear cleanup.

@@ -50,7 +50,7 @@ func isSubAgentFinalStatus(status subAgentStatus) bool {
 
 func isSubAgentActiveStatus(status subAgentStatus) bool {
 	switch status {
-	case subAgentStatusQueued, subAgentStatusRunning, subAgentStatusDegraded:
+	case subAgentStatusQueued, subAgentStatusStarting, subAgentStatusReady, subAgentStatusWaitingOnMail, subAgentStatusRetrying, subAgentStatusRunning, subAgentStatusDegraded:
 		return true
 	default:
 		return false

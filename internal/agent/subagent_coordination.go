@@ -219,10 +219,10 @@ func classifySubAgentTurn(report subAgentReport) subAgentTurnDisposition {
 	switch status {
 	case "blocked":
 		return subAgentTurnDisposition{
-			Status:       subAgentStatusStuck,
+			Status:       subAgentStatusBlocked,
 			ReportStatus: "blocked",
-			Stage:        SubAgentStageStuck,
-			EventType:    string(SubAgentStuckEvent),
+			Stage:        SubAgentStageBlocked,
+			EventType:    string(SubAgentBlockedEvent),
 			ErrMsg:       firstNonEmptyString(strings.TrimSpace(report.Blockers), strings.TrimSpace(report.Summary), "sub-agent reported blocked"),
 		}
 	case "needs_followup":

@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/ui/shimmer"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
@@ -23,11 +24,13 @@ type subAgentSpawnResult struct {
 }
 
 type subAgentStatusEntry struct {
-	ID           string    `json:"id"`
-	Status       string    `json:"status"`
-	SubmissionID string    `json:"submission_id,omitempty"`
-	WorkDir      string    `json:"work_dir,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
+	ID               string    `json:"id"`
+	Title            string    `json:"title,omitempty"`
+	Status           string    `json:"status"`
+	SubmissionID     string    `json:"submission_id,omitempty"`
+	WorkDir          string    `json:"work_dir,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
 }
 
 type subAgentWaitResult struct {
@@ -37,6 +40,7 @@ type subAgentWaitResult struct {
 
 type subAgentCollectedResult struct {
 	ID           string    `json:"id"`
+	Title        string    `json:"title,omitempty"`
 	SubmissionID string    `json:"submission_id,omitempty"`
 	Status       string    `json:"status"`
 	Result       string    `json:"result,omitempty"`
@@ -426,6 +430,9 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 		children := make([]*TreeNode, 0, len(payload.Agents))
 		for i, entry := range payload.Agents {
 			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Sub-Agent %d", i+1))})
+			if ctx := strings.TrimSpace(entry.HeartbeatContext); ctx != "" && normalizeSubAgentStatus(entry.Status) != "completed" {
+				children = append(children, &TreeNode{Label: renderSubAgentField(sty, "State Detail", oneLine(ctx))})
+			}
 		}
 		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -456,6 +463,7 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 	if entry.ID != "" || entry.Status != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{
 			ID:           entry.ID,
+			Title:        entry.Title,
 			Status:       entry.Status,
 			SubmissionID: entry.SubmissionID,
 			WorkDir:      entry.WorkDir,
@@ -499,7 +507,7 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Blockers", oneLine(report.Blockers))})
 	}
 
-	label := fmt.Sprintf("Sub-Agent %d", index)
+	label := firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), fmt.Sprintf("Sub-Agent %d", index))
 	return &TreeNode{Label: renderSubAgentAgentTitle(sty, label), Children: sections}
 }
 
@@ -618,7 +626,7 @@ func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) stri
 }
 
 func renderSubAgentAgentLineWithLabel(sty *styles.Styles, entry subAgentStatusEntry, label string) string {
-	id := subAgentDisplayLabel(firstNonEmptyOrchestrationValue(label, entry.ID))
+	id := subAgentDisplayLabel(firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), label, entry.ID))
 	if id == "" {
 		id = "Sub-Agent"
 	}
@@ -704,8 +712,22 @@ func humanizeSubAgentStatus(status string) string {
 		return ""
 	case "queued":
 		return "Queued"
+	case "starting":
+		return "Starting"
+	case "ready":
+		return "Ready"
+	case "waiting_on_mail":
+		return "Waiting on Mail"
+	case "retrying":
+		return "Retrying"
 	case "running":
 		return "Running"
+	case "degraded":
+		return "Degraded"
+	case "blocked":
+		return "Blocked"
+	case "timed_out":
+		return "Timed Out"
 	case "stuck":
 		return "Stuck"
 	case "completed":
@@ -723,10 +745,12 @@ func subAgentStatusIcon(status string) string {
 	switch normalizeSubAgentStatus(status) {
 	case "completed":
 		return "✓"
-	case "stuck", "error":
+	case "blocked", "timed_out", "stuck", "error":
 		return "✕"
 	case "closed":
 		return "○"
+	case "starting", "ready", "waiting_on_mail", "running", "degraded":
+		return shimmer.Spinner(nil, true)
 	default:
 		return "●"
 	}
@@ -734,13 +758,13 @@ func subAgentStatusIcon(status string) string {
 
 func subAgentStatusColor(status string) color.Color {
 	switch normalizeSubAgentStatus(status) {
-	case "completed", "running":
+	case "completed":
 		return lipgloss.Color("#9FE3C1")
-	case "stuck", "error":
+	case "blocked", "timed_out", "stuck", "error":
 		return lipgloss.Color("#E48AA7")
 	case "closed":
 		return lipgloss.Color("#B8AFBF")
-	case "queued":
+	case "starting", "ready", "waiting_on_mail", "running", "degraded", "queued":
 		return lipgloss.Color("#B9A3E8")
 	default:
 		return lipgloss.Color("#B9A3E8")
@@ -819,7 +843,7 @@ func backgroundSubAgentsPayloadActive(result *message.ToolResult) bool {
 
 func isActiveSubAgentStatus(status string) bool {
 	switch normalizeSubAgentStatus(status) {
-	case "queued", "running", "degraded":
+	case "queued", "starting", "ready", "waiting_on_mail", "retrying", "running", "degraded":
 		return true
 	default:
 		return false

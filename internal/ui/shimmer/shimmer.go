@@ -247,27 +247,33 @@ func intensityAt(index int, position float64) float32 {
 func renderRune(mode renderMode, intensity float32, ch string) string {
 	switch mode {
 	case renderTrueColor:
-		baseColor := [3]uint8{126, 74, 214}
-		highlightColor := [3]uint8{191, 146, 255}
+		// Very dark grey-purple base (almost grey)
+		baseColor := [3]uint8{60, 45, 75}
+		// Extremely bright, almost white purple highlight
+		highlightColor := [3]uint8{245, 220, 255}
 		r, g, b := blend(highlightColor, baseColor, clamp01(intensity))
 		return renderRGB(r, g, b, ch)
 	case renderANSI256:
-		index := 98 + int(math.Round(float64(intensity)*85))
-		if index < 98 {
-			index = 98
+		// Map intensity to bright purple range (light lavenders to bright purples)
+		index := 225 + int(math.Round(float64(intensity)*25))
+		if index < 225 {
+			index = 225
 		}
-		if index > 183 {
-			index = 183
+		if index > 255 {
+			index = 255
 		}
 		return renderIndexedColor(index, intensity > 0.7, ch)
 	case renderDecorated:
 		switch {
 		case intensity < 0.2:
-			return "\033[2m\033[38;5;98m" + ch + "\033[0m"
+			// Dark grey-purple
+			return "\033[2m\033[38;5;243m" + ch + "\033[0m"
 		case intensity < 0.6:
-			return "\033[38;5;141m" + ch + "\033[0m"
+			// Medium bright purple
+			return "\033[38;5;183m" + ch + "\033[0m"
 		default:
-			return "\033[1m\033[38;5;183m" + ch + "\033[0m"
+			// Very bright purple (almost white)
+			return "\033[1m\033[38;5;231m" + ch + "\033[0m"
 		}
 	default:
 		return ch

@@ -163,7 +163,7 @@ func renderBackgroundSubAgentNode(sty *styles.Styles, entry agent.BackgroundSubA
 }
 
 func backgroundSubAgentDisplayTitle(entry agent.BackgroundSubAgentView, index int) string {
-	return fmt.Sprintf("Sub-Agent %d", index)
+	return firstNonEmptyBackgroundText(strings.TrimSpace(entry.Title), strings.TrimSpace(entry.Name), fmt.Sprintf("Sub-Agent %d", index))
 }
 
 func backgroundSubAgentFocus(entry agent.BackgroundSubAgentView) string {

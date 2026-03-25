@@ -165,11 +165,13 @@ func worktreeLifecycleStatusForRunner(status string) string {
 	switch strings.TrimSpace(status) {
 	case string(subAgentStatusQueued):
 		return "queued"
-	case string(subAgentStatusRunning), string(subAgentStatusDegraded):
+	case string(subAgentStatusStarting), string(subAgentStatusReady), string(subAgentStatusWaitingOnMail), string(subAgentStatusRetrying), string(subAgentStatusRunning), string(subAgentStatusDegraded):
 		return "running"
 	case string(subAgentStatusCompleted), string(subAgentStatusClosed):
 		return "completed"
-	case string(subAgentStatusStuck):
+	case string(subAgentStatusBlocked):
+		return "blocked"
+	case string(subAgentStatusTimedOut), string(subAgentStatusStuck):
 		return "stuck"
 	case string(subAgentStatusError):
 		return "failed"
@@ -194,9 +196,9 @@ func buildRunnerWorkItemDescription(runner *subAgentRunner) string {
 
 func workItemStatusForRunner(status subAgentStatus) string {
 	switch status {
-	case subAgentStatusRunning, subAgentStatusDegraded:
+	case subAgentStatusStarting, subAgentStatusReady, subAgentStatusWaitingOnMail, subAgentStatusRetrying, subAgentStatusRunning, subAgentStatusDegraded:
 		return "in_progress"
-	case subAgentStatusStuck, subAgentStatusError:
+	case subAgentStatusBlocked, subAgentStatusTimedOut, subAgentStatusStuck, subAgentStatusError:
 		return "blocked"
 	case subAgentStatusCompleted, subAgentStatusClosed:
 		return "closed"

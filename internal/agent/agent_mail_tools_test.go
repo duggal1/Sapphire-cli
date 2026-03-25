@@ -50,8 +50,8 @@ func TestNudgeMailboxRecipientQueuesDurableDispatchWithoutHiddenRun(t *testing.T
 
 	coord := &coordinator{
 		orchestrationStore: store,
-		mailbox:          agentmailbox.NewService(store, nil),
-		subAgentRegistry: newSubAgentRegistry(),
+		mailbox:            agentmailbox.NewService(store, nil),
+		subAgentRegistry:   newSubAgentRegistry(),
 	}
 	runner := &subAgentRunner{
 		id:            "agent-child",

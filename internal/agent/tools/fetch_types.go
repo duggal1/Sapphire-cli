@@ -85,18 +85,18 @@ func (p *AgenticFetchParams) UnmarshalJSON(data []byte) error {
 
 func (p *WebSearchParams) UnmarshalJSON(data []byte) error {
 	type rawWebSearchParams struct {
-		Query      string `json:"query,omitempty"`
-		Q          string `json:"q,omitempty"`
-		Search     string `json:"search,omitempty"`
-		SearchTerm string `json:"search_query,omitempty"`
-		Term       string `json:"term,omitempty"`
+		Query      string   `json:"query,omitempty"`
+		Q          string   `json:"q,omitempty"`
+		Search     string   `json:"search,omitempty"`
+		SearchTerm string   `json:"search_query,omitempty"`
+		Term       string   `json:"term,omitempty"`
 		Queries    []string `json:"queries,omitempty"`
 		Searches   []string `json:"searches,omitempty"`
-		MaxResults int    `json:"max_results,omitempty"`
-		NumResults int    `json:"num_results,omitempty"`
-		Count      int    `json:"count,omitempty"`
-		Limit      int    `json:"limit,omitempty"`
-		Results    int    `json:"results,omitempty"`
+		MaxResults int      `json:"max_results,omitempty"`
+		NumResults int      `json:"num_results,omitempty"`
+		Count      int      `json:"count,omitempty"`
+		Limit      int      `json:"limit,omitempty"`
+		Results    int      `json:"results,omitempty"`
 	}
 
 	var raw rawWebSearchParams

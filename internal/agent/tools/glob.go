@@ -26,8 +26,8 @@ const (
 var globDescription []byte
 
 type GlobParams struct {
-	Pattern string `json:"pattern" description:"The glob pattern to match files against"`
-	Path    string `json:"path,omitempty" description:"The directory to search in. Defaults to the current working directory."`
+	Pattern string   `json:"pattern" description:"The glob pattern to match files against"`
+	Path    string   `json:"path,omitempty" description:"The directory to search in. Defaults to the current working directory."`
 	Paths   []string `json:"paths,omitempty" description:"Optional list of directories to search in one parallel call"`
 }
 

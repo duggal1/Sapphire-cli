@@ -301,10 +301,15 @@ func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 	case "degraded", "stalled":
 		s.handleStuckAgent(ctx, tracker)
 	case "timed_out":
+		issue := "sub-agent timed out or failed startup"
+		if heartbeatContext := strings.TrimSpace(runtime.HeartbeatContext); heartbeatContext != "" {
+			issue += " | last heartbeat: " + heartbeatContext
+		}
 		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
 			existing.Status = "needs_reassignment"
-			existing.CriticalIssue = "sub-agent timed out or failed startup"
+			existing.CriticalIssue = issue
 		})
+		s.escalateCriticalIssueNow(ctx, tracker, issue)
 	case "waiting_on_dependency":
 		s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
 			existing.Status = "waiting_on_dependency"
@@ -562,6 +567,35 @@ func (s *Service) escalateCriticalIssues(ctx context.Context, trackers []*AgentT
 		}
 		_, _ = s.mailbox.Send(ctx, mainMailboxID, "supervisor", "CRITICAL: Sub-agent intervention required", strings.Join(issues, "\n"), agentmailbox.SendOptions{Priority: 0, SkipNudge: true})
 	}
+}
+
+func (s *Service) escalateCriticalIssueNow(ctx context.Context, tracker *AgentTracker, issue string) {
+	if tracker == nil || strings.TrimSpace(issue) == "" || s.mailbox == nil || s.hooks.ResolveMainMailboxID == nil {
+		return
+	}
+	now := time.Now().UTC()
+	shouldSend := false
+	sessionID := tracker.SessionID
+	agentID := tracker.AgentID
+	status := tracker.Status
+	s.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		if !existing.LastEscalatedAt.IsZero() && now.Sub(existing.LastEscalatedAt) < criticalEscalationSpacing {
+			return
+		}
+		existing.LastEscalatedAt = now
+		sessionID = firstNonEmpty(existing.SessionID, sessionID)
+		status = firstNonEmpty(existing.Status, status)
+		shouldSend = true
+	})
+	if !shouldSend {
+		return
+	}
+	mainMailboxID := s.hooks.ResolveMainMailboxID(sessionID)
+	if mainMailboxID == "" {
+		return
+	}
+	body := fmt.Sprintf("- %s | %s | %s", agentID, status, issue)
+	_, _ = s.mailbox.Send(ctx, mainMailboxID, "supervisor", "CRITICAL: Sub-agent intervention required", body, agentmailbox.SendOptions{Priority: 0, SkipNudge: true})
 }
 
 func (s *Service) reportToMainAgent(ctx context.Context, tracker *AgentTracker, validation ValidationState) {

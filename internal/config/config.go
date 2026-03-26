@@ -268,6 +268,7 @@ type Options struct {
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
 	GoogleGrounding           bool         `json:"google_grounding,omitempty" jsonschema:"description=Enable Google search grounding for Gemini models,default=false"`
 	JinaAPIKey                string       `json:"jina_api_key,omitempty" jsonschema:"description=API key for Jina embeddings used by codebase indexing"`
+	SkillsMPAPIKey            string       `json:"skillsmp_api_key,omitempty" jsonschema:"description=API key for SkillsMP marketplace browsing"`
 	AgentMaxDepth             int          `json:"agent_max_depth,omitempty" jsonschema:"description=Maximum nested sub-agent depth,default=2,example=2"`
 	AgentMaxThreads           int          `json:"agent_max_threads,omitempty" jsonschema:"description=Maximum concurrent sub-agents per session,default=6,example=6"`
 }
@@ -539,6 +540,33 @@ func (c *Config) ClearJinaAPIKey() error {
 		c.Options.JinaAPIKey = ""
 	}
 	return c.RemoveConfigField("options.jina_api_key")
+}
+
+func (c *Config) ResolveSkillsMPAPIKey() string {
+	if c != nil && c.Options != nil {
+		if raw := strings.TrimSpace(c.Options.SkillsMPAPIKey); raw != "" {
+			if resolved, err := c.Resolve(raw); err == nil && strings.TrimSpace(resolved) != "" {
+				return strings.TrimSpace(resolved)
+			}
+			return raw
+		}
+	}
+	return strings.TrimSpace(os.Getenv("SKILLSMP_API_KEY"))
+}
+
+func (c *Config) SetSkillsMPAPIKey(apiKey string) error {
+	if c.Options == nil {
+		c.Options = &Options{}
+	}
+	c.Options.SkillsMPAPIKey = strings.TrimSpace(apiKey)
+	return c.SetConfigField("options.skillsmp_api_key", c.Options.SkillsMPAPIKey)
+}
+
+func (c *Config) ClearSkillsMPAPIKey() error {
+	if c.Options != nil {
+		c.Options.SkillsMPAPIKey = ""
+	}
+	return c.RemoveConfigField("options.skillsmp_api_key")
 }
 
 func IsGemini3Model(modelID string) bool {

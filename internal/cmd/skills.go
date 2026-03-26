@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"log/slog"
-	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -16,7 +15,6 @@ var skillsCmd = &cobra.Command{
 	Short: "Browse and install SkillsMP skills",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_ = args
-		apiKey := os.Getenv("SKILLSMP_API_KEY")
 		cwd, err := ResolveCwd(cmd)
 		if err != nil {
 			return err
@@ -29,6 +27,7 @@ var skillsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		apiKey := cfg.ResolveSkillsMPAPIKey()
 
 		styleSet := styles.DefaultStyles(false)
 		model := skillsbrowser.New(&styleSet, apiKey, cfg.Options.DataDirectory)

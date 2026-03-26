@@ -124,6 +124,9 @@ type (
 		APIKey        string
 		ContinueIndex bool
 	}
+	ActionSaveSkillsMPAPIKey struct {
+		APIKey string
+	}
 )
 
 // Messages for OAuth2 device flow dialog.

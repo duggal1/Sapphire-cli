@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/skillsmp"
 )
 
@@ -29,8 +30,13 @@ func NewInstallSkillTool() fantasy.AgentTool {
 			}
 
 			apiKey := strings.TrimSpace(os.Getenv("SKILLSMP_API_KEY"))
+			if workingDir := strings.TrimSpace(GetWorkingDirFromContext(ctx)); workingDir != "" {
+				if cfg, err := config.Load(workingDir, "", false); err == nil {
+					apiKey = cfg.ResolveSkillsMPAPIKey()
+				}
+			}
 			if apiKey == "" {
-				return fantasy.NewTextErrorResponse("SKILLSMP_API_KEY is required"), nil
+				return fantasy.NewTextErrorResponse("SkillsMP API key is required"), nil
 			}
 
 			client := skillsmp.NewClient(apiKey)

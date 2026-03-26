@@ -102,7 +102,7 @@ func New(t *styles.Styles, apiKey, dataDir string) *Model {
 	)
 
 	if strings.TrimSpace(apiKey) == "" {
-		m.warningLine = "SKILLSMP_API_KEY is not set. Browsing and installs are disabled."
+		m.warningLine = "SkillsMP API key is not set. Browsing and installs are disabled."
 		m.focus = focusInput
 	}
 
@@ -243,7 +243,7 @@ func (m *Model) View() tea.View {
 func (m *Model) fetchResults(query string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if strings.TrimSpace(m.client.APIKey) == "" {
-		m.warningLine = "SKILLSMP_API_KEY is not set. Browsing and installs are disabled."
+		m.warningLine = "SkillsMP API key is not set. Browsing and installs are disabled."
 		return nil
 	}
 

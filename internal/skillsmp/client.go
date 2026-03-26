@@ -90,7 +90,7 @@ func (c *Client) FetchRawSkill(ctx context.Context, skill Skill) ([]byte, error)
 
 func (c *Client) fetchSkills(ctx context.Context, endpoint string, query url.Values) ([]Skill, error) {
 	if strings.TrimSpace(c.APIKey) == "" {
-		return nil, errors.New("SKILLSMP_API_KEY is required")
+		return nil, errors.New("SkillsMP API key is required")
 	}
 
 	reqURL, err := url.JoinPath(c.BaseURL, strings.TrimPrefix(endpoint, "/"))

@@ -1457,6 +1457,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		} else {
 			cmds = append(cmds, util.ReportInfo("Jina API key saved"))
 		}
+	case dialog.ActionSaveSkillsMPAPIKey:
+		if err := m.com.Config().SetSkillsMPAPIKey(msg.APIKey); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		m.dialog.CloseDialog(dialog.SkillsMPAPIKeyInputID)
+		cmds = append(cmds, m.openSkillsMarketplace())
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -1492,6 +1499,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionOpenSkillsMarketplace:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
+			break
+		}
+		if strings.TrimSpace(m.com.Config().ResolveSkillsMPAPIKey()) == "" {
+			if cmd := m.openSkillsAPIKeyDialog(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			m.dialog.CloseDialog(dialog.CommandsID)
 			break
 		}
 		cmds = append(cmds, m.openSkillsMarketplace())
@@ -1955,6 +1969,15 @@ func (m *UI) openJinaAPIKeyDialog(continueIndex bool) tea.Cmd {
 		return nil
 	}
 	m.dialog.OpenDialog(dialog.NewJinaAPIKeyInput(m.com, continueIndex))
+	return nil
+}
+
+func (m *UI) openSkillsAPIKeyDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.SkillsMPAPIKeyInputID) {
+		m.dialog.BringToFront(dialog.SkillsMPAPIKeyInputID)
+		return nil
+	}
+	m.dialog.OpenDialog(dialog.NewSkillsMPAPIKeyInput(m.com))
 	return nil
 }
 

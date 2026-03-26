@@ -51,6 +51,9 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "`search_skills`") {
 		t.Fatalf("expected search_skills guidance in coder prompt")
 	}
+	if !strings.Contains(out, "search installed plugins under the Sapphire data dir (`<data-dir>/plugins`)") || !strings.Contains(out, "install it, then use it") {
+		t.Fatalf("expected plugin policy in coder prompt")
+	}
 	if strings.Contains(out, "Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.") {
 		t.Fatalf("expected hardcoded skill routing to be removed from coder prompt")
 	}
@@ -213,6 +216,9 @@ func TestPlanModePromptRequiresFinalProposedPlanWhenReady(t *testing.T) {
 		"Once you have enough information for a safe plan, produce it immediately.",
 		`Execution-oriented narration such as "Initiating Task Execution", "implement the plan", or similar act-first wording while still in Plan Mode`,
 		"Do **not** narrate execution, implementation progress, or task performance while in Plan Mode.",
+		"If `agent.md` exists in the repository, read it first as a quick map of the codebase.",
+		"Read the full relevant code files, not just snippets, when those files materially control the behavior being planned",
+		"The final plan must be strongly structured Markdown in a neutral professional tone.",
 	} {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("expected %q in plan prompt", needle)
@@ -224,6 +230,42 @@ func TestPlanModePromptRequiresFinalProposedPlanWhenReady(t *testing.T) {
 	} {
 		if strings.Contains(out, forbidden) {
 			t.Fatalf("did not expect %q in plan prompt", forbidden)
+		}
+	}
+}
+
+func TestArchitectModePromptRequiresDeepCodebaseGrounding(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "architect-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	p, err := coderPromptForMode(planmode.ArchitectureMode)
+	if err != nil {
+		t.Fatalf("coder prompt for architect: %v", err)
+	}
+	out, err := p.Build(context.Background(), "", "", *cfg)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	for _, needle := range []string{
+		"If `agent.md` exists in the repository, read it first as a quick architectural map.",
+		"read the full relevant implementation files",
+		"use non-mutating tooling, including shell, Python, tests, and builds",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("expected %q in architect prompt", needle)
 		}
 	}
 }

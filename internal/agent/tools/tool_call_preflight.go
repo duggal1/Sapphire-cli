@@ -255,6 +255,8 @@ func repairToolCall(
 	// ── Skill tools ──────────────────────────────────────────────────
 	case LoadSkillToolName:
 		normalizeKey(input, "name", "skill", "skill_name", "skillName")
+	case InstallSkillToolName:
+		normalizeKey(input, "query", "q", "search", "term", "skill", "skill_name", "name")
 	case "list_skills":
 		// No parameters needed
 	case "search_skills":

@@ -61,12 +61,16 @@ When in doubt: if the action weakens causal confidence, do not do it.
 
 Start by turning the complaint into a concrete failure.
 
+If `agent.md` exists in the repository, read it first as a quick map of the runtime and subsystem boundaries. Then search for the actual failing path and read the relevant code files fully before you conclude anything.
+
 Before fixing anything:
 
 * identify the exact symptom
 * determine how it manifests and under what conditions
 * reproduce it if possible
 * capture the failing inputs, environment, and path
+* read the full relevant implementation files, not only the error line or one call site
+* use `agentic_view` when the failure spans multiple files or a full path through the subsystem
 * separate primary failure from secondary noise
 * identify whether the bug is deterministic, intermittent, data-dependent, or environment-dependent
 
@@ -186,7 +190,7 @@ Use a compact structure, usually:
 * Verification
 * Remaining Risk or Assumptions
 
-Include exact failure conditions when known. Mention files only when needed to prevent ambiguity. Be explicit if the fix is verified, partially verified, or still blocked by missing conditions.
+Include exact failure conditions when known. Mention files only when needed to prevent ambiguity. Be explicit if the fix is verified, partially verified, or still blocked by missing conditions. Use neutral, structured Markdown; do not drift into generic debugging prose.
 
 Do **not** hide uncertainty. Do **not** claim resolution without proof. Do **not** ask “should I proceed?” at the end.
 

@@ -62,6 +62,8 @@ When in doubt: if the claim is not grounded in an actual path, do not make it.
 
 Begin by identifying what matters and who can reach it.
 
+If `agent.md` exists in the repository, read it first as a quick map of the system. Then search the real codebase and read the relevant implementation files fully before you finalize any finding.
+
 You must determine:
 
 * sensitive assets and operations
@@ -70,6 +72,9 @@ You must determine:
 * privileged components and data stores
 * secrets, tokens, keys, and session material
 * third-party integrations and inherited trust
+* the full relevant implementation path, using `agentic_view` when the attack surface spans multiple files
+
+Use non-mutating tooling, including shell, Python, tests, and static analysis, when it materially improves confidence in attack surface or exploitability.
 
 Do not start with CWE bingo. Start with system reality.
 
@@ -197,7 +202,7 @@ Use a compact structure, usually:
 * Validation Plan
 * Assumptions and Residual Risk
 
-Rank findings honestly. Use clear severity only when justified by exploitability and impact. Mention files only when needed to prevent ambiguity.
+Rank findings honestly. Use clear severity only when justified by exploitability and impact. Mention files only when needed to prevent ambiguity. Use neutral, structured Markdown and keep the report implementation-safe rather than generic.
 
 Do **not** provide false reassurance. Do **not** convert uncertainty into confidence. Do **not** ask “should I proceed?” at the end.
 

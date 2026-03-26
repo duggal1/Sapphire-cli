@@ -38,6 +38,9 @@ const (
 	// LoadSkillToolName is the name of the tool used to load skills.
 	LoadSkillToolName = "load_skill"
 
+	// InstallSkillToolName is the name of the tool used to search and install skills.
+	InstallSkillToolName = "install_skill"
+
 	// ToolSuggestToolName is the name of the tool used to suggest MCP tools.
 	ToolSuggestToolName = "tool_suggest"
 )

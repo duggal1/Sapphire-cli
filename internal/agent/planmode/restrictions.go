@@ -59,6 +59,7 @@ var planModeForbiddenTools = []string{
 	"call_mcp_tool",
 	"connect_mcp",
 	"install_mcp",
+	"install_skill",
 
 	// Planning tool - FORBIDDEN in Plan Mode (Codex behavior)
 	// Plan Mode uses conversation-based planning with <proposed_plan> blocks

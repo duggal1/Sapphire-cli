@@ -1,0 +1,1 @@
+Install the best matching SkillsMP skill by query. Use this when a built-in skill does not cover the task and the right plugin needs to be fetched and installed before continuing. Register the result in both `<data-dir>/skills/<name>/SKILL.md` and `<data-dir>/plugins/<name>/`.

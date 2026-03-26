@@ -8,15 +8,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
-	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 const (
 	// PlanApprovalID is the identifier for the plan approval dialog.
 	PlanApprovalID              = "plan_approval"
-	planApprovalDialogMaxWidth  = 65
-	planApprovalDialogMaxHeight = 16
+	planApprovalDialogMaxWidth  = 68
+	planApprovalDialogMaxHeight = 14
+	planApprovalSummaryMaxChars = 140
 )
 
 // PlanApprovalDialog represents a dialog that appears after a plan is created.
@@ -114,8 +115,8 @@ func (p *PlanApprovalDialog) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor 
 	p.help.SetWidth(innerWidth)
 
 	rc := NewRenderContext(t, width)
-	rc.Title = "Plan is ready. Ready to implement?"
-	rc.Gap = 1
+	rc.Title = "Plan ready to implement?"
+	rc.Gap = 2
 
 	// Add explanation if provided
 	if p.explanation != "" {
@@ -159,30 +160,17 @@ func (p *PlanApprovalDialog) renderPlan(width int) string {
 		return ""
 	}
 
+	title, summary := buildPlanApprovalPreview(p.planContent)
 	var b strings.Builder
-	b.WriteString("\n")
-	lines := strings.Split(p.planContent, "\n")
-	visible := 0
-	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
+	if title != "" {
+		b.WriteString(p.com.Styles.Base.Bold(true).Render(title))
+	}
+	if summary != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
 		}
-		if visible >= 8 {
-			b.WriteString(p.com.Styles.Muted.Render("  …"))
-			break
-		}
-		switch {
-		case strings.HasPrefix(line, "#"):
-			b.WriteString(p.com.Styles.Base.Bold(true).Render("  "+strings.TrimLeft(line, "# ")) + "\n")
-		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
-			b.WriteString(p.com.Styles.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon+" ") + p.com.Styles.Base.Render(strings.TrimSpace(line[2:])) + "\n")
-		case len(line) > 2 && line[1] == '.' && line[0] >= '0' && line[0] <= '9':
-			b.WriteString(p.com.Styles.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon+" ") + p.com.Styles.Base.Render(strings.TrimSpace(line[2:])) + "\n")
-		default:
-			b.WriteString("  " + p.com.Styles.Subtle.Render(line) + "\n")
-		}
-		visible++
+		wrapWidth := max(20, width-6)
+		b.WriteString(p.com.Styles.Subtle.Render(ansi.Wrap(summary, wrapWidth, "")))
 	}
 
 	return b.String()
@@ -212,6 +200,54 @@ func (p *PlanApprovalDialog) renderButtons() string {
 	}
 
 	return b.String()
+}
+
+func buildPlanApprovalPreview(planContent string) (string, string) {
+	lines := strings.Split(planContent, "\n")
+	title := ""
+	summary := ""
+	inSummarySection := false
+
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "#"):
+			heading := strings.TrimSpace(strings.TrimLeft(line, "#"))
+			if title == "" {
+				title = heading
+				continue
+			}
+			inSummarySection = strings.EqualFold(heading, "summary")
+			continue
+		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
+			if summary == "" && inSummarySection {
+				summary = strings.TrimSpace(line[2:])
+			}
+			continue
+		case len(line) > 2 && line[1] == '.' && line[0] >= '0' && line[0] <= '9':
+			continue
+		default:
+			if summary == "" && (inSummarySection || title != "") {
+				summary = line
+			} else if summary == "" && title == "" {
+				summary = line
+			}
+		}
+		if title != "" && summary != "" {
+			break
+		}
+	}
+
+	if title == "" {
+		title = "Structured plan ready"
+	}
+	summary = strings.Join(strings.Fields(summary), " ")
+	summary = ansi.Truncate(summary, planApprovalSummaryMaxChars, "…")
+	return title, summary
 }
 
 // ActionImplementPlan is sent when user chooses to implement the plan.

@@ -62,11 +62,14 @@ When in doubt: if the comment does not help the author make the code more correc
 
 Before judging the diff, determine:
 
+If `agent.md` exists in the repository, read it first as a quick codebase map. Then read the actual modified files and the relevant surrounding files fully before finalizing the review.
+
 * what problem the change is trying to solve
 * what behavior should change
 * what behavior must remain stable
 * what assumptions the author is making
 * what parts of the system are touched directly or indirectly
+* the broader surrounding implementation, using `agentic_view` when the review depends on multiple files
 
 Do not begin with nits. Begin with intent.
 
@@ -182,7 +185,7 @@ Use a compact structure, usually:
 * Positive Notes
 * Assumptions
 
-If there are no findings, say so plainly. If there are blockers, state them first. Mention files only when needed to prevent ambiguity.
+If there are no findings, say so plainly. If there are blockers, state them first. Mention files only when needed to prevent ambiguity. Use neutral, structured Markdown with decisive judgment rather than review theater.
 
 Do **not** bury the verdict. Do **not** inflate nits into major issues. Do **not** ask “should I proceed?” at the end.
 

@@ -63,6 +63,8 @@ When in doubt: if the split increases ambiguity or collision risk, do not make i
 
 Before decomposing, establish:
 
+If `agent.md` exists in the repository, read it first as a quick system map. Then search for the actual files, seams, and dependencies that govern the task, and read those relevant files fully before you finalize orchestration.
+
 * the actual goal
 * required outputs
 * critical constraints
@@ -70,6 +72,9 @@ Before decomposing, establish:
 * likely hotspots for conflict
 * what must remain centrally owned
 * what can be delegated safely
+* the broader dependency surface, using `agentic_view` when one file is not enough to understand the work graph
+
+Use non-mutating tooling, including shell, Python, tests, and builds, when it materially improves your understanding of dependencies, shared boundaries, or validation cost.
 
 Do not decompose a task you do not yet understand.
 
@@ -210,7 +215,7 @@ Use a compact structure, usually:
 * Validation and Merge Gates
 * Assumptions
 
-Prefer grouped workstreams over long file lists. Mention files only when needed to prevent collision or ambiguity.
+Prefer grouped workstreams over long file lists. Mention files only when needed to prevent collision or ambiguity. Use neutral, structured Markdown with enough specificity that delegation can proceed without inventing missing coordination logic.
 
 Do **not** ask “should I proceed?” at the end. Do **not** produce a generic task list pretending to be orchestration.
 

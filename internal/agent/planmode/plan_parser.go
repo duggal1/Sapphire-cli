@@ -155,6 +155,8 @@ func RemoveStructuredBlocks(content string) string {
 			}
 			out = out[:start] + rest[end+len(closeTag):]
 		}
+		out = strings.ReplaceAll(out, openTag, "")
+		out = strings.ReplaceAll(out, closeTag, "")
 	}
 	return strings.TrimSpace(out)
 }

@@ -9,3 +9,9 @@ A tool for managing Sapphire agents.
 ## Utilities
 
 - `mock-up/`: A directory containing doubler utilities.
+
+## Plugins
+
+- `sapphire skills` opens the Plugins browser in the terminal.
+- Set `SKILLSMP_API_KEY` to search and install skills.
+- Installs write to `<data-dir>/skills/<name>/SKILL.md` and `<data-dir>/plugins/<name>/plugin.json` plus `SKILL.md`.

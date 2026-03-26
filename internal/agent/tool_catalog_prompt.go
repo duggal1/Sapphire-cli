@@ -22,6 +22,7 @@ var runtimeToolSummaries = map[string]string{
 	"collect_result":          "collect final result payloads from finished sub-agents",
 	"connect_mcp":             "connect an installed MCP server",
 	"install_mcp":             "install and configure an MCP server by exact registry name",
+	"install_skill":           "search SkillsMP and install the best matching marketplace skill",
 	"download":                "download remote content to a file",
 	"edit":                    "legacy single-file edit tool",
 	"fetch":                   "fetch remote content for inspection",

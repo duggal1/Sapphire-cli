@@ -44,13 +44,15 @@ type ActionSelectModel struct {
 
 // Messages for commands
 type (
-	ActionNewSession            struct{}
-	ActionToggleHelp            struct{}
-	ActionToggleCompactMode     struct{}
-	ActionTogglePasteBlocks     struct{}
-	ActionToggleThinking        struct{}
-	ActionTogglePills           struct{}
-	ActionExternalEditor        struct{}
+	ActionNewSession        struct{}
+	ActionToggleHelp        struct{}
+	ActionToggleCompactMode struct{}
+	ActionTogglePasteBlocks struct{}
+	ActionToggleThinking    struct{}
+	ActionTogglePills       struct{}
+	ActionExternalEditor    struct{}
+	// ActionOpenSkillsMarketplace opens the skills marketplace TUI.
+	ActionOpenSkillsMarketplace struct{}
 	ActionToggleYoloMode        struct{}
 	ActionCycleWorktreePolicy   struct{}
 	ActionIndexCodebase         struct{}

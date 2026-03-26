@@ -258,35 +258,56 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	switch mode {
 	case planmode.PlanMode:
 		return `Plan mode runtime contract:
+- If agent.md exists, read it first as a codebase map, then search for the real files that control this task.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Read the relevant implementation files fully, not half, before you finalize the plan.
+- Use broad read-only repository inspection when the task spans more than one file.
 - Inspect the repository deeply before finalizing the plan; do not stop after a shallow search or one list call.
 - Do not use update_plan, do not execute, and do not narrate execution.
 - Replace generic explanation with one final decision-complete <proposed_plan>...</proposed_plan> block.
-- If the current draft is not yet a real plan block, keep analyzing and then emit the final plan block.`
+- If the current draft is not yet a real plan block, keep analyzing and then emit the final plan block.
+- The final plan must be structured Markdown, neutral in tone, and specific enough to implement without high-impact guesswork.`
 	case planmode.ArchitectureMode:
 		return `Architect mode runtime contract:
+- If agent.md exists, read it first as a system map, then search for the actual files and seams that govern the task.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Read the relevant implementation files fully before finalizing the design.
+- Use non-mutating tooling, including shell, Python, tests, and builds, when it improves architectural truth.
 - Use read-only inspection and analysis tooling to understand the current structure.
 - Do not mutate repository files.
-- Return the final answer as exactly one <architecture_spec>...</architecture_spec> block.`
+- Return the final answer as exactly one <architecture_spec>...</architecture_spec> block with strongly structured Markdown.`
 	case planmode.DebugMode:
 		return `Debug mode runtime contract:
+- If agent.md exists, read it first as a runtime map, then search for the actual failing path and read the relevant files fully.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use non-mutating tooling aggressively to reproduce and diagnose before concluding.
 - Diagnose from concrete evidence first; do not jump to fixes without tracing the failure.
 - You may inspect and run non-mutating diagnostic tooling, but do not mutate repository files in this mode.
-- Return the final answer as exactly one <debug_report>...</debug_report> block.`
+- Return the final answer as exactly one <debug_report>...</debug_report> block with structured Markdown and explicit verification.`
 	case planmode.SecurityMode:
 		return `Security mode runtime contract:
+- If agent.md exists, read it first as a system map, then search for and fully read the real files that define exposure and trust boundaries.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use non-mutating tooling, including shell, Python, tests, and static analysis, when it materially improves confidence.
 - Use concrete evidence from code, config, and tooling. Avoid generic security commentary.
 - Do not mutate repository files.
-- Return the final answer as exactly one <security_report>...</security_report> block.`
+- Return the final answer as exactly one <security_report>...</security_report> block with structured Markdown and honest severity.`
 	case planmode.ReviewMode:
 		return `Review mode runtime contract:
+- If agent.md exists, read it first as a codebase map, then fully read the changed files and surrounding implementation before finalizing judgment.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use non-mutating checks when they materially improve review quality.
 - Inspect the real code and behavior; prioritize bugs, regressions, and missing tests.
 - Do not mutate repository files.
-- Return the final answer as exactly one <review_report>...</review_report> block.`
+- Return the final answer as exactly one <review_report>...</review_report> block with structured Markdown and decisive findings.`
 	case planmode.OrchestratorMode:
 		return `Orchestrator mode runtime contract:
+- If agent.md exists, read it first as a system map, then search for and fully read the files that define dependencies, collision risk, and validation paths.
+- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use non-mutating tooling, including shell, Python, tests, and builds, when it improves dependency and validation truth.
 - Reason about agent topology, contracts, blockers, and merge-safe execution from real repository/runtime evidence.
 - Do not mutate repository files.
-- Return the final answer as exactly one <execution_orchestration>...</execution_orchestration> block.`
+- Return the final answer as exactly one <execution_orchestration>...</execution_orchestration> block with structured Markdown and explicit contracts.`
 	default:
 		if shouldDelegateToSubAgents(prompt) {
 			return `Plan tool protocol for multi-step tasks (Codex update_plan):

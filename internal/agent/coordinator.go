@@ -1702,6 +1702,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	if err == nil {
 		allTools = append(allTools, searchSkillsTool)
 	}
+	allTools = append(allTools, tools.NewInstallSkillTool())
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.LSP) > 0 || c.cfg.Options.AutoLSP == nil || *c.cfg.Options.AutoLSP {

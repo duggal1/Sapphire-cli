@@ -67,6 +67,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1487,6 +1488,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, m.openEditor(m.textarea.Value()))
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionOpenSkillsMarketplace:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
+			break
+		}
+		cmds = append(cmds, m.openSkillsMarketplace())
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleCompactMode:
 		cmds = append(cmds, m.toggleCompactMode())
@@ -3259,6 +3267,21 @@ func (m *UI) openEditor(value string) tea.Cmd {
 		return openEditorMsg{
 			Text: strings.TrimSpace(string(content)),
 		}
+	})
+}
+
+func (m *UI) openSkillsMarketplace() tea.Cmd {
+	exe, err := os.Executable()
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	cmd := exec.Command(exe, "skills")
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return util.ReportError(err)
+		}
+		return nil
 	})
 }
 

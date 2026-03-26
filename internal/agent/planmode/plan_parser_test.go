@@ -65,6 +65,15 @@ func TestStructuredBlockTagsExposeExpectedPlanTags(t *testing.T) {
 	}
 }
 
+func TestRemoveStructuredBlocksStripsOrphanPlanTags(t *testing.T) {
+	t.Parallel()
+
+	content := "</proposed_plan>\nVisible"
+	if got := RemoveStructuredBlocks(content); got != "Visible" {
+		t.Fatalf("expected orphan tag stripped, got %q", got)
+	}
+}
+
 func TestAvailableModesIncludesExtendedModeCatalog(t *testing.T) {
 	t.Parallel()
 

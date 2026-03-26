@@ -908,6 +908,7 @@ func allToolNames() []string {
 		"list_tools",
 		"search_tools",
 		"search_skills",
+		"install_skill",
 		"tool_suggest",
 		"list_available_mcps",
 		"install_mcp",

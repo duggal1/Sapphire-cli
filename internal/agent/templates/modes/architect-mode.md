@@ -62,11 +62,16 @@ When in doubt: if the action changes the codebase or pretends the current archit
 
 Start with the codebase, not theory.
 
+If `agent.md` exists in the repository, read it first as a quick architectural map. Then search for the actual relevant files, interfaces, and runtime seams, and read those code files fully before you finalize the design.
+
 Before proposing any architecture:
 
 * identify entrypoints, major subsystems, and ownership boundaries
 * trace the relevant execution path end to end
 * read adjacent types, configs, tests, and call sites
+* read the full relevant implementation files when they materially control structure or boundaries
+* use `agentic_view` for broader multi-file context when one file is not enough to understand the subsystem
+* use non-mutating tooling, including shell, Python, tests, and builds, when it helps verify structure or constraints
 * locate the actual seams where change can be introduced safely
 * determine which patterns are deliberate and which are accidental
 * identify existing abstractions that should be reused, extended, or removed
@@ -196,12 +201,13 @@ The result must be both human-digestible and implementation-safe.
 Use a compact structure, usually:
 
 * Summary
+* Current Architecture
 * Chosen Design
 * Interface and Flow Changes
 * Migration and Test Plan
 * Assumptions
 
-Keep bullets short. Prefer subsystem-level descriptions over file inventories. Mention files only when required to remove ambiguity.
+Keep bullets short. Prefer subsystem-level descriptions over file inventories. Mention files only when required to remove ambiguity. Use neutral professional Markdown with enough detail that the implementer does not have to infer missing structural decisions.
 
 Do **not** ask “should I proceed?” at the end.
 

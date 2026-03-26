@@ -86,6 +86,9 @@ const (
 
 	// Checklist reconciliation tuning.
 	maxTodoReconcileAttempts = 1
+
+	// Structured-mode repair tuning.
+	maxStructuredBlockRepairAttempts = 1
 )
 
 //go:embed templates/title.md
@@ -108,6 +111,7 @@ type SessionAgentCall struct {
 	Prompt           string
 	ResumePointID    string
 	TodoReconcileTry int
+	StructuredTry    int
 	SkillContext     string
 	ActiveSkills     []string
 	ActiveTools      []string
@@ -179,6 +183,32 @@ Rules:
 	return followUp
 }
 
+func buildStructuredBlockRepairCall(mode planmode.SessionMode, call SessionAgentCall) SessionAgentCall {
+	followUp := call
+	followUp.SkipUserMessage = true
+	followUp.StructuredTry++
+
+	openTag, closeTag, ok := planmode.StructuredBlockTags(mode)
+	if !ok {
+		return followUp
+	}
+
+	followUp.Prompt = strings.TrimSpace(fmt.Sprintf(`You are still in %s mode.
+
+Your previous response is invalid because it did not end with exactly one valid %s ... %s block.
+
+Rules:
+- Do not narrate execution, implementation progress, or generic status.
+- Do not ask for permission to proceed.
+- Use the repository facts and analysis already gathered in this conversation.
+- Return only the corrected final deliverable.
+- The answer must be a complete Markdown payload wrapped in exactly one %s block.
+
+Return the corrected final deliverable now.`, mode.Title(), openTag, closeTag, openTag))
+
+	return followUp
+}
+
 func countIncompleteRenderableTodos(todos []session.Todo) int {
 	count := 0
 	for _, todo := range todos {
@@ -220,6 +250,97 @@ func completeAllIncompleteTodos(todos []session.Todo) ([]session.Todo, bool) {
 		changed = true
 	}
 	return updated, changed
+}
+
+func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
+	mode = planmode.NormalizeMode(mode)
+
+	switch mode {
+	case planmode.PlanMode:
+		return `Plan mode runtime contract:
+- Inspect the repository deeply before finalizing the plan; do not stop after a shallow search or one list call.
+- Do not use update_plan, do not execute, and do not narrate execution.
+- Replace generic explanation with one final decision-complete <proposed_plan>...</proposed_plan> block.
+- If the current draft is not yet a real plan block, keep analyzing and then emit the final plan block.`
+	case planmode.ArchitectureMode:
+		return `Architect mode runtime contract:
+- Use read-only inspection and analysis tooling to understand the current structure.
+- Do not mutate repository files.
+- Return the final answer as exactly one <architecture_spec>...</architecture_spec> block.`
+	case planmode.DebugMode:
+		return `Debug mode runtime contract:
+- Diagnose from concrete evidence first; do not jump to fixes without tracing the failure.
+- You may inspect and run non-mutating diagnostic tooling, but do not mutate repository files in this mode.
+- Return the final answer as exactly one <debug_report>...</debug_report> block.`
+	case planmode.SecurityMode:
+		return `Security mode runtime contract:
+- Use concrete evidence from code, config, and tooling. Avoid generic security commentary.
+- Do not mutate repository files.
+- Return the final answer as exactly one <security_report>...</security_report> block.`
+	case planmode.ReviewMode:
+		return `Review mode runtime contract:
+- Inspect the real code and behavior; prioritize bugs, regressions, and missing tests.
+- Do not mutate repository files.
+- Return the final answer as exactly one <review_report>...</review_report> block.`
+	case planmode.OrchestratorMode:
+		return `Orchestrator mode runtime contract:
+- Reason about agent topology, contracts, blockers, and merge-safe execution from real repository/runtime evidence.
+- Do not mutate repository files.
+- Return the final answer as exactly one <execution_orchestration>...</execution_orchestration> block.`
+	default:
+		if shouldDelegateToSubAgents(prompt) {
+			return `Plan tool protocol for multi-step tasks (Codex update_plan):
+1. Use update_plan only for non-trivial multi-step work
+2. Call update_plan BEFORE technical work when a plan is warranted
+3. Always send the FULL plan on every update; do not omit existing items
+4. Keep exactly one step in_progress at a time
+5. Before the next command, mark the previous completed step as completed
+6. Do not batch-complete items after the fact
+7. Do not abandon the plan - complete every step
+8. Do NOT repeat the full plan after calling update_plan - the harness already displays it
+
+Skip this only for a single non-destructive read requiring exactly one tool call.`
+		}
+
+		return `For multi-step tasks, use update_plan before execution only when the plan is clear and non-trivial. Every plan item must include explicit step text; never send blank or placeholder steps. Keep 5-7 steps max, send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`
+	}
+}
+
+func buildComplexityModeReminder(mode planmode.SessionMode) string {
+	switch planmode.NormalizeMode(mode) {
+	case planmode.DefaultSessionMode:
+		return `<system_reminder>Complexity mode:
+- Initialize plan with update_plan immediately before technical execution.
+- Keep the plan tracker synchronized after every state change.
+- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
+- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
+- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
+- Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
+- Use agentic_fetch for current external docs instead of guessing.</system_reminder>`
+	default:
+		return ""
+	}
+}
+
+func responseHasRequiredStructuredBlock(mode planmode.SessionMode, assistant *message.Message, result *fantasy.AgentResult) bool {
+	mode = planmode.NormalizeMode(mode)
+	if mode == planmode.DefaultSessionMode {
+		return true
+	}
+
+	text := ""
+	if assistant != nil {
+		text = strings.TrimSpace(assistant.Content().Text)
+	}
+	if text == "" && result != nil {
+		text = strings.TrimSpace(result.Response.Content.Text())
+	}
+	if text == "" {
+		return false
+	}
+
+	block, ok := planmode.ExtractStructuredBlockForMode(mode, text)
+	return ok && block.IsValid
 }
 
 type SessionAgent interface {
@@ -623,6 +744,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
+	mode := planmode.NormalizeMode(currentSession.Mode)
 
 	msgs, err := a.getSessionMessages(ctx, currentSession)
 	if err != nil {
@@ -655,7 +777,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
-	ctx = context.WithValue(ctx, tools.SessionModeContextKey, planmode.NormalizeMode(currentSession.Mode))
+	ctx = context.WithValue(ctx, tools.SessionModeContextKey, mode)
 	runtimeControl := newRuntimeControl()
 	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
 
@@ -692,7 +814,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		return nil
 	}
-	history, files := a.preparePrompt(msgs, call.Prompt, call.Attachments...)
+	history, files := a.preparePrompt(mode, msgs, call.Prompt, call.Attachments...)
 	history = a.injectTieredMemory(ctx, history, call, int(largeModel.CatwalkCfg.ContextWindow))
 
 	startTime := time.Now()
@@ -1361,6 +1483,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		a.checkpointTurn(ctx, call.SessionID, call.Prompt, resultText, "completed", false)
 	}
+	if !responseHasRequiredStructuredBlock(mode, currentAssistant, result) {
+		if mode != planmode.DefaultSessionMode && call.StructuredTry < maxStructuredBlockRepairAttempts {
+			return a.Run(ctx, buildStructuredBlockRepairCall(mode, call))
+		}
+		if mode != planmode.DefaultSessionMode {
+			return nil, fmt.Errorf("%s mode response missing required structured block", mode.Title())
+		}
+	}
 	if followUp, reconcileErr := a.buildTodoReconciliationFollowUp(ctx, call); reconcileErr != nil {
 		return nil, reconcileErr
 	} else if followUp != nil {
@@ -1424,7 +1554,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	}
 
 	// Codex-style compaction: build history and retry with trimming on context exceeded
-	aiMsgs, _ := a.preparePrompt(msgs, "")
+	aiMsgs, _ := a.preparePrompt(planmode.DefaultSessionMode, msgs, "")
 
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
@@ -1711,42 +1841,16 @@ func appendSkillContext(existing, extra string) string {
 	return existing + "\n\n" + extra
 }
 
-func (a *sessionAgent) preparePrompt(msgs []message.Message, prompt string, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+func (a *sessionAgent) preparePrompt(mode planmode.SessionMode, msgs []message.Message, prompt string, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
 	var history []fantasy.Message
 	if !a.isSubAgent {
-		if shouldDelegateToSubAgents(prompt) {
+		if reminder := strings.TrimSpace(buildRuntimeReminder(mode, prompt)); reminder != "" {
 			history = append(history, fantasy.NewUserMessage(
-				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`Plan tool protocol for multi-step tasks (Codex update_plan):
-1. Use update_plan only for non-trivial multi-step work
-2. Call update_plan BEFORE technical work when a plan is warranted
-3. Always send the FULL plan on every update; do not omit existing items
-4. Keep exactly one step in_progress at a time
-5. Before the next command, mark the previous completed step as completed
-6. Do not batch-complete items after the fact
-7. Do not abandon the plan - complete every step
-8. Do NOT repeat the full plan after calling update_plan - the harness already displays it
-
-Skip this only for a single non-destructive read requiring exactly one tool call.`,
-				),
+				fmt.Sprintf("<system_reminder>%s</system_reminder>", reminder),
 			))
-
-			history = append(history, fantasy.NewUserMessage(
-				`<system_reminder>Complexity mode:
-- Initialize plan with update_plan immediately before technical execution.
-- Keep the plan tracker synchronized after every state change.
-- Read one known repository file with "single_view". Read any multi-file target set or broad repository slice with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of minimal batches.
-- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
-- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
-- Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
-- Use agentic_fetch for current external docs instead of guessing.</system_reminder>`,
-			))
-		} else {
-			history = append(history, fantasy.NewUserMessage(
-				fmt.Sprintf("<system_reminder>%s</system_reminder>",
-					`For multi-step tasks, use update_plan before execution only when the plan is clear and non-trivial. Every plan item must include explicit step text; never send blank or placeholder steps. Keep 5-7 steps max, send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`,
-				),
-			))
+		}
+		if extra := buildComplexityModeReminder(mode); extra != "" {
+			history = append(history, fantasy.NewUserMessage(extra))
 		}
 	} else {
 		history = append(history, fantasy.NewUserMessage(

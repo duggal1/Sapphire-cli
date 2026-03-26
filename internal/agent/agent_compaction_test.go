@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/stretchr/testify/require"
@@ -66,6 +67,22 @@ func TestBuildTodoReconciliationCallCreatesHiddenFollowUp(t *testing.T) {
 	require.Equal(t, 1, followUp.TodoReconcileTry)
 	require.Contains(t, followUp.Prompt, "reconcile the live todo list")
 	require.Contains(t, followUp.Prompt, "every retained item ends completed")
+}
+
+func TestBuildStructuredBlockRepairCallCreatesHiddenFollowUp(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{
+		SessionID: "session-1",
+		Prompt:    "Plan the architecture changes",
+	}
+
+	followUp := buildStructuredBlockRepairCall(planmode.PlanMode, call)
+
+	require.True(t, followUp.SkipUserMessage)
+	require.Equal(t, 1, followUp.StructuredTry)
+	require.Contains(t, followUp.Prompt, "still in Plan mode")
+	require.Contains(t, followUp.Prompt, "<proposed_plan>")
 }
 
 func TestCompleteSingleTrailingInProgressTodo(t *testing.T) {

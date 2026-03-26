@@ -37,6 +37,34 @@ func TestExtractStructuredBlockSupportsOtherModeTags(t *testing.T) {
 	}
 }
 
+func TestExtractStructuredBlockForPlanModeAcceptsUnterminatedPlanBlockAtEnd(t *testing.T) {
+	t.Parallel()
+
+	content := "Intro\n<proposed_plan>\n# Title\n\n- Step one\n- Step two\n"
+	block, ok := ExtractStructuredBlockForMode(PlanMode, content)
+	if !ok {
+		t.Fatalf("expected proposed plan block")
+	}
+	if !block.IsValid {
+		t.Fatalf("expected valid block, got %q", block.ValidationError)
+	}
+	if block.Content != "# Title\n\n- Step one\n- Step two" {
+		t.Fatalf("unexpected content: %q", block.Content)
+	}
+}
+
+func TestStructuredBlockTagsExposeExpectedPlanTags(t *testing.T) {
+	t.Parallel()
+
+	open, close, ok := StructuredBlockTags(PlanMode)
+	if !ok {
+		t.Fatal("expected plan mode tags")
+	}
+	if open != "<proposed_plan>" || close != "</proposed_plan>" {
+		t.Fatalf("unexpected tags: %q %q", open, close)
+	}
+}
+
 func TestAvailableModesIncludesExtendedModeCatalog(t *testing.T) {
 	t.Parallel()
 

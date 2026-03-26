@@ -41,8 +41,32 @@ func blockSpecForMode(mode SessionMode) (structuredBlockSpec, bool) {
 	return structuredBlockSpec{}, false
 }
 
+func StructuredBlockTags(mode SessionMode) (string, string, bool) {
+	spec, ok := blockSpecForMode(mode)
+	if !ok {
+		return "", "", false
+	}
+	return "<" + spec.tag + ">", "</" + spec.tag + ">", true
+}
+
 func blockRegex(tag string) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`(?s)<%[1]s>\s*\n(.*?)\n\s*</%[1]s>`, regexp.QuoteMeta(tag)))
+}
+
+func extractStructuredBlockContent(spec structuredBlockSpec, content string) (string, bool) {
+	openTag := "<" + spec.tag + ">"
+	closeTag := "</" + spec.tag + ">"
+
+	start := strings.Index(content, openTag)
+	if start < 0 {
+		return "", false
+	}
+	rest := content[start+len(openTag):]
+	end := strings.Index(rest, closeTag)
+	if end >= 0 {
+		return rest[:end], true
+	}
+	return rest, true
 }
 
 func validateStructuredBlock(content string, tag string) *StructuredBlock {
@@ -87,10 +111,20 @@ func ExtractStructuredBlockForMode(mode SessionMode, content string) (*Structure
 	}
 	re := blockRegex(spec.tag)
 	matches := re.FindStringSubmatch(content)
-	if len(matches) < 2 {
+	if len(matches) >= 2 {
+		block := validateStructuredBlock(matches[1], spec.tag)
+		block.Mode = spec.mode
+		block.Title = spec.title
+		block.OpenTag = "<" + spec.tag + ">"
+		block.CloseTag = "</" + spec.tag + ">"
+		return block, true
+	}
+
+	raw, found := extractStructuredBlockContent(spec, content)
+	if !found {
 		return nil, false
 	}
-	block := validateStructuredBlock(matches[1], spec.tag)
+	block := validateStructuredBlock(raw, spec.tag)
 	block.Mode = spec.mode
 	block.Title = spec.title
 	block.OpenTag = "<" + spec.tag + ">"
@@ -106,7 +140,21 @@ func HasStructuredBlockForMode(mode SessionMode, content string) bool {
 func RemoveStructuredBlocks(content string) string {
 	out := content
 	for _, spec := range structuredBlockSpecs {
-		out = blockRegex(spec.tag).ReplaceAllString(out, "")
+		openTag := "<" + spec.tag + ">"
+		closeTag := "</" + spec.tag + ">"
+		for {
+			start := strings.Index(out, openTag)
+			if start < 0 {
+				break
+			}
+			rest := out[start+len(openTag):]
+			end := strings.Index(rest, closeTag)
+			if end < 0 {
+				out = out[:start]
+				break
+			}
+			out = out[:start] + rest[end+len(closeTag):]
+		}
 	}
 	return strings.TrimSpace(out)
 }

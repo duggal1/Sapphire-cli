@@ -25,7 +25,22 @@ func (c *coordinator) RunPlanMode(ctx context.Context, sessionID, task, _ string
 	return nil, err
 }
 
-func (c *coordinator) ResolvePlanApproval(_ context.Context, _ string, _ bool) error {
+func (c *coordinator) ResolvePlanApproval(_ context.Context, sessionID string, approved bool) error {
+	if c == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	c.planApprovalMu.Lock()
+	waiter, ok := c.planApprovalWaiters[sessionID]
+	if ok {
+		delete(c.planApprovalWaiters, sessionID)
+	}
+	c.planApprovalMu.Unlock()
+	if ok {
+		select {
+		case waiter <- approved:
+		default:
+		}
+	}
 	return nil
 }
 

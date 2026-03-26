@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	t.Parallel()
 
-	history, _ := (&sessionAgent{}).preparePrompt(nil, "architecture changes across the codebase touching multiple files")
+	history, _ := (&sessionAgent{}).preparePrompt(planmode.DefaultSessionMode, nil, "architecture changes across the codebase touching multiple files")
 	require.NotEmpty(t, history)
 
 	var reminders []string
@@ -33,6 +34,31 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	joined := strings.Join(reminders, "\n")
 	require.Contains(t, joined, `Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.`)
 	require.Contains(t, joined, `Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.`)
+}
+
+func TestPlanModePromptContractRemovesExecutionChecklistReminder(t *testing.T) {
+	t.Parallel()
+
+	history, _ := (&sessionAgent{}).preparePrompt(planmode.PlanMode, nil, "plan the refactor")
+	require.NotEmpty(t, history)
+
+	var reminders []string
+	for _, msg := range history {
+		if msg.Role != fantasy.MessageRoleUser {
+			continue
+		}
+		for _, part := range msg.Content {
+			text, ok := fantasy.AsMessagePart[fantasy.TextPart](part)
+			if ok {
+				reminders = append(reminders, text.Text)
+			}
+		}
+	}
+
+	joined := strings.Join(reminders, "\n")
+	require.Contains(t, joined, "<proposed_plan>")
+	require.NotContains(t, joined, "use update_plan before execution")
+	require.NotContains(t, joined, "Initialize plan with update_plan")
 }
 
 func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,4 +50,52 @@ func TestBuildCompactionContinuationCallCarriesResumePointID(t *testing.T) {
 
 	require.Equal(t, "resume-123", continued.ResumePointID)
 	require.Contains(t, continued.Prompt, "durable boot packet")
+}
+
+func TestBuildTodoReconciliationCallCreatesHiddenFollowUp(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{
+		SessionID: "session-1",
+		Prompt:    "Fix the bug",
+	}
+
+	followUp := buildTodoReconciliationCall(call)
+
+	require.True(t, followUp.SkipUserMessage)
+	require.Equal(t, 1, followUp.TodoReconcileTry)
+	require.Contains(t, followUp.Prompt, "reconcile the live todo list")
+	require.Contains(t, followUp.Prompt, "every retained item ends completed")
+}
+
+func TestCompleteSingleTrailingInProgressTodo(t *testing.T) {
+	t.Parallel()
+
+	todos := []session.Todo{
+		{Content: "Inspect runtime", Status: session.TodoStatusCompleted},
+		{Content: "Wire reconciliation", Status: session.TodoStatusInProgress, ActiveForm: "Wiring reconciliation"},
+	}
+
+	updated, changed := completeSingleTrailingInProgressTodo(todos)
+
+	require.True(t, changed)
+	require.Equal(t, session.TodoStatusCompleted, updated[1].Status)
+	require.Empty(t, updated[1].ActiveForm)
+}
+
+func TestCompleteAllIncompleteTodos(t *testing.T) {
+	t.Parallel()
+
+	todos := []session.Todo{
+		{Content: "Inspect runtime", Status: session.TodoStatusCompleted},
+		{Content: "Wire reconciliation", Status: session.TodoStatusInProgress, ActiveForm: "Wiring reconciliation"},
+		{Content: "Verify tests", Status: session.TodoStatusPending},
+	}
+
+	updated, changed := completeAllIncompleteTodos(todos)
+
+	require.True(t, changed)
+	require.Equal(t, session.TodoStatusCompleted, updated[1].Status)
+	require.Equal(t, session.TodoStatusCompleted, updated[2].Status)
+	require.Empty(t, updated[1].ActiveForm)
 }

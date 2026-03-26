@@ -13,7 +13,7 @@ These rules override everything else. Follow them strictly:
 8. **ERROR-FIRST EDITING**: After every edit, check LSP and compiler diagnostics. Fix current-file errors immediately and do not run build or typecheck or edit other files until errors are zero. Only after zero errors should you address warnings. Warnings never block progress.
 9. **ATOMIC MULTI-EDITS**: Every `old_string` must match character-for-character. If one fails, the batch fails. Never guess. Use 5+ lines of context.
 10. **FILE EXISTENCE FIRST**: Never reference, edit, or name a file unless its exact path was just verified with targeted shell commands such as `ls`, `find`, or `rg --files` in the specific directory. If any uncertainty remains, list the deepest precise directory before proceeding.
-11. **CHECKLIST DISCIPLINE**: If you create a plan with `update_plan`, you must execute against it, keep it current after each completed step, and never move to the next command with stale plan state.
+11. **CHECKLIST DISCIPLINE**: If you create a plan with `update_plan`, you must execute against it, keep it current after each completed step, and never move to the next command with stale plan state. The checklist is execution scaffolding for your reasoning, not decorative UI, so ending a turn with stale items is a correctness failure.
 12. **BE AUTONOMOUS**: Search, read, think, decide, act. Break complex tasks into
    steps and complete them all. Try alternative strategies — different commands,
    search terms, tools, or scopes — until the task is done or a hard external

@@ -82,6 +82,9 @@ const (
 	// Codex-style compaction: max tokens for user messages in compacted history.
 	// Aligned with Codex's COMPACT_USER_MESSAGE_MAX_TOKENS = 20,000.
 	compactUserMessageMaxTokens = 20_000
+
+	// Checklist reconciliation tuning.
+	maxTodoReconcileAttempts = 1
 )
 
 //go:embed templates/title.md
@@ -103,6 +106,7 @@ type SessionAgentCall struct {
 	SessionID        string
 	Prompt           string
 	ResumePointID    string
+	TodoReconcileTry int
 	SkillContext     string
 	ActiveSkills     []string
 	ActiveTools      []string
@@ -155,6 +159,66 @@ func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *me
 	}
 
 	return continuation
+}
+
+func buildTodoReconciliationCall(call SessionAgentCall) SessionAgentCall {
+	followUp := call
+	followUp.SkipUserMessage = true
+	followUp.TodoReconcileTry++
+	followUp.Prompt = strings.TrimSpace(`Before ending this request, reconcile the live todo list.
+
+Rules:
+- The todo list exists to keep your execution structured; do not leave it stale.
+- Inspect the current checklist state and act on it now.
+- If any listed work is still genuinely required, do that work first.
+- Then call update_plan so every retained item ends completed.
+- Drop obsolete or superseded items instead of leaving them pending.
+- Do not finish this turn with any retained item still pending or in_progress.
+- After the update_plan call, return only the minimal final answer.`)
+	return followUp
+}
+
+func countIncompleteRenderableTodos(todos []session.Todo) int {
+	count := 0
+	for _, todo := range todos {
+		if !session.IsRenderableTodo(todo) {
+			continue
+		}
+		if session.IsTodoIncompleteStatus(todo.Status) {
+			count++
+		}
+	}
+	return count
+}
+
+func completeSingleTrailingInProgressTodo(todos []session.Todo) ([]session.Todo, bool) {
+	if countIncompleteRenderableTodos(todos) != 1 {
+		return todos, false
+	}
+	updated := slices.Clone(todos)
+	for i := range updated {
+		if !session.IsRenderableTodo(updated[i]) || updated[i].Status != session.TodoStatusInProgress {
+			continue
+		}
+		updated[i].Status = session.TodoStatusCompleted
+		updated[i].ActiveForm = ""
+		return updated, true
+	}
+	return todos, false
+}
+
+func completeAllIncompleteTodos(todos []session.Todo) ([]session.Todo, bool) {
+	updated := slices.Clone(todos)
+	changed := false
+	for i := range updated {
+		if !session.IsRenderableTodo(updated[i]) || !session.IsTodoIncompleteStatus(updated[i].Status) {
+			continue
+		}
+		updated[i].Status = session.TodoStatusCompleted
+		updated[i].ActiveForm = ""
+		changed = true
+	}
+	return updated, changed
 }
 
 type SessionAgent interface {
@@ -393,6 +457,51 @@ func (a *sessionAgent) saveSessionWithTimeout(ctx context.Context, sess session.
 		return nil
 	})
 	return out, err
+}
+
+func (a *sessionAgent) finalizeSessionTodos(ctx context.Context, sessionID string, resolver func([]session.Todo) ([]session.Todo, bool)) (bool, error) {
+	if resolver == nil {
+		return false, nil
+	}
+	currentSession, err := a.getSessionWithTimeout(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if !session.HasIncompleteTodos(currentSession.Todos) {
+		return false, nil
+	}
+	updatedTodos, changed := resolver(currentSession.Todos)
+	if !changed {
+		return false, nil
+	}
+	currentSession.Todos = updatedTodos
+	if _, err := a.saveSessionWithTimeout(ctx, currentSession); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (a *sessionAgent) buildTodoReconciliationFollowUp(ctx context.Context, call SessionAgentCall) (*SessionAgentCall, error) {
+	currentSession, err := a.getSessionWithTimeout(ctx, call.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !session.HasIncompleteTodos(currentSession.Todos) {
+		return nil, nil
+	}
+	if resolved, err := a.finalizeSessionTodos(ctx, call.SessionID, completeSingleTrailingInProgressTodo); err != nil {
+		return nil, err
+	} else if resolved {
+		return nil, nil
+	}
+	if call.TodoReconcileTry < maxTodoReconcileAttempts {
+		followUp := buildTodoReconciliationCall(call)
+		return &followUp, nil
+	}
+	if _, err := a.finalizeSessionTodos(ctx, call.SessionID, completeAllIncompleteTodos); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func isGeminiCodeExecutionModel(model Model) bool {
@@ -1249,6 +1358,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			resultText = result.Response.Content.Text()
 		}
 		a.checkpointTurn(ctx, call.SessionID, call.Prompt, resultText, "completed", false)
+	}
+	if followUp, reconcileErr := a.buildTodoReconciliationFollowUp(ctx, call); reconcileErr != nil {
+		return nil, reconcileErr
+	} else if followUp != nil {
+		return a.Run(ctx, *followUp)
 	}
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)

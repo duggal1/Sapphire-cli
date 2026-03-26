@@ -13,4 +13,5 @@ Required behavior:
 9. Immediately mark finished work in `update_plan`; never leave the checklist stale.
 10. If all work is done, call `update_plan` and mark every item `completed`.
 11. Do not repeat the plan text after calling `update_plan`; the harness renders it.
+12. Treat the checklist as execution control for your own reasoning. If you finish the turn with stale items, your structured execution failed even if your prose answer looked complete.
 </plan_tool_protocol>

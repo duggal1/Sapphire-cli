@@ -2,21 +2,26 @@ package tools
 
 import (
 	"context"
+
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 )
 
 type (
-	sessionIDContextKey string
-	messageIDContextKey string
-	supportsImagesKey   string
-	modelNameKey        string
-	workingDirKey       string
-	runtimeControlKey   string
-	writeScopeKey       string
+	sessionIDContextKey   string
+	sessionModeContextKey string
+	messageIDContextKey   string
+	supportsImagesKey     string
+	modelNameKey          string
+	workingDirKey         string
+	runtimeControlKey     string
+	writeScopeKey         string
 )
 
 const (
 	// SessionIDContextKey is the key for the session ID in the context.
 	SessionIDContextKey sessionIDContextKey = "session_id"
+	// SessionModeContextKey is the key for the current collaboration mode in the context.
+	SessionModeContextKey sessionModeContextKey = "session_mode"
 	// MessageIDContextKey is the key for the message ID in the context.
 	MessageIDContextKey messageIDContextKey = "message_id"
 	// SupportsImagesContextKey is the key for the model's image support capability.
@@ -59,6 +64,19 @@ func getContextValue[T any](ctx context.Context, key any, defaultValue T) T {
 // GetSessionFromContext retrieves the session ID from the context.
 func GetSessionFromContext(ctx context.Context) string {
 	return getContextValue(ctx, SessionIDContextKey, "")
+}
+
+// GetSessionModeFromContext retrieves the current collaboration mode from the context.
+func GetSessionModeFromContext(ctx context.Context) planmode.SessionMode {
+	value := ctx.Value(SessionModeContextKey)
+	switch typed := value.(type) {
+	case planmode.SessionMode:
+		return planmode.NormalizeMode(typed)
+	case string:
+		return planmode.NormalizeMode(planmode.SessionMode(typed))
+	default:
+		return planmode.DefaultMode()
+	}
 }
 
 // GetMessageFromContext retrieves the message ID from the context.

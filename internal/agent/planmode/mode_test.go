@@ -34,3 +34,29 @@ func TestAvailableModesDescriptionsAreConcise(t *testing.T) {
 		}
 	}
 }
+
+func TestModeToolPoliciesMatchRuntimeContract(t *testing.T) {
+	t.Parallel()
+
+	if IsToolAllowed(PlanMode, "bash") {
+		t.Fatal("plan mode must reject bash")
+	}
+	if IsToolAllowed(PlanMode, "apply_patch") {
+		t.Fatal("plan mode must reject apply_patch")
+	}
+	if !IsToolAllowed(PlanMode, "view") {
+		t.Fatal("plan mode must allow read-only discovery tools")
+	}
+	if IsToolAllowed(PlanMode, "unknown_tool") {
+		t.Fatal("plan mode must use a strict allowlist")
+	}
+
+	for _, mode := range []SessionMode{ArchitectureMode, SecurityMode, DebugMode, ReviewMode, OrchestratorMode} {
+		if !IsToolAllowed(mode, "bash") {
+			t.Fatalf("%s should allow bash for inspection and analysis", mode)
+		}
+		if IsToolAllowed(mode, "apply_patch") {
+			t.Fatalf("%s must reject direct file mutation tools", mode)
+		}
+	}
+}

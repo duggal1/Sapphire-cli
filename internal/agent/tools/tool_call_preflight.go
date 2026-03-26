@@ -13,6 +13,7 @@ import (
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/schema"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/filetracker"
 )
 
@@ -34,6 +35,10 @@ func getValidationFileTracker() filetracker.Service {
 }
 
 func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[string]fantasy.AgentTool) (fantasy.ToolCall, fantasy.AgentTool, error) {
+	if err := validateModeAwareToolCall(ctx, call.Name); err != nil {
+		return call, nil, err
+	}
+
 	normalized, ok := NormalizeToolCall(call, tools)
 	if !ok {
 		// Build suggestion list for the model to self-correct
@@ -75,6 +80,25 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	}
 
 	return call, tool, nil
+}
+
+func validateModeAwareToolCall(ctx context.Context, toolName string) error {
+	canonical := canonicalToolNameForModePolicy(toolName)
+	if canonical == "" {
+		return nil
+	}
+	return planmode.ValidateModeToolCall(GetSessionModeFromContext(ctx), canonical)
+}
+
+func canonicalToolNameForModePolicy(name string) string {
+	name = stripToolNamespace(name)
+	if name == "" {
+		return ""
+	}
+	if alias := toolNameAlias(name); alias != "" {
+		return alias
+	}
+	return normalizeToolName(name)
 }
 
 func parseToolInput(raw string, toolName string) (map[string]any, error) {

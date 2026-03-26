@@ -39,6 +39,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/agent/longhorizon"
 	"github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -654,6 +655,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
+	ctx = context.WithValue(ctx, tools.SessionModeContextKey, planmode.NormalizeMode(currentSession.Mode))
 	runtimeControl := newRuntimeControl()
 	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
 

@@ -208,9 +208,6 @@ type PlanModeRegistryOptions struct {
 
 func NewPlanModeRegistry(opts PlanModeRegistryOptions) (*Registry, error) {
 	registry := NewRegistry()
-	if err := registry.Register(updatePlanToolSpec(opts.Sessions)); err != nil {
-		return nil, err
-	}
 	if err := registry.Register(requestUserInputToolSpec(opts.OnQuestions)); err != nil {
 		return nil, err
 	}
@@ -224,9 +221,6 @@ func NewPlanModeRegistry(opts PlanModeRegistryOptions) (*Registry, error) {
 		return nil, err
 	}
 	if err := registry.Register(listDirectoryToolSpec(opts.WorkingDir)); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(runCommandToolSpec(opts.WorkingDir)); err != nil {
 		return nil, err
 	}
 	return registry, nil

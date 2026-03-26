@@ -211,9 +211,19 @@ func TestPlanModePromptRequiresFinalProposedPlanWhenReady(t *testing.T) {
 	for _, needle := range []string{
 		"do **not** stop at validation prose, status narration, or generic explanation",
 		"Once you have enough information for a safe plan, produce it immediately.",
+		`Execution-oriented narration such as "Initiating Task Execution", "implement the plan", or similar act-first wording while still in Plan Mode`,
+		"Do **not** narrate execution, implementation progress, or task performance while in Plan Mode.",
 	} {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("expected %q in plan prompt", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		"Dry-run commands when they do not modify repo-tracked files",
+		"Tests, builds, or checks that may write caches or build artifacts",
+	} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("did not expect %q in plan prompt", forbidden)
 		}
 	}
 }

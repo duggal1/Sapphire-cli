@@ -12,7 +12,8 @@ package planmode
 
 import (
 	"fmt"
-	"slices"
+	"strings"
+	"unicode"
 )
 
 // ToolRestrictions defines which tools are allowed in each mode (Codex-inspired)
@@ -23,6 +24,9 @@ type ToolRestrictions struct {
 
 	// ForbiddenTools - List of tool names forbidden in the current mode
 	ForbiddenTools []string
+
+	// StrictAllowlist rejects every tool that is not explicitly listed in AllowedTools.
+	StrictAllowlist bool
 }
 
 // Forbidden tools in PlanMode (Codex plan mode restrictions)
@@ -36,6 +40,7 @@ var planModeForbiddenTools = []string{
 	"single_edit",
 	"agentic_edit",
 	"multiedit",
+	"apply_patch",
 
 	// File writing tools - FORBIDDEN (mutating operations)
 	"write",
@@ -45,10 +50,15 @@ var planModeForbiddenTools = []string{
 	"job_output",
 	"job_kill",
 	"python",
+	"download",
 
 	// Background execution tools - FORBIDDEN (doing the work)
+	"agent",
 	"orchestrate_worktrees",
 	"report_agent_job_result",
+	"call_mcp_tool",
+	"connect_mcp",
+	"install_mcp",
 
 	// Planning tool - FORBIDDEN in Plan Mode (Codex behavior)
 	// Plan Mode uses conversation-based planning with <proposed_plan> blocks
@@ -69,7 +79,6 @@ var planModeAllowedTools = []string{
 	"glob",
 	"ls",
 	"grep",
-	"rg",
 	"search_tools",
 
 	// Reference tools - ALLOWED (gathering information)
@@ -77,13 +86,13 @@ var planModeAllowedTools = []string{
 	"sourcegraph",
 	"fetch",
 	"agentic_fetch",
-	"download",
+	"web_fetch",
+	"web_search",
+	"google_search",
 
 	// Memory tools - ALLOWED (retrieving context)
 	"view_memory",
-	"refresh_memory",
 	"recall_memory",
-	"save_memory",
 
 	// Tool management - ALLOWED
 	"list_tools",
@@ -91,7 +100,6 @@ var planModeAllowedTools = []string{
 
 	// MCP tools - ALLOWED (for research)
 	"list_available_mcps",
-	"connect_mcp",
 	"list_mcp_tools",
 	"list_mcp_resources",
 	"read_mcp_resource",
@@ -103,8 +111,6 @@ var planModeAllowedTools = []string{
 
 	// LSP tools - ALLOWED (static analysis, non-mutating)
 	"lsp_diagnostics",
-	"lsp_references",
-	"lsp_restart",
 
 	// Mode switching - ALLOWED (to exit plan mode)
 	"set_mode",
@@ -113,69 +119,126 @@ var planModeAllowedTools = []string{
 	"request_user_input",
 }
 
+var specialistModeForbiddenTools = []string{
+	"edit",
+	"single_edit",
+	"agentic_edit",
+	"multiedit",
+	"apply_patch",
+	"write",
+}
+
 // GetToolRestrictions returns the tool restrictions for the given mode (Codex-inspired)
 func GetToolRestrictions(mode SessionMode) *ToolRestrictions {
 	switch NormalizeMode(mode) {
-	case PlanMode, ArchitectureMode, SecurityMode, ReviewMode, OrchestratorMode:
+	case PlanMode:
 		return &ToolRestrictions{
-			AllowedTools:   planModeAllowedTools,
-			ForbiddenTools: planModeForbiddenTools,
+			AllowedTools:    planModeAllowedTools,
+			ForbiddenTools:  planModeForbiddenTools,
+			StrictAllowlist: true,
+		}
+	case ArchitectureMode, SecurityMode, DebugMode, ReviewMode, OrchestratorMode:
+		return &ToolRestrictions{
+			ForbiddenTools: specialistModeForbiddenTools,
 		}
 	default:
 		// PairProgrammingMode and ExecuteMode have no restrictions
-		return &ToolRestrictions{
-			AllowedTools:   nil,
-			ForbiddenTools: nil,
-		}
+		return nil
 	}
 }
 
 // IsToolAllowed checks if a tool is allowed in the given mode (Codex plan mode enforcement)
 func IsToolAllowed(mode SessionMode, toolName string) bool {
-	if !NormalizeMode(mode).RequiresReadOnlyTooling() {
-		// All tools allowed in non-plan modes
+	restrictions := GetToolRestrictions(mode)
+	if restrictions == nil {
 		return true
 	}
-
-	// In plan mode, check if tool is explicitly forbidden
-	if slices.Contains(planModeForbiddenTools, toolName) {
-		return false
+	canonical := canonicalToolName(toolName)
+	if restrictions.StrictAllowlist {
+		return canonical != "" && containsToolName(restrictions.AllowedTools, canonical)
 	}
-
-	// Tool is allowed (either in allowed list or not restricted)
-	return true
+	return canonical == "" || !containsToolName(restrictions.ForbiddenTools, canonical)
 }
 
-// PlanModeError represents an error when a tool is blocked in plan mode
-type PlanModeError struct {
+func canonicalToolName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	lastUnderscore := false
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if !lastUnderscore {
+				b.WriteRune('_')
+				lastUnderscore = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func containsToolName(items []string, toolName string) bool {
+	for _, item := range items {
+		if canonicalToolName(item) == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolRestrictionError represents an error when a tool is blocked by mode policy.
+type ToolRestrictionError struct {
+	Mode     SessionMode
 	ToolName string
 	Message  string
 }
 
-// Error implements the error interface for PlanModeError
-func (e *PlanModeError) Error() string {
-	return fmt.Sprintf("plan mode restriction: tool %q is forbidden in plan mode - %s", e.ToolName, e.Message)
+// Error implements the error interface for ToolRestrictionError.
+func (e *ToolRestrictionError) Error() string {
+	mode := NormalizeMode(e.Mode)
+	title := mode.Title()
+	if strings.TrimSpace(title) == "" {
+		title = mode.String()
+	}
+	return fmt.Sprintf("%s mode restriction: tool %q is forbidden - %s", strings.ToLower(title), e.ToolName, e.Message)
 }
 
-// NewPlanModeError creates a new plan mode error (Codex-style error message)
-func NewPlanModeError(toolName string) *PlanModeError {
-	message := "plan mode is for thinking and planning only - switch to default mode to use this tool"
-	return &PlanModeError{
+// NewToolRestrictionError creates a new mode-aware restriction error.
+func NewToolRestrictionError(mode SessionMode, toolName string) *ToolRestrictionError {
+	mode = NormalizeMode(mode)
+	message := "switch to default mode to use this tool"
+	switch mode {
+	case PlanMode:
+		message = "plan mode is analyze-only and read-only - inspect, clarify, and return a <proposed_plan> instead of executing changes"
+	case ArchitectureMode, SecurityMode, DebugMode, ReviewMode, OrchestratorMode:
+		message = "this mode may inspect and run supporting tools, but direct file-mutation tools are blocked - switch to default mode to edit code"
+	}
+	return &ToolRestrictionError{
+		Mode:     mode,
 		ToolName: toolName,
 		Message:  message,
 	}
 }
 
-// ValidatePlanModeToolCall validates a tool call in plan mode (Codex enforcement)
-// Returns nil if the tool is allowed, or a PlanModeError if forbidden
-func ValidatePlanModeToolCall(mode SessionMode, toolName string) error {
-	if !NormalizeMode(mode).RequiresReadOnlyTooling() {
-		return nil
-	}
-
+func ValidateModeToolCall(mode SessionMode, toolName string) error {
 	if !IsToolAllowed(mode, toolName) {
-		return NewPlanModeError(toolName)
+		return NewToolRestrictionError(mode, toolName)
 	}
-
 	return nil
+}
+
+// NewPlanModeError creates a new plan mode error (compatibility wrapper).
+func NewPlanModeError(toolName string) *ToolRestrictionError {
+	return NewToolRestrictionError(PlanMode, toolName)
+}
+
+// ValidatePlanModeToolCall validates a tool call against the current mode policy.
+func ValidatePlanModeToolCall(mode SessionMode, toolName string) error {
+	return ValidateModeToolCall(mode, toolName)
 }

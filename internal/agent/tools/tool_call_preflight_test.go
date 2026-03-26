@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +41,75 @@ func TestPrepareToolCallNormalizesEditAliases(t *testing.T) {
 	require.Equal(t, "README.md", input["file_path"])
 	require.Equal(t, "alpha", input["old_string"])
 	require.Equal(t, "beta", input["new_string"])
+}
+
+func TestPrepareToolCallRejectsBashInPlanModeBeforeToolLookup(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(context.Background(), SessionModeContextKey, planmode.PlanMode)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "plan-bash-1",
+		Name:  "bash",
+		Input: `{"command":"pwd"}`,
+	}, map[string]fantasy.AgentTool{})
+	require.Error(t, err)
+	require.Contains(t, strings.ToLower(err.Error()), "plan mode restriction")
+	require.Contains(t, err.Error(), `"bash"`)
+	require.NotContains(t, err.Error(), "tool not found")
+}
+
+func TestPrepareToolCallRejectsApplyPatchAliasInPlanModeBeforeValidation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(context.Background(), SessionModeContextKey, planmode.PlanMode)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "plan-patch-1",
+		Name:  "Apply Patch",
+		Input: `{}`,
+	}, map[string]fantasy.AgentTool{})
+	require.Error(t, err)
+	require.Contains(t, strings.ToLower(err.Error()), "plan mode restriction")
+	require.Contains(t, err.Error(), `"apply_patch"`)
+	require.NotContains(t, err.Error(), "unified_diff")
+	require.NotContains(t, err.Error(), "tool not found")
+}
+
+func TestPrepareToolCallAllowsBashInArchitectMode(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	ctx := context.WithValue(context.Background(), SessionModeContextKey, planmode.ArchitectureMode)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "architect-bash-1",
+		Name:  BashToolName,
+		Input: `{"command":"pwd"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool})
+	require.NoError(t, err)
+	require.Equal(t, BashToolName, prepared.Name)
+}
+
+func TestPrepareToolCallRejectsDirectEditToolsInSecurityMode(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(context.Background(), SessionModeContextKey, planmode.SecurityMode)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "security-patch-1",
+		Name:  "apply_patch",
+		Input: `{"file_path":"main.go","unified_diff":"diff --git a/main.go b/main.go"}`,
+	}, map[string]fantasy.AgentTool{})
+	require.Error(t, err)
+	require.Contains(t, strings.ToLower(err.Error()), "security mode restriction")
+	require.Contains(t, err.Error(), `"apply_patch"`)
 }
 
 func TestPrepareToolCallDoesNotRewriteUnreadEditToView(t *testing.T) {

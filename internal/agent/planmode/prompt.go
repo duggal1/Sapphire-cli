@@ -32,9 +32,9 @@ func BuildPlanModePrompt() *PlanModePrompt {
 	return &PlanModePrompt{
 		FullPrompt: prompt,
 		Restrictions: `**PLAN MODE ACTIVE** - You are FORBIDDEN from:
-- File editing tools (edit, single_edit, agentic_edit, multiedit, write)
-- Shell/terminal tools (bash, python, job_output, job_kill)
-- Background execution tools (orchestrate_worktrees, report_agent_job_result)
+- File mutation tools (edit, single_edit, agentic_edit, multiedit, write, apply_patch)
+- Shell, Python, tests, builds, and execution commands
+- Background execution, sub-agent dispatch, and update_plan
 
 This mode is for THINKING AND PLANNING ONLY.`,
 		Role: `You are in PLAN MODE. Your role:
@@ -53,15 +53,15 @@ func GetPlanModeInstructions() string {
 You are in PLAN MODE - for thinking and planning only.
 
 FORBIDDEN:
-- File editing (edit, write, multiedit, etc.)
-- Shell commands (bash, python, etc.)
-- Background execution (orchestrate_worktrees, etc.)
+- File mutation (edit, write, multiedit, apply_patch, etc.)
+- Shell commands, Python, tests, builds, and execution steps
+- Background execution, sub-agent dispatch, and update_plan
 
 ALLOWED:
 - Research (view, glob, grep, fetch, etc.)
 - Analysis (lsp_diagnostics, search_tools, etc.)
 
-Create a complete plan inside <proposed_plan>...</proposed_plan>.
+Do not narrate execution. Create a complete plan inside <proposed_plan>...</proposed_plan>.
 Ask clarifying questions when requirements are unclear.`
 }
 

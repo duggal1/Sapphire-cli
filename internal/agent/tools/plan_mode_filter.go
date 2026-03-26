@@ -14,6 +14,30 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/session"
 )
 
+type modeRestrictedTool struct {
+	mode planmode.SessionMode
+	base fantasy.AgentTool
+}
+
+func (t modeRestrictedTool) Info() fantasy.ToolInfo {
+	return t.base.Info()
+}
+
+func (t modeRestrictedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if err := planmode.ValidateModeToolCall(t.mode, t.base.Info().Name); err != nil {
+		return fantasy.ToolResponse{}, err
+	}
+	return t.base.Run(ctx, call)
+}
+
+func (t modeRestrictedTool) ProviderOptions() fantasy.ProviderOptions {
+	return t.base.ProviderOptions()
+}
+
+func (t modeRestrictedTool) SetProviderOptions(opts fantasy.ProviderOptions) {
+	t.base.SetProviderOptions(opts)
+}
+
 // PlanModeToolFilter wraps tools to enforce plan mode restrictions
 // Returns filtered tool list based on session mode
 func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID string, tools []fantasy.AgentTool) ([]fantasy.AgentTool, error) {
@@ -24,12 +48,11 @@ func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID
 		mode = planmode.DefaultMode()
 	}
 
-	// If not in plan mode, return all tools
-	if mode != planmode.PlanMode {
+	restrictions := planmode.GetToolRestrictions(mode)
+	if restrictions == nil || (!restrictions.StrictAllowlist && len(restrictions.ForbiddenTools) == 0) {
 		return tools, nil
 	}
 
-	// In plan mode, filter out forbidden tools
 	filtered := make([]fantasy.AgentTool, 0, len(tools))
 	for _, tool := range tools {
 		if tool == nil {
@@ -38,7 +61,7 @@ func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID
 
 		toolName := tool.Info().Name
 		if planmode.IsToolAllowed(mode, toolName) {
-			filtered = append(filtered, tool)
+			filtered = append(filtered, modeRestrictedTool{mode: mode, base: tool})
 		}
 	}
 
@@ -49,12 +72,12 @@ func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID
 func GetPlanModeToolRestrictionsMessage() string {
 	return `**Mode Restrictions**
 
-In read-only collaboration modes, the following tools are FORBIDDEN:
-- File editing: edit, single_edit, agentic_edit, multiedit, write
-- Shell commands: bash, python, job_output, job_kill
-- Background execution: orchestrate_worktrees, report_agent_job_result
+In Plan mode, the following tools are FORBIDDEN:
+- File editing: edit, single_edit, agentic_edit, multiedit, write, apply_patch
+- Shell and execution: bash, python, tests, builds, run commands, background jobs
+- Task execution: sub-agent dispatch, worktree orchestration, update_plan
 
-These modes are for analysis, planning, review, and architecture work.
+Plan mode is analyze-only. Inspect the repo, ask targeted questions when needed, and return a <proposed_plan>.
 
 To use these tools, switch to default mode using the set_mode tool.`
 }
@@ -70,11 +93,7 @@ func ValidatePlanModeToolCall(ctx context.Context, sessions session.Service, ses
 		return nil // If we can't get mode, allow the call
 	}
 
-	if !planmode.IsToolAllowed(mode, toolName) {
-		return planmode.NewPlanModeError(toolName)
-	}
-
-	return nil
+	return planmode.ValidateModeToolCall(mode, toolName)
 }
 
 // CreatePlanModeViolationError creates a descriptive error for plan mode violations

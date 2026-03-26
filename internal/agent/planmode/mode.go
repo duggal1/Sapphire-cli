@@ -205,7 +205,7 @@ func (m SessionMode) AllowsStructuredQuestions() bool {
 
 func (m SessionMode) RequiresReadOnlyTooling() bool {
 	switch NormalizeMode(m) {
-	case PlanMode, ArchitectureMode, SecurityMode, ReviewMode, OrchestratorMode:
+	case PlanMode:
 		return true
 	default:
 		return false

@@ -47,14 +47,14 @@ func PlanModeToolFilter(ctx context.Context, sessions session.Service, sessionID
 
 // GetPlanModeToolRestrictionsMessage returns a user-friendly message about plan mode restrictions
 func GetPlanModeToolRestrictionsMessage() string {
-	return `**Plan Mode Restrictions**
+	return `**Mode Restrictions**
 
-In Plan Mode, the following tools are FORBIDDEN:
+In read-only collaboration modes, the following tools are FORBIDDEN:
 - File editing: edit, single_edit, agentic_edit, multiedit, write
 - Shell commands: bash, python, job_output, job_kill
 - Background execution: orchestrate_worktrees, report_agent_job_result
 
-Plan Mode is for THINKING AND PLANNING ONLY.
+These modes are for analysis, planning, review, and architecture work.
 
 To use these tools, switch to default mode using the set_mode tool.`
 }

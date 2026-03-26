@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
@@ -333,6 +334,18 @@ func (a *AssistantMessageItem) renderThinkingMarkdown(content string, width int)
 }
 
 func (a *AssistantMessageItem) renderModelOutput(content string, width int) string {
+	visible := strings.TrimSpace(planmode.RemoveStructuredBlocks(content))
+	if block, ok := planmode.ExtractStructuredBlock(content); ok && block.IsValid {
+		parts := make([]string, 0, 2)
+		if visible != "" {
+			parts = append(parts, prefixRenderedBlock(
+				a.sty.Base.Foreground(a.sty.White).Render("•"),
+				a.renderMarkdown(visible, width),
+			))
+		}
+		parts = append(parts, RenderStructuredBlock(a.sty, block, width))
+		return strings.Join(parts, "\n\n")
+	}
 	return prefixRenderedBlock(
 		a.sty.Base.Foreground(a.sty.White).Render("•"),
 		a.renderMarkdown(content, width),

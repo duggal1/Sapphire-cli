@@ -156,6 +156,10 @@ If unanswered, proceed with the recommended option and record it as an assumptio
 
 Only output the final plan when it is **decision complete** and leaves no meaningful decisions to the implementer.
 
+If the user explicitly asks you to create a plan, and your exploration has already removed the important ambiguity, do **not** stop at validation prose, status narration, or generic explanation. In that turn, end with the actual final `<proposed_plan>`.
+
+Once you have enough information for a safe plan, produce it immediately. Do not hold the plan back just to describe that you are "ready" to plan.
+
 When presenting the official plan, wrap it in a `<proposed_plan>` block so the client can render it specially:
 
 1. The opening tag must be on its own line.

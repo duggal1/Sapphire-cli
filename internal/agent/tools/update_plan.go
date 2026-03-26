@@ -6,7 +6,7 @@
 // session.Todos is OPTIONAL for backwards compatibility only
 //
 // CRITICAL: This tool is FORBIDDEN in Plan Mode (Codex behavior)
-// Plan Mode uses conversation-based planning with <plan> blocks, not update_plan tool
+// Plan Mode uses conversation-based planning with <proposed_plan> blocks, not update_plan tool
 
 package tools
 
@@ -148,12 +148,12 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 			}
 
 			// CODEX LOGIC: update_plan is FORBIDDEN in Plan Mode
-			// Plan Mode uses conversation-based planning with <plan> blocks
+			// Plan Mode uses conversation-based planning with <proposed_plan> blocks
 			// Reference: codex-rs/core/src/tools/handlers/plan.rs
 			currentSession, err := sessions.Get(ctx, sessionID)
 			wasEmpty := false
 			if err == nil && currentSession.Mode == planmode.PlanMode {
-				return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode - Plan Mode uses conversation-based planning with <plan> blocks, not the update_plan tool. Switch to default mode to use update_plan")
+				return fantasy.ToolResponse{}, fmt.Errorf("update_plan is forbidden in Plan Mode - Plan Mode uses conversation-based planning with <proposed_plan> blocks, not the update_plan tool. Switch to default mode to use update_plan")
 			}
 			if err == nil {
 				wasEmpty = len(currentSession.Todos) == 0

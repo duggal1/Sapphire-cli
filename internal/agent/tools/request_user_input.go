@@ -4,7 +4,7 @@
 // CODEX LOGIC: Structured multiple-choice questions for Plan Mode
 // - 1-3 questions only
 // - Every question MUST have non-empty options
-// - Only available in Plan Mode
+// - Only available in explicit collaboration modes
 
 package tools
 
@@ -47,14 +47,15 @@ func NewRequestUserInputTool(sessions session.Service) fantasy.AgentTool {
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required")
 			}
 
-			// CODEX: Only available in Plan Mode
+			// Structured questioning is only available in explicit collaboration modes.
 			currentSession, err := sessions.Get(ctx, sessionID)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("failed to get session: %w", err)
 			}
 
-			if currentSession.Mode != planmode.PlanMode {
-				return fantasy.ToolResponse{}, fmt.Errorf("request_user_input is only available in Plan Mode")
+			mode := planmode.NormalizeMode(currentSession.Mode)
+			if !mode.AllowsStructuredQuestions() {
+				return fantasy.ToolResponse{}, fmt.Errorf("request_user_input is only available in planning/review collaboration modes")
 			}
 
 			// Validate 1-3 questions

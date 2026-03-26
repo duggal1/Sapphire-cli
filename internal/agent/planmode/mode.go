@@ -11,6 +11,7 @@ type ModeDescriptor struct {
 	Title         string
 	Description   string
 	FooterSummary string
+	Accent        string
 	Mock          bool
 }
 
@@ -44,6 +45,9 @@ const (
 	// DebugMode - Static debugging mockup mode.
 	DebugMode SessionMode = "debug"
 
+	// ReviewMode - Rigorous diff/code review mode.
+	ReviewMode SessionMode = "review"
+
 	// OrchestratorMode - Static multi-agent orchestration mockup mode.
 	OrchestratorMode SessionMode = "orchestrator"
 )
@@ -72,8 +76,8 @@ func NormalizeMode(mode SessionMode) SessionMode {
 	switch mode {
 	case "", DefaultSessionMode, PairProgrammingMode, ExecuteMode:
 		return DefaultSessionMode
-	case PlanMode:
-		return PlanMode
+	case PlanMode, ArchitectureMode, SecurityMode, DebugMode, ReviewMode, OrchestratorMode:
+		return mode
 	default:
 		return mode
 	}
@@ -87,7 +91,7 @@ func (m SessionMode) String() string {
 // IsValid returns true if the session mode is valid
 func (m SessionMode) IsValid() bool {
 	switch m {
-	case DefaultSessionMode, PlanMode, PairProgrammingMode, ExecuteMode, ArchitectureMode, SecurityMode, DebugMode, OrchestratorMode:
+	case DefaultSessionMode, PlanMode, PairProgrammingMode, ExecuteMode, ArchitectureMode, SecurityMode, DebugMode, ReviewMode, OrchestratorMode:
 		return true
 	default:
 		return false
@@ -102,21 +106,59 @@ func (m SessionMode) IsPlanMode() bool {
 // IsExecutionMode returns true if the mode allows execution (not plan mode)
 func (m SessionMode) IsExecutionMode() bool {
 	mode := NormalizeMode(m)
-	return mode == DefaultSessionMode || mode == ExecuteMode || mode == DebugMode || mode == OrchestratorMode
+	return mode == DefaultSessionMode || mode == ExecuteMode || mode == DebugMode
 }
 
 func AvailableModes() []ModeDescriptor {
 	return []ModeDescriptor{
 		{
-			Mode:        DefaultSessionMode,
-			Title:       "Default",
-			Description: "",
+			Mode:          DefaultSessionMode,
+			Title:         "Default",
+			Description:   "Normal coding with full tool access.",
+			FooterSummary: "Normal coding workflow.",
+			Accent:        "#8B8B98",
 		},
 		{
 			Mode:          PlanMode,
 			Title:         "Plan",
-			Description:   "",
-			FooterSummary: "",
+			Description:   "Research, clarify, and produce an implementable plan.",
+			FooterSummary: "Read-only planning with approval handoff.",
+			Accent:        "#A855F7",
+		},
+		{
+			Mode:          ArchitectureMode,
+			Title:         "Architect",
+			Description:   "Define structure, interfaces, and boundaries.",
+			FooterSummary: "Architecture-first design review.",
+			Accent:        "#F59E0B",
+		},
+		{
+			Mode:          DebugMode,
+			Title:         "Debug",
+			Description:   "Trace the failure to root cause and verify the fix.",
+			FooterSummary: "Root-cause-first debugging.",
+			Accent:        "#06B6D4",
+		},
+		{
+			Mode:          SecurityMode,
+			Title:         "Security",
+			Description:   "Assess trust boundaries, impact, and realistic risk.",
+			FooterSummary: "Security analysis and hardening.",
+			Accent:        "#EF4444",
+		},
+		{
+			Mode:          ReviewMode,
+			Title:         "Review",
+			Description:   "Inspect diffs for correctness, risk, and completeness.",
+			FooterSummary: "Judgment-complete code review.",
+			Accent:        "#3B82F6",
+		},
+		{
+			Mode:          OrchestratorMode,
+			Title:         "Orchestrator",
+			Description:   "Plan agents, contracts, gates, and merge-safe execution.",
+			FooterSummary: "Execution topology and coordination.",
+			Accent:        "#14B8A6",
 		},
 	}
 }
@@ -146,6 +188,28 @@ func (m SessionMode) Description() string {
 
 func (m SessionMode) FooterSummary() string {
 	return LookupMode(m).FooterSummary
+}
+
+func (m SessionMode) AccentColor() string {
+	return LookupMode(m).Accent
+}
+
+func (m SessionMode) AllowsStructuredQuestions() bool {
+	switch NormalizeMode(m) {
+	case PlanMode, ArchitectureMode, DebugMode, SecurityMode, ReviewMode, OrchestratorMode:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m SessionMode) RequiresReadOnlyTooling() bool {
+	switch NormalizeMode(m) {
+	case PlanMode, ArchitectureMode, SecurityMode, ReviewMode, OrchestratorMode:
+		return true
+	default:
+		return false
+	}
 }
 
 // PlanModeConfig holds plan mode configuration (Codex-inspired)

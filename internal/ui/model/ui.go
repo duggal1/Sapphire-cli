@@ -250,6 +250,7 @@ type UI struct {
 	pendingUserPlaceholderText    string
 	assistantFooter               *chat.AssistantInfoItem
 	pendingAssistantPlaceholderID string
+	planApprovalContent           string
 
 	// onboarding state
 	onboarding struct {
@@ -601,16 +602,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// there is a number of things that could change the pills here so we want to re-render
 		m.renderPills()
 
-		// Open the approval dialog only when the formula gate step is active.
-		if m.session != nil && m.session.Mode == planmode.PlanMode && hasPlanApprovalStepActive(m.session.Todos) {
-			if !m.dialog.ContainsDialog(dialog.PlanApprovalID) {
-				planApprovalDialog, err := dialog.NewPlanApprovalDialog(m.com, m.session.Todos, "")
-				if err == nil {
-					m.dialog.OpenDialog(planApprovalDialog)
-				}
-			}
-		} else if m.dialog.ContainsDialog(dialog.PlanApprovalID) {
-			m.dialog.CloseDialog(dialog.PlanApprovalID)
+		if msg.Payload.Role == message.Assistant {
+			m.syncPlanApprovalDialogForMessage(&msg.Payload)
 		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
@@ -953,6 +946,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 	if cmd := m.syncPendingAssistantPlaceholder(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	m.syncPlanApprovalDialogForMessages(msgs)
 	if m.indexingProgress.Active || m.chat.MessageItem(chat.IndexingMessageID) != nil {
 		if cmd := m.syncIndexingMessageItem(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1162,6 +1156,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		m.updateAssistantFooter(&msg)
+		m.syncPlanApprovalDialogForMessage(&msg)
 	case message.Tool:
 		for _, tr := range msg.ToolResults() {
 			toolItem := m.chat.MessageItem(tr.ToolCallID)
@@ -1230,6 +1225,9 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	}
 
 	m.updateAssistantFooter(&msg)
+	if msg.Role == message.Assistant {
+		m.syncPlanApprovalDialogForMessage(&msg)
+	}
 
 	var items []chat.MessageItem
 	for _, tc := range msg.ToolCalls() {
@@ -1789,6 +1787,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 		m.dialog.CloseDialog(dialog.ModesID)
 		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		m.planApprovalContent = ""
 
 		cmds = append(cmds, func() tea.Msg {
 			return util.NewInfoMsg("Mode switched to " + msg.Mode.Title())
@@ -1812,15 +1811,21 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
+		m.session.Mode = planmode.DefaultMode()
 
 		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		m.planApprovalContent = ""
 
 		cmds = append(cmds, func() tea.Msg {
-			return util.NewInfoMsg("Implementing plan...")
+			return util.NewInfoMsg("Implementing approved plan...")
 		})
+		if planText := strings.TrimSpace(msg.Plan); planText != "" {
+			cmds = append(cmds, m.sendMessage("Implement this approved plan now. Do not re-plan unless a concrete blocker appears.\n\nApproved plan:\n"+planText))
+		}
 	case dialog.ActionRefinePlan:
 		if m.session == nil {
 			m.dialog.CloseDialog(dialog.PlanApprovalID)
+			m.planApprovalContent = ""
 			break
 		}
 
@@ -1831,6 +1836,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		m.planApprovalContent = ""
 
 		cmds = append(cmds, func() tea.Msg {
 			return util.NewInfoMsg("Plan kept in plan mode for refinement")
@@ -3026,21 +3032,65 @@ func splitChatBottom(mainRect uv.Rectangle, editorHeight, footerHeight int) (uv.
 	return contentRect, footerRect, editorRect
 }
 
-func hasPlanApprovalStepActive(todos []session.Todo) bool {
-	for _, todo := range todos {
-		if todo.Status != session.TodoStatusInProgress {
+func latestPlanProposalFromMessages(msgs []message.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != message.Assistant {
 			continue
 		}
-		content := strings.TrimSpace(todo.ActiveForm)
-		if content == "" {
-			content = strings.TrimSpace(todo.Content)
-		}
-		content = strings.ToLower(content)
-		if content == "gate approval" || strings.Contains(content, "gate approval") {
-			return true
+		if block, ok := planmode.ExtractStructuredBlockForMode(planmode.PlanMode, msgs[i].Content().Text); ok && block.IsValid {
+			return block.Content
 		}
 	}
-	return false
+	return ""
+}
+
+func (m *UI) syncPlanApprovalDialogForMessages(msgs []message.Message) {
+	if m == nil || m.session == nil || planmode.NormalizeMode(m.session.Mode) != planmode.PlanMode {
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		return
+	}
+	m.syncPlanApprovalDialog(latestPlanProposalFromMessages(msgs))
+}
+
+func (m *UI) syncPlanApprovalDialogForMessage(msg *message.Message) {
+	if m == nil || m.session == nil || msg == nil {
+		return
+	}
+	if planmode.NormalizeMode(m.session.Mode) != planmode.PlanMode {
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		return
+	}
+	if msg.Role != message.Assistant {
+		return
+	}
+	planContent := ""
+	if block, ok := planmode.ExtractStructuredBlockForMode(planmode.PlanMode, msg.Content().Text); ok && block.IsValid {
+		planContent = block.Content
+	}
+	m.syncPlanApprovalDialog(planContent)
+}
+
+func (m *UI) syncPlanApprovalDialog(planContent string) {
+	if m == nil {
+		return
+	}
+	planContent = strings.TrimSpace(planContent)
+	if planContent == "" {
+		m.planApprovalContent = ""
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+		return
+	}
+	if m.dialog.ContainsDialog(dialog.PlanApprovalID) && m.planApprovalContent == planContent {
+		return
+	}
+	m.planApprovalContent = planContent
+	if m.dialog.ContainsDialog(dialog.PlanApprovalID) {
+		m.dialog.CloseDialog(dialog.PlanApprovalID)
+	}
+	planApprovalDialog, err := dialog.NewPlanApprovalDialog(m.com, planContent, "")
+	if err == nil {
+		m.dialog.OpenDialog(planApprovalDialog)
+	}
 }
 
 func (m *UI) footerHeight(width int) int {
@@ -3112,13 +3162,17 @@ func (m *UI) renderModeFooter(width int) string {
 	policy := worktreepolicy.Normalize(m.session.WorktreePolicy)
 	badges := make([]string, 0, 2)
 	t := m.com.Styles
-	if mode == planmode.PlanMode {
+	if mode != planmode.DefaultMode() {
+		accent := mode.AccentColor()
+		if accent == "" {
+			accent = "#A855F7"
+		}
 		badges = append(badges, lipgloss.NewStyle().
 			Foreground(t.White).
-			Background(lipgloss.Color("#A34DFF")).
-			Padding(0, 1).
+			Background(lipgloss.Color(accent)).
+			Padding(0, 2).
 			Bold(true).
-			Render("MODE PLAN"))
+			Render("MODE "+strings.ToUpper(mode.Title())))
 	}
 	if label := policy.FooterLabel(); label != "" {
 		badges = append(badges, lipgloss.NewStyle().

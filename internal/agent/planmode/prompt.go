@@ -58,12 +58,10 @@ FORBIDDEN:
 - Background execution (orchestrate_worktrees, etc.)
 
 ALLOWED:
-- Planning (update_plan)
 - Research (view, glob, grep, fetch, etc.)
 - Analysis (lsp_diagnostics, search_tools, etc.)
 
-Create plans with 5-7 steps max, each 5-7 words.
-Do NOT repeat the plan - the harness displays it.
+Create a complete plan inside <proposed_plan>...</proposed_plan>.
 Ask clarifying questions when requirements are unclear.`
 }
 

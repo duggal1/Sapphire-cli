@@ -25,6 +25,21 @@ var mcpPolicyPromptSection []byte
 //go:embed templates/modes/plan.md
 var planModePromptSection []byte
 
+//go:embed templates/modes/architect-mode.md
+var architectModePromptSection []byte
+
+//go:embed templates/modes/debug-mode.md
+var debugModePromptSection []byte
+
+//go:embed templates/modes/security-mode.md
+var securityModePromptSection []byte
+
+//go:embed templates/modes/review-mode.md
+var reviewModePromptSection []byte
+
+//go:embed templates/modes/orchestrator-mode.md
+var orchestratorModePromptSection []byte
+
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
@@ -130,8 +145,8 @@ func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prom
 		skillsPolicyPromptSection,
 		mcpPolicyPromptSection,
 	}
-	if planmode.NormalizeMode(mode) == planmode.PlanMode {
-		sections = append(sections, planModePromptSection)
+	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
+		sections = append(sections, modeSection)
 	}
 	sections = append(sections, mainAgentOrchestrationOverlay)
 	systemPrompt, err := prompt.NewPrompt(
@@ -157,8 +172,8 @@ func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*promp
 		skillsPolicyPromptSection,
 		mcpPolicyPromptSection,
 	}
-	if planmode.NormalizeMode(mode) == planmode.PlanMode {
-		sections = append(sections, planModePromptSection)
+	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
+		sections = append(sections, modeSection)
 	}
 	sections = append(sections, mainAgentOrchestrationOverlay)
 	systemPrompt, err := prompt.NewPrompt(
@@ -191,4 +206,23 @@ func composePromptSections(parts ...[]byte) []byte {
 		return nil
 	}
 	return []byte(strings.Join(sections, "\n\n"))
+}
+
+func modePromptSection(mode planmode.SessionMode) []byte {
+	switch planmode.NormalizeMode(mode) {
+	case planmode.PlanMode:
+		return planModePromptSection
+	case planmode.ArchitectureMode:
+		return architectModePromptSection
+	case planmode.DebugMode:
+		return debugModePromptSection
+	case planmode.SecurityMode:
+		return securityModePromptSection
+	case planmode.ReviewMode:
+		return reviewModePromptSection
+	case planmode.OrchestratorMode:
+		return orchestratorModePromptSection
+	default:
+		return nil
+	}
 }

@@ -1,7 +1,6 @@
 package dialog
 
 import (
-	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -9,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
@@ -26,7 +24,7 @@ const (
 type PlanApprovalDialog struct {
 	com         *common.Common
 	help        help.Model
-	plan        []session.Todo
+	planContent string
 	explanation string
 	selected    int // 0 = Switch to Pair Programming & Implement, 1 = Stay in Plan Mode
 
@@ -41,10 +39,10 @@ type PlanApprovalDialog struct {
 var _ Dialog = (*PlanApprovalDialog)(nil)
 
 // NewPlanApprovalDialog creates a new plan approval dialog.
-func NewPlanApprovalDialog(com *common.Common, plan []session.Todo, explanation string) (*PlanApprovalDialog, error) {
+func NewPlanApprovalDialog(com *common.Common, planContent, explanation string) (*PlanApprovalDialog, error) {
 	p := &PlanApprovalDialog{
 		com:         com,
-		plan:        plan,
+		planContent: strings.TrimSpace(planContent),
 		explanation: explanation,
 		selected:    0, // Default to "Implement Plan"
 	}
@@ -93,7 +91,7 @@ func (p *PlanApprovalDialog) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(msg, p.keyMap.Select):
 			switch p.selected {
 			case 0:
-				return ActionImplementPlan{}
+				return ActionImplementPlan{Plan: p.planContent}
 			case 1:
 				return ActionRefinePlan{}
 			}
@@ -157,43 +155,34 @@ func (p *PlanApprovalDialog) FullHelp() [][]key.Binding {
 }
 
 func (p *PlanApprovalDialog) renderPlan(width int) string {
-	if len(p.plan) == 0 {
+	if strings.TrimSpace(p.planContent) == "" {
 		return ""
 	}
 
 	var b strings.Builder
 	b.WriteString("\n")
-
-	for i, todo := range p.plan {
-		if i >= 8 {
-			// Truncate long plans
-			remaining := len(p.plan) - i
-			b.WriteString(p.com.Styles.Muted.Render(fmt.Sprintf("  … and %d more steps", remaining)))
+	lines := strings.Split(p.planContent, "\n")
+	visible := 0
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if visible >= 8 {
+			b.WriteString(p.com.Styles.Muted.Render("  …"))
 			break
 		}
-
-		var icon string
-		var textStyle lipgloss.Style
-
-		switch todo.Status {
-		case session.TodoStatusCompleted:
-			icon = p.com.Styles.Tool.TodoCompletedIcon.Render(styles.TodoCompletedIcon + " ")
-			textStyle = p.com.Styles.Muted
-		case session.TodoStatusInProgress:
-			icon = p.com.Styles.Tool.TodoInProgressIcon.Render(styles.TodoInProgressIcon + " ")
-			textStyle = p.com.Styles.Base
+		switch {
+		case strings.HasPrefix(line, "#"):
+			b.WriteString(p.com.Styles.Base.Bold(true).Render("  "+strings.TrimLeft(line, "# ")) + "\n")
+		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
+			b.WriteString(p.com.Styles.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon+" ") + p.com.Styles.Base.Render(strings.TrimSpace(line[2:])) + "\n")
+		case len(line) > 2 && line[1] == '.' && line[0] >= '0' && line[0] <= '9':
+			b.WriteString(p.com.Styles.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon+" ") + p.com.Styles.Base.Render(strings.TrimSpace(line[2:])) + "\n")
 		default:
-			icon = p.com.Styles.Tool.TodoPendingIcon.Render(styles.TodoPendingIcon + " ")
-			textStyle = p.com.Styles.Subtle
+			b.WriteString("  " + p.com.Styles.Subtle.Render(line) + "\n")
 		}
-
-		text := todo.Content
-		if todo.Status == session.TodoStatusInProgress && todo.ActiveForm != "" {
-			text = todo.ActiveForm
-		}
-
-		line := icon + textStyle.Render(text)
-		b.WriteString(line + "\n")
+		visible++
 	}
 
 	return b.String()
@@ -226,4 +215,6 @@ func (p *PlanApprovalDialog) renderButtons() string {
 }
 
 // ActionImplementPlan is sent when user chooses to implement the plan.
-type ActionImplementPlan struct{}
+type ActionImplementPlan struct {
+	Plan string
+}

@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/commands"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
@@ -401,6 +402,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "mcp_manager", "MCP Manager", "", ActionOpenDialog{MCPManagerID}),
 	}
 
+	currentMode := c.currentMode()
+	commands = append(commands, c.modeCommands(currentMode)...)
+
 	// Only show compact command if there's an active session
 	if c.hasSession {
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
@@ -486,6 +490,39 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	)
 
 	return commands
+}
+
+func (c *Commands) currentMode() planmode.SessionMode {
+	if c == nil || c.com == nil || c.com.App == nil || c.com.App.Sessions == nil || strings.TrimSpace(c.sessionID) == "" {
+		return planmode.DefaultMode()
+	}
+	sess, err := c.com.App.Sessions.Get(context.Background(), c.sessionID)
+	if err != nil {
+		return planmode.DefaultMode()
+	}
+	return planmode.NormalizeMode(sess.Mode)
+}
+
+func (c *Commands) modeCommands(currentMode planmode.SessionMode) []*CommandItem {
+	items := make([]*CommandItem, 0, len(planmode.AvailableModes()))
+	currentMode = planmode.NormalizeMode(currentMode)
+	for _, mode := range planmode.AvailableModes() {
+		label := "Switch to " + mode.Title + " Mode"
+		if mode.Mode == planmode.DefaultMode() {
+			label = "Switch to Default Mode"
+		}
+		if mode.Mode == currentMode {
+			label = mode.Title + " Mode (Current)"
+		}
+		items = append(items, NewCommandItem(
+			c.com.Styles,
+			"mode_"+mode.Mode.String(),
+			label,
+			"",
+			ActionSelectMode{Mode: mode.Mode},
+		))
+	}
+	return items
 }
 
 func toggleLabel(enabled bool, noun string) string {

@@ -25,7 +25,7 @@ const SetModeToolName = "set_mode"
 // SetModeArgs represents the arguments for the set_mode tool
 type SetModeArgs struct {
 	// Mode - The session mode to switch to.
-	Mode string `json:"mode" description:"The session mode to switch to: default or plan"`
+	Mode string `json:"mode" description:"The session mode to switch to: default, plan, architect, debug, security, review, or orchestrator"`
 
 	// Reason - Optional reason for the mode switch
 	Reason *string `json:"reason,omitempty" description:"Optional brief explanation for the mode switch"`
@@ -59,11 +59,21 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 			switch modeStr {
 			case "plan":
 				newMode = planmode.PlanMode
+			case "architect", "architecture":
+				newMode = planmode.ArchitectureMode
+			case "debug":
+				newMode = planmode.DebugMode
+			case "security":
+				newMode = planmode.SecurityMode
+			case "review":
+				newMode = planmode.ReviewMode
+			case "orchestrator":
+				newMode = planmode.OrchestratorMode
 			case "default", "code", "custom", "pair_programming", "execute":
 				newMode = planmode.DefaultMode()
 			default:
 				return fantasy.ToolResponse{}, fmt.Errorf(
-					"invalid mode %q - must be one of: default or plan",
+					"invalid mode %q - must be one of: default, plan, architect, debug, security, review, or orchestrator",
 					args.Mode,
 				)
 			}
@@ -100,6 +110,16 @@ func NewSetModeTool(sessions session.Service) fantasy.AgentTool {
 			switch newMode {
 			case planmode.PlanMode:
 				message.WriteString("\n\n**Plan Mode Active**\n- Conversation-first planning is active\n- The normal agent runtime stays active\n- Planning remains read-only until you switch back to default mode")
+			case planmode.ArchitectureMode:
+				message.WriteString("\n\n**Architect Mode Active**\n- Structural design and interface reasoning are active\n- Repository mutation remains restricted until you switch back to default mode")
+			case planmode.SecurityMode:
+				message.WriteString("\n\n**Security Mode Active**\n- Security analysis and exploitability review are active\n- Repository mutation remains restricted until you switch back to default mode")
+			case planmode.ReviewMode:
+				message.WriteString("\n\n**Review Mode Active**\n- Rigorous diff and behavior review are active\n- Repository mutation remains restricted until you switch back to default mode")
+			case planmode.OrchestratorMode:
+				message.WriteString("\n\n**Orchestrator Mode Active**\n- Multi-agent execution topology planning is active\n- Repository mutation remains restricted until you switch back to default mode")
+			case planmode.DebugMode:
+				message.WriteString("\n\n**Debug Mode Active**\n- Root-cause-first debugging is active\n- Execution and edits remain available, but only after diagnosis")
 			default:
 				message.WriteString("\n\n**Default Mode Active**\n- Normal coding flow is active\n- Full tool access is available")
 			}

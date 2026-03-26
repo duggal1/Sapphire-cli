@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
@@ -135,6 +136,84 @@ func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("expected %q in sub-agent orchestration prompt", needle)
+		}
+	}
+}
+
+func TestCoderPromptIncludesExtendedModeOverlays(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "mode-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	cases := []struct {
+		mode   planmode.SessionMode
+		needle string
+	}{
+		{mode: planmode.PlanMode, needle: "# Plan Mode"},
+		{mode: planmode.ArchitectureMode, needle: "# Architect Mode"},
+		{mode: planmode.DebugMode, needle: "# Debug Mode"},
+		{mode: planmode.SecurityMode, needle: "# Security Mode"},
+		{mode: planmode.ReviewMode, needle: "# Review Mode"},
+		{mode: planmode.OrchestratorMode, needle: "# Orchestrator Mode"},
+	}
+
+	for _, tc := range cases {
+		p, err := coderPromptForMode(tc.mode)
+		if err != nil {
+			t.Fatalf("coder prompt for %s: %v", tc.mode, err)
+		}
+		out, err := p.Build(context.Background(), "", "", *cfg)
+		if err != nil {
+			t.Fatalf("build prompt for %s: %v", tc.mode, err)
+		}
+		if !strings.Contains(out, tc.needle) {
+			t.Fatalf("expected %q in %s prompt", tc.needle, tc.mode)
+		}
+	}
+}
+
+func TestPlanModePromptRequiresFinalProposedPlanWhenReady(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "plan-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	p, err := coderPromptForMode(planmode.PlanMode)
+	if err != nil {
+		t.Fatalf("coder prompt for plan: %v", err)
+	}
+	out, err := p.Build(context.Background(), "", "", *cfg)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	for _, needle := range []string{
+		"do **not** stop at validation prose, status narration, or generic explanation",
+		"Once you have enough information for a safe plan, produce it immediately.",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("expected %q in plan prompt", needle)
 		}
 	}
 }

@@ -1,10 +1,13 @@
 package dialog
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
@@ -16,8 +19,8 @@ import (
 const (
 	// ModesID is the identifier for the modes dialog.
 	ModesID              = "modes"
-	modesDialogMaxWidth  = 60
-	modesDialogMaxHeight = 18
+	modesDialogMaxWidth  = 72
+	modesDialogMaxHeight = 20
 )
 
 // Modes represents a dialog for selecting collaboration mode.
@@ -176,6 +179,7 @@ func (m *Modes) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	rc := NewRenderContext(t, width)
 	rc.Title = m.dialogTitle()
+	rc.Gap = 1
 	inputView := t.Dialog.InputPrompt.Render(m.input.View())
 	rc.AddPart(inputView)
 
@@ -308,21 +312,44 @@ func (m *ModeOption) Render(width int) string {
 	}
 
 	t := m.t
+	accent := m.mode.AccentColor()
+	if accent == "" {
+		accent = "#A855F7"
+	}
 	var icon string
 	if m.isCurrent {
-		icon = t.Base.Foreground(t.Primary).Render("● ")
+		icon = t.Base.Foreground(lipgloss.Color(accent)).Bold(true).Render("● ")
 	} else {
 		icon = t.Muted.Render("○ ")
 	}
 
 	titleStyle := t.Dialog.NormalItem
 	if m.focused {
-		titleStyle = t.Dialog.SelectedItem
+		titleStyle = t.Dialog.SelectedItem.Background(lipgloss.Color(accent))
 	}
 
 	title := icon + titleStyle.Render(m.title)
-	m.cache[width] = title
-	return title
+	desc := strings.TrimSpace(m.description)
+	if desc == "" {
+		m.cache[width] = title
+		return title
+	}
+
+	available := max(0, width-len(m.title)-6)
+	rendered := title + t.Muted.Render(" - "+truncatePlain(desc, available))
+	m.cache[width] = rendered
+	return rendered
+}
+
+func truncatePlain(text string, width int) string {
+	text = strings.TrimSpace(text)
+	if width <= 0 || len(text) <= width {
+		return text
+	}
+	if width == 1 {
+		return "…"
+	}
+	return text[:width-1] + "…"
 }
 
 // ActionSelectMode is sent when a mode is selected.

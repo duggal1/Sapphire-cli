@@ -30,7 +30,7 @@ type RequestUserInputToolRenderContext struct{}
 
 func (r *RequestUserInputToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
-	header := toolHeader(sty, opts.Status, "Plan Question", cappedWidth, opts.Compact, "clarification needed")
+	header := toolHeader(sty, opts.Status, "Mode Question", cappedWidth, opts.Compact, "clarification needed")
 	if opts.Compact {
 		return header
 	}

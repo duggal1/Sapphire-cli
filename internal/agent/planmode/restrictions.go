@@ -51,7 +51,7 @@ var planModeForbiddenTools = []string{
 	"report_agent_job_result",
 
 	// Planning tool - FORBIDDEN in Plan Mode (Codex behavior)
-	// Plan Mode uses conversation-based planning with <plan> blocks
+	// Plan Mode uses conversation-based planning with <proposed_plan> blocks
 	// update_plan is a checklist/progress tool, separate from Plan Mode
 	"update_plan",
 }
@@ -115,8 +115,8 @@ var planModeAllowedTools = []string{
 
 // GetToolRestrictions returns the tool restrictions for the given mode (Codex-inspired)
 func GetToolRestrictions(mode SessionMode) *ToolRestrictions {
-	switch mode {
-	case PlanMode:
+	switch NormalizeMode(mode) {
+	case PlanMode, ArchitectureMode, SecurityMode, ReviewMode, OrchestratorMode:
 		return &ToolRestrictions{
 			AllowedTools:   planModeAllowedTools,
 			ForbiddenTools: planModeForbiddenTools,
@@ -132,7 +132,7 @@ func GetToolRestrictions(mode SessionMode) *ToolRestrictions {
 
 // IsToolAllowed checks if a tool is allowed in the given mode (Codex plan mode enforcement)
 func IsToolAllowed(mode SessionMode, toolName string) bool {
-	if mode != PlanMode {
+	if !NormalizeMode(mode).RequiresReadOnlyTooling() {
 		// All tools allowed in non-plan modes
 		return true
 	}
@@ -169,7 +169,7 @@ func NewPlanModeError(toolName string) *PlanModeError {
 // ValidatePlanModeToolCall validates a tool call in plan mode (Codex enforcement)
 // Returns nil if the tool is allowed, or a PlanModeError if forbidden
 func ValidatePlanModeToolCall(mode SessionMode, toolName string) error {
-	if mode != PlanMode {
+	if !NormalizeMode(mode).RequiresReadOnlyTooling() {
 		return nil
 	}
 

@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
@@ -148,6 +150,14 @@ func (c *coordinator) prepareCurrentAgentForSession(ctx context.Context, session
 	agentTools, err := c.buildToolsForWorkingDir(ctx, agentCfg, workingDir)
 	if err != nil {
 		return "", "", err
+	}
+	if c.sessions != nil && sessionID != "" {
+		filteredTools, filterErr := tools.PlanModeToolFilter(ctx, c.sessions, sessionID, agentTools)
+		if filterErr != nil {
+			slog.Warn("Failed to apply mode tool filter", "session_id", sessionID, "error", filterErr)
+		} else {
+			agentTools = filteredTools
+		}
 	}
 
 	agent.SetWorkingDir(workingDir)

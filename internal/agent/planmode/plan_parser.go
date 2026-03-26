@@ -1,106 +1,162 @@
-// Codex-style <plan> block parser
-// Reference: codex-rs/core/templates/collaboration_mode/plan.md
-//
-// CODEX FORMAT REQUIREMENTS:
-// 1. Opening tag <plan> must be on its own line
-// 2. Plan content starts on the next line (no text on same line as tag)
-// 3. Closing tag </plan> must be on its own line
-// 4. Use Markdown inside the block
-// 5. Tags must be exactly <plan> and </plan>
-
 package planmode
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
-// PlanBlock represents a parsed <plan> block from model response
-type PlanBlock struct {
-	Content           string
-	IsValid           bool
-	ValidationError   string
+type StructuredBlock struct {
+	Mode            SessionMode
+	Title           string
+	OpenTag         string
+	CloseTag        string
+	Content         string
+	IsValid         bool
+	ValidationError string
 }
 
-// planBlockRegex matches <plan>...</plan> blocks
-// Opening and closing tags must be on their own lines
-var planBlockRegex = regexp.MustCompile(`(?s)^\s*<plan>\s*\n(.*?)\n\s*</plan>\s*$`)
-
-// ExtractPlanBlock extracts the first <plan> block from model response
-// Returns the plan content and a boolean indicating if found
-func ExtractPlanBlock(content string) (string, bool) {
-	matches := planBlockRegex.FindStringSubmatch(content)
-	if len(matches) < 2 {
-		return "", false
-	}
-	return strings.TrimSpace(matches[1]), true
+type structuredBlockSpec struct {
+	mode  SessionMode
+	title string
+	tag   string
 }
 
-// ExtractAllPlanBlocks extracts all <plan> blocks
-// Codex rule: "Only produce at most one <plan> block per turn"
-func ExtractAllPlanBlocks(content string) []string {
-	allMatches := planBlockRegex.FindAllStringSubmatch(content, -1)
-	var plans []string
-	for _, matches := range allMatches {
-		if len(matches) >= 2 {
-			plans = append(plans, strings.TrimSpace(matches[1]))
+var structuredBlockSpecs = []structuredBlockSpec{
+	{mode: PlanMode, title: "Plan", tag: "proposed_plan"},
+	{mode: ArchitectureMode, title: "Architecture Spec", tag: "architecture_spec"},
+	{mode: DebugMode, title: "Debug Report", tag: "debug_report"},
+	{mode: ReviewMode, title: "Review Report", tag: "review_report"},
+	{mode: SecurityMode, title: "Security Report", tag: "security_report"},
+	{mode: OrchestratorMode, title: "Execution Orchestration", tag: "execution_orchestration"},
+}
+
+func blockSpecForMode(mode SessionMode) (structuredBlockSpec, bool) {
+	mode = NormalizeMode(mode)
+	for _, spec := range structuredBlockSpecs {
+		if spec.mode == mode {
+			return spec, true
 		}
 	}
-	return plans
+	return structuredBlockSpec{}, false
 }
 
-// ValidatePlanBlock validates against Codex format requirements
-func ValidatePlanBlock(content string) *PlanBlock {
-	plan := &PlanBlock{Content: content, IsValid: true}
-
-	if strings.TrimSpace(content) == "" {
-		plan.IsValid = false
-		plan.ValidationError = "plan block content cannot be empty"
-		return plan
-	}
-
-	if strings.Contains(content, "<plan>") || strings.Contains(content, "</plan>") {
-		plan.IsValid = false
-		plan.ValidationError = "nested <plan> tags are not allowed"
-		return plan
-	}
-
-	lines := strings.Split(content, "\n")
-	if len(lines) < 2 {
-		plan.IsValid = false
-		plan.ValidationError = "plan block should have multiple lines with structure"
-		return plan
-	}
-
-	return plan
+func blockRegex(tag string) *regexp.Regexp {
+	return regexp.MustCompile(fmt.Sprintf(`(?s)<%[1]s>\s*\n(.*?)\n\s*</%[1]s>`, regexp.QuoteMeta(tag)))
 }
 
-// ParsePlanBlock extracts and validates a <plan> block
-func ParsePlanBlock(content string) (*PlanBlock, bool) {
-	planContent, found := ExtractPlanBlock(content)
-	if !found {
+func validateStructuredBlock(content string, tag string) *StructuredBlock {
+	block := &StructuredBlock{
+		Content: strings.TrimSpace(content),
+		IsValid: true,
+	}
+	if block.Content == "" {
+		block.IsValid = false
+		block.ValidationError = "structured block content cannot be empty"
+		return block
+	}
+	if strings.Contains(block.Content, "<"+tag+">") || strings.Contains(block.Content, "</"+tag+">") {
+		block.IsValid = false
+		block.ValidationError = "nested structured tags are not allowed"
+		return block
+	}
+	return block
+}
+
+func ExtractStructuredBlock(content string) (*StructuredBlock, bool) {
+	for _, spec := range structuredBlockSpecs {
+		re := blockRegex(spec.tag)
+		matches := re.FindStringSubmatch(content)
+		if len(matches) < 2 {
+			continue
+		}
+		block := validateStructuredBlock(matches[1], spec.tag)
+		block.Mode = spec.mode
+		block.Title = spec.title
+		block.OpenTag = "<" + spec.tag + ">"
+		block.CloseTag = "</" + spec.tag + ">"
+		return block, true
+	}
+	return nil, false
+}
+
+func ExtractStructuredBlockForMode(mode SessionMode, content string) (*StructuredBlock, bool) {
+	spec, ok := blockSpecForMode(mode)
+	if !ok {
 		return nil, false
 	}
-	return ValidatePlanBlock(planContent), true
+	re := blockRegex(spec.tag)
+	matches := re.FindStringSubmatch(content)
+	if len(matches) < 2 {
+		return nil, false
+	}
+	block := validateStructuredBlock(matches[1], spec.tag)
+	block.Mode = spec.mode
+	block.Title = spec.title
+	block.OpenTag = "<" + spec.tag + ">"
+	block.CloseTag = "</" + spec.tag + ">"
+	return block, true
 }
 
-// HasPlanBlock checks if content contains a <plan> block
+func HasStructuredBlockForMode(mode SessionMode, content string) bool {
+	_, ok := ExtractStructuredBlockForMode(mode, content)
+	return ok
+}
+
+func RemoveStructuredBlocks(content string) string {
+	out := content
+	for _, spec := range structuredBlockSpecs {
+		out = blockRegex(spec.tag).ReplaceAllString(out, "")
+	}
+	return strings.TrimSpace(out)
+}
+
+func FormatStructuredBlock(mode SessionMode, content string) string {
+	spec, ok := blockSpecForMode(mode)
+	if !ok {
+		return strings.TrimSpace(content)
+	}
+	body := strings.TrimSpace(content)
+	if body == "" {
+		return ""
+	}
+	return fmt.Sprintf("<%s>\n%s\n</%s>", spec.tag, body, spec.tag)
+}
+
+// Legacy helpers retained for old call sites/tests, now mapped to Codex-style proposed_plan.
+type PlanBlock = StructuredBlock
+
+func ExtractPlanBlock(content string) (string, bool) {
+	block, ok := ExtractStructuredBlockForMode(PlanMode, content)
+	if !ok {
+		return "", false
+	}
+	return block.Content, true
+}
+
+func ParsePlanBlock(content string) (*PlanBlock, bool) {
+	block, ok := ExtractStructuredBlockForMode(PlanMode, content)
+	if !ok {
+		return nil, false
+	}
+	return block, true
+}
+
 func HasPlanBlock(content string) bool {
-	_, found := ExtractPlanBlock(content)
-	return found
+	return HasStructuredBlockForMode(PlanMode, content)
 }
 
-// CountPlanBlocks returns the number of <plan> blocks
 func CountPlanBlocks(content string) int {
-	return len(ExtractAllPlanBlocks(content))
+	if HasPlanBlock(content) {
+		return 1
+	}
+	return 0
 }
 
-// RemovePlanBlocks removes all <plan> blocks from content
 func RemovePlanBlocks(content string) string {
-	return planBlockRegex.ReplaceAllString(content, "")
+	return RemoveStructuredBlocks(content)
 }
 
-// FormatPlanBlock formats content as a valid <plan> block
 func FormatPlanBlock(content string) string {
-	return "<plan>\n" + strings.TrimSpace(content) + "\n</plan>"
+	return FormatStructuredBlock(PlanMode, content)
 }

@@ -1463,7 +1463,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		m.dialog.CloseDialog(dialog.SapphireAPIKeyInputID)
-		cmds = append(cmds, m.openSkillsMarketplace())
+		cmds = append(cmds, util.ReportInfo("Sapphire API key saved"))
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))

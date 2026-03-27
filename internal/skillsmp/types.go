@@ -3,36 +3,62 @@ package skillsmp
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-const DefaultBaseURL = "https://skillsmp.com/api/v1"
+const DefaultBaseURL = "https://skills.trysapphire.today"
 
-// Skill describes a marketplace skill returned by SkillsMP.
+// Skill describes a skill summary returned by the Sapphire Skills API.
 type Skill struct {
-	Name        string
-	Owner       string
-	Repo        string
-	FilePath    string
-	GithubURL   string
-	Stars       int
-	Description string
-	Installs    int
+	SkillID      string
+	FolderName   string
+	SkillName    string
+	RelativePath string
+	MarkdownPath string
+	SizeBytes    int
+	IsNested     bool
+	Category     string
+}
+
+// SkillFile is an optional file payload returned by the load endpoint.
+type SkillFile struct {
+	Path      string
+	SizeBytes int
+	MimeType  string
+	SHA256    string
+	Encoding  string
+	Text      string
+	Base64    *string
+}
+
+// LoadedSkill is the full payload returned by the load endpoint.
+type LoadedSkill struct {
+	Skill    Skill
+	Markdown string
+	Files    []SkillFile
 }
 
 type rawSkill struct {
-	Name        string      `json:"name"`
-	Owner       string      `json:"owner"`
-	Repo        string      `json:"repo"`
-	FilePath    string      `json:"file_path"`
-	GithubURL   string      `json:"github_url"`
-	Stars       flexibleInt `json:"stars"`
-	Description string      `json:"description"`
-	Installs    flexibleInt `json:"installs"`
+	SkillID      string      `json:"skill_id"`
+	FolderName   string      `json:"folder_name"`
+	SkillName    string      `json:"skill_name"`
+	RelativePath string      `json:"relative_path"`
+	MarkdownPath string      `json:"markdown_path"`
+	SizeBytes    flexibleInt `json:"size_bytes"`
+	IsNested     bool        `json:"is_nested"`
+	Category     *string     `json:"category"`
+}
+
+type rawSkillFile struct {
+	Path      string      `json:"path"`
+	SizeBytes flexibleInt `json:"size_bytes"`
+	MimeType  string      `json:"mime_type"`
+	SHA256    string      `json:"sha256"`
+	Encoding  string      `json:"encoding"`
+	Text      string      `json:"text"`
+	Base64    *string     `json:"base64"`
 }
 
 type flexibleInt int
@@ -73,42 +99,38 @@ func (i flexibleInt) Int() int {
 }
 
 func (s Skill) Key() string {
-	key := strings.TrimSpace(s.GithubURL)
-	if key != "" {
-		if filePath := strings.TrimSpace(s.FilePath); filePath != "" {
-			return key + "|" + filePath
-		}
+	if key := strings.TrimSpace(s.SkillID); key != "" {
 		return key
 	}
-	return strings.Join([]string{
-		strings.TrimSpace(s.Owner),
-		strings.TrimSpace(s.Repo),
-		strings.TrimSpace(s.FilePath),
-		strings.TrimSpace(s.Name),
-	}, "|")
+	if key := strings.TrimSpace(s.FolderName); key != "" {
+		return key
+	}
+	return strings.TrimSpace(s.SkillName)
 }
 
-func (s Skill) OwnerRepo() string {
-	owner := strings.TrimSpace(s.Owner)
-	repo := strings.TrimSpace(s.Repo)
-	switch {
-	case owner != "" && repo != "":
-		return owner + "/" + repo
-	case owner != "":
-		return owner
-	case repo != "":
-		return repo
-	default:
-		return ""
+func (s Skill) DisplayName() string {
+	if name := strings.TrimSpace(s.SkillName); name != "" {
+		return name
 	}
+	if name := strings.TrimSpace(s.FolderName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(s.SkillID)
+}
+
+func (s Skill) LocalName() string {
+	if name := strings.TrimSpace(s.FolderName); name != "" {
+		return name
+	}
+	return s.DisplayName()
 }
 
 func (s Skill) LocalSkillPath(dataDir string) string {
-	return filepath.Join(dataDir, "skills", s.Name, "SKILL.md")
+	return filepath.Join(dataDir, "skills", s.LocalName(), "SKILL.md")
 }
 
 func (s Skill) LocalPluginDir(dataDir string) string {
-	return filepath.Join(dataDir, "plugins", s.Name)
+	return filepath.Join(dataDir, "plugins", s.LocalName())
 }
 
 func (s Skill) LocalPluginManifestPath(dataDir string) string {
@@ -117,50 +139,4 @@ func (s Skill) LocalPluginManifestPath(dataDir string) string {
 
 func (s Skill) LocalPluginSkillPath(dataDir string) string {
 	return filepath.Join(s.LocalPluginDir(dataDir), "SKILL.md")
-}
-
-func (s Skill) RawGitHubURL() (string, error) {
-	raw := strings.TrimSpace(s.GithubURL)
-	if raw == "" {
-		return "", fmt.Errorf("github_url is required")
-	}
-	return githubRawURL(raw)
-}
-
-func githubRawURL(githubURL string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(githubURL))
-	if err != nil {
-		return "", fmt.Errorf("parse github_url: %w", err)
-	}
-
-	host := strings.ToLower(strings.TrimPrefix(parsed.Host, "www."))
-	switch host {
-	case "github.com":
-	case "raw.githubusercontent.com":
-		return parsed.String(), nil
-	default:
-		return "", fmt.Errorf("github_url must point to github.com")
-	}
-
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 4 {
-		return "", fmt.Errorf("github_url must include owner, repo, branch, and file path")
-	}
-	if parts[2] == "blob" {
-		parts = append(parts[:2], parts[3:]...)
-	}
-	if len(parts) < 4 {
-		return "", fmt.Errorf("github_url must include a file path")
-	}
-
-	return (&url.URL{
-		Scheme: func() string {
-			if parsed.Scheme != "" {
-				return parsed.Scheme
-			}
-			return "https"
-		}(),
-		Host: "raw.githubusercontent.com",
-		Path: "/" + strings.Join(parts, "/"),
-	}).String(), nil
 }

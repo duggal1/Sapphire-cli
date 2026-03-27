@@ -1,6 +1,7 @@
 package skillsmp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,14 +9,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const defaultBrowseLimit = 2000
+const (
+	defaultBrowseLimit  = 2000
+	manifestPageLimit   = 200
+	defaultSearchLimit  = 200
+	defaultManifestKind = "all"
+)
 
-// Client talks to the SkillsMP API.
+// Client talks to the Sapphire Skills API.
 type Client struct {
 	BaseURL    string
 	APIKey     string
@@ -23,7 +30,8 @@ type Client struct {
 }
 
 func NewClient(apiKey string) *Client {
-	return NewClientWithBaseURL(DefaultBaseURL, apiKey, nil)
+	baseURL := strings.TrimSpace(os.Getenv("SAPPHIRE_API_BASE_URL"))
+	return NewClientWithBaseURL(baseURL, apiKey, nil)
 }
 
 func NewClientWithBaseURL(baseURL, apiKey string, httpClient *http.Client) *Client {
@@ -45,99 +53,159 @@ func (c *Client) Search(ctx context.Context, query string) ([]Skill, error) {
 	if query == "" {
 		return c.List(ctx, defaultBrowseLimit)
 	}
-	return c.fetchSkills(ctx, "/skills/ai-search", url.Values{"q": []string{query}})
+
+	payload := map[string]any{
+		"query": query,
+		"limit": defaultSearchLimit,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal sapphire search request: %w", err)
+	}
+
+	respBody, err := c.do(ctx, http.MethodPost, []string{"v1", "skills", "search"}, bytes.NewReader(body), map[string]string{
+		"Content-Type": "application/json",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	skills, err := decodeSkillPayload(respBody)
+	if err != nil {
+		return nil, err
+	}
+	return skills, nil
 }
 
 func (c *Client) List(ctx context.Context, limit int) ([]Skill, error) {
 	if limit <= 0 {
-		limit = 100
+		limit = manifestPageLimit
 	}
-	skills, err := c.fetchSkills(ctx, "/skills", url.Values{"limit": []string{fmt.Sprintf("%d", limit)}})
-	if err != nil {
-		return nil, err
+
+	skills := make([]Skill, 0, min(limit, manifestPageLimit))
+	for cursor := 0; len(skills) < limit; cursor += manifestPageLimit {
+		pageLimit := min(manifestPageLimit, limit-len(skills))
+		values := url.Values{}
+		values.Set("limit", strconv.Itoa(pageLimit))
+		values.Set("cursor", strconv.Itoa(cursor))
+		values.Set("category", defaultManifestKind)
+
+		respBody, err := c.do(ctx, http.MethodGet, []string{"v1", "skills", "manifest"}, nil, nil, values)
+		if err != nil {
+			return nil, err
+		}
+
+		page, err := decodeSkillPayload(respBody)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+
+		skills = append(skills, page...)
 	}
-	sortSkillsByPopularity(skills)
+
 	return skills, nil
 }
 
-func (c *Client) FetchRawSkill(ctx context.Context, skill Skill) ([]byte, error) {
-	rawURL, err := skill.RawGitHubURL()
+func (c *Client) LoadSkill(ctx context.Context, skillID string) (LoadedSkill, error) {
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" {
+		return LoadedSkill{}, errors.New("skill_id is required")
+	}
+
+	respBody, err := c.do(ctx, http.MethodGet, []string{"v1", "skills", skillID}, nil, nil)
 	if err != nil {
-		return nil, err
+		return LoadedSkill{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build raw GitHub request: %w", err)
+
+	var payload struct {
+		Skill    rawSkill       `json:"skill"`
+		Markdown string         `json:"markdown"`
+		Files    []rawSkillFile `json:"files"`
 	}
-	req.Header.Set("User-Agent", "Sapphire-cli/1.0")
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch raw skill markdown: %w", err)
+	if err := json.Unmarshal(respBody, &payload); err != nil {
+		return LoadedSkill{}, fmt.Errorf("decode sapphire load response: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, apiError(resp)
+	if strings.TrimSpace(payload.Markdown) == "" {
+		return LoadedSkill{}, errors.New("loaded skill markdown is empty")
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read raw skill markdown: %w", err)
+
+	files := make([]SkillFile, 0, len(payload.Files))
+	for _, file := range payload.Files {
+		files = append(files, SkillFile{
+			Path:      strings.TrimSpace(file.Path),
+			SizeBytes: file.SizeBytes.Int(),
+			MimeType:  strings.TrimSpace(file.MimeType),
+			SHA256:    strings.TrimSpace(file.SHA256),
+			Encoding:  strings.TrimSpace(file.Encoding),
+			Text:      file.Text,
+			Base64:    file.Base64,
+		})
 	}
-	if len(strings.TrimSpace(string(body))) == 0 {
-		return nil, errors.New("raw skill markdown is empty")
-	}
-	return body, nil
+
+	return LoadedSkill{
+		Skill:    normalizeSkill(payload.Skill),
+		Markdown: payload.Markdown,
+		Files:    files,
+	}, nil
 }
 
-func (c *Client) fetchSkills(ctx context.Context, endpoint string, query url.Values) ([]Skill, error) {
+func (c *Client) do(ctx context.Context, method string, pathParts []string, body io.Reader, headers map[string]string, query ...url.Values) ([]byte, error) {
 	if strings.TrimSpace(c.APIKey) == "" {
-		return nil, errors.New("SkillsMP API key is required")
+		return nil, errors.New("Sapphire API key is required")
 	}
 
-	reqURL, err := url.JoinPath(c.BaseURL, strings.TrimPrefix(endpoint, "/"))
+	reqURL, err := url.JoinPath(c.BaseURL, pathParts...)
 	if err != nil {
-		return nil, fmt.Errorf("build skillsmp url: %w", err)
+		return nil, fmt.Errorf("build sapphire api url: %w", err)
 	}
-	if encoded := query.Encode(); encoded != "" {
-		reqURL += "?" + encoded
+	if len(query) > 0 && query[0] != nil {
+		encoded := query[0].Encode()
+		if encoded != "" {
+			reqURL += "?" + encoded
+		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
-		return nil, fmt.Errorf("build skillsmp request: %w", err)
+		return nil, fmt.Errorf("build sapphire api request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "Sapphire-cli/1.0")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("call SkillsMP: %w", err)
+		return nil, fmt.Errorf("call Sapphire API: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, apiError(resp)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read SkillsMP response: %w", err)
+		return nil, fmt.Errorf("read Sapphire API response: %w", err)
 	}
-	skills, err := decodeSkillPayload(body)
-	if err != nil {
-		return nil, err
-	}
-	return skills, nil
+	return respBody, nil
 }
 
 func decodeSkillPayload(data []byte) ([]Skill, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return nil, errors.New("empty SkillsMP response")
+		return nil, errors.New("empty Sapphire API response")
 	}
 
 	if skills, ok := findSkillArray(data, 0); ok {
 		return skills, nil
 	}
 
-	return nil, errors.New("unexpected SkillsMP response shape")
+	return nil, errors.New("unexpected Sapphire API response shape")
 }
 
 func findSkillArray(data []byte, depth int) ([]Skill, bool) {
@@ -151,7 +219,7 @@ func findSkillArray(data []byte, depth int) ([]Skill, bool) {
 		if err := json.Unmarshal(data, &obj); err != nil {
 			return nil, false
 		}
-		for _, key := range []string{"skills", "results", "items", "data"} {
+		for _, key := range []string{"results", "items", "skills", "data"} {
 			raw, ok := obj[key]
 			if !ok {
 				continue
@@ -167,19 +235,11 @@ func findSkillArray(data []byte, depth int) ([]Skill, bool) {
 		}
 		return nil, false
 	}
+
 	skills := make([]Skill, 0, len(rawSkills))
 	for _, raw := range rawSkills {
-		skill := Skill{
-			Name:        strings.TrimSpace(raw.Name),
-			Owner:       strings.TrimSpace(raw.Owner),
-			Repo:        strings.TrimSpace(raw.Repo),
-			FilePath:    strings.TrimSpace(raw.FilePath),
-			GithubURL:   strings.TrimSpace(raw.GithubURL),
-			Stars:       raw.Stars.Int(),
-			Description: strings.TrimSpace(raw.Description),
-			Installs:    raw.Installs.Int(),
-		}
-		if skill.Name == "" {
+		skill := normalizeSkill(raw)
+		if skill.Key() == "" {
 			continue
 		}
 		skills = append(skills, skill)
@@ -187,16 +247,21 @@ func findSkillArray(data []byte, depth int) ([]Skill, bool) {
 	return skills, true
 }
 
-func sortSkillsByPopularity(skills []Skill) {
-	sort.SliceStable(skills, func(i, j int) bool {
-		if skills[i].Installs != skills[j].Installs {
-			return skills[i].Installs > skills[j].Installs
-		}
-		if skills[i].Stars != skills[j].Stars {
-			return skills[i].Stars > skills[j].Stars
-		}
-		return strings.ToLower(skills[i].Name) < strings.ToLower(skills[j].Name)
-	})
+func normalizeSkill(raw rawSkill) Skill {
+	category := ""
+	if raw.Category != nil {
+		category = strings.TrimSpace(*raw.Category)
+	}
+	return Skill{
+		SkillID:      strings.TrimSpace(raw.SkillID),
+		FolderName:   strings.TrimSpace(raw.FolderName),
+		SkillName:    strings.TrimSpace(raw.SkillName),
+		RelativePath: strings.TrimSpace(raw.RelativePath),
+		MarkdownPath: strings.TrimSpace(raw.MarkdownPath),
+		SizeBytes:    raw.SizeBytes.Int(),
+		IsNested:     raw.IsNested,
+		Category:     category,
+	}
 }
 
 func apiError(resp *http.Response) error {
@@ -205,5 +270,5 @@ func apiError(resp *http.Response) error {
 	if text == "" {
 		text = resp.Status
 	}
-	return fmt.Errorf("SkillsMP request failed: %s", text)
+	return fmt.Errorf("Sapphire API request failed: %s", text)
 }

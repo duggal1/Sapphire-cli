@@ -13,7 +13,7 @@ import (
 )
 
 type InstallSkillParams struct {
-	Query string `json:"query" description:"Short domain query for the best matching SkillsMP skill"`
+	Query string `json:"query" description:"Short domain query for the best matching Sapphire extended skill"`
 }
 
 //go:embed install_skill.md
@@ -29,14 +29,14 @@ func NewInstallSkillTool() fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("query is required"), nil
 			}
 
-			apiKey := strings.TrimSpace(os.Getenv("SKILLSMP_API_KEY"))
+			apiKey := strings.TrimSpace(os.Getenv("SAPPHIRE_API_KEY"))
 			if workingDir := strings.TrimSpace(GetWorkingDirFromContext(ctx)); workingDir != "" {
 				if cfg, err := config.Load(workingDir, "", false); err == nil {
-					apiKey = cfg.ResolveSkillsMPAPIKey()
+					apiKey = cfg.ResolveSapphireAPIKey()
 				}
 			}
 			if apiKey == "" {
-				return fantasy.NewTextErrorResponse("SkillsMP API key is required"), nil
+				return fantasy.NewTextErrorResponse("Sapphire API key is required"), nil
 			}
 
 			client := skillsmp.NewClient(apiKey)
@@ -45,21 +45,18 @@ func NewInstallSkillTool() fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
-			body, err := client.FetchRawSkill(ctx, skill)
+			loaded, err := client.LoadSkill(ctx, skill.SkillID)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			dataDir := skillsmp.ResolveDataDir(GetWorkingDirFromContext(ctx))
-			if err := skillsmp.NewInstaller(dataDir).Install(skill, body); err != nil {
+			if err := skillsmp.NewInstaller(dataDir).Install(loaded.Skill, []byte(loaded.Markdown)); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
-			source := skill.OwnerRepo()
-			if source != "" {
-				source = " from " + source
-			}
-			return fantasy.NewTextResponse(fmt.Sprintf("Installed %q%s as a skill and plugin. Next: call `load_skill` with %q.", skill.Name, source, skill.Name)), nil
+			name := loaded.Skill.LocalName()
+			return fantasy.NewTextResponse(fmt.Sprintf("Installed %q as a local extended skill and plugin. Next: call `load_skill` with %q.", name, name)), nil
 		},
 	)
 }

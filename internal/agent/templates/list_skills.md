@@ -10,6 +10,7 @@ Invoke when:
 - User requests available capabilities
 
 For focused routing on large skill sets, use `search_skills` instead.
+If the needed skill is missing locally, use `install_skill` and then `load_skill`.
 
 ## OUTPUT
 

@@ -124,7 +124,7 @@ type (
 		APIKey        string
 		ContinueIndex bool
 	}
-	ActionSaveSkillsMPAPIKey struct {
+	ActionSaveSapphireAPIKey struct {
 		APIKey string
 	}
 )

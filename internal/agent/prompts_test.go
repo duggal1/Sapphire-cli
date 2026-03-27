@@ -51,8 +51,11 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "`search_skills`") {
 		t.Fatalf("expected search_skills guidance in coder prompt")
 	}
-	if !strings.Contains(out, "search installed plugins under the Sapphire data dir (`<data-dir>/plugins`)") || !strings.Contains(out, "install it, then use it") {
-		t.Fatalf("expected plugin policy in coder prompt")
+	if !strings.Contains(out, "Built-in local skills are the first stop.") || !strings.Contains(out, "Be autonomous: do not wait for permission to search, install, and load relevant extended skills") {
+		t.Fatalf("expected extended skills policy in coder prompt")
+	}
+	if !strings.Contains(out, "Installed extended skills become local skills under `<data-dir>/skills`") {
+		t.Fatalf("expected installed extended skills guidance in coder prompt")
 	}
 	if strings.Contains(out, "Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.") {
 		t.Fatalf("expected hardcoded skill routing to be removed from coder prompt")

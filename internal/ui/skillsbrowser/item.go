@@ -77,12 +77,15 @@ func (i *SkillItem) Render(width int) string {
 }
 
 func (i *SkillItem) renderTitleLine(width int, badge string) string {
-	fields := []string{i.Skill.Name}
-	if repo := strings.TrimSpace(i.Skill.OwnerRepo()); repo != "" {
-		fields = append(fields, repo)
+	fields := []string{i.Skill.DisplayName()}
+	if category := strings.TrimSpace(i.Skill.Category); category != "" {
+		fields = append(fields, category)
 	}
-	if installs := strings.TrimSpace(fmt.Sprintf("%d installs", i.Skill.Installs)); installs != "" {
-		fields = append(fields, installs)
+	if size := humanSize(i.Skill.SizeBytes); size != "" {
+		fields = append(fields, size)
+	}
+	if i.Skill.IsNested {
+		fields = append(fields, "nested")
 	}
 	left := strings.Join(fields, "  ")
 	badgeWidth := ansi.StringWidth(badge)
@@ -92,12 +95,18 @@ func (i *SkillItem) renderTitleLine(width int, badge string) string {
 }
 
 func (i *SkillItem) renderBodyLine(width int) string {
-	text := strings.TrimSpace(i.Skill.Description)
+	text := strings.TrimSpace(i.Skill.RelativePath)
+	if text == "" {
+		text = strings.TrimSpace(i.Skill.MarkdownPath)
+	}
+	if text == "" {
+		text = strings.TrimSpace(i.Skill.SkillID)
+	}
 	if i.State == skillStateError && strings.TrimSpace(i.ErrorMessage) != "" {
 		text = "ERROR: " + strings.TrimSpace(i.ErrorMessage)
 	}
 	if text == "" {
-		text = "No description available."
+		text = "No path available."
 	}
 	return ansi.Truncate(text, width, "…")
 }
@@ -120,4 +129,17 @@ func (i *SkillItem) badge() string {
 	}
 
 	return style.Render(label)
+}
+
+func humanSize(sizeBytes int) string {
+	if sizeBytes <= 0 {
+		return ""
+	}
+	if sizeBytes < 1024 {
+		return fmt.Sprintf("%d B", sizeBytes)
+	}
+	if sizeBytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(sizeBytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(sizeBytes)/(1024*1024))
 }

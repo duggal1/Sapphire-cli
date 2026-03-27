@@ -1,6 +1,7 @@
 package skillsmp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/skills"
 )
 
-// Installer writes SkillsMP results into the local Sapphire skill/plugin layout.
+// Installer writes Sapphire API skill results into the local Sapphire extended-skill/plugin layout.
 type Installer struct {
 	DataDir string
 }
@@ -34,11 +35,11 @@ func SearchInstall(query, apiKey string) error {
 	if err != nil {
 		return err
 	}
-	body, err := client.FetchRawSkill(ctx, skill)
+	loaded, err := client.LoadSkill(ctx, skill.SkillID)
 	if err != nil {
 		return err
 	}
-	return installer.Install(skill, body)
+	return installer.Install(loaded.Skill, []byte(loaded.Markdown))
 }
 
 func ResolveDataDir(workingDir string) string {
@@ -63,7 +64,7 @@ func (c *Client) BestMatch(ctx context.Context, query string) (Skill, error) {
 		return Skill{}, err
 	}
 	if len(skills) == 0 {
-		return Skill{}, errors.New("no matching skills found")
+		return Skill{}, errors.New("no matching extended skills found")
 	}
 	return skills[0], nil
 }
@@ -75,17 +76,16 @@ func (i *Installer) Install(skill Skill, skillMarkdown []byte) error {
 	if strings.TrimSpace(i.DataDir) == "" {
 		return errors.New("data directory is required")
 	}
-	if strings.TrimSpace(skill.Name) == "" {
+	localName := skill.LocalName()
+	if strings.TrimSpace(localName) == "" {
 		return errors.New("skill name is required")
 	}
-	if strings.TrimSpace(skill.Description) == "" {
-		return fmt.Errorf("skill %q is missing a description", skill.Name)
-	}
+	description := deriveDescription(skill, skillMarkdown)
 
-	skillDir := filepath.Join(i.DataDir, "skills", skill.Name)
-	pluginDir := filepath.Join(i.DataDir, "plugins", skill.Name)
+	skillDir := filepath.Join(i.DataDir, "skills", localName)
+	pluginDir := filepath.Join(i.DataDir, "plugins", localName)
 
-	if err := validateLocalSkill(skillDir, skill.Name, skill.Description); err != nil {
+	if err := validateLocalSkill(skillDir, localName, description); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -107,9 +107,9 @@ func (i *Installer) Install(skill Skill, skillMarkdown []byte) error {
 	}
 
 	manifest := map[string]any{
-		"name":        skill.Name,
+		"name":        localName,
 		"version":     "1.0.0",
-		"description": skill.Description,
+		"description": description,
 		"skills": []map[string]string{
 			{"path": "./SKILL.md"},
 		},
@@ -136,4 +136,40 @@ func validateLocalSkill(skillDir, name, description string) error {
 		return fmt.Errorf("invalid skill metadata: %w", err)
 	}
 	return nil
+}
+
+func deriveDescription(skill Skill, skillMarkdown []byte) string {
+	if description := frontmatterDescription(skillMarkdown); description != "" {
+		return description
+	}
+	if category := strings.TrimSpace(skill.Category); category != "" {
+		return "Sapphire extended skill for " + category
+	}
+	if name := strings.TrimSpace(skill.DisplayName()); name != "" {
+		return name + " extended skill"
+	}
+	return "Installed from Sapphire Extended Skills API"
+}
+
+func frontmatterDescription(skillMarkdown []byte) string {
+	scanner := bufio.NewScanner(strings.NewReader(string(skillMarkdown)))
+	if !scanner.Scan() {
+		return ""
+	}
+	if strings.TrimSpace(scanner.Text()) != "---" {
+		return ""
+	}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "---" {
+			break
+		}
+		const prefix = "description:"
+		if !strings.HasPrefix(strings.ToLower(line), prefix) {
+			continue
+		}
+		value := strings.TrimSpace(line[len(prefix):])
+		return strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return ""
 }

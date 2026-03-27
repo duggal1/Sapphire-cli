@@ -9,6 +9,7 @@ Invoke when:
 - You know the task domain but not the exact skill names
 - You need focused frontend, backend, cloud, auth, design, or debugging skill discovery
 - The task may need multiple related skills
+- You may need to confirm whether an extended skill is already local before deciding to install it
 
 ## QUERY STRATEGY
 
@@ -31,6 +32,7 @@ Returns ranked matches with:
 ## EXECUTION PATTERN
 
 1. Call `search_skills(query: "...")`
-2. Pick the top relevant skill names
-3. Call `load_skill(name: "...")` for each required skill
-4. Only use `list_skills` when you truly need full inventory browsing
+2. If the required skill is missing locally, call `install_skill(query: "...")`
+3. Pick the top relevant exact skill names
+4. Call `load_skill(name: "...")` for each required skill
+5. Only use `list_skills` when you truly need full inventory browsing

@@ -87,7 +87,7 @@ func TestModeCommandsMarkCurrentMode(t *testing.T) {
 	t.Fatal("missing current mode command")
 }
 
-func TestDefaultCommandsIncludePlugins(t *testing.T) {
+func TestDefaultCommandsIncludeExtendedSkills(t *testing.T) {
 	t.Parallel()
 
 	cmds := (&Commands{
@@ -95,11 +95,11 @@ func TestDefaultCommandsIncludePlugins(t *testing.T) {
 	}).defaultCommands()
 
 	for _, item := range cmds {
-		if item.ID() != "plugins" {
+		if item.ID() != "extended_skills" {
 			continue
 		}
-		if item.title != "Plugins" {
-			t.Fatalf("expected plugins label, got %q", item.title)
+		if item.title != "Extended Skills" {
+			t.Fatalf("expected extended skills label, got %q", item.title)
 		}
 		if _, ok := item.Action().(ActionOpenSkillsMarketplace); !ok {
 			t.Fatalf("expected ActionOpenSkillsMarketplace, got %T", item.Action())
@@ -107,5 +107,5 @@ func TestDefaultCommandsIncludePlugins(t *testing.T) {
 		return
 	}
 
-	t.Fatal("missing plugins command")
+	t.Fatal("missing extended skills command")
 }

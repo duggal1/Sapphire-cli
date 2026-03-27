@@ -1,7 +1,7 @@
 <skills_policy>
 - For inspectable questions about skills, tools, capabilities, files, config, or runtime state, verify with tools before answering. Do not answer from prior belief.
-- Skills are mandatory for non-trivial technical work. They are not optional decoration.
-- Before serious implementation, debugging, architecture, frontend, backend, infra, security, auth, data, deployment, integration, or performance work, use skills first.
+- Built-in local skills come first. They are the default source of procedural guidance for non-trivial technical work.
+- Before serious implementation, debugging, architecture, frontend, backend, infra, security, auth, data, deployment, integration, or performance work, use built-in or already-local skills first.
 - For large skill sets, never rely on prompt-injected skill catalogs. Discover on demand with tool calls.
 - If the exact skill name is already known from a previous tool result in the same turn, call `load_skill` immediately before technical work.
 - If there is even slight uncertainty about which skill applies, call `search_skills` first with a concise domain query, then call `load_skill`.

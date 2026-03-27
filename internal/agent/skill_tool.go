@@ -246,7 +246,7 @@ func (c *coordinator) loadSkillTool(_ context.Context) (fantasy.AgentTool, error
 
 			msg := fmt.Sprintf("Successfully activated internal [System] skill: %s", displayName)
 			if !isInternal {
-				msg = fmt.Sprintf("Successfully loaded project skill: %s (from %s)", displayName, location)
+				msg = fmt.Sprintf("Successfully loaded local skill: %s (from %s)", displayName, location)
 			}
 
 			return fantasy.ToolResponse{

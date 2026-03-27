@@ -1457,12 +1457,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		} else {
 			cmds = append(cmds, util.ReportInfo("Jina API key saved"))
 		}
-	case dialog.ActionSaveSkillsMPAPIKey:
-		if err := m.com.Config().SetSkillsMPAPIKey(msg.APIKey); err != nil {
+	case dialog.ActionSaveSapphireAPIKey:
+		if err := m.com.Config().SetSapphireAPIKey(msg.APIKey); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
-		m.dialog.CloseDialog(dialog.SkillsMPAPIKeyInputID)
+		m.dialog.CloseDialog(dialog.SapphireAPIKeyInputID)
 		cmds = append(cmds, m.openSkillsMarketplace())
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
@@ -1501,8 +1501,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportWarn("Agent is working, please wait..."))
 			break
 		}
-		if strings.TrimSpace(m.com.Config().ResolveSkillsMPAPIKey()) == "" {
-			if cmd := m.openSkillsAPIKeyDialog(); cmd != nil {
+		if strings.TrimSpace(m.com.Config().ResolveSapphireAPIKey()) == "" {
+			if cmd := m.openSapphireAPIKeyDialog(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			m.dialog.CloseDialog(dialog.CommandsID)
@@ -1972,12 +1972,12 @@ func (m *UI) openJinaAPIKeyDialog(continueIndex bool) tea.Cmd {
 	return nil
 }
 
-func (m *UI) openSkillsAPIKeyDialog() tea.Cmd {
-	if m.dialog.ContainsDialog(dialog.SkillsMPAPIKeyInputID) {
-		m.dialog.BringToFront(dialog.SkillsMPAPIKeyInputID)
+func (m *UI) openSapphireAPIKeyDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.SapphireAPIKeyInputID) {
+		m.dialog.BringToFront(dialog.SapphireAPIKeyInputID)
 		return nil
 	}
-	m.dialog.OpenDialog(dialog.NewSkillsMPAPIKeyInput(m.com))
+	m.dialog.OpenDialog(dialog.NewSapphireAPIKeyInput(m.com))
 	return nil
 }
 

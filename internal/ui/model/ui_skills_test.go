@@ -13,8 +13,8 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
-func TestOpenSkillsAPIKeyDialogOpensDialog(t *testing.T) {
-	t.Setenv("SKILLSMP_API_KEY", "")
+func TestOpenSapphireAPIKeyDialogOpensDialog(t *testing.T) {
+	t.Setenv("SAPPHIRE_API_KEY", "")
 
 	sty := styles.DefaultStyles(false)
 	cfg := &config.Config{
@@ -33,10 +33,10 @@ func TestOpenSkillsAPIKeyDialogOpensDialog(t *testing.T) {
 		dialog: dialog.NewOverlay(),
 	}
 
-	if cmd := m.openSkillsAPIKeyDialog(); cmd != nil {
+	if cmd := m.openSapphireAPIKeyDialog(); cmd != nil {
 		t.Fatalf("expected no command from opening the dialog, got %T", cmd)
 	}
-	if !m.dialog.ContainsDialog(dialog.SkillsMPAPIKeyInputID) {
-		t.Fatal("expected SkillsMP API key dialog to be opened")
+	if !m.dialog.ContainsDialog(dialog.SapphireAPIKeyInputID) {
+		t.Fatal("expected Sapphire API key dialog to be opened")
 	}
 }

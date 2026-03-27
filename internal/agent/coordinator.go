@@ -164,7 +164,6 @@ type coordinator struct {
 	// Embedding-based skill retrieval.
 	embeddingService *skills.EmbeddingService
 	discoveredSkills []*skills.Skill
-	skillsOnce       sync.Once
 
 	// Google search failure tracking - fallback to DDG after 2 failures
 	googleSearchFailures      sync.Map // map[string]int (sessionID -> failureCount)
@@ -1021,18 +1020,16 @@ func mergeSkills(primary, secondary []*skills.Skill) []*skills.Skill {
 	return result
 }
 
-// ensureSkillsDiscovered discovers all available skills once and caches them.
+// ensureSkillsDiscovered refreshes the available local skill inventory on demand.
 func (c *coordinator) ensureSkillsDiscovered() {
-	c.skillsOnce.Do(func() {
-		var expandedPaths []string
-		for _, pth := range c.cfg.Options.SkillsPaths {
-			expandedPaths = append(expandedPaths, promptpkg.ExpandPath(pth, *c.cfg))
-		}
-		c.discoveredSkills = skills.Discover(expandedPaths)
-		if len(c.discoveredSkills) > 0 {
-			slog.Debug("Discovered skills for embedding", "count", len(c.discoveredSkills))
-		}
-	})
+	var expandedPaths []string
+	for _, pth := range c.cfg.Options.SkillsPaths {
+		expandedPaths = append(expandedPaths, promptpkg.ExpandPath(pth, *c.cfg))
+	}
+	c.discoveredSkills = skills.Discover(expandedPaths)
+	if len(c.discoveredSkills) > 0 {
+		slog.Debug("Discovered skills for embedding", "count", len(c.discoveredSkills))
+	}
 }
 
 func shouldPrimeAutonomousSubAgents(userPrompt string) bool {

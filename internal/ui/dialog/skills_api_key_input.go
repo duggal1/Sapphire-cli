@@ -12,10 +12,10 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 )
 
-const SkillsMPAPIKeyInputID = "skillsmp_api_key_input"
+const SapphireAPIKeyInputID = "sapphire_api_key_input"
 
-// SkillsMPAPIKeyInput is the dialog used to collect a SkillsMP API key.
-type SkillsMPAPIKeyInput struct {
+// SapphireAPIKeyInput is the dialog used to collect a Sapphire Extended Skills API key.
+type SapphireAPIKeyInput struct {
 	com   *common.Common
 	width int
 
@@ -28,12 +28,12 @@ type SkillsMPAPIKeyInput struct {
 	help  help.Model
 }
 
-var _ Dialog = (*SkillsMPAPIKeyInput)(nil)
+var _ Dialog = (*SapphireAPIKeyInput)(nil)
 
-// NewSkillsMPAPIKeyInput creates a new SkillsMP API key dialog.
-func NewSkillsMPAPIKeyInput(com *common.Common) *SkillsMPAPIKeyInput {
+// NewSapphireAPIKeyInput creates a new Sapphire Extended Skills API key dialog.
+func NewSapphireAPIKeyInput(com *common.Common) *SapphireAPIKeyInput {
 	t := com.Styles
-	m := &SkillsMPAPIKeyInput{
+	m := &SapphireAPIKeyInput{
 		com:   com,
 		width: 66,
 	}
@@ -41,7 +41,7 @@ func NewSkillsMPAPIKeyInput(com *common.Common) *SkillsMPAPIKeyInput {
 	innerWidth := m.width - t.Dialog.View.GetHorizontalFrameSize() - 2
 	m.input = textinput.New()
 	m.input.SetVirtualCursor(false)
-	m.input.Placeholder = "Enter your SkillsMP API key..."
+	m.input.Placeholder = "Enter your Sapphire Extended Skills API key..."
 	m.input.SetStyles(com.Styles.TextInput)
 	m.input.SetWidth(max(0, innerWidth-t.Dialog.InputPrompt.GetHorizontalFrameSize()-1))
 	m.input.EchoMode = textinput.EchoPassword
@@ -60,12 +60,12 @@ func NewSkillsMPAPIKeyInput(com *common.Common) *SkillsMPAPIKeyInput {
 }
 
 // ID implements Dialog.
-func (m *SkillsMPAPIKeyInput) ID() string {
-	return SkillsMPAPIKeyInputID
+func (m *SapphireAPIKeyInput) ID() string {
+	return SapphireAPIKeyInputID
 }
 
 // HandleMsg implements Dialog.
-func (m *SkillsMPAPIKeyInput) HandleMsg(msg tea.Msg) Action {
+func (m *SapphireAPIKeyInput) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
@@ -76,7 +76,7 @@ func (m *SkillsMPAPIKeyInput) HandleMsg(msg tea.Msg) Action {
 			if value == "" {
 				return nil
 			}
-			return ActionSaveSkillsMPAPIKey{APIKey: value}
+			return ActionSaveSapphireAPIKey{APIKey: value}
 		default:
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -95,7 +95,7 @@ func (m *SkillsMPAPIKeyInput) HandleMsg(msg tea.Msg) Action {
 }
 
 // Draw implements Dialog.
-func (m *SkillsMPAPIKeyInput) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
+func (m *SapphireAPIKeyInput) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := m.com.Styles
 	dialogStyle := t.Dialog.View.Width(m.width)
 	helpStyle := t.Dialog.HelpView.Width(m.width - dialogStyle.GetHorizontalFrameSize())
@@ -115,29 +115,29 @@ func (m *SkillsMPAPIKeyInput) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor
 	return cur
 }
 
-func (m *SkillsMPAPIKeyInput) headerView() string {
+func (m *SapphireAPIKeyInput) headerView() string {
 	t := m.com.Styles
 	title := t.Dialog.TitleText.Render("Enter your ") +
-		t.Dialog.TitleAccent.Render("SkillsMP API key") +
+		t.Dialog.TitleAccent.Render("Sapphire Extended Skills API key") +
 		t.Dialog.TitleText.Render(".")
 	headerOffset := t.Dialog.Title.GetHorizontalFrameSize() + t.Dialog.View.GetHorizontalFrameSize()
 	return common.DialogTitle(t, t.Dialog.Title.Render(title), m.width-headerOffset, m.com.Styles.Primary, m.com.Styles.Secondary)
 }
 
-func (m *SkillsMPAPIKeyInput) inputView() string {
+func (m *SapphireAPIKeyInput) inputView() string {
 	m.input.Prompt = "> "
 	m.input.Focus()
 	return m.input.View()
 }
 
-func (m *SkillsMPAPIKeyInput) Cursor() *tea.Cursor {
+func (m *SapphireAPIKeyInput) Cursor() *tea.Cursor {
 	return InputCursor(m.com.Styles, m.input.Cursor())
 }
 
-func (m *SkillsMPAPIKeyInput) FullHelp() [][]key.Binding {
+func (m *SapphireAPIKeyInput) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{m.keyMap.Submit, m.keyMap.Close}}
 }
 
-func (m *SkillsMPAPIKeyInput) ShortHelp() []key.Binding {
+func (m *SapphireAPIKeyInput) ShortHelp() []key.Binding {
 	return []key.Binding{m.keyMap.Submit, m.keyMap.Close}
 }

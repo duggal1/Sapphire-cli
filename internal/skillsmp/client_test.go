@@ -3,6 +3,7 @@ package skillsmp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,74 +11,121 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClientSearchAndList(t *testing.T) {
+func TestClientSearchListAndLoad(t *testing.T) {
 	t.Parallel()
 
-	skillsCalls := 0
+	searchCalls := 0
+	manifestCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer token" {
-			t.Errorf("authorization header = %q, want %q", got, "Bearer token")
-		}
+		require.Equal(t, "token", r.Header.Get("x-api-key"))
+		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
 
-		switch r.URL.Path {
-		case "/api/v1/skills/ai-search":
-			if got := r.URL.Query().Get("q"); got != "security" {
-				t.Errorf("query = %q, want %q", got, "security")
-			}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/search":
+			searchCalls++
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(body, &payload))
+			require.Equal(t, "security", payload["query"])
+			require.EqualValues(t, defaultSearchLimit, payload["limit"])
+
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"skills": []map[string]any{
+				"query":    "security",
+				"returned": 1,
+				"results": []map[string]any{
 					{
-						"name":        "security-audit",
-						"owner":       "trail-of-bits",
-						"repo":        "security-audit",
-						"file_path":   "SKILL.md",
-						"github_url":  "https://github.com/trail-of-bits/security-audit/blob/main/SKILL.md",
-						"stars":       100,
-						"description": "Security audit workflow",
-						"installs":    999,
-					},
-					{
-						"name":        "security-ops",
-						"owner":       "trail-of-bits",
-						"repo":        "security-ops",
-						"file_path":   "SKILL.md",
-						"github_url":  "https://github.com/trail-of-bits/security-ops/blob/main/SKILL.md",
-						"stars":       80,
-						"description": "Security operations workflow",
-						"installs":    500,
+						"skill_id":      "security-audit",
+						"folder_name":   "security-audit",
+						"skill_name":    "security-audit",
+						"relative_path": "security/SKILL.md",
+						"markdown_path": "security/SKILL.md",
+						"size_bytes":    1536,
+						"is_nested":     false,
+						"category":      "security",
 					},
 				},
 			})
-		case "/api/v1/skills":
-			skillsCalls++
-			wantLimit := "2000"
-			if skillsCalls == 2 {
-				wantLimit = "100"
-			}
-			if got := r.URL.Query().Get("limit"); got != wantLimit {
-				t.Errorf("limit = %q, want %q", got, wantLimit)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"skills": []map[string]any{
-					{
-						"name":        "popular-skills",
-						"owner":       "vercel-labs",
-						"repo":        "agent-skills",
-						"file_path":   "SKILL.md",
-						"github_url":  "https://github.com/vercel-labs/agent-skills/blob/main/SKILL.md",
-						"stars":       200,
-						"description": "Popular skill",
-						"installs":    4000,
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skills/manifest":
+			manifestCalls++
+			switch manifestCalls {
+			case 1:
+				require.Equal(t, "200", r.URL.Query().Get("limit"))
+				require.Equal(t, "0", r.URL.Query().Get("cursor"))
+				require.Equal(t, "all", r.URL.Query().Get("category"))
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"items": []map[string]any{
+						{
+							"skill_id":      "alpha",
+							"folder_name":   "alpha",
+							"skill_name":    "alpha",
+							"relative_path": "alpha/SKILL.md",
+							"markdown_path": "alpha/SKILL.md",
+							"size_bytes":    100,
+							"is_nested":     false,
+							"category":      "core",
+						},
+						{
+							"skill_id":      "beta",
+							"folder_name":   "beta",
+							"skill_name":    "beta",
+							"relative_path": "beta/SKILL.md",
+							"markdown_path": "beta/SKILL.md",
+							"size_bytes":    200,
+							"is_nested":     true,
+							"category":      "integrations",
+						},
 					},
+				})
+			case 2:
+				require.Equal(t, "200", r.URL.Query().Get("limit"))
+				require.Equal(t, "200", r.URL.Query().Get("cursor"))
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"items": []map[string]any{
+						{
+							"skill_id":      "gamma",
+							"folder_name":   "gamma",
+							"skill_name":    "gamma",
+							"relative_path": "gamma/SKILL.md",
+							"markdown_path": "gamma/SKILL.md",
+							"size_bytes":    300,
+							"is_nested":     false,
+							"category":      nil,
+						},
+					},
+				})
+			case 3:
+				require.Equal(t, "200", r.URL.Query().Get("limit"))
+				require.Equal(t, "400", r.URL.Query().Get("cursor"))
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"items": []map[string]any{},
+				})
+			default:
+				t.Fatalf("unexpected manifest request %d", manifestCalls)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skills/security-audit":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"skill": map[string]any{
+					"skill_id":      "security-audit",
+					"folder_name":   "security-audit",
+					"skill_name":    "security-audit",
+					"relative_path": "security/SKILL.md",
+					"markdown_path": "security/SKILL.md",
+					"size_bytes":    1536,
+					"is_nested":     false,
+					"category":      "security",
+				},
+				"markdown": "# Security Audit\n",
+				"files": []map[string]any{
 					{
-						"name":        "less-popular",
-						"owner":       "vercel-labs",
-						"repo":        "agent-skills",
-						"file_path":   "SKILL.md",
-						"github_url":  "https://github.com/vercel-labs/agent-skills/blob/main/SKILL.md",
-						"stars":       250,
-						"description": "Less popular skill",
-						"installs":    100,
+						"path":       "SKILL.md",
+						"size_bytes": 18,
+						"mime_type":  "text/markdown",
+						"sha256":     "abc",
+						"encoding":   "text",
+						"text":       "# Security Audit\n",
+						"base64":     nil,
 					},
 				},
 			})
@@ -87,30 +135,24 @@ func TestClientSearchAndList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL(server.URL+"/api/v1", "token", server.Client())
+	client := NewClientWithBaseURL(server.URL, "token", server.Client())
 
 	search, err := client.Search(context.Background(), "security")
 	require.NoError(t, err)
-	require.Len(t, search, 2)
-	require.Equal(t, "security-audit", search[0].Name)
-	require.Equal(t, "trail-of-bits/security-audit", search[0].OwnerRepo())
+	require.Len(t, search, 1)
+	require.Equal(t, "security-audit", search[0].SkillID)
+	require.Equal(t, "security", search[0].Category)
+	require.Equal(t, "security-audit", search[0].DisplayName())
 
-	emptySearch, err := client.Search(context.Background(), "")
+	list, err := client.List(context.Background(), 450)
 	require.NoError(t, err)
-	require.Len(t, emptySearch, 2)
-	require.Equal(t, "popular-skills", emptySearch[0].Name)
+	require.Len(t, list, 3)
+	require.Equal(t, "alpha", list[0].SkillID)
+	require.Equal(t, "gamma", list[2].SkillID)
 
-	list, err := client.List(context.Background(), 100)
+	loaded, err := client.LoadSkill(context.Background(), "security-audit")
 	require.NoError(t, err)
-	require.Len(t, list, 2)
-	require.Equal(t, "popular-skills", list[0].Name)
-	require.Equal(t, "less-popular", list[1].Name)
-}
-
-func TestClientRawGitHubURL(t *testing.T) {
-	t.Parallel()
-
-	raw, err := githubRawURL("https://github.com/owner/repo/blob/main/path/SKILL.md")
-	require.NoError(t, err)
-	require.Equal(t, "https://raw.githubusercontent.com/owner/repo/main/path/SKILL.md", raw)
+	require.Equal(t, "security-audit", loaded.Skill.LocalName())
+	require.Equal(t, "# Security Audit\n", loaded.Markdown)
+	require.Len(t, loaded.Files, 1)
 }

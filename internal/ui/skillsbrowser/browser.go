@@ -37,7 +37,7 @@ type installResultMsg struct {
 	Err  error
 }
 
-// Model renders the SkillsMP browser.
+// Model renders the Sapphire extended skills browser.
 type Model struct {
 	styles    *styles.Styles
 	client    *skillsmp.Client
@@ -93,7 +93,7 @@ func New(t *styles.Styles, apiKey, dataDir string) *Model {
 	m.input = textinput.New()
 	m.input.SetVirtualCursor(false)
 	m.input.SetStyles(t.TextInput)
-	m.input.Placeholder = "Search SkillsMP"
+	m.input.Placeholder = "Search Extended Skills"
 	m.input.Focus()
 
 	m.spinner = spinner.New(
@@ -102,7 +102,7 @@ func New(t *styles.Styles, apiKey, dataDir string) *Model {
 	)
 
 	if strings.TrimSpace(apiKey) == "" {
-		m.warningLine = "SkillsMP API key is not set. Browsing and installs are disabled."
+		m.warningLine = "Sapphire API key is not set. Browsing and installs are disabled."
 		m.focus = focusInput
 	}
 
@@ -170,7 +170,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			item.SetState(skillStateInstalled, "")
 			m.errorLine = ""
-			m.statusLine = fmt.Sprintf("Installed %s", msg.Item.Name)
+			m.statusLine = fmt.Sprintf("Installed %s", msg.Item.DisplayName())
 		}
 		m.list.InvalidateItem(m.indexOfItem(item))
 		return m, m.nextTick()
@@ -243,14 +243,14 @@ func (m *Model) View() tea.View {
 func (m *Model) fetchResults(query string) tea.Cmd {
 	query = strings.TrimSpace(query)
 	if strings.TrimSpace(m.client.APIKey) == "" {
-		m.warningLine = "SkillsMP API key is not set. Browsing and installs are disabled."
+		m.warningLine = "Sapphire API key is not set. Browsing and installs are disabled."
 		return nil
 	}
 
 	m.loading = true
-	m.loadingLabel = "Loading top 2,000 skills by installs..."
+	m.loadingLabel = "Loading top 2,000 extended skills..."
 	if query != "" {
-		m.loadingLabel = "Searching SkillsMP for " + query + "..."
+		m.loadingLabel = "Searching Sapphire extended skills for " + query + "..."
 	}
 	m.errorLine = ""
 	m.statusLine = ""
@@ -274,12 +274,12 @@ func (m *Model) installSelected() tea.Cmd {
 	}
 	item.SetState(skillStateInstalling, "")
 	m.errorLine = ""
-	m.statusLine = fmt.Sprintf("Installing %s", item.Skill.Name)
+	m.statusLine = fmt.Sprintf("Installing %s", item.Skill.DisplayName())
 	m.list.InvalidateItem(m.indexOfItem(item))
 	return tea.Batch(m.spinner.Tick, func() tea.Msg {
-		body, err := m.client.FetchRawSkill(context.Background(), item.Skill)
+		loaded, err := m.client.LoadSkill(context.Background(), item.Skill.SkillID)
 		if err == nil {
-			err = m.installer.Install(item.Skill, body)
+			err = m.installer.Install(loaded.Skill, []byte(loaded.Markdown))
 		}
 		return installResultMsg{Key: item.Key(), Item: item.Skill, Err: err}
 	})
@@ -310,7 +310,7 @@ func (m *Model) layout() {
 }
 
 func (m *Model) renderHeader() string {
-	title := m.styles.Base.Bold(true).Foreground(m.styles.Primary).Render("Plugins")
+	title := m.styles.Base.Bold(true).Foreground(m.styles.Primary).Render("Extended Skills")
 	meta := fmt.Sprintf("%d loaded", len(m.items))
 	if m.loadingLabel != "" {
 		meta = m.spinner.View() + " " + m.loadingLabel
@@ -339,9 +339,9 @@ func (m *Model) renderSearch() string {
 
 func (m *Model) renderBody() string {
 	if len(m.items) == 0 {
-		msg := "No skills loaded."
+		msg := "No extended skills loaded."
 		if m.loading {
-			msg = "Loading skills..."
+			msg = "Loading extended skills..."
 		}
 		return m.styles.Dialog.ContentPanel.Width(m.width).Render(msg)
 	}
@@ -360,7 +360,7 @@ func (m *Model) renderStatus() string {
 	if strings.TrimSpace(m.client.APIKey) == "" {
 		parts = append(parts, "API key missing")
 	}
-	parts = append(parts, fmt.Sprintf("%d skills", len(m.items)))
+	parts = append(parts, fmt.Sprintf("%d extended skills", len(m.items)))
 	line := strings.Join(parts, "  ")
 	return m.styles.Dialog.HelpView.Width(m.width).Render(ansi.Truncate(line, m.width, "…"))
 }

@@ -12,7 +12,7 @@ import (
 
 var skillsCmd = &cobra.Command{
 	Use:   "skills",
-	Short: "Browse and install SkillsMP skills",
+	Short: "Browse and install Sapphire extended skills",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_ = args
 		cwd, err := ResolveCwd(cmd)
@@ -27,7 +27,7 @@ var skillsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiKey := cfg.ResolveSkillsMPAPIKey()
+		apiKey := cfg.ResolveSapphireAPIKey()
 
 		styleSet := styles.DefaultStyles(false)
 		model := skillsbrowser.New(&styleSet, apiKey, cfg.Options.DataDirectory)

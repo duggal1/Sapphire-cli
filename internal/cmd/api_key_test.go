@@ -62,3 +62,45 @@ func TestAPIKeyCmd_ExplicitProviderFlag(t *testing.T) {
 	require.Contains(t, string(data), `"api_key":"sk-or-flag-key"`)
 	require.Contains(t, filepath.Base(config.GlobalConfigData()), "sapphire.json")
 }
+
+func TestAPIKeyCmd_SavesSapphireKeyFromSingleArg(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", tmpDir)
+	t.Setenv("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE", "true")
+
+	cmd := newAPIKeyCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(bytes.NewReader(nil))
+
+	err := cmd.RunE(cmd, []string{"sapp_user_test"})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(config.GlobalConfigData())
+	require.NoError(t, err)
+
+	require.Contains(t, string(data), `"sapphire_api_key":"sapp_user_test"`)
+	require.Contains(t, out.String(), "Sapphire API key updated successfully.")
+}
+
+func TestAPIKeyCmd_SavesSapphireKeyExplicitProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", tmpDir)
+	t.Setenv("CRUSH_DISABLE_PROVIDER_AUTO_UPDATE", "true")
+
+	cmd := newAPIKeyCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(bytes.NewReader(nil))
+
+	err := cmd.RunE(cmd, []string{"sapphire", "sapp_user_explicit"})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(config.GlobalConfigData())
+	require.NoError(t, err)
+
+	require.Contains(t, string(data), `"sapphire_api_key":"sapp_user_explicit"`)
+	require.Contains(t, out.String(), "Sapphire API key updated successfully.")
+}

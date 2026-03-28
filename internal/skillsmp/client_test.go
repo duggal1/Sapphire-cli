@@ -18,7 +18,7 @@ func TestClientSearchListAndLoad(t *testing.T) {
 	manifestCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "token", r.Header.Get("x-api-key"))
-		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
+		require.Empty(t, r.Header.Get("Authorization"))
 
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/search":
@@ -155,4 +155,107 @@ func TestClientSearchListAndLoad(t *testing.T) {
 	require.Equal(t, "security-audit", loaded.Skill.LocalName())
 	require.Equal(t, "# Security Audit\n", loaded.Markdown)
 	require.Len(t, loaded.Files, 1)
+}
+
+func TestClientSearchRetriesTransientServerErrors(t *testing.T) {
+	t.Parallel()
+
+	searchCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/skills/search", r.URL.Path)
+		searchCalls++
+		if searchCalls < 3 {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": "retry-me",
+			"results": []map[string]any{
+				{
+					"skill_id":      "retry-skill",
+					"folder_name":   "retry-skill",
+					"skill_name":    "retry-skill",
+					"relative_path": "retry-skill/SKILL.md",
+					"markdown_path": "retry-skill/SKILL.md",
+					"size_bytes":    128,
+					"is_nested":     false,
+					"category":      "backend",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL, "token", server.Client())
+	results, err := client.Search(context.Background(), "retry-me")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, 3, searchCalls)
+}
+
+func TestClientSearchFallsBackToManifestOnServerError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "token", r.Header.Get("x-api-key"))
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/search":
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skills/manifest":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"next_cursor": nil,
+				"items": []map[string]any{
+					{
+						"skill_id":      "java-pro",
+						"folder_name":   "java-pro",
+						"skill_name":    "java-pro",
+						"relative_path": "java-pro/SKILL.md",
+						"markdown_path": "java-pro/SKILL.md",
+						"size_bytes":    100,
+						"is_nested":     false,
+						"category":      "backend",
+					},
+					{
+						"skill_id":      "python-pro",
+						"folder_name":   "python-pro",
+						"skill_name":    "python-pro",
+						"relative_path": "python-pro/SKILL.md",
+						"markdown_path": "python-pro/SKILL.md",
+						"size_bytes":    100,
+						"is_nested":     false,
+						"category":      "backend",
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL, "token", server.Client())
+	results, err := client.Search(context.Background(), "java")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "java-pro", results[0].SkillID)
+}
+
+func TestClientOnlySendsXAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "token", r.Header.Get("x-api-key"))
+		require.Empty(t, r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items":       []map[string]any{},
+			"next_cursor": nil,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL, "token", server.Client())
+	_, err := client.List(context.Background(), 1)
+	require.NoError(t, err)
 }

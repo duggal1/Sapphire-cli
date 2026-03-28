@@ -14,15 +14,22 @@ func newAPIKeyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "api-key [provider] [api-key]",
-		Short: "Overwrite a provider API key",
-		Long: `Overwrite the API key stored for a model provider.
+		Short: "Overwrite a provider or Sapphire API key",
+		Long: `Overwrite the API key stored for a model provider or for Sapphire extended skills.
 
 If you pass a single argument, Sapphire treats it as the OpenRouter API key.
 If you pass two arguments, Sapphire treats them as provider and API key.
+If the single argument starts with "sapp_", Sapphire stores it as the Sapphire skills API key.
 `,
 		Example: `
 # Overwrite the OpenRouter key with the quick path
 sapphire api-key sk-or-123456
+
+# Overwrite the Sapphire skills key with the quick path
+sapphire api-key sapp_user_xxx
+
+# Overwrite the Sapphire skills key explicitly
+sapphire api-key sapphire sapp_user_xxx
 
 # Overwrite the OpenRouter key explicitly
 sapphire api-key openrouter sk-or-123456
@@ -53,11 +60,21 @@ sapphire api-key --provider openrouter --api-key sk-or-123456
 				return err
 			}
 
+			if strings.EqualFold(providerID, "sapphire") {
+				if err := cfg.SetSapphireAPIKey(apiKey); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "Sapphire API key updated successfully.")
+				fmt.Fprintf(cmd.OutOrStdout(), "Config: %s\n", config.GlobalConfigData())
+				return nil
+			}
+
 			if err := cfg.SetProviderAPIKey(providerID, apiKey); err != nil {
 				return err
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s API key updated successfully.\n", humanizeProviderID(providerID))
+			fmt.Fprintf(cmd.OutOrStdout(), "Config: %s\n", config.GlobalConfigData())
 			return nil
 		},
 	}
@@ -83,7 +100,11 @@ func resolveAPIKeyOverride(providerFlag, apiKeyFlag string, args []string) (stri
 		}
 		apiKey = strings.TrimSpace(args[0])
 		if provider == "" {
-			provider = "openrouter"
+			if strings.HasPrefix(strings.ToLower(apiKey), "sapp_") {
+				provider = "sapphire"
+			} else {
+				provider = "openrouter"
+			}
 		}
 	case 2:
 		if provider != "" || apiKey != "" {
@@ -110,6 +131,8 @@ func humanizeProviderID(providerID string) string {
 		return "Provider"
 	}
 	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "sapphire":
+		return "Sapphire"
 	case "openrouter":
 		return "OpenRouter"
 	case "github", "github-copilot", "copilot":

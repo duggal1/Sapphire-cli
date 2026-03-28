@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +68,10 @@ func (c *Client) Search(ctx context.Context, query string) ([]Skill, error) {
 		"Content-Type": "application/json",
 	})
 	if err != nil {
+		skills, fallbackErr := c.searchViaManifest(ctx, query, defaultSearchLimit)
+		if fallbackErr == nil {
+			return skills, nil
+		}
 		return nil, err
 	}
 
@@ -75,6 +80,14 @@ func (c *Client) Search(ctx context.Context, query string) ([]Skill, error) {
 		return nil, err
 	}
 	return skills, nil
+}
+
+func (c *Client) searchViaManifest(ctx context.Context, query string, limit int) ([]Skill, error) {
+	skills, err := c.List(ctx, defaultBrowseLimit)
+	if err != nil {
+		return nil, err
+	}
+	return filterSkillsLocally(skills, query, limit), nil
 }
 
 func (c *Client) List(ctx context.Context, limit int) ([]Skill, error) {
@@ -95,7 +108,7 @@ func (c *Client) List(ctx context.Context, limit int) ([]Skill, error) {
 			return nil, err
 		}
 
-		page, err := decodeSkillPayload(respBody)
+		page, hasNext, err := decodeManifestPayload(respBody)
 		if err != nil {
 			return nil, err
 		}
@@ -104,6 +117,9 @@ func (c *Client) List(ctx context.Context, limit int) ([]Skill, error) {
 		}
 
 		skills = append(skills, page...)
+		if !hasNext {
+			break
+		}
 	}
 
 	return skills, nil
@@ -157,6 +173,15 @@ func (c *Client) do(ctx context.Context, method string, pathParts []string, body
 		return nil, errors.New("Sapphire API key is required")
 	}
 
+	var bodyBytes []byte
+	var err error
+	if body != nil {
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("read sapphire api request body: %w", err)
+		}
+	}
+
 	reqURL, err := url.JoinPath(c.BaseURL, pathParts...)
 	if err != nil {
 		return nil, fmt.Errorf("build sapphire api url: %w", err)
@@ -168,32 +193,58 @@ func (c *Client) do(ctx context.Context, method string, pathParts []string, body
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
-	if err != nil {
-		return nil, fmt.Errorf("build sapphire api request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Sapphire-cli/1.0")
-	req.Header.Set("x-api-key", c.APIKey)
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		reqBody := io.Reader(nil)
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
+		}
 
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call Sapphire API: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, apiError(resp)
-	}
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("build sapphire api request: %w", err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "Sapphire-cli/1.0")
+		req.Header.Set("x-api-key", c.APIKey)
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read Sapphire API response: %w", err)
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("call Sapphire API: %w", err)
+			if attempt < 2 {
+				time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read Sapphire API response: %w", readErr)
+			if attempt < 2 {
+				time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+				continue
+			}
+			return nil, lastErr
+		}
+		if resp.StatusCode == http.StatusOK {
+			return respBody, nil
+		}
+
+		lastErr = apiErrorStatus(resp.StatusCode, respBody)
+		if resp.StatusCode < http.StatusInternalServerError || attempt == 2 {
+			return nil, lastErr
+		}
+		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
 	}
-	return respBody, nil
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("Sapphire API request failed")
 }
 
 func decodeSkillPayload(data []byte) ([]Skill, error) {
@@ -206,6 +257,35 @@ func decodeSkillPayload(data []byte) ([]Skill, error) {
 	}
 
 	return nil, errors.New("unexpected Sapphire API response shape")
+}
+
+func decodeManifestPayload(data []byte) ([]Skill, bool, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, false, errors.New("empty Sapphire API response")
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err == nil {
+		skills, err := decodeSkillPayload(data)
+		if err != nil {
+			return nil, false, err
+		}
+		rawNext, ok := obj["next_cursor"]
+		if !ok {
+			return skills, true, nil
+		}
+		rawNext = bytes.TrimSpace(rawNext)
+		if bytes.Equal(rawNext, []byte("null")) || len(rawNext) == 0 || bytes.Equal(rawNext, []byte(`""`)) {
+			return skills, false, nil
+		}
+		return skills, true, nil
+	}
+
+	skills, err := decodeSkillPayload(data)
+	if err != nil {
+		return nil, false, err
+	}
+	return skills, true, nil
 }
 
 func findSkillArray(data []byte, depth int) ([]Skill, bool) {
@@ -264,11 +344,83 @@ func normalizeSkill(raw rawSkill) Skill {
 	}
 }
 
-func apiError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+func filterSkillsLocally(skills []Skill, query string, limit int) []Skill {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return skills
+	}
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+
+	tokens := strings.Fields(query)
+	type ranked struct {
+		skill Skill
+		score int
+	}
+	rankedSkills := make([]ranked, 0, len(skills))
+
+	for _, skill := range skills {
+		name := strings.ToLower(skill.DisplayName())
+		folder := strings.ToLower(skill.FolderName)
+		skillID := strings.ToLower(skill.SkillID)
+		category := strings.ToLower(skill.Category)
+		path := strings.ToLower(skill.RelativePath + " " + skill.MarkdownPath)
+
+		score := 0
+		matchedAll := true
+		for _, token := range tokens {
+			tokenScore := 0
+			switch {
+			case name == token:
+				tokenScore = 12
+			case strings.Contains(name, token):
+				tokenScore = 8
+			case strings.Contains(folder, token) || strings.Contains(skillID, token):
+				tokenScore = 6
+			case category != "" && strings.Contains(category, token):
+				tokenScore = 4
+			case strings.Contains(path, token):
+				tokenScore = 2
+			}
+			if tokenScore == 0 {
+				matchedAll = false
+				break
+			}
+			score += tokenScore
+		}
+		if !matchedAll || score == 0 {
+			continue
+		}
+		rankedSkills = append(rankedSkills, ranked{skill: skill, score: score})
+	}
+
+	sort.SliceStable(rankedSkills, func(i, j int) bool {
+		if rankedSkills[i].score != rankedSkills[j].score {
+			return rankedSkills[i].score > rankedSkills[j].score
+		}
+		return strings.ToLower(rankedSkills[i].skill.DisplayName()) < strings.ToLower(rankedSkills[j].skill.DisplayName())
+	})
+
+	if len(rankedSkills) > limit {
+		rankedSkills = rankedSkills[:limit]
+	}
+
+	filtered := make([]Skill, 0, len(rankedSkills))
+	for _, item := range rankedSkills {
+		filtered = append(filtered, item.skill)
+	}
+	return filtered
+}
+
+func apiErrorStatus(statusCode int, body []byte) error {
+	body = bytes.TrimSpace(body)
+	if len(body) > 4096 {
+		body = body[:4096]
+	}
 	text := strings.TrimSpace(string(body))
 	if text == "" {
-		text = resp.Status
+		text = http.StatusText(statusCode)
 	}
 	return fmt.Errorf("Sapphire API request failed: %s", text)
 }

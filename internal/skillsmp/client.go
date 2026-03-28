@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -79,6 +80,12 @@ func (c *Client) Search(ctx context.Context, query string) ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(skills) == 0 {
+		fallbackSkills, fallbackErr := c.searchViaManifest(ctx, query, defaultSearchLimit)
+		if fallbackErr == nil {
+			return fallbackSkills, nil
+		}
+	}
 	return skills, nil
 }
 
@@ -87,7 +94,7 @@ func (c *Client) searchViaManifest(ctx context.Context, query string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	return filterSkillsLocally(skills, query, limit), nil
+	return searchSkillsLocally(skills, query, limit), nil
 }
 
 func (c *Client) List(ctx context.Context, limit int) ([]Skill, error) {
@@ -345,7 +352,7 @@ func normalizeSkill(raw rawSkill) Skill {
 }
 
 func filterSkillsLocally(skills []Skill, query string, limit int) []Skill {
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = normalizeSearchText(query)
 	if query == "" {
 		return skills
 	}
@@ -353,49 +360,67 @@ func filterSkillsLocally(skills []Skill, query string, limit int) []Skill {
 		limit = defaultSearchLimit
 	}
 
-	tokens := strings.Fields(query)
+	tokens := normalizedQueryTokens(query)
 	type ranked struct {
-		skill Skill
-		score int
+		skill         Skill
+		score         int
+		matchedTokens int
 	}
 	rankedSkills := make([]ranked, 0, len(skills))
 
 	for _, skill := range skills {
-		name := strings.ToLower(skill.DisplayName())
-		folder := strings.ToLower(skill.FolderName)
-		skillID := strings.ToLower(skill.SkillID)
-		category := strings.ToLower(skill.Category)
-		path := strings.ToLower(skill.RelativePath + " " + skill.MarkdownPath)
+		name := normalizeSearchText(skill.DisplayName())
+		folder := normalizeSearchText(skill.FolderName)
+		skillID := normalizeSearchText(skill.SkillID)
+		category := normalizeSearchText(skill.Category)
+		path := normalizeSearchText(skill.RelativePath + " " + skill.MarkdownPath)
 
 		score := 0
-		matchedAll := true
+		matchedTokens := 0
 		for _, token := range tokens {
+			tokenWeight := scoreWeightForToken(token)
 			tokenScore := 0
 			switch {
-			case name == token:
-				tokenScore = 12
+			case containsWholeToken(name, token):
+				tokenScore = 18 * tokenWeight
+			case containsWholeToken(folder, token) || containsWholeToken(skillID, token):
+				tokenScore = 14 * tokenWeight
 			case strings.Contains(name, token):
-				tokenScore = 8
+				tokenScore = 12 * tokenWeight
 			case strings.Contains(folder, token) || strings.Contains(skillID, token):
-				tokenScore = 6
+				tokenScore = 9 * tokenWeight
 			case category != "" && strings.Contains(category, token):
-				tokenScore = 4
+				tokenScore = 6 * tokenWeight
 			case strings.Contains(path, token):
-				tokenScore = 2
+				tokenScore = 4 * tokenWeight
 			}
-			if tokenScore == 0 {
-				matchedAll = false
-				break
+			if tokenScore > 0 {
+				score += tokenScore
+				matchedTokens++
 			}
-			score += tokenScore
 		}
-		if !matchedAll || score == 0 {
+		if matchedTokens == 0 || score == 0 {
 			continue
 		}
-		rankedSkills = append(rankedSkills, ranked{skill: skill, score: score})
+
+		if strings.Contains(name, query) || strings.Contains(folder, query) || strings.Contains(skillID, query) {
+			score += 40
+		}
+		if len(tokens) > 0 && strings.HasPrefix(name, tokens[0]) {
+			score += 20
+		}
+
+		rankedSkills = append(rankedSkills, ranked{
+			skill:         skill,
+			score:         score,
+			matchedTokens: matchedTokens,
+		})
 	}
 
 	sort.SliceStable(rankedSkills, func(i, j int) bool {
+		if rankedSkills[i].matchedTokens != rankedSkills[j].matchedTokens {
+			return rankedSkills[i].matchedTokens > rankedSkills[j].matchedTokens
+		}
 		if rankedSkills[i].score != rankedSkills[j].score {
 			return rankedSkills[i].score > rankedSkills[j].score
 		}
@@ -411,6 +436,163 @@ func filterSkillsLocally(skills []Skill, query string, limit int) []Skill {
 		filtered = append(filtered, item.skill)
 	}
 	return filtered
+}
+
+func searchSkillsLocally(skills []Skill, query string, limit int) []Skill {
+	variants := buildSearchVariants(query)
+	if len(variants) == 0 {
+		return filterSkillsLocally(skills, query, limit)
+	}
+
+	results := make([]Skill, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, variant := range variants {
+		for _, skill := range filterSkillsLocally(skills, variant, limit) {
+			key := skill.Key()
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			results = append(results, skill)
+			if limit > 0 && len(results) >= limit {
+				return results[:limit]
+			}
+		}
+	}
+	return results
+}
+
+func buildSearchVariants(query string) []string {
+	normalized := normalizeSearchText(query)
+	if normalized == "" {
+		return nil
+	}
+
+	variants := []string{normalized}
+	seen := map[string]struct{}{normalized: {}}
+	add := func(value string) {
+		value = normalizeSearchText(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		variants = append(variants, value)
+	}
+
+	tokens := normalizedQueryTokens(normalized)
+	if len(tokens) == 0 {
+		return variants
+	}
+
+	focused := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if isLowSignalSearchToken(token) {
+			continue
+		}
+		focused = append(focused, token)
+	}
+	if len(focused) > 0 {
+		add(strings.Join(focused, " "))
+	}
+	if len(focused) >= 2 {
+		add(strings.Join(focused[:2], " "))
+	}
+
+	sort.SliceStable(tokens, func(i, j int) bool {
+		return scoreWeightForToken(tokens[i]) > scoreWeightForToken(tokens[j])
+	})
+	for _, token := range tokens {
+		if isLowSignalSearchToken(token) {
+			continue
+		}
+		add(token)
+	}
+
+	return variants
+}
+
+func normalizedQueryTokens(query string) []string {
+	fields := strings.Fields(normalizeSearchText(query))
+	seen := make(map[string]struct{}, len(fields))
+	tokens := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		tokens = append(tokens, field)
+	}
+	return tokens
+}
+
+func normalizeSearchText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(value))
+	lastSpace := true
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func containsWholeToken(haystack, token string) bool {
+	if haystack == "" || token == "" {
+		return false
+	}
+	for _, part := range strings.Fields(haystack) {
+		if part == token {
+			return true
+		}
+	}
+	return false
+}
+
+func scoreWeightForToken(token string) int {
+	switch {
+	case len(token) >= 10:
+		return 4
+	case len(token) >= 7:
+		return 3
+	case len(token) >= 4:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func isLowSignalSearchToken(token string) bool {
+	switch token {
+	case "a", "an", "the", "and", "or", "with", "without", "for", "to", "in", "on", "of":
+		return true
+	case "app", "cli", "flow", "project", "repo", "repository", "implementation", "implement", "build", "setup", "using", "use", "codebase":
+		return true
+	case "go", "golang", "typescript", "javascript", "python", "rust", "java":
+		return true
+	default:
+		return false
+	}
 }
 
 func apiErrorStatus(statusCode int, body []byte) error {

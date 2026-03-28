@@ -400,6 +400,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_mode", "Switch Mode", "", ActionOpenDialog{ModesID}),
 		NewCommandItem(c.com.Styles, "mcp_browser", "MCP Browser (Beautiful)", "", ActionOpenDialog{MCPBrowserID}),
 		NewCommandItem(c.com.Styles, "extended_skills", "Extended Skills", "", ActionOpenSkillsMarketplace{}),
+		NewCommandItem(c.com.Styles, "index_codebase", "Index Codebase", "", ActionIndexCodebase{}),
 		NewCommandItem(c.com.Styles, "mcp_manager", "MCP Manager", "", ActionOpenDialog{MCPManagerID}),
 	}
 

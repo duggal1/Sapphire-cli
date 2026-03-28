@@ -420,6 +420,7 @@ type sessionAgent struct {
 	activeRequests          *csync.Map[string, context.CancelFunc]
 	memory                  memory.MemoryService
 	memoryCompiler          *memory.Compiler
+	codebaseIndexStatus     func(ctx context.Context, sessionID, workingDir string) string
 	pmem                    *pmem.System
 	postCompactionInjection *csync.Map[string, bool]
 	longHorizon             *longhorizon.Manager
@@ -451,6 +452,7 @@ type SessionAgentOptions struct {
 	WriteScope           *tools.WriteScope
 	Memory               memory.MemoryService
 	MemoryCompiler       *memory.Compiler
+	CodebaseIndexStatus  func(ctx context.Context, sessionID, workingDir string) string
 	Pmem                 *pmem.System
 	LongHorizon          *longhorizon.Manager
 	MemoryConsolidator   func(ctx context.Context, sessionID string) error
@@ -478,6 +480,7 @@ func NewSessionAgent(
 		activeRequests:          csync.NewMap[string, context.CancelFunc](),
 		memory:                  opts.Memory,
 		memoryCompiler:          opts.MemoryCompiler,
+		codebaseIndexStatus:     opts.CodebaseIndexStatus,
 		pmem:                    opts.Pmem,
 		workingDir:              csync.NewValue(opts.WorkingDir),
 		writeScope:              opts.WriteScope,
@@ -1977,6 +1980,10 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}
 
 	compiledInjection := ""
+	workDir := ""
+	if a.workingDir != nil {
+		workDir = a.workingDir.Get()
+	}
 	if a.memoryCompiler != nil {
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			if strings.TrimSpace(call.ResumePointID) != "" {
@@ -1991,10 +1998,6 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 		}
 	}
 	if compiledInjection == "" && a.memoryCompiler != nil {
-		workDir := ""
-		if a.workingDir != nil {
-			workDir = a.workingDir.Get()
-		}
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			compiledInjection = a.memoryCompiler.RenderPromptInjection(memCtx, memory.CompileRequest{
 				SessionID:           sessionID,
@@ -2004,6 +2007,13 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 				LongHorizonContext:  longHorizonContext,
 				HistoricalContext:   historicalContext,
 			})
+			cancel()
+		}
+	}
+	codebaseIndexStatus := ""
+	if a.codebaseIndexStatus != nil {
+		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
+			codebaseIndexStatus = a.codebaseIndexStatus(memCtx, sessionID, workDir)
 			cancel()
 		}
 	}
@@ -2028,6 +2038,11 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 				fantasy.NewSystemMessage(historicalContext),
 			}, retHistory...)
 		}
+	}
+	if codebaseIndexStatus != "" {
+		retHistory = append([]fantasy.Message{
+			fantasy.NewSystemMessage(codebaseIndexStatus),
+		}, retHistory...)
 	}
 
 	if a.pmem != nil {

@@ -1453,7 +1453,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 		m.dialog.CloseDialog(dialog.JinaAPIKeyInputID)
 		if msg.ContinueIndex {
-			cmds = append(cmds, util.ReportWarn("Codebase indexing is temporarily disabled"))
+			cmds = append(cmds, m.startCodebaseIndexing(true))
 		} else {
 			cmds = append(cmds, util.ReportInfo("Jina API key saved"))
 		}
@@ -1509,6 +1509,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 		cmds = append(cmds, m.openSkillsMarketplace())
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionIndexCodebase:
+		if m.indexingProgress.Active {
+			cmds = append(cmds, util.ReportWarn("Codebase indexing is already running"))
+			break
+		}
+		cmds = append(cmds, m.startCodebaseIndexing(true))
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleCompactMode:
 		cmds = append(cmds, m.toggleCompactMode())
@@ -1982,8 +1989,19 @@ func (m *UI) openSapphireAPIKeyDialog() tea.Cmd {
 }
 
 func (m *UI) startCodebaseIndexing(force bool) tea.Cmd {
-	_ = force
-	return util.ReportWarn("Codebase indexing is temporarily disabled")
+	if m == nil || m.com == nil || m.com.App == nil || m.com.App.AgentCoordinator == nil {
+		return util.ReportError(errors.New("agent coordinator is not initialized"))
+	}
+	return func() tea.Msg {
+		stats, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), force)
+		if err != nil {
+			return util.ReportError(err)()
+		}
+		if stats.FileCount > 0 {
+			return util.NewInfoMsg(fmt.Sprintf("Codebase graph indexed (%d files)", stats.FileCount))
+		}
+		return util.NewInfoMsg("Codebase graph indexed")
+	}
 }
 
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {

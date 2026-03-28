@@ -12,7 +12,10 @@ func SubscribeEvents(ctx context.Context) <-chan pubsub.Event[Progress] {
 	return progressBroker.Subscribe(ctx)
 }
 
+func PublishProgress(progress Progress) {
+	publishProgress("", progress)
+}
+
 func publishProgress(eventType pubsub.EventType, progress Progress) {
 	progressBroker.Publish(eventType, progress)
 }
-

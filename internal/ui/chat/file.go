@@ -82,7 +82,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	if opts.IsPending() {
 		pendingHeader := pendingTool(sty, toolTitle)
-		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, ToolStatusRunning, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
+		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, ToolStatusRunning, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName, opts.IsSpinning)
 		if body == "" {
 			return pendingHeader
 		}
@@ -90,7 +90,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	}
 
 	if !opts.HasResult() {
-		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
+		body := renderViewSummary(sty, toolTitle, filePaths, params, nil, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName, opts.IsSpinning)
 		if body == "" {
 			return header
 		}
@@ -125,7 +125,7 @@ func (v *ViewToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 		}
 	}
 
-	body := renderViewSummary(sty, toolTitle, filePaths, params, opts.Result, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName)
+	body := renderViewSummary(sty, toolTitle, filePaths, params, opts.Result, opts.Status, cappedWidth-toolBodyLeftPaddingTotal, opts.ToolCall.Name == tools.SingleViewToolName, opts.IsSpinning)
 	if body == "" {
 		if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
 			return joinToolParts(header, earlyState)
@@ -172,6 +172,7 @@ func renderViewSummary(
 	status ToolStatus,
 	width int,
 	isSingleView bool,
+	isSpinning bool,
 ) string {
 	normalizedPaths := normalizeViewSummaryPaths(filePaths)
 	if isSingleView {
@@ -179,7 +180,7 @@ func renderViewSummary(
 		if !ok {
 			return ""
 		}
-		root := buildViewDetailsRoot(sty, toolTitle, []fileContextEntry{entry}, status, result, true)
+		root := buildViewDetailsRoot(sty, toolTitle, []fileContextEntry{entry}, status, result, true, isSpinning)
 		if root == nil {
 			return ""
 		}
@@ -227,7 +228,7 @@ func renderViewSummary(
 		entries = append(entries, entry)
 	}
 
-	root := buildViewDetailsRoot(sty, toolTitle, entries, status, result, isSingleView)
+	root := buildViewDetailsRoot(sty, toolTitle, entries, status, result, isSingleView, isSpinning)
 	if root == nil {
 		return ""
 	}
@@ -241,6 +242,7 @@ func buildViewDetailsRoot(
 	status ToolStatus,
 	result *message.ToolResult,
 	isSingleView bool,
+	isSpinning bool,
 ) *TreeNode {
 	if len(entries) == 0 {
 		return nil
@@ -254,10 +256,10 @@ func buildViewDetailsRoot(
 		scopeNode := &TreeNode{Label: subAgentKVLabel("Scope", viewScope(entries))}
 		scopeNode.Children = append(scopeNode.Children,
 			&TreeNode{Label: subAgentKVLabel("File", renderViewFileLabel(sty, entries[0]))},
-			&TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))},
+			&TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(sty, status, result, isSpinning))},
 			&TreeNode{Label: subAgentKVLabel("Purpose", "inspect single-file context")},
 		)
-		if activity := viewActivityLabel(status, result); activity != "" {
+		if activity := viewActivityLabel(sty, status, result, isSpinning, len(entries)); activity != "" {
 			scopeNode.Children = append(scopeNode.Children, &TreeNode{Label: subAgentKVLabel("Activity", activity)})
 		}
 		if errLine := viewErrorLine(status, result); errLine != "" {
@@ -277,9 +279,9 @@ func buildViewDetailsRoot(
 	if filesTree := buildFileContextRoot(sty, "Files Read", entries); filesTree != nil {
 		children = append(children, filesTree)
 	}
-	children = append(children, &TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(status, result))})
+	children = append(children, &TreeNode{Label: subAgentKVLabel("Status", viewStatusLabel(sty, status, result, isSpinning))})
 	children = append(children, &TreeNode{Label: subAgentKVLabel("Purpose", "inspect multi-file context")})
-	if activity := viewActivityLabel(status, result); activity != "" {
+	if activity := viewActivityLabel(sty, status, result, isSpinning, len(entries)); activity != "" {
 		children = append(children, &TreeNode{Label: subAgentKVLabel("Activity", activity)})
 	}
 
@@ -447,7 +449,7 @@ func commonSlashPathPrefix(paths []string) string {
 	return strings.Join(parts[:prefixLen], "/")
 }
 
-func viewStatusLabel(status ToolStatus, result *message.ToolResult) string {
+func viewStatusLabel(sty *styles.Styles, status ToolStatus, result *message.ToolResult, isSpinning bool) string {
 	switch status {
 	case ToolStatusError:
 		return "error"
@@ -456,6 +458,9 @@ func viewStatusLabel(status ToolStatus, result *message.ToolResult) string {
 	case ToolStatusAwaitingPermission:
 		return "awaiting permission"
 	case ToolStatusRunning:
+		if isSpinning {
+			return styles.ShimmerTextNeutral(sty, "reading", 0)
+		}
 		return "reading"
 	}
 	if result == nil {
@@ -472,9 +477,18 @@ func viewErrorLine(status ToolStatus, result *message.ToolResult) string {
 	return strings.TrimSpace(text)
 }
 
-func viewActivityLabel(status ToolStatus, result *message.ToolResult) string {
+func viewActivityLabel(sty *styles.Styles, status ToolStatus, result *message.ToolResult, isSpinning bool, fileCount int) string {
 	if status == ToolStatusRunning {
-		return "active"
+		label := "reading files"
+		if fileCount == 1 {
+			label = "reading file"
+		} else if fileCount > 1 {
+			label = fmt.Sprintf("reading %d files", fileCount)
+		}
+		if isSpinning {
+			return styles.ShimmerTextNeutral(sty, label, 0)
+		}
+		return label
 	}
 	if result == nil {
 		return ""

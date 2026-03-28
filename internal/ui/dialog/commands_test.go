@@ -109,3 +109,26 @@ func TestDefaultCommandsIncludeExtendedSkills(t *testing.T) {
 
 	t.Fatal("missing extended skills command")
 }
+
+func TestDefaultCommandsIncludeIndexCodebase(t *testing.T) {
+	t.Parallel()
+
+	cmds := (&Commands{
+		com: testCommandsCommon(t),
+	}).defaultCommands()
+
+	for _, item := range cmds {
+		if item.ID() != "index_codebase" {
+			continue
+		}
+		if item.title != "Index Codebase" {
+			t.Fatalf("expected index codebase label, got %q", item.title)
+		}
+		if _, ok := item.Action().(ActionIndexCodebase); !ok {
+			t.Fatalf("expected ActionIndexCodebase, got %T", item.Action())
+		}
+		return
+	}
+
+	t.Fatal("missing index codebase command")
+}

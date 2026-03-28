@@ -57,6 +57,9 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "Installed extended skills become local skills under `<data-dir>/skills`") {
 		t.Fatalf("expected installed extended skills guidance in coder prompt")
 	}
+	if !strings.Contains(out, "Would you like me to index the whole codebase?") || !strings.Contains(out, "`index_codebase`") {
+		t.Fatalf("expected codebase indexing guidance in coder prompt")
+	}
 	if strings.Contains(out, "Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.") {
 		t.Fatalf("expected hardcoded skill routing to be removed from coder prompt")
 	}

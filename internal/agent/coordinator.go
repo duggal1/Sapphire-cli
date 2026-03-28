@@ -112,9 +112,97 @@ func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) e
 }
 
 func (c *coordinator) IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error) {
-	_ = ctx
-	_ = force
-	return codeindex.Stats{}, fmt.Errorf("codebase indexing is temporarily disabled")
+	if c == nil || c.memoryCompiler == nil {
+		return codeindex.Stats{}, fmt.Errorf("durable codebase graph is not initialized")
+	}
+	result, err := c.memoryCompiler.WarmCodebase(ctx, memory.WarmRequest{
+		WorkingDir: c.mainWorkingDir(),
+		Force:      force,
+	}, func(progress memory.WarmProgress) {
+		codeindex.PublishProgress(codeindex.Progress{
+			Workspace:       progress.Workspace,
+			Phase:           progress.Phase,
+			Message:         progress.Message,
+			Active:          progress.Active,
+			Finished:        progress.Finished,
+			FilesDiscovered: progress.FilesDiscovered,
+			FilesProcessed:  progress.FilesProcessed,
+			FilesIndexed:    progress.FilesIndexed,
+			Percent:         progress.Percent,
+			StartedAt:       progress.StartedAt,
+			UpdatedAt:       progress.UpdatedAt,
+			Error:           progress.Error,
+		})
+	})
+	if err != nil {
+		return codeindex.Stats{}, err
+	}
+	lastIndexedAt := result.Status.LastIndexedAt
+	if lastIndexedAt.IsZero() {
+		lastIndexedAt = time.Now().UTC()
+	}
+	fileCount := result.Status.FileCount
+	if fileCount == 0 {
+		fileCount = result.DiscoveredFiles
+	}
+	return codeindex.Stats{
+		FileCount:     fileCount,
+		LastIndexedAt: lastIndexedAt,
+	}, nil
+}
+
+func (c *coordinator) renderCodebaseIndexStatusPrompt(ctx context.Context, sessionID, workingDir string) string {
+	_ = sessionID
+	if c == nil || c.memoryCompiler == nil {
+		return ""
+	}
+	status, err := c.memoryCompiler.IndexStatus(ctx, workingDir)
+	if err != nil {
+		return strings.Join([]string{
+			"## CODEBASE INDEX STATUS",
+			"- durable_graph: unavailable",
+			"- error: " + strings.TrimSpace(err.Error()),
+			"- rule: if a repo-wide task clearly needs broader codebase retrieval, end with exactly: \"Would you like me to index the whole codebase?\"",
+			"- if the user agrees, call `index_codebase` before continuing.",
+			"- do not ask for indexing on trivial or single-file work.",
+		}, "\n")
+	}
+
+	state := "cold"
+	if status.Available {
+		state = "ready"
+		if status.Dirty && len(status.ChangedFiles) > 0 {
+			state = "dirty"
+		}
+	}
+
+	lines := []string{
+		"## CODEBASE INDEX STATUS",
+		"- durable_graph: " + state,
+		"- scope: " + firstNonEmptyString(status.ScopePath, strings.TrimSpace(workingDir)),
+		"- repo_root: " + firstNonEmptyString(status.RepoRoot, strings.TrimSpace(workingDir)),
+		fmt.Sprintf("- index_epoch: %d", status.IndexEpoch),
+		fmt.Sprintf("- indexed_files: %d", status.FileCount),
+		fmt.Sprintf("- working_tree_dirty: %t", status.Dirty),
+		"- boot_packet: regenerated from the durable graph for each new model context",
+	}
+	if !status.LastIndexedAt.IsZero() {
+		lines = append(lines, "- last_indexed_at: "+status.LastIndexedAt.Format(time.RFC3339))
+	}
+	if len(status.ChangedFiles) > 0 {
+		changedFiles := append([]string{}, status.ChangedFiles...)
+		if len(changedFiles) > 8 {
+			changedFiles = changedFiles[:8]
+		}
+		lines = append(lines, "- changed_files: "+strings.Join(changedFiles, ", "))
+	}
+	lines = append(lines,
+		"- use the boot packet as hot codebase context, but still read exact files before editing.",
+		"- if a repo-wide task clearly needs broader retrieval and the durable graph is cold, dirty, or visibly too narrow for the requested scope, end with exactly: \"Would you like me to index the whole codebase?\"",
+		"- if the user agrees, call `index_codebase` before continuing.",
+		"- do not ask for indexing on trivial or single-file work.",
+	)
+	return strings.Join(lines, "\n")
 }
 
 func (c *coordinator) GetLongHorizonState(sessionID string) string {
@@ -350,7 +438,6 @@ func NewCoordinator(
 	}
 	mainDir := c.mainWorkingDir()
 	apiKey := c.resolveGeminiAPIKey()
-	// Codebase indexing is temporarily disabled. Keep the plumbing dormant for now.
 	if !isNonInteractiveMode() {
 		c.longHorizon = longhorizon.NewManager(mainDir)
 
@@ -1367,6 +1454,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		Tools:                nil,
 		Memory:               c.memory,
 		MemoryCompiler:       c.memoryCompiler,
+		CodebaseIndexStatus:  c.renderCodebaseIndexStatusPrompt,
 		Pmem:                 c.pmem,
 		LongHorizon:          c.longHorizon,
 		MemoryConsolidator:   c.ConsolidateMemory,
@@ -1700,6 +1788,9 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		allTools = append(allTools, searchSkillsTool)
 	}
 	allTools = append(allTools, tools.NewInstallSkillTool())
+	if indexCodebaseTool, err := c.indexCodebaseTool(ctx); err == nil {
+		allTools = append(allTools, indexCodebaseTool)
+	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.LSP) > 0 || c.cfg.Options.AutoLSP == nil || *c.cfg.Options.AutoLSP {

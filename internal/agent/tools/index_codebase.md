@@ -1,0 +1,1 @@
+Warm the durable codebase graph for the current repository. Use this after the user agrees to index the whole codebase, or when a large repo-wide task needs a fresh graph so future turns get stronger boot-packet context. Avoid it for trivial or single-file work.

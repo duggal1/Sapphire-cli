@@ -75,7 +75,7 @@ func TestSingleViewPendingStillRendersMetadataTree(t *testing.T) {
 	if !strings.Contains(rendered, "View") || !strings.Contains(rendered, "Scope: internal/agent") {
 		t.Fatalf("expected pending single view metadata, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L12-L88") || !strings.Contains(rendered, "Activity: active") {
+	if !strings.Contains(rendered, "File: agent.go") || !strings.Contains(rendered, "L12-L88") || !strings.Contains(rendered, "Activity:") || !strings.Contains(rendered, "reading file") {
 		t.Fatalf("expected pending single view file metadata, got %q", rendered)
 	}
 }
@@ -97,5 +97,25 @@ func TestSingleViewUsesAliasPathFields(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "File: file.go L9-L61") {
 		t.Fatalf("expected exact alias path line range, got %q", rendered)
+	}
+}
+
+func TestAgenticViewPendingRendersLoaderActivity(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewViewToolMessageItem(&sty, message.ToolCall{
+		ID:       "view-agentic-pending",
+		Name:     "agentic_view",
+		Input:    `{"file_paths":["internal/cmd/root.go","internal/ui/chat/file.go"]}`,
+		Finished: false,
+	}, nil, false)
+
+	rendered := ansi.Strip(item.Render(100))
+	if !strings.Contains(rendered, "Agentic View") || !strings.Contains(rendered, "Files: 2") {
+		t.Fatalf("expected pending agentic view metadata, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Activity:") || !strings.Contains(rendered, "reading 2 files") {
+		t.Fatalf("expected pending agentic view loader activity, got %q", rendered)
 	}
 }

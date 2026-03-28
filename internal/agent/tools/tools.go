@@ -41,6 +41,9 @@ const (
 	// InstallSkillToolName is the name of the tool used to search and install skills.
 	InstallSkillToolName = "install_skill"
 
+	// IndexCodebaseToolName warms the durable codebase graph and prompt boot packet context.
+	IndexCodebaseToolName = "index_codebase"
+
 	// ToolSuggestToolName is the name of the tool used to suggest MCP tools.
 	ToolSuggestToolName = "tool_suggest"
 )

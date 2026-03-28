@@ -13,6 +13,8 @@
   `search_skills` -> `install_skill` if needed -> `load_skill` -> `load_skill`
 - Installed extended skills become local skills under `<data-dir>/skills` and should be treated as directly available local skills after installation.
 - Treat the installed `SKILL.md` as the source of truth once loaded. Follow it exactly.
-- Prefer concise search queries that reflect the real task, for example `frontend auth form`, `supabase auth row level security`, `aws terraform deploy`, or `backend api observability`.
+- Prefer concise, high-signal install queries. Start with 1-4 strong domain terms such as `supabase auth`, `frontend auth form`, `aws terraform deploy`, or `backend api observability`.
+- Strip incidental words from install queries unless they are essential to the skill itself. Usually drop words like `project`, `codebase`, `cli`, `flow`, `implement`, and language names unless they are genuinely part of the needed specialization.
+- For mixed tasks, install multiple focused skills instead of one overloaded query. Example: `supabase` and `auth`, not one long query that mixes every requirement.
 - Do not install blindly. Install only when the task is non-trivial and the extended skill is likely to improve execution quality.
 </extended_skills_policy>

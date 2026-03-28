@@ -937,6 +937,7 @@ func allToolNames() []string {
 		"search_tools",
 		"search_skills",
 		"install_skill",
+		"index_codebase",
 		"tool_suggest",
 		"list_available_mcps",
 		"install_mcp",

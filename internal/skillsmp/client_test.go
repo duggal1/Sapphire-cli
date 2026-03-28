@@ -242,6 +242,69 @@ func TestClientSearchFallsBackToManifestOnServerError(t *testing.T) {
 	require.Equal(t, "java-pro", results[0].SkillID)
 }
 
+func TestClientSearchFallsBackToManifestOnEmptySearchAndRelaxesQuery(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "token", r.Header.Get("x-api-key"))
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"query":   "supabase auth email password go cli",
+				"results": []map[string]any{},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skills/manifest":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"next_cursor": nil,
+				"items": []map[string]any{
+					{
+						"skill_id":      "supabase-automation",
+						"folder_name":   "supabase-automation",
+						"skill_name":    "supabase-automation",
+						"relative_path": "supabase-automation",
+						"markdown_path": "/var/task/Plugins/supabase-automation/SKILL.md",
+						"size_bytes":    100,
+						"is_nested":     false,
+						"category":      "integrations",
+					},
+					{
+						"skill_id":      "auth-implementation-patterns",
+						"folder_name":   "auth-implementation-patterns",
+						"skill_name":    "auth-implementation-patterns",
+						"relative_path": "auth-implementation-patterns",
+						"markdown_path": "/var/task/Plugins/auth-implementation-patterns/SKILL.md",
+						"size_bytes":    100,
+						"is_nested":     false,
+						"category":      "auth",
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL, "token", server.Client())
+	results, err := client.Search(context.Background(), "supabase auth email password go cli")
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	require.Equal(t, "supabase-automation", results[0].SkillID)
+}
+
+func TestFilterSkillsLocallyMatchesHyphenatedNames(t *testing.T) {
+	t.Parallel()
+
+	results := filterSkillsLocally([]Skill{
+		{SkillID: "supabase-auth", FolderName: "supabase-auth", SkillName: "supabase-auth"},
+		{SkillID: "auth-helper", FolderName: "auth-helper", SkillName: "auth-helper"},
+	}, "supabase auth", 10)
+
+	require.Len(t, results, 2)
+	require.Equal(t, "supabase-auth", results[0].SkillID)
+}
+
 func TestClientOnlySendsXAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 

@@ -102,6 +102,32 @@ func Foo() string {
 	require.Greater(t, packet2.RepoSnapshot.IndexEpoch, packet1.RepoSnapshot.IndexEpoch)
 }
 
+func TestCompilerIndexStatusAndWarmCodebase(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	status, err := compiler.IndexStatus(context.Background(), repoRoot)
+	require.NoError(t, err)
+	require.False(t, status.Available)
+
+	var progress []WarmProgress
+	result, err := compiler.WarmCodebase(context.Background(), WarmRequest{
+		WorkingDir: repoRoot,
+		Force:      true,
+	}, func(item WarmProgress) {
+		progress = append(progress, item)
+	})
+	require.NoError(t, err)
+	require.True(t, result.Status.Available)
+	require.GreaterOrEqual(t, result.Status.FileCount, 3)
+	require.NotEmpty(t, progress)
+	require.Equal(t, "ready", progress[len(progress)-1].Phase)
+	require.True(t, progress[len(progress)-1].Finished)
+}
+
 func seedMemoryTestRepo(t *testing.T) string {
 	t.Helper()
 

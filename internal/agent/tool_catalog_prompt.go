@@ -21,6 +21,7 @@ var runtimeToolSummaries = map[string]string{
 	"close_agent":             "close a sub-agent and release its resources",
 	"collect_result":          "collect final result payloads from finished sub-agents",
 	"connect_mcp":             "connect an installed MCP server",
+	"index_codebase":          "warm the durable codebase graph so future turns get richer boot-packet context",
 	"install_mcp":             "install and configure an MCP server by exact registry name",
 	"install_skill":           "search the Sapphire skills API and install the best matching extended skill into the local skill store",
 	"download":                "download remote content to a file",

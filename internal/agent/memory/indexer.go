@@ -15,9 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	appdb "github.com/duggal1/Sapphire-cli/internal/db"
@@ -72,6 +75,18 @@ type repoFileCandidate struct {
 	SizeBytes    int64
 }
 
+type indexOperationOptions struct {
+	Force  bool
+	Report func(WarmProgress)
+}
+
+type indexOperationStats struct {
+	DiscoveredFiles int
+	ChangedFiles    int
+	RemovedFiles    int
+	IndexedFiles    int
+}
+
 var memoryAllowedExtensions = map[string]string{
 	".go":   "go",
 	".md":   "markdown",
@@ -108,24 +123,50 @@ var memoryAllowedHiddenDirs = map[string]struct{}{
 }
 
 func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (storedRepoScope, error) {
+	scope, _, err := c.ensureIndexedScopeWithOptions(ctx, workingDir, indexOperationOptions{})
+	return scope, err
+}
+
+func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir string, opts indexOperationOptions) (storedRepoScope, indexOperationStats, error) {
+	startedAt := c.now()
 	snapshot, err := captureRepoSnapshot(ctx, workingDir)
 	if err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
+	reportWarmProgress(opts.Report, WarmProgress{
+		Workspace: snapshot.ScopePath,
+		Phase:     "discovering",
+		Message:   "Scanning workspace",
+		Active:    true,
+		Percent:   0.02,
+		StartedAt: startedAt,
+		UpdatedAt: startedAt,
+	})
 	candidates, err := scanRepoFileCandidates(snapshot.ScopePath)
 	if err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
+	stats := indexOperationStats{DiscoveredFiles: len(candidates)}
+	reportWarmProgress(opts.Report, WarmProgress{
+		Workspace:       snapshot.ScopePath,
+		Phase:           "discovering",
+		Message:         "Diffing tracked files",
+		Active:          true,
+		FilesDiscovered: len(candidates),
+		Percent:         0.08,
+		StartedAt:       startedAt,
+		UpdatedAt:       c.now(),
+	})
 	existing, err := c.loadExistingScope(ctx, snapshot)
 	if err != nil && !errors.Is(err, errNoScope) {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 
 	existingFiles := make(map[string]storedRepoFile)
 	if existing.ID != "" {
 		existingFiles, err = c.loadExistingFiles(ctx, existing.ID)
 		if err != nil {
-			return storedRepoScope{}, err
+			return storedRepoScope{}, indexOperationStats{}, err
 		}
 	}
 	existingSymbolsByFile := map[string][]appdb.MemoryRepoSymbol{}
@@ -146,7 +187,7 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 	for _, candidate := range candidates {
 		currentByPath[candidate.Path] = candidate
 		prev, ok := existingFiles[candidate.Path]
-		if !ok || prev.ModTimeUnix != candidate.ModTimeUnix || prev.SizeBytes != candidate.SizeBytes || prev.Language != candidate.Language || prev.Role != candidate.Role || prev.Status != candidate.Status {
+		if opts.Force || !ok || prev.ModTimeUnix != candidate.ModTimeUnix || prev.SizeBytes != candidate.SizeBytes || prev.Language != candidate.Language || prev.Role != candidate.Role || prev.Status != candidate.Status {
 			changedPaths = append(changedPaths, candidate.Path)
 		}
 	}
@@ -158,6 +199,8 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 	}
 	sort.Strings(changedPaths)
 	sort.Strings(removedPaths)
+	stats.ChangedFiles = len(changedPaths)
+	stats.RemovedFiles = len(removedPaths)
 
 	scopeID := existing.ID
 	if scopeID == "" {
@@ -167,13 +210,13 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 	epoch := existing.LatestEpoch
 	if epoch == 0 {
 		epoch = 1
-	} else if len(changedPaths) > 0 || len(removedPaths) > 0 || snapshot.HeadCommit != existing.HeadCommit || snapshot.Dirty != existing.Dirty {
+	} else if opts.Force || len(changedPaths) > 0 || len(removedPaths) > 0 || snapshot.HeadCommit != existing.HeadCommit || snapshot.Dirty != existing.Dirty {
 		epoch++
 	}
 
 	tx, err := c.conn.BeginTx(ctx, nil)
 	if err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 	defer tx.Rollback() //nolint:errcheck
 	qtx := appdb.New(tx)
@@ -191,7 +234,7 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 		CreatedAt:     coalesceInt64(existing.LastIndexedAt, nowUnix),
 		UpdatedAt:     nowUnix,
 	}); err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 
 	if len(removedPaths) > 0 {
@@ -201,23 +244,44 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 				_ = qtx.DeleteMemoryFactProvenanceByFacts(ctx, "repo_symbol", extractMemorySymbolIDs(existingSymbolsByFile[file.ID]))
 			}
 			if err := qtx.DeleteMemoryRepoFileByScopeAndPath(ctx, scopeID, path); err != nil {
-				return storedRepoScope{}, err
+				return storedRepoScope{}, indexOperationStats{}, err
 			}
 		}
 	}
 
-	parsedChanged := make([]indexedRepoFile, 0, len(changedPaths))
-	for _, path := range changedPaths {
-		candidate := currentByPath[path]
-		file, ok, err := loadIndexedRepoFile(snapshot.ScopePath, candidate.AbsolutePath)
-		if err != nil {
-			return storedRepoScope{}, err
+	reportWarmProgress(opts.Report, WarmProgress{
+		Workspace:       snapshot.ScopePath,
+		Phase:           "parsing",
+		Message:         "Extracting durable graph facts",
+		Active:          true,
+		FilesDiscovered: len(candidates),
+		FilesProcessed:  0,
+		Percent:         0.12,
+		StartedAt:       startedAt,
+		UpdatedAt:       c.now(),
+	})
+	parsedChanged, err := loadIndexedRepoFilesParallel(snapshot.ScopePath, currentByPath, changedPaths, func(processed, total int) {
+		percent := 0.12
+		if total > 0 {
+			percent = 0.12 + (0.68 * (float64(processed) / float64(total)))
 		}
-		if !ok {
-			continue
-		}
-		parsedChanged = append(parsedChanged, file)
+		reportWarmProgress(opts.Report, WarmProgress{
+			Workspace:       snapshot.ScopePath,
+			Phase:           "parsing",
+			Message:         "Extracting durable graph facts",
+			Active:          true,
+			FilesDiscovered: len(candidates),
+			FilesProcessed:  processed,
+			FilesIndexed:    processed,
+			Percent:         percent,
+			StartedAt:       startedAt,
+			UpdatedAt:       c.now(),
+		})
+	})
+	if err != nil {
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
+	stats.IndexedFiles = len(parsedChanged)
 
 	if len(parsedChanged) > 0 || existing.ID == "" {
 		for _, file := range parsedChanged {
@@ -241,11 +305,11 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 				UpdatedAt:   nowUnix,
 				CreatedAt:   nowUnix,
 			}); err != nil {
-				return storedRepoScope{}, err
+				return storedRepoScope{}, indexOperationStats{}, err
 			}
 			_ = qtx.DeleteMemoryFactProvenanceByFact(ctx, "repo_file", fileID)
 			if err := qtx.DeleteMemoryRepoSymbolsByFile(ctx, scopeID, fileID); err != nil {
-				return storedRepoScope{}, err
+				return storedRepoScope{}, indexOperationStats{}, err
 			}
 			_ = qtx.DeleteMemoryFactProvenanceByFacts(ctx, "repo_symbol", extractMemorySymbolIDs(existingSymbolsByFile[fileID]))
 			fileProvID, err := c.createTxProvenance(ctx, qtx, appdb.InsertMemoryProvenanceParams{
@@ -288,7 +352,7 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 					UpdatedAt:   nowUnix,
 					CreatedAt:   nowUnix,
 				}); err != nil {
-					return storedRepoScope{}, err
+					return storedRepoScope{}, indexOperationStats{}, err
 				}
 				if fileProvID != "" {
 					_ = qtx.LinkMemoryFactProvenance(ctx, appdb.LinkMemoryFactProvenanceParams{
@@ -304,9 +368,21 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 
 	impactedPaths := append(append([]string{}, changedPaths...), removedPaths...)
 	if err := qtx.DeleteMemoryRepoEdgesForPaths(ctx, scopeID, impactedPaths); err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 	_ = qtx.DeleteMemoryFactProvenanceByFacts(ctx, "repo_edge", extractMemoryEdgeIDs(existingEdges, impactedPaths))
+	reportWarmProgress(opts.Report, WarmProgress{
+		Workspace:       snapshot.ScopePath,
+		Phase:           "persisting",
+		Message:         "Writing durable graph",
+		Active:          true,
+		FilesDiscovered: len(candidates),
+		FilesProcessed:  len(changedPaths),
+		FilesIndexed:    len(parsedChanged),
+		Percent:         0.9,
+		StartedAt:       startedAt,
+		UpdatedAt:       c.now(),
+	})
 	for _, file := range parsedChanged {
 		for _, edge := range file.Edges {
 			edgeID := hashText(scopeID, edge.FromFile, edge.FromSymbol, edge.Type, edge.ToFile, edge.ToSymbol, edge.ToSymbolKey)
@@ -323,7 +399,7 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 				UpdatedAt:   nowUnix,
 				CreatedAt:   nowUnix,
 			}); err != nil {
-				return storedRepoScope{}, err
+				return storedRepoScope{}, indexOperationStats{}, err
 			}
 			fileProvID, _ := c.createTxProvenance(ctx, qtx, appdb.InsertMemoryProvenanceParams{
 				ID:          uuid.NewString(),
@@ -347,10 +423,10 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 		}
 	}
 	if err := qtx.RelinkMemoryRepoEdgesToChangedFiles(ctx, scopeID, changedPaths); err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 
-	if len(changedPaths) > 0 || len(removedPaths) > 0 || existing.ID == "" || snapshot.HeadCommit != existing.HeadCommit || snapshot.Dirty != existing.Dirty {
+	if opts.Force || len(changedPaths) > 0 || len(removedPaths) > 0 || existing.ID == "" || snapshot.HeadCommit != existing.HeadCommit || snapshot.Dirty != existing.Dirty {
 		if err := qtx.InsertMemoryIndexEpoch(ctx, appdb.InsertMemoryIndexEpochParams{
 			ID:           uuid.NewString(),
 			ScopeID:      scopeID,
@@ -363,12 +439,12 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 			CreatedAt:    nowUnix,
 			CompletedAt:  nowUnix,
 		}); err != nil {
-			return storedRepoScope{}, err
+			return storedRepoScope{}, indexOperationStats{}, err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return storedRepoScope{}, err
+		return storedRepoScope{}, indexOperationStats{}, err
 	}
 	return storedRepoScope{
 		ID:            scopeID,
@@ -380,7 +456,7 @@ func (c *Compiler) ensureIndexedScope(ctx context.Context, workingDir string) (s
 		ChangedFiles:  snapshot.ChangedFiles,
 		LatestEpoch:   epoch,
 		LastIndexedAt: nowUnix,
-	}, nil
+	}, stats, nil
 }
 
 func (c *Compiler) loadExistingScope(ctx context.Context, snapshot repoSnapshot) (storedRepoScope, error) {
@@ -742,6 +818,78 @@ func loadIndexedRepoFile(root, path string) (indexedRepoFile, bool, error) {
 		file.Facts["module"] = firstLineWithPrefix(file.Content, "module ")
 	}
 	return file, true, nil
+}
+
+func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCandidate, changedPaths []string, report func(processed, total int)) ([]indexedRepoFile, error) {
+	if len(changedPaths) == 0 {
+		return nil, nil
+	}
+	type parseResult struct {
+		index int
+		file  indexedRepoFile
+		ok    bool
+		err   error
+	}
+
+	workers := min(len(changedPaths), max(1, runtime.GOMAXPROCS(0)))
+	workCh := make(chan int)
+	resultCh := make(chan parseResult, len(changedPaths))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range workCh {
+				path := changedPaths[idx]
+				candidate := candidates[path]
+				file, ok, err := loadIndexedRepoFile(root, candidate.AbsolutePath)
+				resultCh <- parseResult{
+					index: idx,
+					file:  file,
+					ok:    ok,
+					err:   err,
+				}
+			}
+		}()
+	}
+	for idx := range changedPaths {
+		workCh <- idx
+	}
+	close(workCh)
+	wg.Wait()
+	close(resultCh)
+
+	items := make([]parseResult, len(changedPaths))
+	processed := 0
+	for result := range resultCh {
+		if result.err != nil {
+			return nil, result.err
+		}
+		items[result.index] = result
+		processed++
+		if report != nil && (processed == len(changedPaths) || len(changedPaths) <= 32 || processed%max(1, len(changedPaths)/24) == 0) {
+			report(processed, len(changedPaths))
+		}
+	}
+
+	files := make([]indexedRepoFile, 0, len(changedPaths))
+	for _, item := range items {
+		if !item.ok {
+			continue
+		}
+		files = append(files, item.file)
+	}
+	return files, nil
+}
+
+func reportWarmProgress(report func(WarmProgress), progress WarmProgress) {
+	if report == nil {
+		return
+	}
+	if progress.UpdatedAt.IsZero() {
+		progress.UpdatedAt = time.Now().UTC()
+	}
+	report(progress)
 }
 
 func extractGoFacts(file *indexedRepoFile) {

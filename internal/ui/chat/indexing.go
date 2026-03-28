@@ -136,6 +136,10 @@ func (i *IndexingMessageItem) renderDetail(percentLabel string) string {
 	switch i.progress.Phase {
 	case "discovering":
 		return fmt.Sprintf("%s · %d/%d files · %s", percentLabel, i.progress.FilesProcessed, max(1, i.progress.FilesDiscovered), phase)
+	case "parsing":
+		return fmt.Sprintf("%s · %d/%d files · extracting graph facts", percentLabel, i.progress.FilesProcessed, max(1, i.progress.FilesDiscovered))
+	case "persisting":
+		return fmt.Sprintf("%s · %d files indexed · writing durable graph", percentLabel, max(i.progress.FilesIndexed, i.progress.FilesProcessed))
 	case "preparing":
 		return fmt.Sprintf("%s · %d chunks prepared · %s", percentLabel, max(0, i.progress.ChunksTotal), phase)
 	case "embedding":

@@ -22,6 +22,9 @@ var skillsPolicyPromptSection []byte
 //go:embed templates/extended_skills.md
 var extendedSkillsPromptSection []byte
 
+//go:embed templates/codebase_indexing.md
+var codebaseIndexingPromptSection []byte
+
 //go:embed templates/mcp_policy.md
 var mcpPolicyPromptSection []byte
 
@@ -147,6 +150,7 @@ func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prom
 		coderPromptTmpl,
 		skillsPolicyPromptSection,
 		extendedSkillsPromptSection,
+		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
@@ -175,6 +179,7 @@ func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*promp
 		taskPromptTmpl,
 		skillsPolicyPromptSection,
 		extendedSkillsPromptSection,
+		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {

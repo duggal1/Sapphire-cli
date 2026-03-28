@@ -45,6 +45,47 @@ type CompileRequest struct {
 	HistoricalContext   string
 }
 
+type IndexStatus struct {
+	RepoRoot      string
+	ScopePath     string
+	Branch        string
+	Available     bool
+	IndexEpoch    int64
+	LastIndexedAt time.Time
+	Dirty         bool
+	ChangedFiles  []string
+	FileCount     int
+}
+
+type WarmRequest struct {
+	WorkingDir string
+	Force      bool
+}
+
+type WarmResult struct {
+	Status          IndexStatus
+	DiscoveredFiles int
+	ChangedFiles    int
+	RemovedFiles    int
+	IndexedFiles    int
+	Elapsed         time.Duration
+}
+
+type WarmProgress struct {
+	Workspace       string
+	Phase           string
+	Message         string
+	Active          bool
+	Finished        bool
+	FilesDiscovered int
+	FilesProcessed  int
+	FilesIndexed    int
+	Percent         float64
+	StartedAt       time.Time
+	UpdatedAt       time.Time
+	Error           string
+}
+
 type BootPacket struct {
 	Version          string             `json:"version"`
 	GeneratedAt      string             `json:"generated_at"`
@@ -319,6 +360,119 @@ func (c *Compiler) Compile(ctx context.Context, req CompileRequest) (BootPacket,
 		_ = c.recordBootPacket(ctx, req, scope.ID, packet)
 	}
 	return packet, nil
+}
+
+func (c *Compiler) IndexStatus(ctx context.Context, workingDir string) (IndexStatus, error) {
+	if c == nil || c.conn == nil {
+		return IndexStatus{}, fmt.Errorf("memory compiler is not initialized")
+	}
+	snapshot, err := captureRepoSnapshot(ctx, workingDir)
+	if err != nil {
+		return IndexStatus{}, err
+	}
+	status := IndexStatus{
+		RepoRoot:     snapshot.RepoRoot,
+		ScopePath:    snapshot.ScopePath,
+		Branch:       snapshot.Branch,
+		Dirty:        snapshot.Dirty,
+		ChangedFiles: snapshot.ChangedFiles,
+	}
+	scope, err := c.loadExistingScope(ctx, snapshot)
+	if err != nil {
+		if errors.Is(err, errNoScope) {
+			return status, nil
+		}
+		return IndexStatus{}, err
+	}
+	status.Available = true
+	status.IndexEpoch = scope.LatestEpoch
+	if scope.LastIndexedAt > 0 {
+		status.LastIndexedAt = time.Unix(scope.LastIndexedAt, 0).UTC()
+	}
+	rows, err := c.q.ListMemoryRepoFilesByScope(ctx, scope.ID)
+	if err != nil {
+		return IndexStatus{}, err
+	}
+	status.FileCount = len(rows)
+	return status, nil
+}
+
+func (c *Compiler) WarmCodebase(ctx context.Context, req WarmRequest, report func(WarmProgress)) (WarmResult, error) {
+	if c == nil || c.conn == nil {
+		return WarmResult{}, fmt.Errorf("memory compiler is not initialized")
+	}
+	startedAt := c.now()
+	scope, stats, err := c.ensureIndexedScopeWithOptions(ctx, req.WorkingDir, indexOperationOptions{
+		Force:  req.Force,
+		Report: report,
+	})
+	if err != nil {
+		if report != nil {
+			report(WarmProgress{
+				Workspace: strings.TrimSpace(req.WorkingDir),
+				Phase:     "failed",
+				Message:   "Codebase graph indexing failed",
+				Active:    false,
+				Finished:  true,
+				Error:     err.Error(),
+				Percent:   1,
+				StartedAt: startedAt,
+				UpdatedAt: c.now(),
+			})
+		}
+		return WarmResult{}, err
+	}
+
+	status, statusErr := c.IndexStatus(ctx, req.WorkingDir)
+	if statusErr != nil {
+		status = IndexStatus{
+			RepoRoot:      scope.RepoRoot,
+			ScopePath:     scope.ScopePath,
+			Branch:        scope.Branch,
+			Available:     true,
+			IndexEpoch:    scope.LatestEpoch,
+			LastIndexedAt: time.Unix(scope.LastIndexedAt, 0).UTC(),
+			Dirty:         scope.Dirty,
+			ChangedFiles:  scope.ChangedFiles,
+			FileCount:     stats.DiscoveredFiles,
+		}
+	}
+
+	message := "Durable codebase graph is ready"
+	if stats.ChangedFiles == 0 && stats.RemovedFiles == 0 && stats.IndexedFiles == 0 {
+		message = "Durable codebase graph is already up to date"
+	}
+	workspace := strings.TrimSpace(status.ScopePath)
+	if workspace == "" {
+		workspace = strings.TrimSpace(scope.ScopePath)
+	}
+	if workspace == "" {
+		workspace = strings.TrimSpace(req.WorkingDir)
+	}
+	if report != nil {
+		report(WarmProgress{
+			Workspace:       workspace,
+			Phase:           "ready",
+			Message:         message,
+			Active:          false,
+			Finished:        true,
+			FilesDiscovered: stats.DiscoveredFiles,
+			FilesProcessed:  stats.DiscoveredFiles,
+			FilesIndexed:    stats.IndexedFiles,
+			Percent:         1,
+			StartedAt:       startedAt,
+			UpdatedAt:       c.now(),
+		})
+	}
+
+	return WarmResult{
+		Status:          status,
+		DiscoveredFiles: stats.DiscoveredFiles,
+		ChangedFiles:    stats.ChangedFiles,
+		RemovedFiles:    stats.RemovedFiles,
+		IndexedFiles:    stats.IndexedFiles,
+		Elapsed:         c.now().Sub(startedAt),
+	}, nil
 }
 
 func (c *Compiler) PersistHandoff(ctx context.Context, req CompileRequest) error {

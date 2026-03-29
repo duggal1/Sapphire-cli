@@ -25,4 +25,7 @@ func TestCoderPromptIncludesMistakeIntelligenceProtocol(t *testing.T) {
 	require.Contains(t, built, ".sapphire/mistake.md")
 	require.Contains(t, built, "The agent writes `MISTAKES.md`.")
 	require.Contains(t, built, "update that entry with stronger evidence")
+	require.Contains(t, built, "`improvement_eval`")
+	require.Contains(t, built, "`strategy_pattern`")
+	require.Contains(t, built, "Before a high-risk, repeated, or structurally similar task")
 }

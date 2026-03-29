@@ -75,11 +75,13 @@ func TestBuildMistakeSelfHealingCall(t *testing.T) {
 	assert.Equal(t, 1, followUp.MistakeSelfHealTry)
 	assert.Contains(t, followUp.Prompt, "Read .sapphire/mistake.md fully.")
 	assert.Contains(t, followUp.Prompt, "call save_memory with event_type=\\\"architectural_decision\\\"")
+	assert.Contains(t, followUp.Prompt, "event_type=\\\"improvement_eval\\\"")
+	assert.Contains(t, followUp.Prompt, "save_memory a strategy_pattern")
 	assert.Contains(t, followUp.Prompt, "unknown escape sequence")
 	assert.Contains(t, followUp.Prompt, "resume the original task already in session history")
 }
 
-func TestMistakeSelfHealingMonitorRequiresSaveMemoryBeforeTaskWork(t *testing.T) {
+func TestMistakeSelfHealingMonitorAllowsEditingMistakeFilesBeforeSaveMemory(t *testing.T) {
 	t.Parallel()
 
 	monitor := newMistakeSelfHealingMonitor(true)
@@ -89,13 +91,51 @@ func TestMistakeSelfHealingMonitorRequiresSaveMemoryBeforeTaskWork(t *testing.T)
 		t.Fatal("reading the mistake protocol should be allowed before save_memory")
 	}
 
+	monitor.ObserveSelfHealingProgress(tools.WriteToolName, `{"file_path":"MISTAKES.md","content":"# MISTAKES.md"}`)
+	if _, ok := monitor.ConsumePersistenceReminder(); ok {
+		t.Fatal("writing MISTAKES.md should be allowed before save_memory")
+	}
+}
+
+func TestMistakeSelfHealingMonitorRequiresSaveMemoryBeforeTaskWork(t *testing.T) {
+	t.Parallel()
+
+	monitor := newMistakeSelfHealingMonitor(true)
+
 	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go build ./..."}`)
 	evidence, ok := monitor.ConsumePersistenceReminder()
 	require.True(t, ok)
 	assert.Contains(t, evidence, "go build")
+}
 
+func TestMistakeSelfHealingMonitorRequiresImprovementEvalBeforeValidation(t *testing.T) {
+	t.Parallel()
+
+	monitor := newMistakeSelfHealingMonitor(true)
 	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"architectural_decision","content":{"decision":"rule"}}`)
 	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go test ./..."}`)
-	_, ok = monitor.ConsumePersistenceReminder()
+	if _, ok := monitor.ConsumePersistenceReminder(); ok {
+		t.Fatal("architectural decision persistence should clear the pre-save reminder path")
+	}
+
+	evidence, ok := monitor.ConsumeEvalReminder()
+	require.True(t, ok)
+	assert.Contains(t, evidence, "go test")
+
+	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"improvement_eval","content":{"task_shape":"matcher repair","probe":"go test ./experiments/mistake_lab","success_criteria":"tests pass"}}`)
+	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go test ./..."}`)
+	_, ok = monitor.ConsumeEvalReminder()
 	assert.False(t, ok)
+}
+
+func TestBuildImprovementEvalCall(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{SessionID: "session-1", Prompt: "original task"}
+	followUp := buildImprovementEvalCall(call, "bash: attempted validation `go test ./...` before save_memory improvement_eval")
+
+	assert.True(t, followUp.SkipUserMessage)
+	assert.Contains(t, followUp.Prompt, `event_type="improvement_eval"`)
+	assert.Contains(t, followUp.Prompt, `event_type="strategy_pattern"`)
+	assert.Contains(t, followUp.Prompt, "Do not rerun validation until the improvement_eval has been persisted.")
 }

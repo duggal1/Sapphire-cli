@@ -515,6 +515,17 @@ func (c *Config) SetGoogleGrounding(enabled bool) error {
 	return c.SetConfigField("options.google_grounding", enabled)
 }
 
+func (c *Config) SetAgentMaxThreads(limit int) error {
+	if limit <= 0 {
+		return fmt.Errorf("sub-agent limit must be greater than zero")
+	}
+	if c.Options == nil {
+		c.Options = &Options{}
+	}
+	c.Options.AgentMaxThreads = limit
+	return c.SetConfigField("options.agent_max_threads", limit)
+}
+
 func (c *Config) ResolveJinaAPIKey() string {
 	if c != nil && c.Options != nil {
 		if raw := strings.TrimSpace(c.Options.JinaAPIKey); raw != "" {

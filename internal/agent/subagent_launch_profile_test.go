@@ -88,3 +88,75 @@ func TestSubAgentLaunchProfileHarnessCapturesSpawnChurn(t *testing.T) {
 	require.NotZero(t, counters["db.message_create"])
 	require.LessOrEqual(t, counters["db.agent_state_upsert"], int64(6))
 }
+
+func TestSubAgentBurstLaunchProfileUsesSharedStartupContext(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+	cfg.Providers.Set("test-provider", config.ProviderConfig{ID: "test-provider"})
+
+	metrics := newSubAgentLaunchMetrics()
+	coord := &coordinator{
+		cfg:                       cfg,
+		sessions:                  env.sessions,
+		messages:                  env.messages,
+		memory:                    orchestrationMemoryStub{},
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
+		subAgents:                 make(map[string]*subAgentRunner),
+		subAgentRegistry:          newSubAgentRegistry(),
+		subAgentLaunchProbe:       metrics,
+		subAgentLaunchMemoryCache: make(map[string]subAgentLaunchMemoryCacheEntry),
+		subAgentLaunchMemoryWork:  make(map[string]*subAgentLaunchMemoryFlight),
+	}
+	coord.subAgentFactory = func(ctx context.Context, workDir string, normalizedManifest []string, opts spawnAgentOptions) (SessionAgent, error) {
+		return newMockAgent("test-provider", 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			time.Sleep(15 * time.Millisecond)
+			return agentResultWithText("STATUS: done\nSUMMARY: profiled spawn burst"), nil
+		}), nil
+	}
+
+	parentSession, err := env.sessions.Create(context.Background(), "Parent")
+	require.NoError(t, err)
+
+	ids := make([]string, 0, 5)
+	for i := 0; i < 5; i++ {
+		agentID, submissionID, err := coord.spawnSubAgent(context.Background(), parentSession.ID, spawnAgentOptions{
+			Prompt: "Inspect your assigned domain only and return a short summary.",
+			Title:  "Profiled Burst Sub-Agent",
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, submissionID)
+		ids = append(ids, agentID)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var statuses []subAgentStatusEntry
+	for {
+		var timedOut bool
+		statuses, timedOut = coord.waitSubAgentStatuses(context.Background(), ids, time.Until(deadline))
+		require.False(t, timedOut)
+		allCompleted := len(statuses) == len(ids)
+		for _, status := range statuses {
+			if status.Status != subAgentStatusCompleted {
+				allCompleted = false
+				break
+			}
+		}
+		if allCompleted {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "sub-agent burst did not finish before deadline")
+	}
+	for _, id := range ids {
+		require.NoError(t, coord.closeSubAgent(id))
+	}
+
+	steps, counters := metrics.snapshot()
+	t.Logf("burst sub-agent launch profile: steps=%+v counters=%+v", steps, counters)
+	require.Equal(t, int64(1), counters["subagent_memory.launch_context_cache_miss"])
+	require.GreaterOrEqual(t, counters["subagent_memory.launch_context_cache_hit"]+counters["subagent_memory.launch_context_flight_wait"], int64(4))
+	require.Equal(t, int64(5), counters["subagent_memory.launch_lightweight"])
+	require.NotZero(t, steps["turn.build_memory_context"])
+}

@@ -46,6 +46,9 @@ type Compiler struct {
 	sharedRepoTTL   time.Duration
 	sharedRepoCache map[string]sharedRepoCacheEntry
 	sharedRepoWork  map[string]*sharedRepoFlight
+	scopeGraphMu    sync.Mutex
+	scopeGraphCache map[string]compiledGraphCacheEntry
+	scopeGraphWork  map[string]*compiledGraphFlight
 	pruneDelay      time.Duration
 	pruneInterval   time.Duration
 	pruneTimeout    time.Duration
@@ -237,6 +240,17 @@ type sharedRepoFlight struct {
 	err   error
 }
 
+type compiledGraphCacheEntry struct {
+	graph     compiledGraph
+	expiresAt time.Time
+}
+
+type compiledGraphFlight struct {
+	done  chan struct{}
+	graph compiledGraph
+	err   error
+}
+
 type storedRepoScope struct {
 	ID            string
 	RepoRoot      string
@@ -333,6 +347,8 @@ func NewCompiler(conn *sql.DB, store *orchestrationdb.Store) *Compiler {
 		sharedRepoTTL:   defaultSharedRepoTTL,
 		sharedRepoCache: map[string]sharedRepoCacheEntry{},
 		sharedRepoWork:  map[string]*sharedRepoFlight{},
+		scopeGraphCache: map[string]compiledGraphCacheEntry{},
+		scopeGraphWork:  map[string]*compiledGraphFlight{},
 		pruneDelay:      defaultPruneDelay,
 		pruneInterval:   defaultPruneInterval,
 		pruneTimeout:    defaultPruneTimeout,
@@ -431,7 +447,7 @@ func (c *Compiler) loadSharedRepoSubstrate(ctx context.Context, workingDir strin
 		if err != nil {
 			return repoSnapshot{}, storedRepoScope{}, compiledGraph{}, err
 		}
-		graph, err := c.loadScopeGraph(ctx, scope.ID)
+		graph, err := c.loadScopeGraphShared(ctx, scope)
 		if err != nil {
 			return repoSnapshot{}, storedRepoScope{}, compiledGraph{}, err
 		}
@@ -460,7 +476,7 @@ func (c *Compiler) loadSharedRepoSubstrate(ctx context.Context, workingDir strin
 		c.finishSharedRepoFlight(key, sharedRepoCacheEntry{}, err)
 		return repoSnapshot{}, storedRepoScope{}, compiledGraph{}, err
 	}
-	graph, err := c.loadScopeGraph(ctx, scope.ID)
+	graph, err := c.loadScopeGraphShared(ctx, scope)
 	if err != nil {
 		c.finishSharedRepoFlight(key, sharedRepoCacheEntry{}, err)
 		return repoSnapshot{}, storedRepoScope{}, compiledGraph{}, err
@@ -519,6 +535,74 @@ func (c *Compiler) finishSharedRepoFlight(key string, entry sharedRepoCacheEntry
 	close(flight.done)
 }
 
+func (c *Compiler) loadScopeGraphShared(ctx context.Context, scope storedRepoScope) (compiledGraph, error) {
+	key := scopeGraphCacheKey(scope)
+	if entry, ok := c.cachedScopeGraph(key); ok {
+		return entry.graph, nil
+	}
+	flight, leader := c.startScopeGraphFlight(key)
+	if !leader {
+		select {
+		case <-ctx.Done():
+			return compiledGraph{}, ctx.Err()
+		case <-flight.done:
+			return flight.graph, flight.err
+		}
+	}
+
+	graph, err := c.loadScopeGraph(ctx, scope.ID)
+	c.finishScopeGraphFlight(key, graph, err)
+	return graph, err
+}
+
+func (c *Compiler) cachedScopeGraph(key string) (compiledGraphCacheEntry, bool) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return compiledGraphCacheEntry{}, false
+	}
+	now := c.now()
+	c.scopeGraphMu.Lock()
+	entry, ok := c.scopeGraphCache[key]
+	if ok && !entry.expiresAt.After(now) {
+		delete(c.scopeGraphCache, key)
+		ok = false
+	}
+	c.scopeGraphMu.Unlock()
+	if !ok {
+		return compiledGraphCacheEntry{}, false
+	}
+	return entry, true
+}
+
+func (c *Compiler) startScopeGraphFlight(key string) (*compiledGraphFlight, bool) {
+	c.scopeGraphMu.Lock()
+	defer c.scopeGraphMu.Unlock()
+	if flight := c.scopeGraphWork[key]; flight != nil {
+		return flight, false
+	}
+	flight := &compiledGraphFlight{done: make(chan struct{})}
+	c.scopeGraphWork[key] = flight
+	return flight, true
+}
+
+func (c *Compiler) finishScopeGraphFlight(key string, graph compiledGraph, err error) {
+	c.scopeGraphMu.Lock()
+	flight := c.scopeGraphWork[key]
+	delete(c.scopeGraphWork, key)
+	if err == nil && strings.TrimSpace(key) != "" {
+		c.scopeGraphCache[key] = compiledGraphCacheEntry{
+			graph:     graph,
+			expiresAt: c.now().Add(c.sharedRepoTTL),
+		}
+	}
+	c.scopeGraphMu.Unlock()
+	if flight == nil {
+		return
+	}
+	flight.graph = graph
+	flight.err = err
+	close(flight.done)
+}
+
 func (c *Compiler) cachedCompilePacket(ctx context.Context, req CompileRequest) (BootPacket, bool) {
 	if c == nil || c.compileCacheTTL <= 0 {
 		return BootPacket{}, false
@@ -571,6 +655,14 @@ func sharedRepoCacheKey(snapshot repoSnapshot) string {
 		strings.TrimSpace(snapshot.HeadCommit),
 		fmt.Sprintf("%t", snapshot.Dirty),
 		strings.Join(snapshot.ChangedFiles, "\n"),
+	)
+}
+
+func scopeGraphCacheKey(scope storedRepoScope) string {
+	return hashText(
+		strings.TrimSpace(scope.ID),
+		fmt.Sprintf("%d", scope.LatestEpoch),
+		strings.TrimSpace(scope.HeadCommit),
 	)
 }
 

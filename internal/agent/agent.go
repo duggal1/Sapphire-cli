@@ -1085,6 +1085,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			toolResult := a.convertToToolResult(result)
+			persistedToolResult := compactToolResultForPersistence(result.ToolName, toolResult)
 
 			// Track Python tool failures - quit after 3 consecutive failures
 			if result.ToolName == tools.PythonToolName {
@@ -1114,17 +1115,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					}
 				}
 				outStr := toolResult.Content
-				if toolResult.IsError {
+				if persistedToolResult.Content != "" {
+					outStr = persistedToolResult.Content
+				}
+				if persistedToolResult.IsError {
 					outStr = "ERROR: " + outStr
 				}
 				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), result.ToolName, rawInput, outStr)
-				a.pmem.RecordToolResult(genCtx, currentAssistant.SessionID, result.ToolName, outStr, toolResult.IsError)
+				a.pmem.RecordToolResult(genCtx, currentAssistant.SessionID, result.ToolName, outStr, persistedToolResult.IsError)
 			}
 
 			_, createMsgErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
-					toolResult,
+					persistedToolResult,
 				},
 			}, dbOpTimeout)
 			if createMsgErr != nil {
@@ -2535,6 +2539,38 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	}
 
 	return baseResult
+}
+
+const compactPersistedToolResultLimit = 4000
+
+func compactToolResultForPersistence(toolName string, result message.ToolResult) message.ToolResult {
+	if result.Content == "" {
+		return result
+	}
+	if !shouldCompactPersistedToolResult(toolName) && len(result.Content) <= compactPersistedToolResultLimit {
+		return result
+	}
+	summary := truncateForContext(strings.TrimSpace(result.Content), compactPersistedToolResultLimit)
+	if shouldCompactPersistedToolResult(toolName) {
+		summary = fmt.Sprintf("[persisted summary for %s; full tool output omitted to keep shared memory and session storage lightweight]\n%s", toolName, summary)
+	}
+	result.Content = summary
+	if len(result.Data) > 512 {
+		result.Data = ""
+	}
+	if len(result.Metadata) > 1024 {
+		result.Metadata = truncateForContext(result.Metadata, 1024)
+	}
+	return result
+}
+
+func shouldCompactPersistedToolResult(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case tools.AgenticViewToolName, tools.ViewToolName, tools.SingleViewToolName, tools.LSToolName, tools.GlobToolName:
+		return true
+	default:
+		return false
+	}
 }
 
 // workaroundProviderMediaLimitations converts media content in tool results to

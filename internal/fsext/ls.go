@@ -16,6 +16,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
+const discoveryWalkWorkers = 2
+
 // fastIgnoreDirs is a set of directory names that are always ignored.
 // This provides O(1) lookup for common cases to avoid expensive pattern matching.
 var fastIgnoreDirs = map[string]bool{
@@ -247,10 +249,11 @@ func ListDirectory(ctx context.Context, initialPath string, ignorePatterns []str
 	slog.Debug("Listing directory", "path", initialPath, "depth", depth, "limit", limit, "ignorePatterns", ignorePatterns)
 
 	conf := fastwalk.Config{
-		Follow:   false,
-		ToSlash:  fastwalk.DefaultToSlash(),
-		Sort:     fastwalk.SortDirsFirst,
-		MaxDepth: depth,
+		Follow:     false,
+		ToSlash:    fastwalk.DefaultToSlash(),
+		Sort:       fastwalk.SortDirsFirst,
+		MaxDepth:   depth,
+		NumWorkers: discoveryWalkWorkers,
 	}
 
 	err := fastwalk.Walk(&conf, initialPath, func(path string, d os.DirEntry, err error) error {

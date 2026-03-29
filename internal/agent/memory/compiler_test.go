@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	appdb "github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/stretchr/testify/require"
@@ -236,6 +237,49 @@ func TestCompilerIndexStatusAndWarmCodebase(t *testing.T) {
 	require.True(t, progress[len(progress)-1].Finished)
 }
 
+func TestWarmCodebaseNoOpReusesCurrentIndexedScopeWithoutRewrite(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	initMemoryTestGitRepo(t, repoRoot)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	_, err := compiler.WarmCodebase(context.Background(), WarmRequest{
+		WorkingDir: repoRoot,
+	}, nil)
+	require.NoError(t, err)
+
+	var scopeID string
+	var firstIndexedAt int64
+	err = conn.QueryRowContext(context.Background(), `SELECT id, last_indexed_at FROM memory_repo_scopes LIMIT 1`).Scan(&scopeID, &firstIndexedAt)
+	require.NoError(t, err)
+
+	var firstEpochCount int
+	err = conn.QueryRowContext(context.Background(), `SELECT COUNT(1) FROM memory_index_epochs WHERE scope_id = ?`, scopeID).Scan(&firstEpochCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, firstEpochCount)
+
+	compiler.now = func() time.Time {
+		return time.Unix(firstIndexedAt+3600, 0).UTC()
+	}
+
+	_, err = compiler.WarmCodebase(context.Background(), WarmRequest{
+		WorkingDir: repoRoot,
+	}, nil)
+	require.NoError(t, err)
+
+	var secondIndexedAt int64
+	err = conn.QueryRowContext(context.Background(), `SELECT last_indexed_at FROM memory_repo_scopes WHERE id = ?`, scopeID).Scan(&secondIndexedAt)
+	require.NoError(t, err)
+	require.Equal(t, firstIndexedAt, secondIndexedAt)
+
+	var secondEpochCount int
+	err = conn.QueryRowContext(context.Background(), `SELECT COUNT(1) FROM memory_index_epochs WHERE scope_id = ?`, scopeID).Scan(&secondEpochCount)
+	require.NoError(t, err)
+	require.Equal(t, firstEpochCount, secondEpochCount)
+}
+
 func TestCompilerWarmCodebaseReportsCanceledState(t *testing.T) {
 	t.Parallel()
 
@@ -259,6 +303,34 @@ func TestCompilerWarmCodebaseReportsCanceledState(t *testing.T) {
 	require.Equal(t, "Codebase graph indexing stopped", progress[len(progress)-1].Message)
 	require.Empty(t, progress[len(progress)-1].Error)
 	require.True(t, progress[len(progress)-1].Finished)
+}
+
+func TestCaptureRepoSnapshotPreservesDirtyFilePaths(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	initMemoryTestGitRepo(t, repoRoot)
+
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "internal.go"), []byte("package sample\n"), 0o644))
+	cmd := exec.Command("git", "-C", repoRoot, "add", "internal.go")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	cmd = exec.Command("git", "-C", repoRoot, "commit", "-m", "add internal")
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "internal.go"), []byte("package sample\n\nfunc Changed() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "Sapphire-cli"), []byte("binary"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".sapphire-memory"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, ".sapphire-memory", "memory.md"), []byte("# scratch\n"), 0o644))
+
+	snapshot, err := captureRepoSnapshot(context.Background(), repoRoot)
+	require.NoError(t, err)
+	require.Contains(t, snapshot.ChangedFiles, "internal.go")
+	require.NotContains(t, snapshot.ChangedFiles, "nternal.go")
+	require.NotContains(t, snapshot.ChangedFiles, "Sapphire-cli")
+	require.NotContains(t, snapshot.ChangedFiles, ".sapphire-memory/memory.md")
+	require.Equal(t, filepath.Clean(snapshot.RepoRoot), filepath.Clean(snapshot.ScopePath))
 }
 
 func seedMemoryTestRepo(t *testing.T) string {

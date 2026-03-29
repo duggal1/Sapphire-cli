@@ -150,7 +150,7 @@ func TestSupervisorValidatesCompletionAndReportsToMain(t *testing.T) {
 	inbox, err := store.ListInbox(ctx, "main:session-1", true, 10)
 	require.NoError(t, err)
 	require.Len(t, inbox, 1)
-	require.Equal(t, "SUBAGENT_VALIDATED", inbox[0].Subject)
+	require.Equal(t, subjectCompletionValidated, inbox[0].Subject)
 }
 
 func TestSupervisorReassignsRecoverableAgents(t *testing.T) {
@@ -233,7 +233,7 @@ func TestSupervisorHandleStuckAgentThrottleSendsSingleMail(t *testing.T) {
 	inbox, err := store.ListInbox(ctx, tracker.AgentID, false, 10)
 	require.NoError(t, err)
 	require.Len(t, inbox, 1)
-	require.Equal(t, "SUPERVISOR", inbox[0].Subject)
+	require.Equal(t, subjectRecoveryNudge, inbox[0].Subject)
 }
 
 func TestSupervisorDoesNotSendUnreadMailReminderLoop(t *testing.T) {
@@ -344,4 +344,66 @@ func TestSupervisorReportsHeartbeatContext(t *testing.T) {
 		}
 	}
 	require.True(t, found, "Heartbeat context should be included in escalation message")
+}
+
+func TestSupervisorRecordsOrphanedPatrolReceiptAndEscalates(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	mainMailboxID := "main-mailbox"
+	service := NewService(
+		store,
+		agentstate.NewService(store),
+		agentactivity.NewService(store),
+		agentmailbox.NewService(store, nil),
+		Hooks{
+			ResolveMainMailboxID: func(sessionID string) string {
+				return mainMailboxID
+			},
+		},
+	)
+
+	tracker := &AgentTracker{
+		AgentID:       "agent-1",
+		SessionID:     "session-1",
+		WorkItemID:    "work-1",
+		Status:        "running",
+		SpawnedAt:     time.Now().UTC().Add(-30 * time.Minute),
+		LastHeartbeat: time.Now().UTC().Add(-20 * time.Minute),
+	}
+	service.updateTrackerState(tracker.AgentID, func(existing *AgentTracker) {
+		*existing = *tracker
+	})
+
+	require.NoError(t, agentstate.NewService(store).Register(ctx, orchestrationdb.AgentState{
+		AgentID:       "agent-1",
+		Status:        "running",
+		SessionID:     "session-1",
+		LastHeartbeat: time.Now().UTC().Add(-20 * time.Minute),
+		CreatedAt:     time.Now().UTC().Add(-30 * time.Minute),
+		UpdatedAt:     time.Now().UTC(),
+	}))
+
+	service.superviseAgent(ctx, tracker)
+
+	inbox, err := store.ListInbox(ctx, mainMailboxID, false, 10)
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	require.Equal(t, subjectEscalation, inbox[0].Subject)
+	require.Contains(t, inbox[0].Body, "agent-1")
+
+	items, err := agentactivity.NewService(store).Recent(ctx, "agent-1", 10)
+	require.NoError(t, err)
+	found := false
+	for _, item := range items {
+		if item.EventType == "supervisor_patrol_receipt" && strings.Contains(item.DetailsJSON, `"verdict":"orphaned"`) {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected an orphaned patrol receipt")
 }

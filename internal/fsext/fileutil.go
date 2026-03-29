@@ -103,9 +103,10 @@ func globWithDoubleStar(ctx context.Context, pattern, searchPath string, limit i
 	walker := NewFastGlobWalker(searchPath)
 	found := csync.NewSlice[FileInfo]()
 	conf := fastwalk.Config{
-		Follow:  false,
-		ToSlash: fastwalk.DefaultToSlash(),
-		Sort:    fastwalk.SortFilesFirst,
+		Follow:     false,
+		ToSlash:    fastwalk.DefaultToSlash(),
+		Sort:       fastwalk.SortFilesFirst,
+		NumWorkers: discoveryWalkWorkers,
 	}
 	err := fastwalk.Walk(&conf, searchPath, func(path string, d os.DirEntry, err error) error {
 		// Military-grade safeguard: immediate exit if context cancelled

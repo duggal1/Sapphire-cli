@@ -1,34 +1,44 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestClassifySubAgentTurnBlocked(t *testing.T) {
-	t.Parallel()
+func TestBuildSubAgentAssignmentUsesStructuredTaskPacket(t *testing.T) {
+	assignment, prompt := buildSubAgentAssignment(
+		"work-auth",
+		"parent-session",
+		"Auth survey",
+		"Read the auth-related code paths and summarize the exact responsibility split.",
+		"/repo",
+		subAgentLaunchDecision{
+			TaskKey: "auth-survey",
+			Domains: []string{"auth", "api"},
+		},
+		[]string{"internal/auth", "internal/api"},
+		"",
+		"Return the exact auth file map and main risks.",
+		"go test ./internal/auth",
+		"",
+	)
 
-	outcome := classifySubAgentTurn(subAgentReport{
-		Status:   "blocked",
-		Summary:  "Need dependency state",
-		Blockers: "Waiting on dependency",
-	})
-	if outcome.Status != subAgentStatusBlocked {
-		t.Fatalf("expected blocked report to map to blocked status, got %q", outcome.Status)
+	if assignment.ID != "work-auth" {
+		t.Fatalf("expected assignment id to be preserved")
 	}
-	if outcome.ReportStatus != "blocked" {
-		t.Fatalf("expected blocked report status, got %q", outcome.ReportStatus)
-	}
-	if outcome.ErrMsg == "" {
-		t.Fatal("expected blocked report to produce an error message")
-	}
-}
-
-func TestClassifySubAgentTurnNeedsFollowup(t *testing.T) {
-	t.Parallel()
-
-	outcome := classifySubAgentTurn(subAgentReport{Status: "needs_followup"})
-	if outcome.Status != subAgentStatusCompleted {
-		t.Fatalf("expected needs_followup to keep completed status, got %q", outcome.Status)
-	}
-	if outcome.ReportStatus != "needs_followup" {
-		t.Fatalf("expected needs_followup report status, got %q", outcome.ReportStatus)
+	for _, needle := range []string{
+		"Assignment Objective:",
+		"Assigned Scope:",
+		"Primary Task:",
+		"Success Criteria:",
+		"Validation Command:",
+		"Execution Contract:",
+		"Deliverable:",
+		"Do not duplicate likely sibling work.",
+		"Output format (strict):",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("expected %q in assignment prompt", needle)
+		}
 	}
 }

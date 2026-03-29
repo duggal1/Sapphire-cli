@@ -103,6 +103,7 @@ type subAgentRunner struct {
 	firstStaleObservedAt time.Time
 	lastPersistedAt      time.Time
 	turnTimeout          time.Duration
+	freshLaunch          bool
 	mu                   sync.Mutex
 }
 
@@ -790,7 +791,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 			return "", "", err
 		}
 
-		override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort)
+		override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort, promptText, decision)
 		if err != nil {
 			cleanup()
 			return "", "", err
@@ -862,6 +863,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		statusBroker:  pubsub.NewBroker[subAgentStatus](),
 		hookEnabled:   strings.TrimSpace(opts.WorkItemID) != "",
 		turnTimeout:   opts.TurnTimeout,
+		freshLaunch:   true,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
@@ -965,10 +967,14 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusWaitingOnMail, SubAgentStageWaitingOnMail, SubAgentWaitingOnMailEvent, "processing coordination mail")
 				prompt = mailboxSummary + "\n\n" + prompt
 			}
+			stepStarted := time.Now()
 			skillContext := c.buildSubAgentPersistentMemoryContext(context.Background(), runner)
+			c.observeSubAgentLaunchStep("turn.build_memory_context", stepStarted)
 			c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusReady, SubAgentStageReady, SubAgentReadyEvent, "runtime ready")
 			c.transitionSubAgentSubmission(runner, input.submissionID, subAgentStatusRunning, SubAgentStageRunning, SubAgentRunningEvent, "executing assigned task")
+			stepStarted = time.Now()
 			result, err := c.runSubAgentTurn(runCtx, runner.agent, runner.sessionID, runner.parentSession, prompt, skillContext)
+			c.observeSubAgentLaunchStep("turn.run_agent", stepStarted)
 			stopHeartbeat()
 			cancel()
 			timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded)
@@ -1302,6 +1308,7 @@ func (c *coordinator) resumeSubAgent(ctx context.Context, parentSessionID, agent
 		assignment:    assignment,
 		statusBroker:  pubsub.NewBroker[subAgentStatus](),
 		hookEnabled:   hookEnabled,
+		freshLaunch:   false,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)

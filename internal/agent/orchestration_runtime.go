@@ -19,15 +19,26 @@ import (
 )
 
 const (
-	mainAgentMailboxPrefix = "main:"
-	mailboxNudgePrompt     = "You have new agent mail. Call `agent_mail_inbox` immediately, handle the coordination request, then call `agent_mail_ack` for completed items before continuing your assigned task."
-	maxOrchestrationMail   = 10
-	maxOrchestrationAgents = 8
-	maxOrchestrationFeed   = 12
-	maxOrchestrationWork   = 8
-	maxStructuredEntries   = 6
-	maxLongHorizonChars    = 2800
+	mainAgentMailboxPrefix  = "main:"
+	mailboxNudgePrompt      = "You have new agent mail. Call `agent_mail_inbox` immediately, handle the coordination request, then call `agent_mail_ack` for completed items before continuing your assigned task."
+	maxOrchestrationMail    = 10
+	maxOrchestrationAgents  = 8
+	maxOrchestrationFeed    = 12
+	maxOrchestrationWork    = 8
+	maxStructuredEntries    = 6
+	maxLongHorizonChars     = 2800
+	subAgentLaunchMemoryTTL = 5 * time.Second
 )
+
+type subAgentLaunchMemoryCacheEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
+type subAgentLaunchMemoryFlight struct {
+	done  chan struct{}
+	value string
+}
 
 func (c *coordinator) Close() error {
 	if c == nil {
@@ -112,7 +123,7 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 		Description:  buildRunnerWorkItemDescription(runner),
 		Status:       workItemStatusForRunner(runner.status),
 		Assignee:     runner.id,
-		Dependencies: marshalPrettyJSON(runner.assignment.Domains),
+		Dependencies: "[]",
 		CreatedAt:    runner.assignment.CreatedAt,
 	}
 	if workItem.Status == "closed" {
@@ -468,7 +479,34 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	}
 	workDir := runner.workDir
 	agentID := runner.id
+	workItemID := strings.TrimSpace(runner.assignment.ID)
+	freshLaunch := runner.freshLaunch && !runner.hasPriorTurnHistoryLocked()
+	if freshLaunch {
+		runner.freshLaunch = false
+	}
 	runner.mu.Unlock()
+
+	rootSessionID := firstNonEmptyString(parentSessionID, sessionID)
+	if freshLaunch {
+		if shared := c.buildSharedSubAgentLaunchMemoryContext(ctx, rootSessionID, workDir); shared != "" {
+			sections = append(sections, shared)
+		}
+		if c.orchestrationStore != nil && workItemID != "" {
+			if workItem, err := c.orchestrationStore.GetWorkItem(ctx, workItemID); err == nil {
+				if workSection := renderWorkItemsContext([]orchestrationdb.WorkItem{workItem}); workSection != "" {
+					sections = append(sections, workSection)
+				}
+			}
+		}
+		if mailboxSection := c.buildMailboxContext(ctx, runner.id, true, maxOrchestrationMail); mailboxSection != "" {
+			sections = append(sections, mailboxSection)
+		}
+		if len(sections) == 0 {
+			return ""
+		}
+		c.countSubAgentLaunchMetric("subagent_memory.launch_lightweight", 1)
+		return "## PERSISTENT MEMORY\n" + strings.Join(sections, "\n\n")
+	}
 
 	if c.memoryCompiler != nil {
 		if compiled := c.memoryCompiler.RenderPromptInjection(ctx, agentmemory.CompileRequest{
@@ -526,7 +564,144 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	if len(sections) == 0 {
 		return ""
 	}
+	c.countSubAgentLaunchMetric("subagent_memory.launch_full", 1)
 	return "## PERSISTENT MEMORY\n" + strings.Join(sections, "\n\n")
+}
+
+func (r *subAgentRunner) hasPriorTurnHistoryLocked() bool {
+	if r == nil {
+		return false
+	}
+	if strings.TrimSpace(r.lastResult) != "" || strings.TrimSpace(r.lastError) != "" || strings.TrimSpace(r.lastProgress) != "" {
+		return true
+	}
+	for _, submission := range r.submissions {
+		if submission == nil {
+			continue
+		}
+		if !submission.EndedAt.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *coordinator) buildSharedSubAgentLaunchMemoryContext(ctx context.Context, sessionID, workDir string) string {
+	if c == nil {
+		return ""
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	workDir = strings.TrimSpace(workDir)
+	if sessionID == "" && workDir == "" {
+		return ""
+	}
+	key := sessionID + "|" + filepath.Clean(workDir)
+	if value, ok := c.cachedSubAgentLaunchMemory(key); ok {
+		c.countSubAgentLaunchMetric("subagent_memory.launch_context_cache_hit", 1)
+		return value
+	}
+	flight, leader := c.startSubAgentLaunchMemoryFlight(key)
+	if !leader {
+		c.countSubAgentLaunchMetric("subagent_memory.launch_context_flight_wait", 1)
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-flight.done:
+			return flight.value
+		}
+	}
+
+	var sections []string
+	if c.memoryCompiler != nil {
+		req := agentmemory.CompileRequest{
+			SessionID:  sessionID,
+			AgentID:    mainAgentMailboxID(sessionID),
+			WorkingDir: workDir,
+		}
+		compiled := c.memoryCompiler.RenderCachedPromptInjection(ctx, req)
+		if compiled == "" {
+			compiled = c.memoryCompiler.RenderPromptInjection(ctx, req)
+		}
+		if compiled != "" {
+			sections = append(sections, compiled)
+		}
+	}
+	if sessionID != "" {
+		if longHorizon := compactLongHorizonContext(c.GetLongHorizonState(sessionID)); longHorizon != "" {
+			sections = append(sections, "### Long-Horizon State\n"+longHorizon)
+		}
+		if continuity := c.buildStructuredSummaryContext(ctx, sessionID); continuity != "" {
+			sections = append(sections, continuity)
+		}
+		if directorySection := c.buildAgentDirectoryContext(ctx, sessionID, maxOrchestrationAgents); directorySection != "" {
+			sections = append(sections, directorySection)
+		}
+	}
+
+	value := strings.Join(sections, "\n\n")
+	c.storeSubAgentLaunchMemory(key, value)
+	c.finishSubAgentLaunchMemoryFlight(key, value)
+	c.countSubAgentLaunchMetric("subagent_memory.launch_context_cache_miss", 1)
+	return value
+}
+
+func (c *coordinator) cachedSubAgentLaunchMemory(key string) (string, bool) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return "", false
+	}
+	now := time.Now().UTC()
+	c.subAgentLaunchMemoryMu.Lock()
+	defer c.subAgentLaunchMemoryMu.Unlock()
+	entry, ok := c.subAgentLaunchMemoryCache[key]
+	if !ok {
+		return "", false
+	}
+	if !entry.expiresAt.After(now) {
+		delete(c.subAgentLaunchMemoryCache, key)
+		return "", false
+	}
+	return entry.value, true
+}
+
+func (c *coordinator) storeSubAgentLaunchMemory(key, value string) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	c.subAgentLaunchMemoryMu.Lock()
+	if c.subAgentLaunchMemoryCache == nil {
+		c.subAgentLaunchMemoryCache = make(map[string]subAgentLaunchMemoryCacheEntry)
+	}
+	c.subAgentLaunchMemoryCache[key] = subAgentLaunchMemoryCacheEntry{
+		value:     value,
+		expiresAt: time.Now().UTC().Add(subAgentLaunchMemoryTTL),
+	}
+	c.subAgentLaunchMemoryMu.Unlock()
+}
+
+func (c *coordinator) startSubAgentLaunchMemoryFlight(key string) (*subAgentLaunchMemoryFlight, bool) {
+	c.subAgentLaunchMemoryMu.Lock()
+	defer c.subAgentLaunchMemoryMu.Unlock()
+	if c.subAgentLaunchMemoryWork == nil {
+		c.subAgentLaunchMemoryWork = make(map[string]*subAgentLaunchMemoryFlight)
+	}
+	if flight := c.subAgentLaunchMemoryWork[key]; flight != nil {
+		return flight, false
+	}
+	flight := &subAgentLaunchMemoryFlight{done: make(chan struct{})}
+	c.subAgentLaunchMemoryWork[key] = flight
+	return flight, true
+}
+
+func (c *coordinator) finishSubAgentLaunchMemoryFlight(key, value string) {
+	c.subAgentLaunchMemoryMu.Lock()
+	flight := c.subAgentLaunchMemoryWork[key]
+	delete(c.subAgentLaunchMemoryWork, key)
+	c.subAgentLaunchMemoryMu.Unlock()
+	if flight == nil {
+		return
+	}
+	flight.value = value
+	close(flight.done)
 }
 
 func (c *coordinator) reportSubAgentOutcomeToParent(ctx context.Context, runner *subAgentRunner, submissionID string, report subAgentReport, rawResult string) {

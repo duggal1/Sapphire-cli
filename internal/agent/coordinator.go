@@ -326,6 +326,9 @@ type coordinator struct {
 	checkpointService         *memory.CheckpointService
 	cachedTools               []fantasy.AgentTool
 	cachedToolNames           []string
+	subAgentLaunchMemoryMu    sync.Mutex
+	subAgentLaunchMemoryCache map[string]subAgentLaunchMemoryCacheEntry
+	subAgentLaunchMemoryWork  map[string]*subAgentLaunchMemoryFlight
 	mcpPreflightMu            sync.Mutex
 	mcpPreflightCache         map[string]mcpPreflightSnapshot
 	mcpPreflightInFlight      map[string]bool
@@ -423,6 +426,8 @@ func NewCoordinator(
 		subAgentRegistry:          newSubAgentRegistry(),
 		worktreeOps:               make(map[string]*sync.Mutex),
 		agentJobs:                 newAgentJobManager(),
+		subAgentLaunchMemoryCache: make(map[string]subAgentLaunchMemoryCacheEntry),
+		subAgentLaunchMemoryWork:  make(map[string]*subAgentLaunchMemoryFlight),
 		mcpPreflightCache:         make(map[string]mcpPreflightSnapshot),
 		mcpPreflightInFlight:      make(map[string]bool),
 		mcpSelectionCache:         make(map[string]mcpSelectionSnapshot),
@@ -1994,40 +1999,7 @@ type agentModelOverride struct {
 	Provider        string
 	Model           string
 	ReasoningEffort string
-}
-
-func (c *coordinator) resolveSubAgentModelOverride(rawModel, reasoningEffort string) (*agentModelOverride, error) {
-	rawModel = strings.TrimSpace(rawModel)
-	reasoningEffort = strings.TrimSpace(reasoningEffort)
-	if rawModel == "" && reasoningEffort == "" {
-		return nil, nil
-	}
-	largeModelCfg, ok := c.cfg.Models[config.SelectedModelTypeLarge]
-	if !ok {
-		return nil, errors.New("large model not selected")
-	}
-	provider := largeModelCfg.Provider
-	modelID := largeModelCfg.Model
-	if rawModel != "" {
-		parts := strings.SplitN(rawModel, ":", 2)
-		if len(parts) == 2 {
-			provider = strings.TrimSpace(parts[0])
-			modelID = strings.TrimSpace(parts[1])
-		} else {
-			modelID = strings.TrimSpace(rawModel)
-		}
-	}
-	if provider == "" || modelID == "" {
-		return nil, errors.New("invalid model override")
-	}
-	if _, ok := c.cfg.Providers.Get(provider); !ok {
-		return nil, fmt.Errorf("model provider %q not configured", provider)
-	}
-	return &agentModelOverride{
-		Provider:        provider,
-		Model:           modelID,
-		ReasoningEffort: reasoningEffort,
-	}, nil
+	ProviderOptions map[string]any
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
@@ -2045,17 +2017,7 @@ func (c *coordinator) buildAgentModelsWithOverride(ctx context.Context, isSubAge
 		return Model{}, Model{}, errors.New("small model not selected")
 	}
 
-	if override != nil {
-		if override.Provider != "" {
-			largeModelCfg.Provider = override.Provider
-		}
-		if override.Model != "" {
-			largeModelCfg.Model = override.Model
-		}
-		if override.ReasoningEffort != "" {
-			largeModelCfg.ReasoningEffort = override.ReasoningEffort
-		}
-	}
+	largeModelCfg = applyAgentModelOverride(largeModelCfg, override)
 
 	largeProviderCfg, ok := c.cfg.Providers.Get(largeModelCfg.Provider)
 	if !ok {

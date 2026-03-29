@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -17,7 +18,7 @@ import (
 	"time"
 )
 
-// Store is the per-session SQLite persistent memory store.
+// Store is the project-shared SQLite persistent memory store.
 // All writes go through a single serialized writer. Reads are concurrent.
 type Store struct {
 	db        *sql.DB
@@ -94,8 +95,9 @@ CREATE TABLE IF NOT EXISTS memory_dead_letter (
 );
 `
 
-// NewStore opens (or creates) a per-session SQLite memory database.
-// The database is scoped to both the project root path and the session ID.
+// NewStore opens (or creates) a project-shared SQLite memory database.
+// Session separation happens at the row level via session_id, not by creating
+// one database file per agent or session.
 func NewStore(dataDir, sessionID, projectRoot string) (*Store, error) {
 	projectScope := projectScopeHash(projectRoot)
 	dir := filepath.Join(dataDir, "memory")
@@ -103,11 +105,15 @@ func NewStore(dataDir, sessionID, projectRoot string) (*Store, error) {
 		return nil, fmt.Errorf("memory: create dir: %w", err)
 	}
 
-	shortSession := sessionID
-	if len(shortSession) > 8 {
-		shortSession = shortSession[:8]
+	dbPath := filepath.Join(dir, fmt.Sprintf("%s.db", projectScope[:12]))
+	legacyPath := filepath.Join(dir, fmt.Sprintf("%s_.db", projectScope[:12]))
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			_ = os.Rename(legacyPath, dbPath)
+			_ = os.Rename(legacyPath+"-wal", dbPath+"-wal")
+			_ = os.Rename(legacyPath+"-shm", dbPath+"-shm")
+		}
 	}
-	dbPath := filepath.Join(dir, fmt.Sprintf("%s_%s.db", projectScope[:12], shortSession))
 	db, err := openMemoryDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("memory: open db: %w", err)

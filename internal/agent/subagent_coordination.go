@@ -88,22 +88,30 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 	if assignment.Title != "" {
 		builder.WriteString(fmt.Sprintf("Title: %s\n", assignment.Title))
 	}
-	builder.WriteString(fmt.Sprintf("Workdir: %s\n", assignment.WorkDir))
+	builder.WriteString("\nAssignment Objective:\n")
+	builder.WriteString("- Own exactly this assignment. Do not widen scope.\n")
+	builder.WriteString("- Complete the assigned task or return a precise blocker.\n")
+	builder.WriteString("- If this run is part of a parallel batch, assume sibling agents own different scopes. Do not duplicate likely sibling work.\n")
+	builder.WriteString("\nAssigned Scope:\n")
+	builder.WriteString(fmt.Sprintf("- Workdir: %s\n", assignment.WorkDir))
 	if assignment.Branch != "" {
-		builder.WriteString(fmt.Sprintf("Branch: %s\n", assignment.Branch))
+		builder.WriteString(fmt.Sprintf("- Branch: %s\n", assignment.Branch))
 	}
-	builder.WriteString(fmt.Sprintf("Domains: %s\n\n", domainLine))
-	builder.WriteString("Task:\n")
+	builder.WriteString(fmt.Sprintf("- Domains: %s\n", domainLine))
+	builder.WriteString("\nPrimary Task:\n")
 	builder.WriteString(assignment.Task)
 	if assignment.DefinitionOfDone != "" {
-		builder.WriteString("\n\nDefinition of done:\n")
-		builder.WriteString(assignment.DefinitionOfDone)
+		builder.WriteString("\n\nSuccess Criteria:\n")
+		builder.WriteString("- ")
+		builder.WriteString(strings.ReplaceAll(assignment.DefinitionOfDone, "\n", "\n- "))
 	}
 	if assignment.TestCommand != "" {
-		builder.WriteString("\n\nTest command:\n")
+		builder.WriteString("\n\nValidation Command:\n")
+		builder.WriteString("- ")
 		builder.WriteString(assignment.TestCommand)
 	}
-	builder.WriteString("\n\nRules:\n")
+	builder.WriteString("\n\nExecution Contract:\n")
+	builder.WriteString("- Keep the plan concise, concrete, and task-oriented.\n")
 	builder.WriteString("- Stay within the assigned task and scope.\n")
 	builder.WriteString("- Run commands inside the workdir.\n")
 	builder.WriteString("- Inspect before claiming.\n")
@@ -122,6 +130,9 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 	}
 	builder.WriteString("- Report absolute file paths for findings and edits.\n")
 	builder.WriteString("- If blocked, report the missing dependency or decision.\n\n")
+	builder.WriteString("Deliverable:\n")
+	builder.WriteString("- Return the strict report format below.\n")
+	builder.WriteString("- Include only concrete progress, evidence, risks, and next step.\n\n")
 	builder.WriteString("Validation:\n")
 	builder.WriteString("- A validation gate runs after the turn.\n")
 	builder.WriteString("- Failed validation preserves the worktree for review.\n")

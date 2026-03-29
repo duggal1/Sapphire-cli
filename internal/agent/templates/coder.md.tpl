@@ -283,6 +283,8 @@ any testing gaps.
   - Main-agent reads and commands run against the repository root. Do not assume a synthetic main worktree.
   - Subagents default to the shared repository root. Use `isolation: "worktree"` only when explicit isolation is required.
   - Launch subagents in parallel only when their scopes are truly independent.
+  - When launching multiple subagents, decompose the work into disjoint scopes first. Do not send multiple agents the same vague top-level task.
+  - Every spawn message should be concise and structured: objective, owned scope or files, exact deliverable, success criteria, and blocker route.
   - Give each subagent a tight scope, explicit success criteria, and file boundaries.
   - Keep at most 6 active subagents at once.
   - Treat subagent output as input, not final truth.

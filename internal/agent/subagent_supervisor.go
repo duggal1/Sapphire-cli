@@ -19,7 +19,7 @@ func (c *coordinator) validateSubAgentLaunch(ctx context.Context, sessionID, pro
 		active := c.activeSubAgentCount(sessionID)
 		limit := c.subAgentThreadLimit()
 		if limit > 0 && active >= limit {
-			return decision, fmt.Errorf("sub-agent launch rejected: %d active sub-agents already running", active)
+			return decision, fmt.Errorf("sub-agent limit reached: system currently allows up to %d concurrent sub-agents; %d already active", limit, active)
 		}
 	}
 
@@ -37,7 +37,7 @@ func (c *coordinator) validateSubAgentResume(ctx context.Context, parentSessionI
 		active := c.activeSubAgentCount(parentSessionID)
 		limit := c.subAgentThreadLimit()
 		if limit > 0 && active >= limit {
-			return fmt.Errorf("sub-agent resume rejected: %d active sub-agents already running", active)
+			return fmt.Errorf("sub-agent limit reached: system currently allows up to %d concurrent sub-agents; %d already active", limit, active)
 		}
 	}
 	return nil

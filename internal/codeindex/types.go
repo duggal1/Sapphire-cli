@@ -29,6 +29,15 @@ type Stats struct {
 	LastIndexedAt   time.Time
 }
 
+type SemanticAgentProgress struct {
+	ID        string
+	Label     string
+	Status    string
+	Task      string
+	Scope     string
+	FileCount int
+}
+
 type Progress struct {
 	Workspace       string
 	Phase           string
@@ -45,6 +54,7 @@ type Progress struct {
 	UpdatedAt       time.Time
 	Error           string
 	Stats           Stats
+	SemanticAgents  []SemanticAgentProgress
 }
 
 type SearchResult struct {

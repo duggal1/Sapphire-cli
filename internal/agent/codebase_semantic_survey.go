@@ -21,7 +21,7 @@ const (
 	defaultSemanticSurveyAgents = 3
 	maxSemanticSurveyAgents     = 4
 	semanticSurveyShardTimeout  = 30 * time.Minute
-	semanticSurveyReasoning     = "low"
+	semanticSurveyReasoning     = "high"
 	semanticSurveyRepairPasses  = 2
 )
 
@@ -421,24 +421,24 @@ func buildSemanticSurveyShardPrompt(inputPath, graphPath string, shard semanticS
 	return strings.TrimSpace(fmt.Sprintf(`
 You are the AI author for one shard of Sapphire's durable codebase graph.
 
-This is not optional exploration. Your job is to build the semantic graph for your shard and write it to:
-%s
+Mission:
+- Own this shard only. Other agents own other shards.
+- Read the full assigned shard and write the shard graph to %s
 
-First, read:
+Read first:
 - agent.md if it exists
-- the shard manifest: %s
+- shard manifest: %s
 
-Requirements:
-- Inspect the assigned shard deeply.
+Non-negotiable rules:
 - Account for every assigned file in the shard manifest.
-- Read every assigned file with the real repository read tools before you finalize.
-- The system verifies shard coverage from your actual tool calls. If files were skipped, your shard will be sent back for repair.
-- Read critical files fully.
-- Build an AI-authored graph, not a generic summary.
+- Read every assigned file with real repository read tools before finalizing.
+- Critical files must be read fully.
+- The system verifies coverage from your actual tool calls. Skipped files trigger repair.
+- Build an AI-authored graph, not a generic repo summary.
 - Do not edit repository source files.
 - You may only write the graph artifact above.
 
-The graph artifact must contain:
+Artifact structure:
 1. Shard metadata
 2. Module graph and relationships
 3. Critical files with exact responsibilities

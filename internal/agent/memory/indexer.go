@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -106,17 +107,18 @@ var memoryAllowedExtensions = map[string]string{
 }
 
 var memoryIgnoredDirs = map[string]struct{}{
-	".git":         {},
-	".sapphire":    {},
-	"node_modules": {},
-	"vendor":       {},
-	"dist":         {},
-	"build":        {},
-	"coverage":     {},
-	".next":        {},
-	".turbo":       {},
-	".idea":        {},
-	".vscode":      {},
+	".git":             {},
+	".sapphire":        {},
+	".sapphire-memory": {},
+	"node_modules":     {},
+	"vendor":           {},
+	"dist":             {},
+	"build":            {},
+	"coverage":         {},
+	".next":            {},
+	".turbo":           {},
+	".idea":            {},
+	".vscode":          {},
 }
 
 var memoryAllowedHiddenDirs = map[string]struct{}{
@@ -177,18 +179,6 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 			return storedRepoScope{}, indexOperationStats{}, err
 		}
 	}
-	existingSymbolsByFile := map[string][]appdb.MemoryRepoSymbol{}
-	existingEdges := []appdb.MemoryRepoEdge{}
-	if existing.ID != "" {
-		if symbols, err := c.q.ListMemoryRepoSymbolsByScope(ctx, existing.ID); err == nil {
-			for _, symbol := range symbols {
-				existingSymbolsByFile[symbol.FileID] = append(existingSymbolsByFile[symbol.FileID], symbol)
-			}
-		}
-		if edges, err := c.q.ListMemoryRepoEdgesByScope(ctx, existing.ID); err == nil {
-			existingEdges = edges
-		}
-	}
 
 	changedPaths := make([]string, 0, len(candidates))
 	currentByPath := make(map[string]repoFileCandidate, len(candidates))
@@ -209,6 +199,25 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 	sort.Strings(removedPaths)
 	stats.ChangedFiles = len(changedPaths)
 	stats.RemovedFiles = len(removedPaths)
+	if existing.ID != "" && !opts.Force && len(changedPaths) == 0 && len(removedPaths) == 0 && isCurrentIndexedSnapshot(existing, snapshot) {
+		return materializeScopeForSnapshot(existing, snapshot), stats, nil
+	}
+
+	existingSymbolsByFile := map[string][]appdb.MemoryRepoSymbol{}
+	existingEdges := []appdb.MemoryRepoEdge{}
+	if existing.ID != "" && (len(changedPaths) > 0 || len(removedPaths) > 0) {
+		symbols, err := c.q.ListMemoryRepoSymbolsByScope(ctx, existing.ID)
+		if err != nil {
+			return storedRepoScope{}, indexOperationStats{}, err
+		}
+		for _, symbol := range symbols {
+			existingSymbolsByFile[symbol.FileID] = append(existingSymbolsByFile[symbol.FileID], symbol)
+		}
+		existingEdges, err = c.q.ListMemoryRepoEdgesByScope(ctx, existing.ID)
+		if err != nil {
+			return storedRepoScope{}, indexOperationStats{}, err
+		}
+	}
 
 	scopeID := existing.ID
 	if scopeID == "" {
@@ -471,9 +480,26 @@ func (c *Compiler) loadExistingScope(ctx context.Context, snapshot repoSnapshot)
 	item, err := c.q.GetMemoryRepoScope(ctx, snapshot.RepoRoot, snapshot.ScopePath, snapshot.Branch)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return storedRepoScope{}, errNoScope
+			item, err = c.loadExistingScopeCaseInsensitive(ctx, snapshot)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return storedRepoScope{}, errNoScope
+				}
+				return storedRepoScope{}, err
+			}
+			if strings.TrimSpace(item.ScopePath) != strings.TrimSpace(snapshot.ScopePath) {
+				if _, updateErr := c.conn.ExecContext(ctx, `UPDATE memory_repo_scopes SET scope_path = ?, updated_at = ? WHERE id = ?`, snapshot.ScopePath, c.now().Unix(), item.ID); updateErr == nil {
+					item.ScopePath = snapshot.ScopePath
+				}
+			}
+			if strings.TrimSpace(item.RepoRoot) != strings.TrimSpace(snapshot.RepoRoot) {
+				if _, updateErr := c.conn.ExecContext(ctx, `UPDATE memory_repo_scopes SET repo_root = ?, updated_at = ? WHERE id = ?`, snapshot.RepoRoot, c.now().Unix(), item.ID); updateErr == nil {
+					item.RepoRoot = snapshot.RepoRoot
+				}
+			}
+		} else {
+			return storedRepoScope{}, err
 		}
-		return storedRepoScope{}, err
 	}
 	return storedRepoScope{
 		ID:            item.ID,
@@ -486,6 +512,41 @@ func (c *Compiler) loadExistingScope(ctx context.Context, snapshot repoSnapshot)
 		LatestEpoch:   item.LatestEpoch,
 		LastIndexedAt: item.LastIndexedAt,
 	}, nil
+}
+
+func (c *Compiler) loadExistingScopeCaseInsensitive(ctx context.Context, snapshot repoSnapshot) (appdb.MemoryRepoScope, error) {
+	row := c.conn.QueryRowContext(ctx, `SELECT id, repo_root, scope_path, branch, head_commit, dirty, changed_files_json, latest_epoch, last_indexed_at
+		FROM memory_repo_scopes
+		WHERE lower(repo_root) = lower(?) AND lower(scope_path) = lower(?) AND branch = ?
+		LIMIT 1`, snapshot.RepoRoot, snapshot.ScopePath, snapshot.Branch)
+	var item appdb.MemoryRepoScope
+	var dirty int64
+	var changedJSON string
+	if err := row.Scan(&item.ID, &item.RepoRoot, &item.ScopePath, &item.Branch, &item.HeadCommit, &dirty, &changedJSON, &item.LatestEpoch, &item.LastIndexedAt); err != nil {
+		return appdb.MemoryRepoScope{}, err
+	}
+	item.Dirty = dirty != 0
+	_ = json.Unmarshal([]byte(changedJSON), &item.ChangedFiles)
+	return item, nil
+}
+
+func isCurrentIndexedSnapshot(scope storedRepoScope, snapshot repoSnapshot) bool {
+	return strings.TrimSpace(scope.HeadCommit) == strings.TrimSpace(snapshot.HeadCommit) &&
+		scope.Dirty == snapshot.Dirty &&
+		strings.TrimSpace(scope.Branch) == strings.TrimSpace(snapshot.Branch) &&
+		stringSlicesEqual(scope.ChangedFiles, snapshot.ChangedFiles)
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Compiler) loadExistingFiles(ctx context.Context, scopeID string) (map[string]storedRepoFile, error) {
@@ -628,13 +689,20 @@ func captureRepoSnapshot(ctx context.Context, workingDir string) (repoSnapshot, 
 	if strings.TrimSpace(scopeRel) == "" {
 		scopeRel = "."
 	}
+	if scopeRel == "." {
+		scopePath = repoRoot
+	} else {
+		scopePath = filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(scopeRel)))
+	}
 	branch := strings.TrimSpace(gitOutput(ctx, scopePath, "rev-parse", "--abbrev-ref", "HEAD"))
 	headCommit := strings.TrimSpace(gitOutput(ctx, scopePath, "rev-parse", "HEAD"))
-	status := strings.TrimSpace(gitOutput(ctx, scopePath, "status", "--porcelain"))
+	statusCmd := exec.CommandContext(ctx, "git", "-C", scopePath, "status", "--porcelain")
+	statusOut, _ := statusCmd.Output()
+	status := strings.TrimRight(string(statusOut), "\n")
 	var changed []string
 	if status != "" {
 		for _, line := range strings.Split(status, "\n") {
-			line = strings.TrimSpace(line)
+			line = strings.TrimRight(line, "\r")
 			if len(line) < 4 {
 				continue
 			}
@@ -643,7 +711,7 @@ func captureRepoSnapshot(ctx context.Context, workingDir string) (repoSnapshot, 
 				path = path[idx+4:]
 			}
 			path = filepath.ToSlash(path)
-			if path == ".sapphire" || strings.HasPrefix(path, ".sapphire/") {
+			if !shouldTrackPathInMemorySnapshot(path) {
 				continue
 			}
 			if path != "" {
@@ -661,6 +729,39 @@ func captureRepoSnapshot(ctx context.Context, workingDir string) (repoSnapshot, 
 		Dirty:        len(changed) > 0,
 		ChangedFiles: uniqueSortedStrings(changed),
 	}, nil
+}
+
+func shouldTrackPathInMemorySnapshot(path string) bool {
+	path = strings.TrimSpace(filepath.ToSlash(path))
+	path = strings.TrimSuffix(path, "/")
+	if path == "" {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	for _, part := range parts[:max(len(parts)-1, 0)] {
+		if _, skip := memoryIgnoredDirs[part]; skip {
+			return false
+		}
+		if strings.HasPrefix(part, ".") {
+			if _, allow := memoryAllowedHiddenDirs[part]; !allow {
+				return false
+			}
+		}
+	}
+	base := parts[len(parts)-1]
+	if base == "AGENTS.md" || base == "agent.md" {
+		return true
+	}
+	if _, skip := memoryIgnoredDirs[base]; skip {
+		return false
+	}
+	if strings.HasPrefix(base, ".") {
+		if _, allow := memoryAllowedHiddenDirs[base]; !allow {
+			return false
+		}
+	}
+	_, ok := memoryAllowedExtensions[strings.ToLower(filepath.Ext(base))]
+	return ok
 }
 
 func scanRepoFileCandidates(root string) ([]repoFileCandidate, error) {

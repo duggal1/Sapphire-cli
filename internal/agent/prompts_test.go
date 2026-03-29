@@ -218,6 +218,41 @@ func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 	}
 }
 
+func TestCoderPromptRequiresStructuredDistinctSubAgentAssignments(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "subagent-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	p, err := coderPrompt()
+	if err != nil {
+		t.Fatalf("coder prompt: %v", err)
+	}
+	out, err := p.Build(context.Background(), "", "", *cfg)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	for _, needle := range []string{
+		"When launching multiple subagents, decompose the work into disjoint scopes first.",
+		"Every spawn message should be concise and structured: objective, owned scope or files, exact deliverable, success criteria, and blocker route.",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("expected %q in coder prompt", needle)
+		}
+	}
+}
+
 func TestCoderPromptIncludesExtendedModeOverlays(t *testing.T) {
 	t.Parallel()
 

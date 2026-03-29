@@ -137,3 +137,14 @@ snapshots/
 
 # Long horizon testing
 long_horizon/
+
+# Additional directories to ignore
+.augment/
+.factory/
+.sapphire-memory/
+.zencoder/
+.zenflow/
+beads/
+docker/
+sapphire-cli-testing/
+skills-repo/

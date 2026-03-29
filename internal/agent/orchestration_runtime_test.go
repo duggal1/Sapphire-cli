@@ -141,6 +141,58 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 	require.Contains(t, ctxBlock, "work:work-auth")
 }
 
+func TestBuildSubAgentPersistentMemoryContextFreshLaunchUsesSharedCache(t *testing.T) {
+	ctx := context.Background()
+	metrics := newSubAgentLaunchMetrics()
+	coord := &coordinator{
+		memory:                    orchestrationMemoryStub{},
+		subAgentLaunchProbe:       metrics,
+		subAgentRegistry:          newSubAgentRegistry(),
+		subAgentLaunchMemoryCache: make(map[string]subAgentLaunchMemoryCacheEntry),
+		subAgentLaunchMemoryWork:  make(map[string]*subAgentLaunchMemoryFlight),
+	}
+
+	runnerOne := &subAgentRunner{
+		id:            "agent-one",
+		sessionID:     "sub-one",
+		parentSession: "parent-session",
+		workDir:       "/repo",
+		submissions:   make(map[string]*subAgentSubmission),
+		freshLaunch:   true,
+		assignment: subAgentAssignment{
+			ID:    "work-one",
+			Title: "Shard one",
+			Task:  "Inspect the first repo slice",
+		},
+	}
+	runnerTwo := &subAgentRunner{
+		id:            "agent-two",
+		sessionID:     "sub-two",
+		parentSession: "parent-session",
+		workDir:       "/repo",
+		submissions:   make(map[string]*subAgentSubmission),
+		freshLaunch:   true,
+		assignment: subAgentAssignment{
+			ID:    "work-two",
+			Title: "Shard two",
+			Task:  "Inspect the second repo slice",
+		},
+	}
+
+	first := coord.buildSubAgentPersistentMemoryContext(ctx, runnerOne)
+	second := coord.buildSubAgentPersistentMemoryContext(ctx, runnerTwo)
+
+	require.Contains(t, first, "PERSISTENT MEMORY")
+	require.Contains(t, first, "SESSION CONTINUITY")
+	require.Contains(t, second, "PERSISTENT MEMORY")
+	require.Contains(t, second, "SESSION CONTINUITY")
+
+	_, counters := metrics.snapshot()
+	require.Equal(t, int64(1), counters["subagent_memory.launch_context_cache_miss"])
+	require.GreaterOrEqual(t, counters["subagent_memory.launch_context_cache_hit"], int64(1))
+	require.Equal(t, int64(2), counters["subagent_memory.launch_lightweight"])
+}
+
 func TestReportSubAgentOutcomeToParentSendsStructuredMail(t *testing.T) {
 	ctx := context.Background()
 	store, err := orchestrationdb.Open(ctx, t.TempDir())
@@ -246,6 +298,38 @@ func TestCurrentCheckpointCursorsUseDurableRowIDs(t *testing.T) {
 	mailCursor, activityCursor := coord.currentCheckpointCursors(ctx, sessionID, mainAgentID)
 	require.Equal(t, expectedMailCursor, mailCursor)
 	require.Equal(t, expectedActivityCursor, activityCursor)
+}
+
+func TestSyncRunnerOrchestrationStateDoesNotTreatDomainsAsDependencies(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	coord := &coordinator{
+		orchestrationStore: store,
+		stateService:       agentstate.NewService(store),
+	}
+	runner := &subAgentRunner{
+		id:        "agent-auth",
+		sessionID: "sub-session",
+		status:    subAgentStatusRunning,
+		assignment: subAgentAssignment{
+			ID:        "work-auth",
+			Title:     "Auth flow",
+			Task:      "Implement auth flow",
+			Domains:   []string{"auth", "backend"},
+			CreatedAt: time.Now().UTC(),
+		},
+	}
+
+	coord.syncRunnerOrchestrationState(ctx, runner)
+
+	item, err := store.GetWorkItem(ctx, "work-auth")
+	require.NoError(t, err)
+	require.Equal(t, "[]", item.Dependencies)
 }
 
 func TestShouldPersistCheckpointHandoffSkipsOrdinaryMainTurns(t *testing.T) {

@@ -22,11 +22,24 @@ func (c *coordinator) supervisorRuntimeSnapshot(agentID string) (agentsupervisor
 		return agentsupervisor.AgentRuntimeSnapshot{}, false
 	}
 	snap := runner.snapshot()
+	runner.mu.Lock()
+	agent := runner.agent
+	sessionID := runner.sessionID
+	parentSessionID := runner.parentSession
+	workItemID := runner.assignment.ID
+	hasOutstandingWork := runner.hasOutstandingWorkLocked()
+	runner.mu.Unlock()
+	busy := false
+	queuedPrompts := 0
+	if agent != nil {
+		busy = agent.IsSessionBusy(sessionID)
+		queuedPrompts = agent.QueuedPrompts(sessionID)
+	}
 	return agentsupervisor.AgentRuntimeSnapshot{
 		AgentID:              snap.ID,
-		SessionID:            runner.sessionID,
-		ParentSessionID:      runner.parentSession,
-		WorkItemID:           runner.assignment.ID,
+		SessionID:            sessionID,
+		ParentSessionID:      parentSessionID,
+		WorkItemID:           workItemID,
 		Status:               string(snap.Status),
 		DefinitionOfDone:     snap.DefinitionOfDone,
 		LastResult:           snap.LastResult,
@@ -38,6 +51,11 @@ func (c *coordinator) supervisorRuntimeSnapshot(agentID string) (agentsupervisor
 		ValidationHasChanges: snap.ValidationHasChanges,
 		LastHeartbeat:        snap.LastHeartbeat,
 		HeartbeatContext:     snap.HeartbeatContext,
+		RunnerPresent:        true,
+		Busy:                 busy,
+		QueuedPrompts:        queuedPrompts,
+		PendingSubmissions:   snap.Pending,
+		HasOutstandingWork:   hasOutstandingWork,
 	}, true
 }
 

@@ -231,6 +231,40 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 		epoch++
 	}
 
+	reportWarmProgress(opts.Report, WarmProgress{
+		Workspace:       snapshot.ScopePath,
+		Phase:           "parsing",
+		Message:         "Extracting durable graph facts",
+		Active:          true,
+		FilesDiscovered: len(candidates),
+		FilesProcessed:  0,
+		Percent:         0.12,
+		StartedAt:       startedAt,
+		UpdatedAt:       c.now(),
+	})
+	parsedChanged, err := loadIndexedRepoFilesParallel(ctx, snapshot.ScopePath, currentByPath, changedPaths, func(processed, total int) {
+		percent := 0.12
+		if total > 0 {
+			percent = 0.12 + (0.68 * (float64(processed) / float64(total)))
+		}
+		reportWarmProgress(opts.Report, WarmProgress{
+			Workspace:       snapshot.ScopePath,
+			Phase:           "parsing",
+			Message:         "Extracting durable graph facts",
+			Active:          true,
+			FilesDiscovered: len(candidates),
+			FilesProcessed:  processed,
+			FilesIndexed:    processed,
+			Percent:         percent,
+			StartedAt:       startedAt,
+			UpdatedAt:       c.now(),
+		})
+	})
+	if err != nil {
+		return storedRepoScope{}, indexOperationStats{}, err
+	}
+	stats.IndexedFiles = len(parsedChanged)
+
 	tx, err := c.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return storedRepoScope{}, indexOperationStats{}, err
@@ -265,40 +299,6 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 			}
 		}
 	}
-
-	reportWarmProgress(opts.Report, WarmProgress{
-		Workspace:       snapshot.ScopePath,
-		Phase:           "parsing",
-		Message:         "Extracting durable graph facts",
-		Active:          true,
-		FilesDiscovered: len(candidates),
-		FilesProcessed:  0,
-		Percent:         0.12,
-		StartedAt:       startedAt,
-		UpdatedAt:       c.now(),
-	})
-	parsedChanged, err := loadIndexedRepoFilesParallel(ctx, snapshot.ScopePath, currentByPath, changedPaths, func(processed, total int) {
-		percent := 0.12
-		if total > 0 {
-			percent = 0.12 + (0.68 * (float64(processed) / float64(total)))
-		}
-		reportWarmProgress(opts.Report, WarmProgress{
-			Workspace:       snapshot.ScopePath,
-			Phase:           "parsing",
-			Message:         "Extracting durable graph facts",
-			Active:          true,
-			FilesDiscovered: len(candidates),
-			FilesProcessed:  processed,
-			FilesIndexed:    processed,
-			Percent:         percent,
-			StartedAt:       startedAt,
-			UpdatedAt:       c.now(),
-		})
-	})
-	if err != nil {
-		return storedRepoScope{}, indexOperationStats{}, err
-	}
-	stats.IndexedFiles = len(parsedChanged)
 
 	if len(parsedChanged) > 0 || existing.ID == "" {
 		for _, file := range parsedChanged {
@@ -967,7 +967,7 @@ func loadIndexedRepoFilesParallel(ctx context.Context, root string, candidates m
 		err   error
 	}
 
-	workers := min(len(changedPaths), max(1, min(4, max(1, runtime.GOMAXPROCS(0)/2))))
+	workers := recommendedIndexedRepoWorkers(len(changedPaths))
 	workCh := make(chan int)
 	resultCh := make(chan parseResult, len(changedPaths))
 	var wg sync.WaitGroup
@@ -1041,6 +1041,17 @@ func loadIndexedRepoFilesParallel(ctx context.Context, root string, candidates m
 		files = append(files, item.file)
 	}
 	return files, nil
+}
+
+func recommendedIndexedRepoWorkers(changedCount int) int {
+	if changedCount <= 0 {
+		return 0
+	}
+	base := max(2, runtime.GOMAXPROCS(0))
+	if changedCount >= 2048 {
+		base = max(base, runtime.GOMAXPROCS(0)*2)
+	}
+	return min(changedCount, min(16, base))
 }
 
 func reportWarmProgress(report func(WarmProgress), progress WarmProgress) {

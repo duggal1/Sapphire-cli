@@ -100,6 +100,9 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 	if status != "" {
 		lines = append(lines, i.sty.Muted.Render(status))
 	}
+	if tree := i.renderSemanticAgentTree(width - 4); tree != "" {
+		lines = append(lines, tree)
+	}
 	lines = append(lines, progressLine)
 	if detail := i.renderMetrics(); detail != "" {
 		lines = append(lines, i.sty.HalfMuted.Render(detail))
@@ -187,6 +190,43 @@ func (i *IndexingMessageItem) renderMetrics() string {
 	}
 
 	return strings.Join(parts, " · ")
+}
+
+func (i *IndexingMessageItem) renderSemanticAgentTree(width int) string {
+	if len(i.progress.SemanticAgents) == 0 || width <= 0 {
+		return ""
+	}
+	root := &TreeNode{
+		Label:    i.sty.HalfMuted.Render("AI sub-agents"),
+		Children: make([]*TreeNode, 0, len(i.progress.SemanticAgents)),
+	}
+	for _, agent := range i.progress.SemanticAgents {
+		header := strings.TrimSpace(agent.Label)
+		if header == "" {
+			header = "Shard"
+		}
+		status := strings.TrimSpace(agent.Status)
+		if status != "" {
+			header += " · " + status
+		}
+		if agent.FileCount > 0 {
+			header += fmt.Sprintf(" · %d files", agent.FileCount)
+		}
+
+		detailParts := make([]string, 0, 2)
+		if scope := strings.TrimSpace(agent.Scope); scope != "" {
+			detailParts = append(detailParts, scope)
+		}
+		if task := strings.TrimSpace(agent.Task); task != "" {
+			detailParts = append(detailParts, task)
+		}
+		label := header
+		if len(detailParts) > 0 {
+			label += "\n" + i.sty.HalfMuted.Render(strings.Join(detailParts, " · "))
+		}
+		root.Children = append(root.Children, &TreeNode{Label: label})
+	}
+	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
 func renderIndexingProgressBar(width int, percent float64) string {

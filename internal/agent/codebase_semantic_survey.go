@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	defaultSemanticSurveyAgents = 3
-	maxSemanticSurveyAgents     = 4
-	semanticSurveyShardTimeout  = 30 * time.Minute
-	semanticSurveyReasoning     = "high"
-	semanticSurveyRepairPasses  = 2
+	defaultSemanticSurveyAgents       = 4
+	semanticSurveyShardTimeout        = 30 * time.Minute
+	semanticSurveyReasoning           = "low"
+	semanticSurveyRepairPasses        = 2
+	semanticSurveyTargetFilesPerAgent = 350
+	semanticSurveyMinFilesPerAgent    = 96
+	semanticSurveyProgressPoll        = 5 * time.Second
 )
 
 type indexCodebaseOptions struct {
@@ -47,6 +49,19 @@ type semanticSurveyShardPlan struct {
 	Files          []agentmemory.IndexedFileInfo
 	TopDirectories []string
 	CriticalFiles  []string
+	LanguageCounts map[string]int
+}
+
+type semanticSurveySpawnPlan struct {
+	Shard     semanticSurveyShardPlan
+	InputPath string
+	GraphPath string
+}
+
+type semanticSurveyUnit struct {
+	Label          string
+	Files          []agentmemory.IndexedFileInfo
+	TopDirectories []string
 	LanguageCounts map[string]int
 }
 
@@ -135,7 +150,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		return nil, err
 	}
 
-	agentCount := normalizeSemanticSurveyAgentCount(requestedAgents, len(files))
+	agentCount := normalizeSemanticSurveyAgentCount(requestedAgents, len(files), c.semanticSurveyAgentLimit(surveySessionID))
 	shards := buildSemanticSurveyShards(files, agentCount)
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("no semantic survey shards were generated")
@@ -165,7 +180,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		return nil, err
 	}
 
-	reportProgress := func(message string, percent float64) {
+	reportProgress := func(message string, percent float64, agents []codeindex.SemanticAgentProgress) {
 		codeindex.PublishProgress(codeindex.Progress{
 			Workspace:       status.ScopePath,
 			Phase:           "semantic_graph",
@@ -176,14 +191,14 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 			Percent:         percent,
 			StartedAt:       manifest.GeneratedAt,
 			UpdatedAt:       time.Now().UTC(),
+			SemanticAgents:  agents,
 		})
 	}
 
-	reportProgress(formatSemanticSurveyProgressMessage(0, len(shards), true), 0.92)
+	reportProgress(formatSemanticSurveyProgressMessage(0, len(shards), true), 0.92, nil)
 
-	agentIDs := make([]string, 0, len(shards))
-	shardByAgent := make(map[string]semanticSurveyShardPlan, len(shards))
-	for i, shard := range shards {
+	spawnPlans := make([]semanticSurveySpawnPlan, 0, len(shards))
+	for _, shard := range shards {
 		input := codebasesurvey.ShardInput{
 			ShardID:        shard.ID,
 			Label:          shard.Label,
@@ -203,21 +218,59 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		if err := ensureEmptyFile(graphPath); err != nil {
 			return nil, err
 		}
-		agentID, _, err := c.spawnSubAgent(ctx, surveySessionID, spawnAgentOptions{
-			WorkItemID:       "codebase-semantic-" + shard.ID,
-			Prompt:           buildSemanticSurveyShardPrompt(inputPath, graphPath, shard),
-			Title:            "AI Codebase Graph " + shard.Label,
-			WriteManifest:    []string{graphPath},
-			DefinitionOfDone: buildSemanticSurveyDefinitionOfDone(graphPath, shard),
-			AgentID:          config.AgentTask,
-			ReasoningEffort:  semanticSurveyReasoning,
-			TurnTimeout:      semanticSurveyShardTimeout,
+		spawnPlans = append(spawnPlans, semanticSurveySpawnPlan{
+			Shard:     shard,
+			InputPath: inputPath,
+			GraphPath: graphPath,
 		})
-		if err != nil {
-			return nil, err
+	}
+
+	type spawnResult struct {
+		Index   int
+		AgentID string
+		Err     error
+	}
+	resultCh := make(chan spawnResult, len(spawnPlans))
+	for idx, plan := range spawnPlans {
+		go func(index int, plan semanticSurveySpawnPlan) {
+			agentID, _, err := c.spawnSubAgent(ctx, surveySessionID, spawnAgentOptions{
+				WorkItemID:       "codebase-semantic-" + plan.Shard.ID,
+				Prompt:           buildSemanticSurveyShardPrompt(plan.InputPath, plan.GraphPath, plan.Shard),
+				Title:            "AI Codebase Graph " + plan.Shard.Label,
+				WriteManifest:    []string{plan.GraphPath},
+				DefinitionOfDone: buildSemanticSurveyDefinitionOfDone(plan.GraphPath, plan.Shard),
+				AgentID:          config.AgentTask,
+				ReasoningEffort:  semanticSurveyReasoning,
+				TurnTimeout:      semanticSurveyShardTimeout,
+			})
+			resultCh <- spawnResult{Index: index, AgentID: agentID, Err: err}
+		}(idx, plan)
+	}
+
+	agentIDs := make([]string, 0, len(spawnPlans))
+	agentIDByIndex := make([]string, len(spawnPlans))
+	shardByAgent := make(map[string]semanticSurveyShardPlan, len(spawnPlans))
+	for launched := 0; launched < len(spawnPlans); launched++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-resultCh:
+			if result.Err != nil {
+				for _, agentID := range agentIDs {
+					_ = c.closeSubAgent(agentID)
+				}
+				return nil, result.Err
+			}
+			agentIDByIndex[result.Index] = result.AgentID
+			agentIDs = orderedSemanticSurveyAgentIDs(agentIDByIndex)
+			shardByAgent[result.AgentID] = spawnPlans[result.Index].Shard
+			launchPercent := 0.92 + (0.02 * float64(launched+1) / float64(len(spawnPlans)))
+			reportProgress(
+				formatSemanticSurveyProgressMessage(launched+1, len(shards), true),
+				launchPercent,
+				c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent),
+			)
 		}
-		agentIDs = append(agentIDs, agentID)
-		shardByAgent[agentID] = shards[i]
 	}
 
 	waitDeadline := time.Now().Add(semanticSurveyTimeout(len(files), len(shards)))
@@ -229,7 +282,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		if remaining <= 0 {
 			break
 		}
-		waitSlice := minDuration(15*time.Second, remaining)
+		waitSlice := minDuration(semanticSurveyProgressPoll, remaining)
 		snapshots, _ := c.waitSubAgents(ctx, agentIDs, waitSlice)
 		done := 0
 		for _, snap := range snapshots {
@@ -237,7 +290,11 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 				done++
 			}
 		}
-		reportProgress(formatSemanticSurveyProgressMessage(done, len(shards), false), 0.92+(0.06*(float64(done)/float64(len(shards)))))
+		reportProgress(
+			formatSemanticSurveyProgressMessage(done, len(shards), false),
+			0.94+(0.04*(float64(done)/float64(len(shards)))),
+			c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent),
+		)
 		if done == len(shards) {
 			break
 		}
@@ -314,7 +371,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		_ = c.pmem.RefreshMemory(ctx, sessionID, true)
 	}
 
-	reportProgress("AI codebase graph ready", 1)
+	reportProgress("AI codebase graph ready", 1, c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent))
 	return &codebaseSemanticSurveyResult{
 		Status:       manifest.Status,
 		AgentCount:   manifest.AgentCount,
@@ -333,12 +390,12 @@ func formatSemanticSurveyProgressMessage(done, total int, launching bool) string
 		done = total
 	}
 	if launching {
-		return fmt.Sprintf("Launching AI codebase survey sub-agents; shard graph runs in background (%d/%d complete)", done, total)
+		return fmt.Sprintf("Launching AI codebase survey sub-agents in parallel (%d/%d ready)", done, total)
 	}
 	if done >= total {
 		return fmt.Sprintf("AI codebase graph shards complete %d/%d", done, total)
 	}
-	return fmt.Sprintf("AI codebase graph shards complete %d/%d; sub-agents still running", done, total)
+	return fmt.Sprintf("AI codebase graph shards complete %d/%d; parallel shard sub-agents still running", done, total)
 }
 
 func (c *coordinator) ensureSemanticSurveySession(ctx context.Context, sessionID string) (string, error) {
@@ -355,30 +412,79 @@ func (c *coordinator) ensureSemanticSurveySession(ctx context.Context, sessionID
 	return sess.ID, nil
 }
 
-func buildSemanticSurveyShards(files []agentmemory.IndexedFileInfo, requestedAgents int) []semanticSurveyShardPlan {
-	agentCount := normalizeSemanticSurveyAgentCount(requestedAgents, len(files))
-	if agentCount == 0 || len(files) == 0 {
+func (c *coordinator) semanticSurveyAgentLimit(sessionID string) int {
+	limit := c.subAgentThreadLimit()
+	if limit <= 0 {
+		return 0
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return limit
+	}
+	remaining := limit - c.activeSubAgentCount(sessionID)
+	if remaining < 1 {
+		return 1
+	}
+	return remaining
+}
+
+func orderedSemanticSurveyAgentIDs(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func (c *coordinator) buildSemanticSurveyProgressAgents(agentIDs []string, shardByAgent map[string]semanticSurveyShardPlan) []codeindex.SemanticAgentProgress {
+	if len(agentIDs) == 0 {
 		return nil
 	}
-	groups := make(map[string][]agentmemory.IndexedFileInfo)
-	for _, file := range files {
-		key := topLevelPath(file.Path)
-		groups[key] = append(groups[key], file)
+	snapshots, _ := c.snapshotSubAgentsByID(agentIDs)
+	byID := make(map[string]subAgentSnapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byID[snapshot.ID] = snapshot
 	}
-	type group struct {
-		label string
-		files []agentmemory.IndexedFileInfo
-	}
-	ordered := make([]group, 0, len(groups))
-	for label, items := range groups {
-		sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
-		ordered = append(ordered, group{label: label, files: items})
-	}
-	sort.Slice(ordered, func(i, j int) bool {
-		if len(ordered[i].files) == len(ordered[j].files) {
-			return ordered[i].label < ordered[j].label
+	progress := make([]codeindex.SemanticAgentProgress, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		shard, ok := shardByAgent[agentID]
+		if !ok {
+			continue
 		}
-		return len(ordered[i].files) > len(ordered[j].files)
+		snapshot := byID[agentID]
+		status := strings.TrimSpace(string(snapshot.Status))
+		if status == "" {
+			status = string(subAgentStatusQueued)
+		}
+		scope := strings.Join(limitSurveyStrings(shard.TopDirectories, 3), ", ")
+		if strings.TrimSpace(scope) == "" {
+			scope = strings.Join(limitSurveyStrings(shard.CriticalFiles, 2), ", ")
+		}
+		progress = append(progress, codeindex.SemanticAgentProgress{
+			ID:        agentID,
+			Label:     shard.Label,
+			Status:    status,
+			Task:      "Read assigned files and write shard graph",
+			Scope:     scope,
+			FileCount: len(shard.Files),
+		})
+	}
+	return progress
+}
+
+func buildSemanticSurveyShards(files []agentmemory.IndexedFileInfo, agentCount int) []semanticSurveyShardPlan {
+	if agentCount <= 0 || len(files) == 0 {
+		return nil
+	}
+	targetFiles := max(1, ceilDiv(len(files), agentCount))
+	units := buildSemanticSurveyUnits(files, targetFiles)
+	sort.Slice(units, func(i, j int) bool {
+		if len(units[i].Files) == len(units[j].Files) {
+			return units[i].Label < units[j].Label
+		}
+		return len(units[i].Files) > len(units[j].Files)
 	})
 
 	shards := make([]semanticSurveyShardPlan, agentCount)
@@ -390,18 +496,18 @@ func buildSemanticSurveyShards(files []agentmemory.IndexedFileInfo, requestedAge
 			LanguageCounts: make(map[string]int),
 		}
 	}
-	for _, group := range ordered {
+	for _, unit := range units {
 		target := 0
 		for i := 1; i < len(shards); i++ {
 			if loads[i] < loads[target] {
 				target = i
 			}
 		}
-		shards[target].Files = append(shards[target].Files, group.files...)
-		shards[target].TopDirectories = append(shards[target].TopDirectories, group.label)
-		loads[target] += len(group.files)
-		for _, file := range group.files {
-			shards[target].LanguageCounts[file.Language]++
+		shards[target].Files = append(shards[target].Files, unit.Files...)
+		shards[target].TopDirectories = append(shards[target].TopDirectories, unit.TopDirectories...)
+		loads[target] += len(unit.Files)
+		for language, count := range unit.LanguageCounts {
+			shards[target].LanguageCounts[language] += count
 		}
 	}
 	out := make([]semanticSurveyShardPlan, 0, len(shards))
@@ -409,7 +515,7 @@ func buildSemanticSurveyShards(files []agentmemory.IndexedFileInfo, requestedAge
 		if len(shard.Files) == 0 {
 			continue
 		}
-		sort.Strings(shard.TopDirectories)
+		shard.TopDirectories = uniqueSurveyStrings(shard.TopDirectories)
 		shard.Label = fmt.Sprintf("Shard %d (%s)", i+1, strings.Join(limitSurveyStrings(shard.TopDirectories, 2), ", "))
 		shard.CriticalFiles = selectSemanticCriticalFiles(shard.Files, 18)
 		out = append(out, shard)
@@ -505,7 +611,7 @@ func (c *coordinator) repairSemanticSurveyCoverage(ctx context.Context, dataDir 
 			if remaining <= 0 {
 				break
 			}
-			snaps, _ := c.waitSubAgents(ctx, next, minDuration(15*time.Second, remaining))
+			snaps, _ := c.waitSubAgents(ctx, next, minDuration(semanticSurveyProgressPoll, remaining))
 			done := 0
 			for _, snap := range snaps {
 				if isSubAgentFinalStatus(snap.Status) {
@@ -722,7 +828,7 @@ func (c *coordinator) runSemanticSurveyAggregator(ctx context.Context, sessionID
 		if remaining <= 0 {
 			break
 		}
-		snaps, _ := c.waitSubAgents(ctx, []string{agentID}, minDuration(15*time.Second, remaining))
+		snaps, _ := c.waitSubAgents(ctx, []string{agentID}, minDuration(semanticSurveyProgressPoll, remaining))
 		if len(snaps) == 1 && isSubAgentFinalStatus(snaps[0].Status) {
 			return nil
 		}
@@ -757,16 +863,20 @@ Requirements:
 `, manifestPath, overviewPath))
 }
 
-func normalizeSemanticSurveyAgentCount(requested, totalFiles int) int {
+func normalizeSemanticSurveyAgentCount(requested, totalFiles, limit int) int {
 	if totalFiles <= 0 {
 		return 0
 	}
 	count := requested
 	if count <= 0 {
-		count = defaultSemanticSurveyAgents
+		count = max(defaultSemanticSurveyAgents, ceilDiv(totalFiles, semanticSurveyTargetFilesPerAgent))
+		maxUseful := max(1, ceilDiv(totalFiles, semanticSurveyMinFilesPerAgent))
+		if count > maxUseful {
+			count = maxUseful
+		}
 	}
-	if count > maxSemanticSurveyAgents {
-		count = maxSemanticSurveyAgents
+	if limit > 0 && count > limit {
+		count = limit
 	}
 	if count > totalFiles {
 		count = totalFiles
@@ -775,6 +885,76 @@ func normalizeSemanticSurveyAgentCount(requested, totalFiles int) int {
 		count = 1
 	}
 	return count
+}
+
+func buildSemanticSurveyUnits(files []agentmemory.IndexedFileInfo, targetFiles int) []semanticSurveyUnit {
+	groups := make(map[string][]agentmemory.IndexedFileInfo)
+	for _, file := range files {
+		key := semanticSurveyGroupKey(file.Path)
+		groups[key] = append(groups[key], file)
+	}
+	units := make([]semanticSurveyUnit, 0, len(groups))
+	for label, items := range groups {
+		sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
+		for chunkIndex, chunk := range splitSemanticSurveyGroup(items, targetFiles) {
+			unitLabel := label
+			if len(items) > len(chunk) {
+				unitLabel = fmt.Sprintf("%s #%d", label, chunkIndex+1)
+			}
+			languageCounts := make(map[string]int)
+			for _, file := range chunk {
+				languageCounts[file.Language]++
+			}
+			units = append(units, semanticSurveyUnit{
+				Label:          unitLabel,
+				Files:          chunk,
+				TopDirectories: []string{unitLabel},
+				LanguageCounts: languageCounts,
+			})
+		}
+	}
+	return units
+}
+
+func splitSemanticSurveyGroup(files []agentmemory.IndexedFileInfo, targetFiles int) [][]agentmemory.IndexedFileInfo {
+	if len(files) == 0 {
+		return nil
+	}
+	chunkSize := max(1, targetFiles)
+	if len(files) <= chunkSize {
+		return [][]agentmemory.IndexedFileInfo{append([]agentmemory.IndexedFileInfo{}, files...)}
+	}
+	out := make([][]agentmemory.IndexedFileInfo, 0, ceilDiv(len(files), chunkSize))
+	for start := 0; start < len(files); start += chunkSize {
+		end := min(start+chunkSize, len(files))
+		out = append(out, append([]agentmemory.IndexedFileInfo{}, files[start:end]...))
+	}
+	return out
+}
+
+func semanticSurveyGroupKey(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" {
+		return "."
+	}
+	parts := strings.Split(path, "/")
+	switch {
+	case len(parts) >= 3 && (parts[0] == "internal" || parts[0] == "cmd" || parts[0] == "pkg" || parts[0] == "src" || parts[0] == "lib" || parts[0] == "app"):
+		return strings.Join(parts[:2], "/")
+	case len(parts) >= 3 && parts[0] == "docs":
+		return strings.Join(parts[:2], "/")
+	case len(parts) >= 2:
+		return strings.Join(parts[:2], "/")
+	default:
+		return parts[0]
+	}
+}
+
+func ceilDiv(total, divisor int) int {
+	if divisor <= 0 {
+		return 0
+	}
+	return (total + divisor - 1) / divisor
 }
 
 func topLevelPath(path string) string {
@@ -926,4 +1106,25 @@ func limitSurveyStrings(values []string, limit int) []string {
 		return append([]string{}, values...)
 	}
 	return append([]string{}, values[:limit]...)
+}
+
+func uniqueSurveyStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	return out
 }

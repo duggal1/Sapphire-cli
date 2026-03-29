@@ -83,11 +83,14 @@ func (m *mistakeSelfHealingMonitor) Consume() (mistakeSelfHealingTrigger, bool) 
 	return trigger, true
 }
 
-func (m *mistakeSelfHealingMonitor) ObserveSelfHealingProgress(toolName, rawInput string) {
+func (m *mistakeSelfHealingMonitor) ObserveSelfHealingProgress(toolName, rawInput string, result message.ToolResult) {
 	if m == nil || !m.selfHealingMode || m.persistenceReminderPending || m.evalReminderPending {
 		return
 	}
 	if strings.TrimSpace(toolName) == persistmemory.SaveToolName {
+		if result.IsError {
+			return
+		}
 		switch parseSaveMemoryEventType(rawInput) {
 		case persistmemory.MemoryEventArchitecturalDecision:
 			m.saveMemoryCalled = true

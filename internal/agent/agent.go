@@ -1094,7 +1094,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					break
 				}
 			}
-			runtimeControl.mistakeSelfHealing.ObserveSelfHealingProgress(result.ToolName, rawInput)
+			runtimeControl.mistakeSelfHealing.ObserveSelfHealingProgress(result.ToolName, rawInput, toolResult)
 			runtimeControl.mistakeSelfHealing.Observe(result.ToolName, rawInput, toolResult)
 
 			// Track Python tool failures - quit after 3 consecutive failures

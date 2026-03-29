@@ -141,6 +141,9 @@ long_horizon/
 # OpenCLaw reference directory
 openclaw/
 
+# Beads directory
+beads/
+
 # Additional directories to ignore
 .augment/
 .factory/

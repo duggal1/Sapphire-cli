@@ -134,15 +134,19 @@ func (m *memoryFileManager) buildContent(ctx context.Context, sessionID string, 
 
 	var constitution string
 	var architectural []MemoryRecord
+	var strategies []MemoryRecord
 	var failures []MemoryRecord
+	var evals []MemoryRecord
 	var constraints []MemoryRecord
 	var progress []MemoryRecord
 	if store != nil {
 		constitution, _ = store.GetConstitution(ctx)
-		architectural, _ = store.QueryRecordsBySession(ctx, sessionID, "architectural", 0)
-		failures, _ = store.QueryRecordsBySession(ctx, sessionID, "failures", 0)
-		constraints, _ = store.QueryRecordsBySession(ctx, sessionID, "negative_constraints", 0)
-		progress, _ = store.QueryRecordsBySession(ctx, sessionID, "progress", 0)
+		architectural, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterArchitectural, 0)
+		strategies, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterStrategies, 0)
+		failures, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterFailures, 0)
+		evals, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterEvals, 0)
+		constraints, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterNegativeConstraints, 0)
+		progress, _ = store.QueryRecordsBySession(ctx, sessionID, MemoryFilterProgress, 0)
 	}
 
 	var lines []string
@@ -186,11 +190,25 @@ func (m *memoryFileManager) buildContent(ctx context.Context, sessionID string, 
 		lines = append(lines, "- no durable architectural decisions captured yet")
 	}
 
+	lines = append(lines, "", "## Proven Strategies")
+	if strategyLines := renderStrategyLines(strategies); len(strategyLines) > 0 {
+		lines = append(lines, strategyLines...)
+	} else {
+		lines = append(lines, "- no validated reusable strategies captured yet")
+	}
+
 	lines = append(lines, "", "## Failures and Guardrails")
 	if guardrailLines := renderGuardrailLines(failures, constraints, state); len(guardrailLines) > 0 {
 		lines = append(lines, guardrailLines...)
 	} else {
 		lines = append(lines, "- no durable failure modes or guardrails recorded yet")
+	}
+
+	lines = append(lines, "", "## Validated Improvement Probes")
+	if evalLines := renderImprovementEvalLines(evals); len(evalLines) > 0 {
+		lines = append(lines, evalLines...)
+	} else {
+		lines = append(lines, "- no reusable improvement probes captured yet")
 	}
 
 	lines = append(lines, "", "## Architecture Overview")
@@ -643,6 +661,17 @@ func renderDecisionLines(records []MemoryRecord, state sessionStateSnapshot) []s
 	return uniqueStrings(lines)
 }
 
+func renderStrategyLines(records []MemoryRecord) []string {
+	var lines []string
+	for _, record := range records {
+		line := formatStrategyPatternRecord(record.ContentJSON)
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, "- "+line)
+		}
+	}
+	return uniqueStrings(lines)
+}
+
 func formatDecisionRecord(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -687,6 +716,17 @@ func renderGuardrailLines(failures, constraints []MemoryRecord, state sessionSta
 	for _, failure := range state.RecentFailures {
 		if strings.TrimSpace(failure) != "" {
 			lines = append(lines, "- failure_signal: "+strings.TrimSpace(failure))
+		}
+	}
+	return uniqueStrings(lines)
+}
+
+func renderImprovementEvalLines(records []MemoryRecord) []string {
+	var lines []string
+	for _, record := range records {
+		line := formatImprovementEvalRecord(record.ContentJSON)
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, "- "+line)
 		}
 	}
 	return uniqueStrings(lines)
@@ -783,11 +823,13 @@ func memorySectionOrderForStage(stage ContextLoadStage) []string {
 		order = append(order,
 			"Repo Constitution",
 			"Stable Decisions",
+			"Proven Strategies",
 		)
 	}
 	if stage >= ContextLoadStage30 {
 		order = append(order,
 			"Failures and Guardrails",
+			"Validated Improvement Probes",
 			"Architecture Overview",
 		)
 	}
@@ -823,7 +865,19 @@ func trimMemorySectionForStage(title string, lines []string, stage ContextLoadSt
 		} else {
 			maxBodyLines = 6
 		}
+	case "Proven Strategies":
+		if stage >= ContextLoadStage50 {
+			maxBodyLines = 8
+		} else {
+			maxBodyLines = 5
+		}
 	case "Failures and Guardrails":
+		if stage >= ContextLoadStage50 {
+			maxBodyLines = 6
+		} else {
+			maxBodyLines = 4
+		}
+	case "Validated Improvement Probes":
 		if stage >= ContextLoadStage50 {
 			maxBodyLines = 6
 		} else {

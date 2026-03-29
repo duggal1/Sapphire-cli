@@ -262,7 +262,7 @@ func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, ses
 			core = core[:1024]
 		}
 
-		recentDecisions, err := s.Store.QueryRecordsBySession(ctx, sessionID, "architectural", 20)
+		recentDecisions, err := s.Store.QueryRecordsBySession(ctx, sessionID, MemoryFilterArchitectural, 20)
 		if err != nil {
 			recentDecisions = nil
 		}
@@ -287,7 +287,23 @@ func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, ses
 		}
 	}
 
-	// 3. Negative Constraints — high priority
+	// 3. Proven strategy patterns — validated reusable tactics
+	if stage >= ContextLoadStage20 && remaining > 0 {
+		strategies, err := s.Store.QueryRecordsBySession(ctx, sessionID, MemoryFilterStrategies, 8)
+		if err == nil && len(strategies) > 0 {
+			block, used := buildRecordBlock("persistent_memory_strategies",
+				"## Proven Strategies (validated reusable tactics)\n",
+				strategies,
+				remaining,
+			)
+			if used > 0 {
+				sb.WriteString(block)
+				remaining -= used
+			}
+		}
+	}
+
+	// 4. Negative Constraints — high priority
 	if stage >= ContextLoadStage30 && remaining > 0 {
 		constraints, err := s.Store.GetNegativeConstraintsBySession(ctx, sessionID)
 		if err == nil && len(constraints) > 0 {
@@ -303,9 +319,25 @@ func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, ses
 		}
 	}
 
-	// 4. Top-K Relevant Records by retrieval score
+	// 5. Improvement evals — focused probes learned from failures
+	if stage >= ContextLoadStage30 && remaining > 0 {
+		evals, err := s.Store.QueryRecordsBySession(ctx, sessionID, MemoryFilterEvals, 8)
+		if err == nil && len(evals) > 0 {
+			block, used := buildRecordBlock("persistent_memory_evals",
+				"## Validated Improvement Probes (rerun these before trusting the lesson)\n",
+				evals,
+				remaining,
+			)
+			if used > 0 {
+				sb.WriteString(block)
+				remaining -= used
+			}
+		}
+	}
+
+	// 6. Top-K Relevant Records by retrieval score
 	if stage >= ContextLoadStage40 && remaining > 0 {
-		records, err := s.Store.QueryRecordsBySession(ctx, sessionID, "all", 15)
+		records, err := s.Store.QueryRecordsBySession(ctx, sessionID, MemoryFilterAll, 15)
 		if err == nil && len(records) > 0 {
 			block, used := buildRecordBlock("persistent_memory_records",
 				"## Recent Memory (ranked by salience)\n",
@@ -319,7 +351,7 @@ func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, ses
 		}
 	}
 
-	// 5. Latest Compaction Checkpoint
+	// 7. Latest Compaction Checkpoint
 	if stage >= ContextLoadStage50 && remaining > 0 {
 		checkpoint, err := s.Store.GetLatestCheckpointBySession(ctx, sessionID)
 		if err == nil && checkpoint != "" {

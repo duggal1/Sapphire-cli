@@ -234,14 +234,21 @@ func (s *Store) QueryRecordsBySession(ctx context.Context, sessionID, filter str
 	args := []any{sessionID, s.project}
 
 	switch filter {
-	case "negative_constraints":
+	case MemoryFilterNegativeConstraints:
 		query += " AND is_negative_constraint = 1"
-	case "architectural":
+	case MemoryFilterArchitectural:
 		query += " AND is_architectural_decision = 1"
-	case "failures":
+	case MemoryFilterFailures:
 		query += " AND is_failure_mode = 1"
-	case "progress":
-		query += " AND event_type = 'task_progress'"
+	case MemoryFilterProgress:
+		query += " AND event_type = ?"
+		args = append(args, MemoryEventTaskProgress)
+	case MemoryFilterEvals:
+		query += " AND event_type = ?"
+		args = append(args, MemoryEventImprovementEval)
+	case MemoryFilterStrategies:
+		query += " AND event_type = ?"
+		args = append(args, MemoryEventStrategyPattern)
 	}
 
 	query += " ORDER BY salience DESC, timestamp DESC"
@@ -271,7 +278,9 @@ func (s *Store) QueryRecordsBySession(ctx context.Context, sessionID, filter str
 		r.IsFailureMode = fail == 1
 
 		// Apply temporal decay. Negative constraints and architectural decisions never decay.
-		if r.IsNegativeConstraint || r.IsArchitecturalDecision {
+		if r.IsNegativeConstraint || r.IsArchitecturalDecision ||
+			r.EventType == MemoryEventImprovementEval ||
+			r.EventType == MemoryEventStrategyPattern {
 			// Zero decay — keep original salience
 		} else {
 			hours := float64(now-r.Timestamp) / 3600.0

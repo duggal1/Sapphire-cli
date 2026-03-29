@@ -20,13 +20,13 @@ const (
 // RecallParams is the input schema for the recall_memory tool.
 type RecallParams struct {
 	Query  string `json:"query" description:"What the agent is looking for in plain language"`
-	Filter string `json:"filter,omitempty" description:"Filter type: all, negative_constraints, architectural, failures, progress. Defaults to all."`
+	Filter string `json:"filter,omitempty" description:"Filter type: all, negative_constraints, architectural, failures, progress, evals, strategies. Defaults to all."`
 	Limit  int    `json:"limit,omitempty" description:"Maximum number of records to return. Defaults to 5."`
 }
 
 // SaveParams is the input schema for the save_memory tool.
 type SaveParams struct {
-	EventType string          `json:"event_type" description:"One of: architectural_decision, negative_constraint, failure_mode, task_progress"`
+	EventType string          `json:"event_type" description:"One of: architectural_decision, negative_constraint, failure_mode, task_progress, improvement_eval, strategy_pattern"`
 	Content   json.RawMessage `json:"content" description:"Structured JSON content to persist"`
 }
 
@@ -158,15 +158,9 @@ func NewSaveTool(system *System, resolveSessionID func(context.Context) string) 
 			}
 
 			eventType := params.EventType
-			validTypes := map[string]bool{
-				"architectural_decision": true,
-				"negative_constraint":    true,
-				"failure_mode":           true,
-				"task_progress":          true,
-			}
-			if !validTypes[eventType] {
+			if !isValidSavedMemoryEventType(eventType) {
 				return fantasy.NewTextResponse(
-					fmt.Sprintf("Invalid event_type %q. Must be one of: architectural_decision, negative_constraint, failure_mode, task_progress", eventType),
+					fmt.Sprintf("Invalid event_type %q. Must be one of: architectural_decision, negative_constraint, failure_mode, task_progress, improvement_eval, strategy_pattern", eventType),
 				), nil
 			}
 
@@ -189,9 +183,9 @@ func NewSaveTool(system *System, resolveSessionID func(context.Context) string) 
 				Timestamp:               timeNowUnix(),
 				TurnIndex:               0, // Explicit saves have no turn index
 				ContentJSON:             contentStr,
-				IsNegativeConstraint:    eventType == "negative_constraint",
-				IsArchitecturalDecision: eventType == "architectural_decision",
-				IsFailureMode:           eventType == "failure_mode",
+				IsNegativeConstraint:    eventType == MemoryEventNegativeConstraint,
+				IsArchitecturalDecision: eventType == MemoryEventArchitecturalDecision,
+				IsFailureMode:           eventType == MemoryEventFailureMode,
 			}
 
 			// Maximum salience for explicit saves

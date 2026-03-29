@@ -8,6 +8,7 @@
 - If the new failure is the same underlying lesson as an existing entry, update that entry with stronger evidence, deeper analysis, or a better prevention rule instead of appending a near-duplicate.
 - Append a new entry only when the failure represents a genuinely new underlying lesson.
 - If the root cause class is not `HALLUCINATION`, persist the prevention rule with `save_memory` as an `architectural_decision`.
+- Before you trust the recovery, persist a focused `improvement_eval` with the exact probe that should catch the same mistake early next time.
 - If the root cause class is `CONTEXT_GAP`, the permanent fix must also change retrieval or required-read behavior.
 - A mistake is not resolved when you understand it. It is resolved only after the structural prevention exists in both `MISTAKES.md` and durable memory.
 
@@ -22,9 +23,11 @@
   4. Decide merge vs append.
   5. Write or strengthen the entry.
   6. Persist the prevention rule with `save_memory` when allowed by the taxonomy.
-  7. Run a narrow validation probe that would have caught the mistake earlier.
-  8. If the probe exposes a weak or incomplete rule, revise the same entry and strengthen the rule instead of creating another one.
-  9. Resume the original task only after the lesson survived validation.
+  7. Persist a focused `improvement_eval` with the task shape, failure signature, probe, success criteria, and prevention rule before rerunning validation.
+  8. Run a narrow validation probe that would have caught the mistake earlier.
+  9. If the probe passes and you used a reusable tactic, persist it as a `strategy_pattern`.
+  10. If the probe exposes a weak or incomplete rule, revise the same entry and strengthen the rule instead of creating another one.
+  11. Resume the original task only after the lesson survived validation.
 
 ## Validation Standard
 - Prefer the smallest targeted validation that directly challenges the new prevention rule.

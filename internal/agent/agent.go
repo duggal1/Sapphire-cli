@@ -1524,6 +1524,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			mistakePersistenceFollowUp = &followUp
 		}
 	}
+	var mistakeEvalFollowUp *SessionAgentCall
+	if mode == planmode.DefaultSessionMode && call.MistakeSelfHealTry > 0 {
+		if evidence, ok := runtimeControl.mistakeSelfHealing.ConsumeEvalReminder(); ok {
+			followUp := buildImprovementEvalCall(call, evidence)
+			mistakeEvalFollowUp = &followUp
+		}
+	}
 
 	// Release active request before processing queued messages.
 	a.activeRequests.Del(call.SessionID)
@@ -1537,6 +1544,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	}
 	if mistakePersistenceFollowUp != nil {
 		return a.Run(ctx, *mistakePersistenceFollowUp)
+	}
+	if mistakeEvalFollowUp != nil {
+		return a.Run(ctx, *mistakeEvalFollowUp)
 	}
 	if mistakeSelfHealFollowUp != nil {
 		return a.Run(ctx, *mistakeSelfHealFollowUp)

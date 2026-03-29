@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
@@ -28,8 +29,11 @@ type mistakeSelfHealingMonitor struct {
 	requested                   bool
 	selfHealingMode             bool
 	saveMemoryCalled            bool
+	improvementEvalSaved        bool
 	persistenceReminderEvidence string
 	persistenceReminderPending  bool
+	evalReminderEvidence        string
+	evalReminderPending         bool
 }
 
 func newMistakeSelfHealingMonitor(selfHealingMode bool) *mistakeSelfHealingMonitor {
@@ -80,18 +84,31 @@ func (m *mistakeSelfHealingMonitor) Consume() (mistakeSelfHealingTrigger, bool) 
 }
 
 func (m *mistakeSelfHealingMonitor) ObserveSelfHealingProgress(toolName, rawInput string) {
-	if m == nil || !m.selfHealingMode || m.persistenceReminderPending {
+	if m == nil || !m.selfHealingMode || m.persistenceReminderPending || m.evalReminderPending {
 		return
 	}
 	if strings.TrimSpace(toolName) == persistmemory.SaveToolName {
-		m.saveMemoryCalled = true
+		switch parseSaveMemoryEventType(rawInput) {
+		case persistmemory.MemoryEventArchitecturalDecision:
+			m.saveMemoryCalled = true
+		case persistmemory.MemoryEventImprovementEval:
+			m.improvementEvalSaved = true
+		}
 		return
 	}
-	if m.saveMemoryCalled || isAllowedBeforeSaveMemory(toolName, rawInput) {
+	if !m.saveMemoryCalled {
+		if isAllowedBeforeSaveMemory(toolName, rawInput) {
+			return
+		}
+		m.persistenceReminderEvidence = summarizeSelfHealingPhaseViolation(toolName, rawInput)
+		m.persistenceReminderPending = true
 		return
 	}
-	m.persistenceReminderEvidence = summarizeSelfHealingPhaseViolation(toolName, rawInput)
-	m.persistenceReminderPending = true
+	if !m.improvementEvalSaved && isValidationToolCall(toolName, rawInput) {
+		m.evalReminderEvidence = summarizeValidationBeforeEval(toolName, rawInput)
+		m.evalReminderPending = true
+		return
+	}
 }
 
 func (m *mistakeSelfHealingMonitor) ConsumePersistenceReminder() (string, bool) {
@@ -100,6 +117,15 @@ func (m *mistakeSelfHealingMonitor) ConsumePersistenceReminder() (string, bool) 
 	}
 	evidence := m.persistenceReminderEvidence
 	m.persistenceReminderPending = false
+	return evidence, true
+}
+
+func (m *mistakeSelfHealingMonitor) ConsumeEvalReminder() (string, bool) {
+	if m == nil || !m.evalReminderPending {
+		return "", false
+	}
+	evidence := m.evalReminderEvidence
+	m.evalReminderPending = false
 	return evidence, true
 }
 
@@ -163,16 +189,71 @@ func isAllowedBeforeSaveMemory(toolName, rawInput string) bool {
 	case persistmemory.SaveToolName:
 		return true
 	case tools.BashToolName:
-		command := strings.ToLower(strings.TrimSpace(parseBashCommand(rawInput)))
-		if command == "" {
-			return false
-		}
-		return strings.Contains(command, ".sapphire/mistake.md") ||
-			strings.Contains(command, "mistakes.md")
+		return commandTouchesMistakeProtocol(parseBashCommand(rawInput))
 	case tools.ViewToolName, tools.SingleViewToolName, tools.AgenticViewToolName:
-		inputLower := strings.ToLower(strings.TrimSpace(rawInput))
-		return strings.Contains(inputLower, ".sapphire/mistake.md") ||
-			strings.Contains(inputLower, "mistakes.md")
+		path := parseToolFilePath(rawInput)
+		return isMistakeProtocolPath(path) || commandTouchesMistakeProtocol(rawInput)
+	case tools.EditToolName, tools.SingleEditToolName, tools.AgenticEditToolName, tools.WriteToolName:
+		return isMistakeProtocolPath(parseToolFilePath(rawInput))
+	default:
+		return false
+	}
+}
+
+func parseSaveMemoryEventType(rawInput string) string {
+	var params persistmemory.SaveParams
+	if err := json.Unmarshal([]byte(rawInput), &params); err == nil {
+		return strings.TrimSpace(params.EventType)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rawInput), &payload); err == nil {
+		if eventType, ok := payload["event_type"].(string); ok {
+			return strings.TrimSpace(eventType)
+		}
+	}
+	return ""
+}
+
+func parseToolFilePath(rawInput string) string {
+	if strings.TrimSpace(rawInput) == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rawInput), &payload); err == nil {
+		for _, key := range []string{"file_path", "path", "file", "filename"} {
+			if value, ok := payload[key].(string); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func isMistakeProtocolPath(path string) bool {
+	path = filepath.ToSlash(strings.ToLower(strings.TrimSpace(path)))
+	path = strings.TrimPrefix(path, "./")
+	switch path {
+	case "mistakes.md", ".sapphire/mistake.md":
+		return true
+	default:
+		return strings.HasSuffix(path, "/mistakes.md") ||
+			strings.Contains(path, "/.sapphire/mistake.md")
+	}
+}
+
+func commandTouchesMistakeProtocol(raw string) bool {
+	command := strings.ToLower(strings.TrimSpace(raw))
+	if command == "" {
+		return false
+	}
+	return strings.Contains(command, ".sapphire/mistake.md") ||
+		strings.Contains(command, "mistakes.md")
+}
+
+func isValidationToolCall(toolName, rawInput string) bool {
+	switch strings.TrimSpace(toolName) {
+	case tools.BashToolName:
+		return isLikelyValidationCommand(strings.ToLower(strings.TrimSpace(parseBashCommand(rawInput))))
 	default:
 		return false
 	}
@@ -188,6 +269,15 @@ func summarizeSelfHealingPhaseViolation(toolName, rawInput string) string {
 		return fmt.Sprintf("%s: attempted task work before save_memory (%s)", toolName, strings.TrimSpace(rawInput))
 	}
 	return fmt.Sprintf("%s: attempted task work before save_memory", toolName)
+}
+
+func summarizeValidationBeforeEval(toolName, rawInput string) string {
+	if strings.TrimSpace(toolName) == tools.BashToolName {
+		if command := strings.TrimSpace(parseBashCommand(rawInput)); command != "" {
+			return fmt.Sprintf("%s: attempted validation `%s` before save_memory improvement_eval", toolName, command)
+		}
+	}
+	return fmt.Sprintf("%s: attempted validation before save_memory improvement_eval", toolName)
 }
 
 func isLikelyMutatingBashCommand(command string) bool {
@@ -369,9 +459,11 @@ Required actions:
 3. Decide whether this is a new lesson or a stronger instance of an existing lesson.
 4. Write or strengthen the canonical MISTAKES.md entry yourself.
 5. If the root cause class is not HALLUCINATION, call save_memory with event_type=\"architectural_decision\" before any more task-file edits or validation.
-6. Only after save_memory succeeds may you run 1-3 narrow validation probes that directly challenge the prevention rule.
-7. If the rule is weak, revise the same entry instead of appending a near-duplicate.
-8. After the lesson survives validation, resume the original task already in session history and finish it.
+6. Before you run validation, call save_memory with event_type=\"improvement_eval\" capturing task_shape, failure_signature, probe, success_criteria, prevention_rule, and concise evidence.
+7. Only after both save_memory writes succeed may you run 1-3 narrow validation probes that directly challenge the prevention rule.
+8. If the probe passes and you discovered a reusable tactic, save_memory a strategy_pattern with task_shape, strategy, trigger_signals, validation_probe, and why_it_worked.
+9. If the rule is weak, revise the same entry instead of appending a near-duplicate.
+10. After the lesson survives validation, resume the original task already in session history and finish it.
 
 Current failure evidence:
 %s
@@ -394,5 +486,23 @@ Phase violation:
 - %s
 
 Do not do more task work until save_memory has completed.`, strings.TrimSpace(evidence)))
+	return followUp
+}
+
+func buildImprovementEvalCall(call SessionAgentCall, evidence string) SessionAgentCall {
+	followUp := call
+	followUp.SkipUserMessage = true
+	followUp.Prompt = strings.TrimSpace(fmt.Sprintf(`Stop. You attempted to validate the recovery before persisting a reusable improvement eval.
+
+Before you rerun validation:
+1. Call save_memory with event_type="improvement_eval" and include task_shape, failure_signature, probe, success_criteria, prevention_rule, and concise evidence.
+2. After that save succeeds, rerun the narrow validation probe that should prove the lesson holds.
+3. If the probe passes and you used a reusable tactic, call save_memory again with event_type="strategy_pattern" capturing task_shape, strategy, trigger_signals, validation_probe, and why_it_worked.
+4. Then continue the self-healing loop and resume the original task.
+
+Phase violation:
+- %s
+
+Do not rerun validation until the improvement_eval has been persisted.`, strings.TrimSpace(evidence)))
 	return followUp
 }

@@ -34,6 +34,9 @@ var mcpPolicyPromptSection []byte
 //go:embed templates/mistake_intelligence.md
 var mistakeIntelligencePromptSection []byte
 
+//go:embed templates/recursive_self_improvement.md
+var recursiveSelfImprovementPromptSection []byte
+
 //go:embed templates/modes/plan.md
 var planModePromptSection []byte
 
@@ -160,6 +163,7 @@ func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prom
 		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
 		mistakeIntelligencePromptSection,
+		recursiveSelfImprovementPromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
 		sections = append(sections, modeSection)
@@ -191,6 +195,7 @@ func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*promp
 		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
 		mistakeIntelligencePromptSection,
+		recursiveSelfImprovementPromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
 		sections = append(sections, modeSection)

@@ -1587,7 +1587,7 @@ func classifyProviderTransportError(err error, linkStyle lipgloss.Style) (string
 		url := "https://openrouter.ai/settings/privacy"
 		link := linkStyle.Hyperlink(url, "id=openrouter-privacy").Render(url)
 		return "OpenRouter privacy settings blocked this model",
-			"No OpenRouter provider endpoint currently matches your account privacy and guardrail settings for this model. Review your provider/privacy policy here: " + link,
+			"No OpenRouter provider endpoint currently matches your account privacy and guardrail settings for this model. Review your provider/privacy policy here: " + link + ". If you want a lower-friction fallback, switch to the non-free `minimax/minimax-m2.5` or `minimax/minimax-m2.5:nitro` sibling.",
 			true
 	}
 

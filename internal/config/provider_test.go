@@ -70,9 +70,24 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	require.Contains(t, modelIDs, "nousresearch/hermes-3-llama-3.1-405b:free")
 	require.Contains(t, modelIDs, "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5:free")
+	require.Contains(t, modelIDs, "minimax/minimax-m2.5")
+	require.Contains(t, modelIDs, "minimax/minimax-m2.5:nitro")
 	require.Contains(t, modelIDs, "arcee-ai/trinity-mini:free")
 	require.Contains(t, modelIDs, "arcee-ai/trinity-large-preview:free")
 	require.Contains(t, modelIDs, "openai/gpt-oss-120b:free")
+
+	var miniMaxFree *catwalk.Model
+	for i := range openRouter.Models {
+		if openRouter.Models[i].ID == "minimax/minimax-m2.5:free" {
+			miniMaxFree = &openRouter.Models[i]
+			break
+		}
+	}
+	require.NotNil(t, miniMaxFree)
+	require.NotNil(t, miniMaxFree.Options.ProviderOptions)
+	providerOpt, ok := miniMaxFree.Options.ProviderOptions["provider"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "deny", providerOpt["data_collection"])
 }
 
 func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t *testing.T) {
@@ -94,7 +109,9 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 		modelIDs = append(modelIDs, model.ID)
 	}
 
-	require.Len(t, providers[0].Models, 9)
+	require.Len(t, providers[0].Models, 11)
+	require.Contains(t, modelIDs, "minimax/minimax-m2.5")
+	require.Contains(t, modelIDs, "minimax/minimax-m2.5:nitro")
 	require.Contains(t, modelIDs, "nvidia/nemotron-3-nano-30b-a3b:free")
 	require.Contains(t, modelIDs, "nvidia/nemotron-3-super-120b-a12b:free")
 	require.Contains(t, modelIDs, "cognitivecomputations/dolphin-mistral-24b-venice-edition:free")

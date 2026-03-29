@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -621,6 +622,93 @@ func (s *System) RefreshMemory(ctx context.Context, sessionID string, force bool
 	return s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, force)
 }
 
+func (s *System) writeSavedRecord(ctx context.Context, sessionID string, rec MemoryRecord) error {
+	if s == nil {
+		return nil
+	}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		return err
+	}
+	if rec.IsArchitecturalDecision {
+		if err := s.persistArchitecturalDecisionToConstitution(ctx, rec.ContentJSON); err != nil {
+			return err
+		}
+	}
+	s.RecordSavedMemory(ctx, sessionID, rec.EventType, rec.ContentJSON)
+	return nil
+}
+
+func (s *System) persistArchitecturalDecisionToConstitution(ctx context.Context, contentJSON string) error {
+	if s == nil || s.Store == nil {
+		return nil
+	}
+	decision := extractArchitecturalDecisionText(contentJSON)
+	if decision == "" {
+		return nil
+	}
+	existing, err := s.Store.GetConstitution(ctx)
+	if err != nil {
+		return err
+	}
+	merged := appendConstitutionDecision(existing, decision)
+	if merged == existing {
+		return nil
+	}
+	return s.Store.UpsertConstitution(ctx, merged)
+}
+
+func extractArchitecturalDecisionText(contentJSON string) string {
+	contentJSON = strings.TrimSpace(contentJSON)
+	if contentJSON == "" {
+		return ""
+	}
+	contentJSON = normalizeSavedMemoryContent(json.RawMessage(contentJSON))
+	var payload any
+	if err := json.Unmarshal([]byte(contentJSON), &payload); err != nil {
+		return contentJSON
+	}
+	return extractArchitecturalDecisionValue(payload)
+}
+
+func extractArchitecturalDecisionValue(payload any) string {
+	switch value := payload.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case map[string]any:
+		for _, key := range []string{"decision", "prevention_rule", "rule", "value"} {
+			if text := extractArchitecturalDecisionValue(value[key]); text != "" {
+				return text
+			}
+		}
+	case []any:
+		buf := make([]byte, 0, len(value))
+		for _, item := range value {
+			number, ok := item.(float64)
+			if !ok || number < 0 || number > 255 {
+				return ""
+			}
+			buf = append(buf, byte(number))
+		}
+		return extractArchitecturalDecisionText(string(buf))
+	}
+	return ""
+}
+
+func normalizeSavedMemoryContent(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return `{"value":""}`
+	}
+	var decoded []byte
+	if err := json.Unmarshal(trimmed, &decoded); err == nil && len(decoded) > 0 {
+		trimmed = bytes.TrimSpace(decoded)
+	}
+	if json.Valid(trimmed) {
+		return string(trimmed)
+	}
+	return fmt.Sprintf(`{"value": %q}`, strings.TrimSpace(string(trimmed)))
+}
+
 func (s *System) saveArchitecturalDecisionFromMistake(ctx context.Context, sessionID string, decision ArchitecturalDecision) error {
 	if s == nil {
 		return nil
@@ -629,7 +717,7 @@ func (s *System) saveArchitecturalDecisionFromMistake(ctx context.Context, sessi
 	if err != nil {
 		return err
 	}
-	if err := s.WriteRecord(ctx, MemoryRecord{
+	return s.writeSavedRecord(ctx, sessionID, MemoryRecord{
 		SessionID:               strings.TrimSpace(sessionID),
 		EventType:               "architectural_decision",
 		Timestamp:               timeNowUnix(),
@@ -637,11 +725,7 @@ func (s *System) saveArchitecturalDecisionFromMistake(ctx context.Context, sessi
 		Salience:                1.0,
 		ContentJSON:             string(payload),
 		IsArchitecturalDecision: true,
-	}); err != nil {
-		return err
-	}
-	s.RecordSavedMemory(ctx, sessionID, "architectural_decision", string(payload))
-	return nil
+	})
 }
 
 func (s *System) shouldRefreshAfterRepoScan(sessionID, toolName string) bool {

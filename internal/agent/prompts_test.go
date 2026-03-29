@@ -51,13 +51,19 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "If there is even slight uncertainty about which skill applies, call `search_skills` first") {
 		t.Fatalf("expected strict skill policy in coder prompt")
 	}
+	if !strings.Contains(out, "Skills are local-first.") {
+		t.Fatalf("expected local-first skill routing in coder prompt")
+	}
+	if !strings.Contains(out, "If local search returns no result or only weak/incomplete fits, call `install_skill` immediately") {
+		t.Fatalf("expected install_skill to be fallback-only in coder prompt")
+	}
 	if !strings.Contains(out, "`install_mcp`") || !strings.Contains(out, "Verify before claim.") {
 		t.Fatalf("expected MCP policy module in coder prompt")
 	}
 	if !strings.Contains(out, "`search_skills`") {
 		t.Fatalf("expected search_skills guidance in coder prompt")
 	}
-	if !strings.Contains(out, "Built-in local skills are the first stop.") || !strings.Contains(out, "Be autonomous: do not wait for permission to search, install, and load relevant extended skills") {
+	if !strings.Contains(out, "Local skills come first.") || !strings.Contains(out, "Be autonomous: do not wait for permission to search, install, and load relevant extended skills") {
 		t.Fatalf("expected extended skills policy in coder prompt")
 	}
 	if !strings.Contains(out, "Installed extended skills become local skills under `<data-dir>/skills`") {
@@ -192,6 +198,8 @@ func TestPromptsRequireAutonomousCurrentIntegrationDiscovery(t *testing.T) {
 				"assume model memory may be stale and verify current reality first",
 				"Do not ask the user to paste public docs when you can retrieve current docs",
 				"Use this discovery ladder for non-trivial integrations unless the user explicitly narrows scope",
+				"Search local bundled and already-installed skills with a concise query.",
+				"Install and load extended skills only if local skill search is empty or insufficient.",
 				"If MCP is missing or insufficient, use `google_search` and `web_search`, and include URL context",
 				"If the local inventory and live official registry still do not provide a usable MCP, do not stall.",
 			} {

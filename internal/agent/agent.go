@@ -107,24 +107,25 @@ var pythonCapabilitiesPrompt []byte
 var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 
 type SessionAgentCall struct {
-	SessionID        string
-	Prompt           string
-	ResumePointID    string
-	TodoReconcileTry int
-	StructuredTry    int
-	SkillContext     string
-	ActiveSkills     []string
-	ActiveTools      []string
-	ProviderOptions  fantasy.ProviderOptions
-	Attachments      []message.Attachment
-	PrecreatedUser   *message.Message
-	SkipUserMessage  bool
-	MaxOutputTokens  int64
-	Temperature      *float64
-	TopP             *float64
-	TopK             *int64
-	FrequencyPenalty *float64
-	PresencePenalty  *float64
+	SessionID          string
+	Prompt             string
+	ResumePointID      string
+	TodoReconcileTry   int
+	StructuredTry      int
+	MistakeSelfHealTry int
+	SkillContext       string
+	ActiveSkills       []string
+	ActiveTools        []string
+	ProviderOptions    fantasy.ProviderOptions
+	Attachments        []message.Attachment
+	PrecreatedUser     *message.Message
+	SkipUserMessage    bool
+	MaxOutputTokens    int64
+	Temperature        *float64
+	TopP               *float64
+	TopK               *int64
+	FrequencyPenalty   *float64
+	PresencePenalty    *float64
 }
 
 func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message, resumePointID string) SessionAgentCall {
@@ -802,7 +803,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionModeContextKey, mode)
-	runtimeControl := newRuntimeControl()
+	runtimeControl := newRuntimeControl(call.MistakeSelfHealTry > 0)
 	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
 
 	genCtx, cancel := context.WithCancel(ctx)
@@ -1086,6 +1087,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 			toolResult := a.convertToToolResult(result)
 			persistedToolResult := compactToolResultForPersistence(result.ToolName, toolResult)
+			var rawInput string
+			for _, tc := range currentAssistant.ToolCalls() {
+				if tc.ID == result.ToolCallID {
+					rawInput = tc.Input
+					break
+				}
+			}
+			runtimeControl.mistakeSelfHealing.ObserveSelfHealingProgress(result.ToolName, rawInput)
+			runtimeControl.mistakeSelfHealing.Observe(result.ToolName, rawInput, toolResult)
 
 			// Track Python tool failures - quit after 3 consecutive failures
 			if result.ToolName == tools.PythonToolName {
@@ -1107,13 +1117,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			if a.pmem != nil {
-				var rawInput string
-				for _, tc := range currentAssistant.ToolCalls() {
-					if tc.ID == result.ToolCallID {
-						rawInput = tc.Input
-						break
-					}
-				}
 				outStr := toolResult.Content
 				if persistedToolResult.Content != "" {
 					outStr = persistedToolResult.Content
@@ -1292,6 +1295,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			},
 			func(steps []fantasy.StepResult) bool {
 				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+			},
+			func(steps []fantasy.StepResult) bool {
+				return mode == planmode.DefaultSessionMode &&
+					call.MistakeSelfHealTry < maxMistakeSelfHealingAttempts &&
+					runtimeControl.mistakeSelfHealing != nil &&
+					runtimeControl.mistakeSelfHealing.requested
 			},
 		},
 	}
@@ -1501,6 +1510,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		a.messageQueue.Set(call.SessionID, existing)
 	}
 
+	var mistakeSelfHealFollowUp *SessionAgentCall
+	if mode == planmode.DefaultSessionMode && call.MistakeSelfHealTry < maxMistakeSelfHealingAttempts {
+		if trigger, ok := runtimeControl.mistakeSelfHealing.Consume(); ok {
+			followUp := buildMistakeSelfHealingCall(call, trigger)
+			mistakeSelfHealFollowUp = &followUp
+		}
+	}
+	var mistakePersistenceFollowUp *SessionAgentCall
+	if mode == planmode.DefaultSessionMode && call.MistakeSelfHealTry > 0 {
+		if evidence, ok := runtimeControl.mistakeSelfHealing.ConsumePersistenceReminder(); ok {
+			followUp := buildMistakePersistenceCall(call, evidence)
+			mistakePersistenceFollowUp = &followUp
+		}
+	}
+
 	// Release active request before processing queued messages.
 	a.activeRequests.Del(call.SessionID)
 	cancel()
@@ -1510,6 +1534,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			resultText = result.Response.Content.Text()
 		}
 		a.checkpointTurn(ctx, call.SessionID, call.Prompt, resultText, "completed", false)
+	}
+	if mistakePersistenceFollowUp != nil {
+		return a.Run(ctx, *mistakePersistenceFollowUp)
+	}
+	if mistakeSelfHealFollowUp != nil {
+		return a.Run(ctx, *mistakeSelfHealFollowUp)
 	}
 	if !responseHasRequiredStructuredBlock(mode, currentAssistant, result) {
 		if mode != planmode.DefaultSessionMode && call.StructuredTry < maxStructuredBlockRepairAttempts {

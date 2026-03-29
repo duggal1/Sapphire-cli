@@ -16,17 +16,19 @@ const (
 )
 
 type runtimeControl struct {
-	mu              sync.Mutex
-	phase           runtimePhase
-	toolCallsInStep int
-	lastTool        string
-	lastChange      time.Time
+	mu                 sync.Mutex
+	phase              runtimePhase
+	toolCallsInStep    int
+	lastTool           string
+	lastChange         time.Time
+	mistakeSelfHealing *mistakeSelfHealingMonitor
 }
 
-func newRuntimeControl() *runtimeControl {
+func newRuntimeControl(selfHealingMode bool) *runtimeControl {
 	return &runtimeControl{
-		phase:      runtimePhaseObserve,
-		lastChange: time.Now(),
+		phase:              runtimePhaseObserve,
+		lastChange:         time.Now(),
+		mistakeSelfHealing: newMistakeSelfHealingMonitor(selfHealingMode),
 	}
 }
 

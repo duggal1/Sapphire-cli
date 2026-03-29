@@ -39,7 +39,8 @@ Use strict backend workflows.`), 0o644))
 	require.NoError(t, err)
 	searchResp := runAgentTool(t, searchTool, "search_skills", SearchSkillsParams{Query: "backend api server", Limit: 5})
 	require.Contains(t, searchResp.Content, "backend")
-	require.Contains(t, searchResp.Content, "Matching Skills")
+	require.Contains(t, searchResp.Content, "Matching Local Skills")
+	require.Contains(t, searchResp.Content, "Load from here before considering `install_skill`")
 
 	loadTool, err := coord.loadSkillTool(t.Context())
 	require.NoError(t, err)
@@ -65,7 +66,8 @@ func TestSkillToolsRediscoverNewLocalSkills(t *testing.T) {
 	require.NoError(t, err)
 	query := "zzztotallyuniquesapphireextendedskill"
 	firstSearch := runAgentTool(t, searchTool, "search_skills", SearchSkillsParams{Query: query, Limit: 5})
-	require.Contains(t, firstSearch.Content, "No skills matched query")
+	require.Contains(t, firstSearch.Content, "No local skills matched query")
+	require.Contains(t, firstSearch.Content, "call `install_skill(query:")
 
 	skillDir := filepath.Join(skillsRoot, query)
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))

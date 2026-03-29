@@ -31,6 +31,69 @@ func TestMemoryToolsHandleUninitializedSystem(t *testing.T) {
 	require.Contains(t, healthResp.Content, "Memory system not initialized")
 }
 
+func TestSaveToolArchitecturalDecisionPersistsConstitution(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	system, err := NewSystem(t.Context(), "session-1", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: repoRoot,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, system)
+	t.Cleanup(system.Close)
+
+	saveResp := runMemoryTool(t, NewSaveTool(system, func(context.Context) string { return "session-1" }), SaveToolName, SaveParams{
+		EventType: "architectural_decision",
+		Content:   json.RawMessage(`{"decision":"Always read the full target file before editing it."}`),
+	})
+	require.Contains(t, saveResp.Content, "Memory saved: architectural_decision")
+
+	constitution, err := system.Store.GetConstitution(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, constitution, "Always read the full target file before editing it.")
+
+	count, err := system.Store.CountRecords(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, count)
+}
+
+func TestSaveToolNormalizesByteArrayArchitecturalDecisionContent(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	system, err := NewSystem(t.Context(), "session-2", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: repoRoot,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, system)
+	t.Cleanup(system.Close)
+
+	raw := []byte(`{"decision":"Normalize byte-array tool payloads before persisting them."}`)
+	numberList := make([]int, 0, len(raw))
+	for _, b := range raw {
+		numberList = append(numberList, int(b))
+	}
+	encoded, err := json.Marshal(numberList)
+	require.NoError(t, err)
+
+	saveResp := runMemoryTool(t, NewSaveTool(system, func(context.Context) string { return "session-2" }), SaveToolName, SaveParams{
+		EventType: "architectural_decision",
+		Content:   json.RawMessage(encoded),
+	})
+	require.Contains(t, saveResp.Content, "Memory saved: architectural_decision")
+
+	constitution, err := system.Store.GetConstitution(context.Background())
+	require.NoError(t, err)
+	require.Contains(t, constitution, "Normalize byte-array tool payloads before persisting them.")
+
+	records, err := system.Store.QueryRecords(context.Background(), "architectural", 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, records)
+	require.Contains(t, records[0].ContentJSON, `"decision":"Normalize byte-array tool payloads before persisting them."`)
+}
+
 func runMemoryTool[T any](t *testing.T, tool fantasy.AgentTool, name string, params T) fantasy.ToolResponse {
 	t.Helper()
 

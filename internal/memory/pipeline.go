@@ -163,7 +163,6 @@ func (p *Pipeline) ExtractSync(ctx context.Context, sessionID string, turnIndex 
 		})
 	}
 	p.embedRecords(ctx, embedJobs)
-	p.persistMistakes(ctx, sessionID, turnIndex, rawSource, result)
 	return nil
 }
 
@@ -327,123 +326,17 @@ func (p *Pipeline) processBatch(ctx context.Context, events []ExtractionEvent) {
 	if len(result.ArchitecturalDecisions) > 0 {
 		p.maybeUpdateConstitution(ctx, result)
 	}
-	p.persistMistakes(ctx, sessionID, turnIndex, combined, result)
 }
 
 func (p *Pipeline) maybeUpdateConstitution(ctx context.Context, result *ExtractionResult) {
 	existing, _ := p.store.GetConstitution(ctx)
-	if existing != "" {
-		// Core constitution is immutable once established.
+	content := mergeCoreConstitution(existing, result.ArchitecturalDecisions)
+	if content == existing || content == "" {
 		return
-	}
-
-	var decisions []string
-	for _, ad := range result.ArchitecturalDecisions {
-		decisions = append(decisions, "- "+ad.Decision+": "+ad.Rationale)
-	}
-
-	content := "# Project Architecture Decisions (Core)\n\n"
-	for _, d := range decisions {
-		content += d + "\n"
-	}
-	if len(content) > 1024 {
-		content = content[:1024]
 	}
 	if err := p.store.UpsertConstitution(ctx, content); err != nil {
 		slog.Debug("memory: failed to update constitution", "error", err)
 	}
-}
-
-func (p *Pipeline) persistMistakes(ctx context.Context, sessionID string, turnIndex int, rawSource string, result *ExtractionResult) {
-	if p == nil || result == nil || len(result.FailuresEncountered) == 0 || strings.TrimSpace(p.projectRoot) == "" {
-		return
-	}
-	if err := EnsureMistakeProtocol(p.projectRoot); err != nil {
-		slog.Debug("memory: failed to ensure mistake protocol", "error", err)
-	}
-	currentStep := strings.TrimSpace(result.TaskProgress.CurrentStep)
-	for _, failure := range result.FailuresEncountered {
-		if !failure.ShouldPersistToMistakes() {
-			continue
-		}
-		class := failure.NormalizedRootCauseClass()
-		if class == "" {
-			class = MistakeRootCauseWrongAssumption
-		}
-		rule := strings.TrimSpace(failure.PreventionRuleText())
-		resolved := false
-		statusNote := ""
-		if class != MistakeRootCauseHallucination && rule != "" && p.saveArchitecturalDecision != nil {
-			decision := ArchitecturalDecision{
-				Decision:  rule,
-				Rationale: firstNonEmptyStringValue(strings.TrimSpace(failure.DeepAnalysis), strings.TrimSpace(failure.RootCause), strings.TrimSpace(failure.WhatFailed)),
-			}
-			if err := p.saveArchitecturalDecision(ctx, sessionID, decision); err != nil {
-				statusNote = "Prevention rule still needs durable persistence."
-				slog.Debug("memory: failed to persist mistake prevention rule", "error", err, "session_id", sessionID)
-			} else {
-				resolved = true
-				statusNote = "Prevention rule persisted to durable memory."
-			}
-		} else if class == MistakeRootCauseHallucination {
-			statusNote = "Logged for reference only. No structural prevention rule was persisted."
-		} else {
-			statusNote = "Prevention rule still needs durable persistence."
-		}
-		if _, _, err := AppendMistake(p.projectRoot, MistakeLogInput{
-			Fingerprint:    BuildFailureFingerprint(sessionID, turnIndex, failure),
-			Date:           time.Now().UTC(),
-			Task:           firstNonEmptyStringValue(currentStep, strings.TrimSpace(failure.WhatFailed), "Unspecified task"),
-			TaskDomain:     inferFailureTaskDomain(failure, currentStep),
-			Agent:          "main",
-			Model:          "unknown",
-			Worktree:       "shared",
-			WhatHappened:   strings.TrimSpace(failure.WhatFailed),
-			RootCauseClass: class,
-			RootCause:      strings.TrimSpace(failure.RootCause),
-			DeepAnalysis:   firstNonEmptyStringValue(strings.TrimSpace(failure.DeepAnalysis), truncate(rawSource, 800)),
-			WhyThisClass:   firstNonEmptyStringValue(strings.TrimSpace(failure.WhyThisClass), "Derived from the extracted failure evidence and taxonomy match."),
-			Severity:       failure.NormalizedSeverity(),
-			IsIgnorable:    failure.IsIgnorable || class == MistakeRootCauseHallucination,
-			SolutionSteps:  splitFailureResolutionSteps(failure.Resolution),
-			PreventionRule: rule,
-			StatusNote:     statusNote,
-			Resolved:       resolved,
-		}); err != nil {
-			slog.Debug("memory: failed to append mistake register entry", "error", err, "session_id", sessionID)
-		}
-	}
-}
-
-func inferFailureTaskDomain(failure FailureEncountered, currentStep string) string {
-	if domain := strings.TrimSpace(failure.TaskDomain); domain != "" {
-		return domain
-	}
-	return firstNonEmptyStringValue(currentStep, "general")
-}
-
-func splitFailureResolutionSteps(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var steps []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(strings.TrimLeft(line, "-0123456789. "))
-		if line != "" {
-			steps = append(steps, line)
-		}
-	}
-	if len(steps) > 0 {
-		return steps
-	}
-	for _, part := range strings.Split(raw, ". ") {
-		part = strings.TrimSpace(strings.TrimSuffix(part, "."))
-		if part != "" {
-			steps = append(steps, part)
-		}
-	}
-	return steps
 }
 
 // BuildCheckpointJSON creates a checkpoint JSON from recent memory records.

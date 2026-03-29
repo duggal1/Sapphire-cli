@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,4 +73,61 @@ func TestAppendMistakeAndReadPreventionRules(t *testing.T) {
 	block := RenderPreventionRulesBlock(repoRoot, 10)
 	require.Contains(t, block, "### Prevention Rules From MISTAKES.md")
 	require.Contains(t, block, "RULE-001: Never edit auth-adjacent code without reading all downstream consumers first.")
+}
+
+func TestAppendMistakeEnsuresProtocolFile(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+
+	_, appended, err := AppendMistake(repoRoot, MistakeLogInput{
+		Fingerprint:    "failure:auto-protocol",
+		Date:           time.Date(2026, 3, 29, 14, 0, 0, 0, time.UTC),
+		Task:           "Bootstrap mistake logging",
+		TaskDomain:     "memory",
+		Agent:          "agent-1",
+		Model:          "gemini-test",
+		Worktree:       "shared",
+		WhatHappened:   "The protocol file was missing in a fresh repo.",
+		RootCauseClass: MistakeRootCauseWrongAssumption,
+		RootCause:      "The runtime assumed the protocol file already existed.",
+		Severity:       MistakeSeverityHigh,
+		SolutionSteps:  []string{"Materialize .sapphire/mistake.md before logging."},
+		PreventionRule: "Always create .sapphire/mistake.md before attempting autonomous mistake logging.",
+		Resolved:       true,
+	})
+	require.NoError(t, err)
+	require.True(t, appended)
+	require.FileExists(t, MistakeProtocolPath(repoRoot))
+}
+
+func TestAppendMistakeKeepsSingleAppendixBlock(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	for i := 0; i < 2; i++ {
+		_, appended, err := AppendMistake(repoRoot, MistakeLogInput{
+			Fingerprint:    "failure:appendix-" + string(rune('a'+i)),
+			Date:           time.Date(2026, 3, 29, 15+i, 0, 0, 0, time.UTC),
+			Task:           "Appendix stability",
+			TaskDomain:     "memory",
+			Agent:          "agent-1",
+			Model:          "gemini-test",
+			Worktree:       "shared",
+			WhatHappened:   "A non-trivial failure was logged.",
+			RootCauseClass: MistakeRootCauseWrongAssumption,
+			RootCause:      "The system appended a new mistake entry.",
+			Severity:       MistakeSeverityMedium,
+			SolutionSteps:  []string{"Keep the appendix block only once."},
+			PreventionRule: "Keep the appendix block at the end of MISTAKES.md exactly once.",
+			Resolved:       true,
+		})
+		require.NoError(t, err)
+		require.True(t, appended)
+	}
+
+	raw, err := os.ReadFile(MistakesPath(repoRoot))
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(raw), "## APPENDIX: ROOT CAUSE TAXONOMY"))
+	require.Equal(t, 1, strings.Count(string(raw), "## APPENDIX: RESOLUTION PROTOCOL"))
 }

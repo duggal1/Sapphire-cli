@@ -31,6 +31,9 @@ var codebaseIndexingPromptSection []byte
 //go:embed templates/mcp_policy.md
 var mcpPolicyPromptSection []byte
 
+//go:embed templates/mistake_intelligence.md
+var mistakeIntelligencePromptSection []byte
+
 //go:embed templates/modes/plan.md
 var planModePromptSection []byte
 
@@ -156,6 +159,7 @@ func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prom
 		extendedSkillsPromptSection,
 		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
+		mistakeIntelligencePromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
 		sections = append(sections, modeSection)
@@ -186,6 +190,7 @@ func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*promp
 		extendedSkillsPromptSection,
 		codebaseIndexingPromptSection,
 		mcpPolicyPromptSection,
+		mistakeIntelligencePromptSection,
 	}
 	if modeSection := modePromptSection(planmode.NormalizeMode(mode)); modeSection != nil {
 		sections = append(sections, modeSection)

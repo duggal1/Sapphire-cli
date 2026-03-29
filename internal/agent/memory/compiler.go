@@ -1382,13 +1382,20 @@ func dedupeRequiredReads(reads []BootRequiredRead) []BootRequiredRead {
 }
 
 func prependMistakesRequiredRead(repoRoot string, reads []BootRequiredRead) []BootRequiredRead {
-	if !persistmemory.MistakesFileExists(repoRoot) {
-		return reads
+	out := make([]BootRequiredRead, 0, len(reads)+2)
+	if protocolPath := persistmemory.MistakeProtocolPath(repoRoot); strings.TrimSpace(protocolPath) != "" {
+		out = append(out, BootRequiredRead{
+			Path:   filepath.ToSlash(filepath.Clean(strings.TrimPrefix(protocolPath, repoRoot+string(filepath.Separator)))),
+			Reason: "local mistake logging protocol",
+		})
 	}
-	out := append([]BootRequiredRead{{
-		Path:   persistmemory.MistakesFileName,
-		Reason: "failure intelligence register",
-	}}, reads...)
+	if persistmemory.MistakesFileExists(repoRoot) {
+		out = append(out, BootRequiredRead{
+			Path:   persistmemory.MistakesFileName,
+			Reason: "failure intelligence register",
+		})
+	}
+	out = append(out, reads...)
 	out = dedupeRequiredReads(out)
 	if len(out) > defaultRequiredReadLimit {
 		out = out[:defaultRequiredReadLimit]

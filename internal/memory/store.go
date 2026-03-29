@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -155,8 +156,13 @@ func projectScopeHash(root string) string {
 }
 
 // dedupHash returns a deterministic hash for event deduplication.
-func dedupHash(sessionID string, turnIndex int, eventType string) string {
+// Explicit saves use turn_index=0, so fold the content into the hash to avoid
+// collapsing multiple architectural decisions in the same session.
+func dedupHash(sessionID string, turnIndex int, eventType, contentJSON string) string {
 	raw := fmt.Sprintf("%s:%d:%s", sessionID, turnIndex, eventType)
+	if turnIndex <= 0 {
+		raw += ":" + strings.TrimSpace(contentJSON)
+	}
 	h := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(h[:16])
 }
@@ -181,7 +187,7 @@ func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) (int64, error
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	hash := dedupHash(rec.SessionID, rec.TurnIndex, rec.EventType)
+	hash := dedupHash(rec.SessionID, rec.TurnIndex, rec.EventType, rec.ContentJSON)
 
 	res, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO memory_records
@@ -198,8 +204,10 @@ func (s *Store) WriteRecord(ctx context.Context, rec MemoryRecord) (int64, error
 		return 0, err
 	}
 
-	if id, err := res.LastInsertId(); err == nil && id > 0 {
-		return id, nil
+	if rowsAffected, err := res.RowsAffected(); err == nil && rowsAffected > 0 {
+		if id, err := res.LastInsertId(); err == nil && id > 0 {
+			return id, nil
+		}
 	}
 
 	// If insert was ignored, fetch existing ID by dedup hash.

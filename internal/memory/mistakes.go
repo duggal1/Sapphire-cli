@@ -216,6 +216,9 @@ func AppendMistake(repoRoot string, input MistakeLogInput) (MistakeEntry, bool, 
 	if repoRoot == "" {
 		return MistakeEntry{}, false, nil
 	}
+	if err := EnsureMistakeProtocol(repoRoot); err != nil {
+		return MistakeEntry{}, false, err
+	}
 	mistakeFileMu.Lock()
 	defer mistakeFileMu.Unlock()
 
@@ -312,6 +315,9 @@ func parseMistakeRegister(scope, raw string) MistakeRegister {
 		bodyEnd := len(raw)
 		if i+1 < len(matches) && len(matches[i+1]) >= 2 {
 			bodyEnd = matches[i+1][0]
+		}
+		if appendixStart := strings.Index(raw[bodyStart:bodyEnd], "\n## APPENDIX:"); appendixStart >= 0 {
+			bodyEnd = bodyStart + appendixStart
 		}
 		section := raw[bodyStart:bodyEnd]
 		entry := MistakeEntry{

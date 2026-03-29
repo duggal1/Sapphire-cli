@@ -120,11 +120,12 @@ func (c *coordinator) searchSkillsTool(_ context.Context) (fantasy.AgentTool, er
 
 			matches := rankSkills(c.discoveredSkills, query, limit)
 			if len(matches) == 0 {
-				return fantasy.NewTextResponse(fmt.Sprintf("No skills matched query %q. Try broader terms or call list_skills for full inventory.", query)), nil
+				return fantasy.NewTextResponse(fmt.Sprintf("No local skills matched query %q. Local search covers bundled and already-installed skills. Next: call `install_skill(query: %q)` or refine the query.", query, query)), nil
 			}
 
 			var sb strings.Builder
-			sb.WriteString("## Matching Skills\n\n")
+			sb.WriteString("## Matching Local Skills\n\n")
+			sb.WriteString("These results are local skills already available in this environment. Load from here before considering `install_skill`.\n\n")
 			for _, match := range matches {
 				source := "System"
 				if !match.info.IsInternal {
@@ -143,7 +144,7 @@ func (c *coordinator) searchSkillsTool(_ context.Context) (fantasy.AgentTool, er
 				sb.WriteString(match.info.Location)
 				sb.WriteString("]\n")
 			}
-			sb.WriteString("\nNext: call `load_skill` with the exact skill name you want to activate.")
+			sb.WriteString("\nNext: call `load_skill` with the exact local skill name you want to activate. Use `install_skill` only if these local matches are insufficient.")
 			return fantasy.NewTextResponse(sb.String()), nil
 		},
 	), nil

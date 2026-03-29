@@ -122,7 +122,7 @@ These rules override everything else. Follow them strictly:
 - `refresh_memory`: force regeneration of the concise `memory.md` projection.
 - `memory_query`: search persistent long-term memory.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
-- `list_skills` / `search_skills` / `load_skill`: discover and activate local skills.
+- `list_skills` / `search_skills` / `load_skill`: discover and activate bundled or already-installed local skills first.
 - `list_available_mcps` / `install_mcp` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
 - `spawn_agent` / `resume_agent` / `send_input` / `wait` / `collect_result` / `close_agent`: real sub-agent lifecycle.
 - `agent`: delegate a bounded task to a worker agent.

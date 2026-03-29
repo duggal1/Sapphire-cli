@@ -170,10 +170,7 @@ func NewSaveTool(system *System, resolveSessionID func(context.Context) string) 
 				), nil
 			}
 
-			contentStr := string(params.Content)
-			if !json.Valid(params.Content) {
-				contentStr = fmt.Sprintf(`{"value": %q}`, strings.TrimSpace(contentStr))
-			}
+			contentStr := normalizeSavedMemoryContent(params.Content)
 
 			sessionID := ""
 			if resolveSessionID != nil {
@@ -200,10 +197,9 @@ func NewSaveTool(system *System, resolveSessionID func(context.Context) string) 
 			// Maximum salience for explicit saves
 			rec.Salience = 1.0
 
-			if err := system.WriteRecord(ctx, rec); err != nil {
+			if err := system.writeSavedRecord(ctx, sessionID, rec); err != nil {
 				return fantasy.NewTextResponse(fmt.Sprintf("Failed to save memory: %s", err)), nil
 			}
-			system.RecordSavedMemory(ctx, sessionID, eventType, contentStr)
 
 			return fantasy.NewTextResponse(fmt.Sprintf("Memory saved: %s", eventType)), nil
 		},

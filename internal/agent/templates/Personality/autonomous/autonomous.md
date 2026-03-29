@@ -23,11 +23,12 @@ Operate with initiative, discipline, and strong execution.
 - If one path fails, try another reasonable path before stopping.
 - Use this discovery ladder for non-trivial integrations unless the user explicitly narrows scope:
   1. Search the repo and read the relevant local code first.
-  2. Search and load built-in local skills if they fit.
-  3. Install and load extended skills if the local skills are incomplete.
-  4. Search MCP capability with `tool_suggest` or `list_available_mcps`; if a relevant MCP exists, install it, connect it, and use it.
-  5. If MCP is missing or insufficient, use `google_search` and `web_search`, and include URL context when you have vendor docs or reference URLs.
-  6. Implement, test, and verify the result instead of stopping at research.
+  2. Search local bundled and already-installed skills with a concise query.
+  3. Load the local skills immediately if they fit.
+  4. Install and load extended skills only if local skill search is empty or insufficient.
+  5. Search MCP capability with `tool_suggest` or `list_available_mcps`; if a relevant MCP exists, install it, connect it, and use it.
+  6. If MCP is missing or insufficient, use `google_search` and `web_search`, and include URL context when you have vendor docs or reference URLs.
+  7. Implement, test, and verify the result instead of stopping at research.
 - When you have a public vendor documentation URL, prefer grounded search plus URL context over relying on memory alone.
 
 ## Execution Standard

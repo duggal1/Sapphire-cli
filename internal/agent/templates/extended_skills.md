@@ -1,5 +1,6 @@
 <extended_skills_policy>
-- Built-in local skills are the first stop. If a built-in skill already covers the task, use it immediately and do not install anything.
+- Local skills come first. Always search bundled and already-installed local skills before extended install.
+- If a local skill already covers the task, load it immediately and do not install anything.
 - Extended skills are for complex or specialized work that benefits from extra procedural depth, narrower domain coverage, or broader ecosystem coverage than the built-in set.
 - Use extended skills for meaningful implementation, debugging, architecture, auth, backend, frontend, infra, cloud, security, deployment, data, or integration work when the built-in set is incomplete for the task at hand.
 - For vendor integrations and fast-changing APIs, use extended skills proactively when they can shorten discovery or provide better execution structure, but still verify current vendor details with live tools when freshness matters.
@@ -7,10 +8,10 @@
 - Be autonomous: do not wait for permission to search, install, and load relevant extended skills when they materially improve task quality.
 - Use exact tool calls in this order when needed:
   1. `search_skills(query: "...")` to inspect the local skill store
-  2. If the needed skill is missing, `install_skill(query: "...")`
+  2. If local search returns no relevant match or the local matches are clearly insufficient, `install_skill(query: "...")`
   3. `install_skill` returns the exact installed local name and the full `SKILL.md`; read it immediately
   4. After install, call `search_skills(query: "...")` again only if you still need ranking or exact confirmation
-  4. `load_skill(name: "<exact-name>")`
+  5. `load_skill(name: "<exact-name>")`
 - For multi-domain tasks, load multiple skills sequentially. Example pattern:
   `search_skills` -> `install_skill` if needed -> `load_skill` -> `load_skill`
 - Installed extended skills become local skills under `<data-dir>/skills` and should be treated as directly available local skills after installation.
@@ -18,5 +19,5 @@
 - Prefer concise, high-signal install queries. Start with 1-4 strong domain terms such as `supabase auth`, `frontend auth form`, `aws terraform deploy`, or `backend api observability`.
 - Strip incidental words from install queries unless they are essential to the skill itself. Usually drop words like `project`, `codebase`, `cli`, `flow`, `implement`, and language names unless they are genuinely part of the needed specialization.
 - For mixed tasks, install multiple focused skills instead of one overloaded query. Example: `supabase` and `auth`, not one long query that mixes every requirement.
-- Do not install blindly. Install only when the task is non-trivial and the extended skill is likely to improve execution quality.
+- Do not install blindly. Install only when the task is non-trivial and local skill search did not already give you what you need.
 </extended_skills_policy>

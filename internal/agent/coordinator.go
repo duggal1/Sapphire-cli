@@ -478,23 +478,9 @@ func NewCoordinator(
 	}
 	mainDir := c.mainWorkingDir()
 	apiKey := c.resolveGeminiAPIKey()
+	c.initPersistentMemory(ctx, cfg.Options.DataDirectory, mainDir, apiKey)
 	if !isNonInteractiveMode() {
 		c.longHorizon = longhorizon.NewManager(mainDir)
-
-		// Initialize persistent memory system. Session history and memory.md stay
-		// available even when model-based extraction is disabled.
-		pmemSys, pmemErr := pmem.NewSystem(ctx, "", pmem.Config{
-			ExtractionModel: c.resolveGeminiExtractionModel(),
-			APIKey:          apiKey,
-			EmbeddingModel:  pmem.DefaultEmbeddingModel,
-			EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
-			DataDir:         cfg.Options.DataDirectory,
-			ProjectRoot:     mainDir,
-		})
-		if pmemErr == nil && pmemSys != nil {
-			c.pmem = pmemSys
-			slog.Debug("Persistent memory system initialized")
-		}
 		// Initialize embedding-based skill retrieval.
 		c.initEmbeddingService()
 
@@ -545,6 +531,36 @@ func NewCoordinator(
 	c.currentAgent = agent
 	c.agents[config.AgentCoder] = agent
 	return c, nil
+}
+
+func (c *coordinator) initPersistentMemory(ctx context.Context, dataDir, projectRoot, apiKey string) {
+	if c == nil {
+		return
+	}
+	projectRoot = strings.TrimSpace(projectRoot)
+	if projectRoot == "" {
+		return
+	}
+	if err := pmem.EnsureMistakeProtocol(projectRoot); err != nil {
+		slog.Warn("Failed to ensure mistake protocol", "error", err)
+	}
+	pmemSys, err := pmem.NewSystem(ctx, "", pmem.Config{
+		ExtractionModel: c.resolveGeminiExtractionModel(),
+		APIKey:          apiKey,
+		EmbeddingModel:  pmem.DefaultEmbeddingModel,
+		EmbeddingDims:   pmem.DefaultEmbeddingDimensions,
+		DataDir:         dataDir,
+		ProjectRoot:     projectRoot,
+	})
+	if err != nil {
+		slog.Warn("Failed to initialize persistent memory system", "error", err)
+		return
+	}
+	if pmemSys == nil {
+		return
+	}
+	c.pmem = pmemSys
+	slog.Debug("Persistent memory system initialized")
 }
 
 // Run implements Coordinator.

@@ -94,6 +94,53 @@ func TestSaveToolNormalizesByteArrayArchitecturalDecisionContent(t *testing.T) {
 	require.Contains(t, records[0].ContentJSON, `"decision":"Normalize byte-array tool payloads before persisting them."`)
 }
 
+func TestSaveToolSupportsImprovementEvalsAndStrategies(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	system, err := NewSystem(t.Context(), "session-3", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: repoRoot,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, system)
+	t.Cleanup(system.Close)
+
+	evalResp := runMemoryTool(t, NewSaveTool(system, func(context.Context) string { return "session-3" }), SaveToolName, SaveParams{
+		EventType: MemoryEventImprovementEval,
+		Content: json.RawMessage(`{
+			"task_shape":"regex parser repair",
+			"failure_signature":"unknown escape sequence in matcher_test.go",
+			"probe":"go test ./experiments/mistake_lab",
+			"success_criteria":"targeted tests pass",
+			"prevention_rule":"Persist the exact failing probe before rerunning validation."
+		}`),
+	})
+	require.Contains(t, evalResp.Content, "Memory saved: "+MemoryEventImprovementEval)
+
+	strategyResp := runMemoryTool(t, NewSaveTool(system, func(context.Context) string { return "session-3" }), SaveToolName, SaveParams{
+		EventType: MemoryEventStrategyPattern,
+		Content: json.RawMessage(`{
+			"task_shape":"regex parser repair",
+			"strategy":"Reproduce with a one-package go test before broadening the validation scope.",
+			"why_it_worked":"It kept the failure surface narrow enough to iterate quickly.",
+			"trigger_signals":["compiler escape errors","fresh mutation after heredoc edits"],
+			"validation_probe":"go test ./experiments/mistake_lab"
+		}`),
+	})
+	require.Contains(t, strategyResp.Content, "Memory saved: "+MemoryEventStrategyPattern)
+
+	evals, err := system.Store.QueryRecords(context.Background(), MemoryFilterEvals, 10)
+	require.NoError(t, err)
+	require.Len(t, evals, 1)
+	require.Contains(t, evals[0].ContentJSON, `"task_shape":"regex parser repair"`)
+
+	strategies, err := system.Store.QueryRecords(context.Background(), MemoryFilterStrategies, 10)
+	require.NoError(t, err)
+	require.Len(t, strategies, 1)
+	require.Contains(t, strategies[0].ContentJSON, `"strategy":"Reproduce with a one-package go test before broadening the validation scope."`)
+}
+
 func runMemoryTool[T any](t *testing.T, tool fantasy.AgentTool, name string, params T) fantasy.ToolResponse {
 	t.Helper()
 

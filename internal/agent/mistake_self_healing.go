@@ -88,7 +88,7 @@ func (m *mistakeSelfHealingMonitor) ObserveSelfHealingProgress(toolName, rawInpu
 		return
 	}
 	if strings.TrimSpace(toolName) == persistmemory.SaveToolName {
-		if result.IsError {
+		if result.IsError || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(result.Content)), "memory saved:") {
 			return
 		}
 		switch parseSaveMemoryEventType(rawInput) {

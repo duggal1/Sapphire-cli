@@ -112,7 +112,7 @@ func TestMistakeSelfHealingMonitorRequiresImprovementEvalBeforeValidation(t *tes
 	t.Parallel()
 
 	monitor := newMistakeSelfHealingMonitor(true)
-	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"architectural_decision","content":{"decision":"rule"}}`, message.ToolResult{})
+	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"architectural_decision","content":{"decision":"rule"}}`, message.ToolResult{Content: "Memory saved: architectural_decision"})
 	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go test ./..."}`, message.ToolResult{})
 	if _, ok := monitor.ConsumePersistenceReminder(); ok {
 		t.Fatal("architectural decision persistence should clear the pre-save reminder path")
@@ -122,10 +122,25 @@ func TestMistakeSelfHealingMonitorRequiresImprovementEvalBeforeValidation(t *tes
 	require.True(t, ok)
 	assert.Contains(t, evidence, "go test")
 
-	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"improvement_eval","content":{"task_shape":"matcher repair","probe":"go test ./experiments/mistake_lab","success_criteria":"tests pass"}}`, message.ToolResult{})
+	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"improvement_eval","content":{"task_shape":"matcher repair","probe":"go test ./experiments/mistake_lab","success_criteria":"tests pass"}}`, message.ToolResult{Content: "Memory saved: improvement_eval"})
 	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go test ./..."}`, message.ToolResult{})
 	_, ok = monitor.ConsumeEvalReminder()
 	assert.False(t, ok)
+}
+
+func TestMistakeSelfHealingMonitorDoesNotCountFailedSaveMemoryAsProgress(t *testing.T) {
+	t.Parallel()
+
+	monitor := newMistakeSelfHealingMonitor(true)
+
+	monitor.ObserveSelfHealingProgress("save_memory", `{"event_type":"architectural_decision","content":{"decision":"rule"}}`, message.ToolResult{
+		Content: "Failed to save memory: disk offline",
+	})
+	monitor.ObserveSelfHealingProgress(tools.BashToolName, `{"command":"cd experiments/mistake_lab && go build ./..."}`, message.ToolResult{})
+
+	evidence, ok := monitor.ConsumePersistenceReminder()
+	require.True(t, ok)
+	assert.Contains(t, evidence, "go build")
 }
 
 func TestBuildImprovementEvalCall(t *testing.T) {

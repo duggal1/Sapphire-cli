@@ -52,8 +52,11 @@ type ShardArtifact struct {
 	WorkItemID     string   `json:"work_item_id,omitempty"`
 	Status         string   `json:"status"`
 	FileCount      int      `json:"file_count"`
+	ReadCount      int      `json:"read_count,omitempty"`
+	CoverageStatus string   `json:"coverage_status,omitempty"`
 	TopDirectories []string `json:"top_directories,omitempty"`
 	CriticalFiles  []string `json:"critical_files,omitempty"`
+	MissingFiles   []string `json:"missing_files,omitempty"`
 	Summary        string   `json:"summary,omitempty"`
 	ArtifactPath   string   `json:"artifact_path,omitempty"`
 	Error          string   `json:"error,omitempty"`
@@ -199,11 +202,20 @@ func RenderOverview(manifest Manifest) string {
 		lines = append(lines, "", "## Shards")
 		for _, shard := range manifest.ShardArtifacts {
 			line := fmt.Sprintf("- %s [%s] files=%d", firstNonEmpty(shard.Label, shard.ShardID), strings.TrimSpace(shard.Status), shard.FileCount)
+			if shard.ReadCount > 0 || strings.TrimSpace(shard.CoverageStatus) != "" {
+				line += fmt.Sprintf(" read=%d", shard.ReadCount)
+			}
+			if strings.TrimSpace(shard.CoverageStatus) != "" {
+				line += " coverage=" + strings.TrimSpace(shard.CoverageStatus)
+			}
 			if shard.Summary != "" {
 				line += " | " + strings.TrimSpace(shard.Summary)
 			}
 			if shard.ArtifactPath != "" {
 				line += " | artifact=" + shard.ArtifactPath
+			}
+			if len(shard.MissingFiles) > 0 {
+				line += " | missing=" + strings.Join(shard.MissingFiles, ", ")
 			}
 			if shard.Error != "" {
 				line += " | error=" + strings.TrimSpace(shard.Error)

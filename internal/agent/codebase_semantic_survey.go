@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
+	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/codebasesurvey"
 	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -19,6 +21,8 @@ const (
 	defaultSemanticSurveyAgents = 3
 	maxSemanticSurveyAgents     = 4
 	semanticSurveyShardTimeout  = 30 * time.Minute
+	semanticSurveyReasoning     = "low"
+	semanticSurveyRepairPasses  = 2
 )
 
 type indexCodebaseOptions struct {
@@ -44,6 +48,14 @@ type semanticSurveyShardPlan struct {
 	TopDirectories []string
 	CriticalFiles  []string
 	LanguageCounts map[string]int
+}
+
+type semanticSurveyCoverage struct {
+	AssignedCount int
+	ReadCount     int
+	ReadFiles     []string
+	MissingFiles  []string
+	Error         string
 }
 
 func (c *coordinator) indexCodebaseWithOptions(ctx context.Context, opts indexCodebaseOptions) (codeindex.Stats, *codebaseSemanticSurveyResult, error) {
@@ -167,7 +179,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		})
 	}
 
-	reportProgress("Launching AI codebase survey sub-agents", 0.92)
+	reportProgress(formatSemanticSurveyProgressMessage(0, len(shards), true), 0.92)
 
 	agentIDs := make([]string, 0, len(shards))
 	shardByAgent := make(map[string]semanticSurveyShardPlan, len(shards))
@@ -198,6 +210,7 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 			WriteManifest:    []string{graphPath},
 			DefinitionOfDone: buildSemanticSurveyDefinitionOfDone(graphPath, shard),
 			AgentID:          config.AgentTask,
+			ReasoningEffort:  semanticSurveyReasoning,
 			TurnTimeout:      semanticSurveyShardTimeout,
 		})
 		if err != nil {
@@ -224,12 +237,13 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 				done++
 			}
 		}
-		reportProgress(fmt.Sprintf("AI codebase graph shards complete %d/%d", done, len(shards)), 0.92+(0.06*(float64(done)/float64(len(shards)))))
+		reportProgress(formatSemanticSurveyProgressMessage(done, len(shards), false), 0.92+(0.06*(float64(done)/float64(len(shards)))))
 		if done == len(shards) {
 			break
 		}
 	}
 
+	coverageByAgent := c.repairSemanticSurveyCoverage(ctx, dataDir, agentIDs, shardByAgent)
 	collected := c.collectSubAgentResults(agentIDs)
 	manifest.Status = "ready"
 	manifest.GeneratedAt = time.Now().UTC()
@@ -238,9 +252,13 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 
 	for _, result := range collected {
 		shard := shardByAgent[result.ID]
+		coverage := coverageByAgent[result.ID]
 		statusText := strings.TrimSpace(string(result.Status))
 		if statusText == "" {
 			statusText = "unknown"
+		}
+		if len(coverage.MissingFiles) > 0 && statusText == string(subAgentStatusCompleted) {
+			statusText = "partial"
 		}
 		summary := strings.TrimSpace(result.Progress)
 		if summary == "" {
@@ -259,11 +277,14 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 			AgentID:        result.ID,
 			Status:         statusText,
 			FileCount:      len(shard.Files),
+			ReadCount:      coverage.ReadCount,
+			CoverageStatus: describeSemanticSurveyCoverage(coverage),
 			TopDirectories: shard.TopDirectories,
 			CriticalFiles:  shard.CriticalFiles,
+			MissingFiles:   limitSurveyStrings(coverage.MissingFiles, 12),
 			Summary:        summary,
 			ArtifactPath:   graphPath,
-			Error:          strings.TrimSpace(result.Error),
+			Error:          firstNonEmptyString(strings.TrimSpace(result.Error), strings.TrimSpace(coverage.Error)),
 		}
 		if statusText != string(subAgentStatusCompleted) {
 			manifest.Status = "partial"
@@ -303,6 +324,21 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		OverviewPath: manifest.OverviewPath,
 		GeneratedAt:  manifest.GeneratedAt,
 	}, nil
+}
+
+func formatSemanticSurveyProgressMessage(done, total int, launching bool) string {
+	total = max(total, 1)
+	done = max(done, 0)
+	if done > total {
+		done = total
+	}
+	if launching {
+		return fmt.Sprintf("Launching AI codebase survey sub-agents; shard graph runs in background (%d/%d complete)", done, total)
+	}
+	if done >= total {
+		return fmt.Sprintf("AI codebase graph shards complete %d/%d", done, total)
+	}
+	return fmt.Sprintf("AI codebase graph shards complete %d/%d; sub-agents still running", done, total)
 }
 
 func (c *coordinator) ensureSemanticSurveySession(ctx context.Context, sessionID string) (string, error) {
@@ -395,6 +431,8 @@ First, read:
 Requirements:
 - Inspect the assigned shard deeply.
 - Account for every assigned file in the shard manifest.
+- Read every assigned file with the real repository read tools before you finalize.
+- The system verifies shard coverage from your actual tool calls. If files were skipped, your shard will be sent back for repair.
 - Read critical files fully.
 - Build an AI-authored graph, not a generic summary.
 - Do not edit repository source files.
@@ -429,6 +467,231 @@ func buildSemanticSurveyDefinitionOfDone(graphPath string, shard semanticSurveyS
 	))
 }
 
+func (c *coordinator) repairSemanticSurveyCoverage(ctx context.Context, dataDir string, agentIDs []string, shardByAgent map[string]semanticSurveyShardPlan) map[string]semanticSurveyCoverage {
+	coverageByAgent := make(map[string]semanticSurveyCoverage, len(agentIDs))
+	pending := append([]string{}, agentIDs...)
+	for pass := 0; pass <= semanticSurveyRepairPasses && len(pending) > 0; pass++ {
+		next := make([]string, 0, len(pending))
+		for _, agentID := range pending {
+			shard, ok := shardByAgent[agentID]
+			if !ok {
+				continue
+			}
+			coverage := c.inspectSemanticSurveyCoverage(ctx, agentID, shard)
+			coverageByAgent[agentID] = coverage
+			if len(coverage.MissingFiles) == 0 {
+				continue
+			}
+			if pass >= semanticSurveyRepairPasses {
+				continue
+			}
+			graphPath := codebasesurvey.ShardGraphPath(dataDir, shard.ID)
+			if _, err := c.sendSubAgentInput(ctx, agentID, buildSemanticSurveyCoverageRepairPrompt(graphPath, shard, coverage.MissingFiles), nil, false); err != nil {
+				coverage.Error = firstNonEmptyString(coverage.Error, err.Error())
+				coverageByAgent[agentID] = coverage
+				continue
+			}
+			next = append(next, agentID)
+		}
+		if len(next) == 0 {
+			break
+		}
+		waitDeadline := time.Now().Add(minDuration(10*time.Minute, semanticSurveyTimeout(0, len(next))))
+		for {
+			if err := ctx.Err(); err != nil {
+				return coverageByAgent
+			}
+			remaining := time.Until(waitDeadline)
+			if remaining <= 0 {
+				break
+			}
+			snaps, _ := c.waitSubAgents(ctx, next, minDuration(15*time.Second, remaining))
+			done := 0
+			for _, snap := range snaps {
+				if isSubAgentFinalStatus(snap.Status) {
+					done++
+				}
+			}
+			if done == len(next) {
+				break
+			}
+		}
+		pending = next
+	}
+	for _, agentID := range agentIDs {
+		if _, ok := coverageByAgent[agentID]; ok {
+			continue
+		}
+		if shard, ok := shardByAgent[agentID]; ok {
+			coverageByAgent[agentID] = c.inspectSemanticSurveyCoverage(ctx, agentID, shard)
+		}
+	}
+	return coverageByAgent
+}
+
+func (c *coordinator) inspectSemanticSurveyCoverage(ctx context.Context, agentID string, shard semanticSurveyShardPlan) semanticSurveyCoverage {
+	runner, err := c.getSubAgent(agentID)
+	if err != nil {
+		return semanticSurveyCoverage{
+			AssignedCount: len(shard.Files),
+			MissingFiles:  collectShardPaths(shard.Files),
+			Error:         err.Error(),
+		}
+	}
+	runner.mu.Lock()
+	sessionID := runner.sessionID
+	workDir := runner.workDir
+	runner.mu.Unlock()
+
+	assigned := collectShardPaths(shard.Files)
+	readFiles, err := c.collectSemanticSurveyReadFiles(ctx, sessionID, workDir)
+	if err != nil {
+		return semanticSurveyCoverage{
+			AssignedCount: len(assigned),
+			MissingFiles:  assigned,
+			Error:         err.Error(),
+		}
+	}
+	readSet := make(map[string]struct{}, len(readFiles))
+	for _, path := range readFiles {
+		readSet[path] = struct{}{}
+	}
+	missing := make([]string, 0, len(assigned))
+	for _, path := range assigned {
+		if _, ok := readSet[path]; ok {
+			continue
+		}
+		missing = append(missing, path)
+	}
+	return semanticSurveyCoverage{
+		AssignedCount: len(assigned),
+		ReadCount:     len(readSet),
+		ReadFiles:     readFiles,
+		MissingFiles:  missing,
+	}
+}
+
+func (c *coordinator) collectSemanticSurveyReadFiles(ctx context.Context, sessionID, workDir string) ([]string, error) {
+	if c == nil || c.messages == nil || strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("semantic survey session is unavailable")
+	}
+	msgs, err := c.messages.List(ctx, strings.TrimSpace(sessionID))
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	files := make([]string, 0, 64)
+	for _, msg := range msgs {
+		for _, call := range msg.ToolCalls() {
+			for _, path := range extractSemanticSurveyToolPaths(call.Name, call.Input, workDir) {
+				if _, ok := seen[path]; ok {
+					continue
+				}
+				seen[path] = struct{}{}
+				files = append(files, path)
+			}
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func extractSemanticSurveyToolPaths(toolName, input, workDir string) []string {
+	switch strings.TrimSpace(toolName) {
+	case tools.ViewToolName, tools.SingleViewToolName, tools.AgenticViewToolName:
+	default:
+		return nil
+	}
+	var params tools.ViewParams
+	if err := json.Unmarshal([]byte(input), &params); err != nil {
+		return nil
+	}
+	paths := make([]string, 0, 8)
+	if trimmed := strings.TrimSpace(params.FilePath); trimmed != "" {
+		paths = append(paths, trimmed)
+	}
+	paths = append(paths, params.FilePaths...)
+	paths = append(paths, params.Paths...)
+	paths = append(paths, params.Files...)
+	if trimmed := strings.TrimSpace(params.Path); trimmed != "" {
+		paths = append(paths, trimmed)
+	}
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		normalized := normalizeSemanticSurveyPath(workDir, path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeSemanticSurveyPath(workDir, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if workDir != "" && filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(workDir, path); err == nil {
+			path = rel
+		}
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	if path == "." || path == "" || path == ".." || strings.HasPrefix(path, "../") {
+		return ""
+	}
+	return path
+}
+
+func describeSemanticSurveyCoverage(coverage semanticSurveyCoverage) string {
+	if strings.TrimSpace(coverage.Error) != "" {
+		return "unverified"
+	}
+	if coverage.AssignedCount == 0 {
+		return "empty"
+	}
+	if len(coverage.MissingFiles) == 0 {
+		return "verified"
+	}
+	return fmt.Sprintf("partial %d/%d", coverage.AssignedCount-len(coverage.MissingFiles), coverage.AssignedCount)
+}
+
+func buildSemanticSurveyCoverageRepairPrompt(graphPath string, shard semanticSurveyShardPlan, missing []string) string {
+	missing = append([]string{}, missing...)
+	sort.Strings(missing)
+	return strings.TrimSpace(fmt.Sprintf(`
+Coverage verifier found missing assigned files for %s.
+
+You must repair the shard graph now.
+
+Requirements:
+- Read every missing file below with the real repository read tools.
+- Use "single_view" for exactly one file and "agentic_view" for multiple files.
+- Do not claim completion until every missing file has been read.
+- Update the existing shard graph at %s so it covers the full assigned inventory.
+
+Missing files:
+- %s
+
+Return the same required final header block:
+STATUS: completed
+SUMMARY: one concise sentence about the shard
+PROGRESS: graph written to %s
+FILES: comma-separated critical file paths
+COMMANDS: list the main tools/commands you used
+RISKS: one concise risks line or "none"
+NEXT: one concise next action for the overall repo graph
+BLOCKERS: one concise blocker line or "none"
+`, shard.Label, graphPath, strings.Join(missing, "\n- "), graphPath))
+}
+
 func (c *coordinator) runSemanticSurveyAggregator(ctx context.Context, sessionID, dataDir string, manifest codebasesurvey.Manifest, totalFiles int) error {
 	overviewPath := codebasesurvey.OverviewPath(dataDir)
 	if err := ensureEmptyFile(overviewPath); err != nil {
@@ -442,6 +705,7 @@ func (c *coordinator) runSemanticSurveyAggregator(ctx context.Context, sessionID
 		WriteManifest:    []string{overviewPath},
 		DefinitionOfDone: "Write the overall AI-authored codebase graph overview with architecture, critical systems, and cross-shard relationships.",
 		AgentID:          config.AgentTask,
+		ReasoningEffort:  semanticSurveyReasoning,
 		TurnTimeout:      semanticSurveyShardTimeout,
 	})
 	if err != nil {

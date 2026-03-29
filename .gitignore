@@ -138,6 +138,9 @@ snapshots/
 # Long horizon testing
 long_horizon/
 
+# OpenCLaw reference directory
+openclaw/
+
 # Additional directories to ignore
 .augment/
 .factory/

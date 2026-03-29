@@ -66,6 +66,12 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "`recall_memory`: query persistent memory records. Pass `limit` as an integer, not a string.") {
 		t.Fatalf("expected recall_memory guidance in coder prompt")
 	}
+	if !strings.Contains(out, "For long-horizon tasks, treat durable memory as an operating system:") {
+		t.Fatalf("expected long-horizon memory operating protocol in coder prompt")
+	}
+	if !strings.Contains(out, "`save_memory`: persist durable facts, decisions, strategies, and user preferences that must survive future sessions.") {
+		t.Fatalf("expected save_memory guidance in coder prompt")
+	}
 	if strings.Contains(out, "`memory_query`") {
 		t.Fatalf("expected memory_query guidance to be removed from coder prompt")
 	}
@@ -122,6 +128,8 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 				"If asked for today's date, day, or current time, answer from the runtime context, not model memory.",
 				"For anything time-sensitive or likely to have changed since the cutoff, verify with tools or web search before answering.",
 				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
+				"Treat long-horizon work as work that may span compaction, restarts, many turns, multiple sub-agents, or many hours of token usage.",
+				"Use `save_memory` for durable facts that future sessions must not lose",
 			},
 		},
 		{
@@ -137,6 +145,8 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 				"Your knowledge cutoff is mid-2025.",
 				"Today's date is in the runtime context below.",
 				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
+				"Do not rely on the raw transcript alone.",
+				"If memory continuity appears broken or contradictory, use `memory_health` and then recover from durable state instead of guessing.",
 			},
 		},
 	} {

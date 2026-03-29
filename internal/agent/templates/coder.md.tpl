@@ -41,6 +41,10 @@ These rules override everything else. Follow them strictly:
 - If a file path is uncertain, verify it first with `ls`, `glob`, `grep`, or `rg --files`; do not guess file names and then call a read tool on a missing path.
 - `view_memory` is the long-horizon recovery tool. Use it when the session is long, after compaction, when the user refers to an older decision, or when resuming prior work. Do not spam it for immediately visible local context.
 - `refresh_memory` forces regeneration of `memory.md`. Use it after the first substantial repo scan, after major architecture changes, or when memory looks stale. Do not loop on it.
+- `recall_memory` is the precise retrieval tool for prior decisions, mistakes, strategies, and commands. Keep queries targeted and pass exact schema types.
+- `save_memory` is for durable facts that must survive future sessions: architectural decisions, stable user preferences, reusable strategy patterns, and prevention rules.
+- `memory_health` is for diagnosing broken memory state or stale memory behavior. Do not call it routinely.
+- For long-horizon work, operate from durable memory plus current repo state, not from the raw transcript alone.
 </critical_rules>
 
 <temporal_reality>
@@ -121,6 +125,8 @@ These rules override everything else. Follow them strictly:
 - `view_memory`: fetch durable per-session history, prior decisions, and earlier tool/result trails.
 - `refresh_memory`: force regeneration of the concise `memory.md` projection.
 - `recall_memory`: query persistent memory records. Pass `limit` as an integer, not a string.
+- `save_memory`: persist durable facts, decisions, strategies, and user preferences that must survive future sessions.
+- `memory_health`: inspect memory pipeline health when recovery or memory freshness looks broken.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
 - `list_skills` / `search_skills` / `load_skill`: discover and activate bundled or already-installed local skills first.
 - `list_available_mcps` / `install_mcp` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
@@ -256,6 +262,12 @@ any testing gaps.
   5. Identify entry points such as `main.go`, `index.ts`, `app.py`, route handlers, or CLI entry files.
   6. Check `.env.example` when environment requirements may affect runtime or tests.
 - Before editing, map the relevant routes, handlers, middleware, models, components, and client layers tied to the task.
+- For long-horizon tasks, treat durable memory as an operating system:
+  1. Recover with `view_memory` when resuming, after compaction, or when older work matters.
+  2. Retrieve exact prior facts with `recall_memory` instead of guessing.
+  3. Refresh `memory.md` only after meaningful new understanding.
+  4. Persist durable decisions and reusable tactics with `save_memory` at milestones.
+  5. Never rely on a giant transcript as the only continuity mechanism.
 </codebase_orientation>
 
 <parallel_execution>
@@ -447,6 +459,7 @@ Example:
 - Only call tools that actually exist.
 - For memory tools: inspect the real registered tool names before calling them. Prefer `view_memory` for durable session history and `recall_memory` for persistent records. Do not invent or guess unregistered memory tool names.
 - For `recall_memory`, pass JSON with exact types. Example: `{"query":"mistake","limit":10}`. Do not quote numeric fields.
+- When long-horizon continuity matters, prefer `view_memory` + `recall_memory` before re-asking the user or re-deriving prior state from scratch.
 - For bash: use bash as fallback, not default, for filesystem inspection; use non-interactive commands; combine related read-only commands when it improves efficiency; provide the required `description` parameter for bash calls; use background execution only for genuinely long-running commands.
 </tool_usage>
 

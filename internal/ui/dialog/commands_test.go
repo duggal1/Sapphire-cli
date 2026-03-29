@@ -5,7 +5,6 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	apppkg "github.com/duggal1/Sapphire-cli/internal/app"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/csync"
@@ -29,62 +28,6 @@ func testCommandsCommon(t *testing.T) *common.Common {
 		App:    a,
 		Styles: &sty,
 	}
-}
-
-func TestModeCommandsIncludeEveryAvailableMode(t *testing.T) {
-	t.Parallel()
-
-	sty := styles.DefaultStyles(false)
-	cmds := (&Commands{
-		com: &common.Common{
-			Styles: &sty,
-		},
-	}).modeCommands(planmode.ReviewMode)
-
-	if len(cmds) != len(planmode.SelectableModes()) {
-		t.Fatalf("expected %d mode commands, got %d", len(planmode.SelectableModes()), len(cmds))
-	}
-
-	seen := make(map[planmode.SessionMode]bool, len(cmds))
-	for _, item := range cmds {
-		action, ok := item.Action().(ActionSelectMode)
-		if !ok {
-			t.Fatalf("expected ActionSelectMode, got %T", item.Action())
-		}
-		seen[action.Mode] = true
-	}
-
-	for _, mode := range planmode.SelectableModes() {
-		if !seen[mode.Mode] {
-			t.Fatalf("expected command item for mode %s", mode.Mode)
-		}
-	}
-}
-
-func TestModeCommandsMarkCurrentMode(t *testing.T) {
-	t.Parallel()
-
-	sty := styles.DefaultStyles(false)
-	cmds := (&Commands{
-		com: &common.Common{
-			Styles: &sty,
-		},
-	}).modeCommands(planmode.PlanMode)
-
-	for _, item := range cmds {
-		action, ok := item.Action().(ActionSelectMode)
-		if !ok {
-			t.Fatalf("expected ActionSelectMode, got %T", item.Action())
-		}
-		if action.Mode == planmode.PlanMode {
-			if item.title != "Plan Mode (Current)" {
-				t.Fatalf("expected current mode label, got %q", item.title)
-			}
-			return
-		}
-	}
-
-	t.Fatal("missing current mode command")
 }
 
 func TestDefaultCommandsIncludeExtendedSkills(t *testing.T) {

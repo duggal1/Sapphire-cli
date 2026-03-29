@@ -11,6 +11,7 @@ import (
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
+	persistmemory "github.com/duggal1/Sapphire-cli/internal/memory"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 )
 
@@ -30,6 +31,7 @@ const (
 	loopDetectionWindowSize   = 10
 	loopDetectionRepeatCount  = 5
 	criticalEscalationSpacing = 10 * time.Minute
+	mistakeLogRequestSpacing  = 6 * time.Minute
 )
 
 type AgentRuntimeSnapshot struct {
@@ -37,6 +39,8 @@ type AgentRuntimeSnapshot struct {
 	SessionID            string
 	ParentSessionID      string
 	WorkItemID           string
+	RepoRoot             string
+	WorkingDir           string
 	Status               string
 	DefinitionOfDone     string
 	LastResult           string
@@ -427,6 +431,7 @@ func (s *Service) superviseAgent(ctx context.Context, tracker *AgentTracker) {
 		"action":        receipt.RecommendedAction,
 		"heartbeat_age": receipt.Evidence.HeartbeatAge,
 	})
+	s.enforceMistakeLogging(ctx, tracker, runtime)
 }
 
 func (s *Service) applyPatrolReceipt(ctx context.Context, tracker *AgentTracker, receipt PatrolReceipt) {
@@ -824,6 +829,98 @@ func (s *Service) nudgeAgent(ctx context.Context, tracker *AgentTracker, subject
 		Priority:  0,
 		SkipNudge: true,
 	})
+}
+
+func (s *Service) enforceMistakeLogging(ctx context.Context, tracker *AgentTracker, runtime AgentRuntimeSnapshot) {
+	if tracker == nil || s.mailbox == nil || s.activityService == nil {
+		return
+	}
+	repoRoot := strings.TrimSpace(runtime.RepoRoot)
+	if repoRoot == "" {
+		repoRoot = strings.TrimSpace(runtime.WorkingDir)
+	}
+	if repoRoot == "" {
+		return
+	}
+	failure, ok := s.latestUnloggedFailureActivity(ctx, tracker.AgentID, repoRoot)
+	if !ok {
+		return
+	}
+	if s.countRecentInterventions(ctx, tracker.AgentID, string(PatrolActionLogMistake), mistakeLogRequestSpacing) > 0 {
+		return
+	}
+	s.nudgeAgent(ctx, tracker, subjectMistakeLogRequired, s.buildMistakeLogRequiredBody(runtime, failure))
+	s.logActivity(ctx, tracker.AgentID, "supervisor_intervention", map[string]any{
+		"action":           string(PatrolActionLogMistake),
+		"failure_event_id": failure.ID,
+	})
+}
+
+func (s *Service) latestUnloggedFailureActivity(ctx context.Context, agentID, repoRoot string) (agentactivity.Entry, bool) {
+	if s == nil || s.activityService == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(repoRoot) == "" {
+		return agentactivity.Entry{}, false
+	}
+	items, err := s.activityService.Recent(ctx, agentID, 32)
+	if err != nil {
+		return agentactivity.Entry{}, false
+	}
+	for _, item := range items {
+		if !isFailureActivityEvent(item.EventType) {
+			continue
+		}
+		fingerprint := "activity:" + strings.TrimSpace(item.ID)
+		if persistmemory.HasLoggedMistakeFingerprint(repoRoot, fingerprint) {
+			continue
+		}
+		return item, true
+	}
+	return agentactivity.Entry{}, false
+}
+
+func isFailureActivityEvent(eventType string) bool {
+	switch strings.ToLower(strings.TrimSpace(eventType)) {
+	case "failed", "timed_out", "stuck", "error", "main_turn_error":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) buildMistakeLogRequiredBody(runtime AgentRuntimeSnapshot, failure agentactivity.Entry) string {
+	var details map[string]any
+	if err := json.Unmarshal([]byte(failure.DetailsJSON), &details); err != nil {
+		details = map[string]any{}
+	}
+	lines := []string{
+		"Failure intelligence logging is required before you continue.",
+		"",
+		"1. Read `.sapphire/mistake.md` in the current repository.",
+		"2. Append a new entry to `MISTAKES.md` at the repository root.",
+		fmt.Sprintf("3. Include this exact fingerprint comment: `<!-- mistake_fingerprint: activity:%s -->`", strings.TrimSpace(failure.ID)),
+		"4. Classify the root cause using the required taxonomy and write a permanent prevention rule.",
+		"5. If the class is not `HALLUCINATION`, persist the prevention rule with `save_memory` as an `architectural_decision`.",
+		"6. Continue the original task only after the file write and durable memory write are both complete.",
+		"",
+		"Failure evidence:",
+		fmt.Sprintf("- event: %s", strings.TrimSpace(failure.EventType)),
+		fmt.Sprintf("- recorded_at: %s", failure.CreatedAt.UTC().Format(time.RFC3339)),
+	}
+	if repoRoot := strings.TrimSpace(runtime.RepoRoot); repoRoot != "" {
+		lines = append(lines, fmt.Sprintf("- repo_root: %s", repoRoot))
+	}
+	if workDir := strings.TrimSpace(runtime.WorkingDir); workDir != "" {
+		lines = append(lines, fmt.Sprintf("- working_dir: %s", workDir))
+	}
+	if workItemID := strings.TrimSpace(runtime.WorkItemID); workItemID != "" {
+		lines = append(lines, fmt.Sprintf("- work_item_id: %s", workItemID))
+	}
+	if status := strings.TrimSpace(stringValue(details["status"])); status != "" {
+		lines = append(lines, fmt.Sprintf("- status: %s", status))
+	}
+	if errText := strings.TrimSpace(firstNonEmpty(stringValue(details["error"]), runtime.LastError)); errText != "" {
+		lines = append(lines, fmt.Sprintf("- error: %s", errText))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (s *Service) isBlockedOnDependency(ctx context.Context, workItemID string) bool {

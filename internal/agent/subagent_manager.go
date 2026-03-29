@@ -17,6 +17,7 @@ import (
 	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
+	persistmemory "github.com/duggal1/Sapphire-cli/internal/memory"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
 	"github.com/duggal1/Sapphire-cli/internal/session"
@@ -1661,6 +1662,14 @@ func (c *coordinator) forkSubAgentContext(ctx context.Context, parentSessionID, 
 			message.TextContent{Text: "Forked context snapshot from parent session. Tool history and reasoning state are intentionally excluded to keep the fork isolated."},
 		},
 	})
+	if rules := persistmemory.RenderPreventionRulesBlock(c.cfg.WorkingDir(), 12); rules != "" {
+		_, _ = c.messages.Create(forkCtx, childSessionID, message.CreateMessageParams{
+			Role: message.System,
+			Parts: []message.ContentPart{
+				message.TextContent{Text: rules},
+			},
+		})
+	}
 
 	var preload []message.Message
 	if parentSession.SummaryMessageID != "" {

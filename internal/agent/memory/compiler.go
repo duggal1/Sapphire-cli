@@ -16,6 +16,7 @@ import (
 	"time"
 
 	appdb "github.com/duggal1/Sapphire-cli/internal/db"
+	persistmemory "github.com/duggal1/Sapphire-cli/internal/memory"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
 	"github.com/duggal1/Sapphire-cli/internal/session"
 	"github.com/google/uuid"
@@ -62,6 +63,7 @@ type CompileRequest struct {
 	AgentID             string
 	WorkingDir          string
 	Task                string
+	IncludeMistakesRead bool
 	ProjectConstitution string
 	LongHorizonContext  string
 	HistoricalContext   string
@@ -392,6 +394,7 @@ func (c *Compiler) Compile(ctx context.Context, req CompileRequest) (BootPacket,
 	if err != nil {
 		return BootPacket{}, err
 	}
+	_ = persistmemory.EnsureMistakeProtocol(snapshot.RepoRoot)
 	runtime, err := c.collectRuntimeSnapshot(ctx, req, scope)
 	if err != nil {
 		return BootPacket{}, err
@@ -400,6 +403,9 @@ func (c *Compiler) Compile(ctx context.Context, req CompileRequest) (BootPacket,
 	taskClass := classifyTask(req.Task)
 	seedFiles, seedSymbols := collectSliceSeeds(req.Task, runtime, scope, graph)
 	slice, reads := buildGraphSlice(taskClass, seedFiles, seedSymbols, graph)
+	if req.IncludeMistakesRead {
+		reads = prependMistakesRequiredRead(snapshot.RepoRoot, reads)
+	}
 	policies := compileRelevantPolicies(scope.RepoRoot, req.ProjectConstitution, req.LongHorizonContext, req.HistoricalContext)
 	packet := BootPacket{
 		Version:     bootPacketVersion,
@@ -682,6 +688,7 @@ func (c *Compiler) compileCacheKey(req CompileRequest) string {
 		strings.TrimSpace(req.AgentID),
 		filepath.Clean(strings.TrimSpace(req.WorkingDir)),
 		strings.TrimSpace(req.Task),
+		fmt.Sprintf("%t", req.IncludeMistakesRead),
 		strings.TrimSpace(req.ProjectConstitution),
 		strings.TrimSpace(req.LongHorizonContext),
 		strings.TrimSpace(req.HistoricalContext),
@@ -1370,6 +1377,21 @@ func dedupeRequiredReads(reads []BootRequiredRead) []BootRequiredRead {
 		}
 		seen[key] = struct{}{}
 		out = append(out, item)
+	}
+	return out
+}
+
+func prependMistakesRequiredRead(repoRoot string, reads []BootRequiredRead) []BootRequiredRead {
+	if !persistmemory.MistakesFileExists(repoRoot) {
+		return reads
+	}
+	out := append([]BootRequiredRead{{
+		Path:   persistmemory.MistakesFileName,
+		Reason: "failure intelligence register",
+	}}, reads...)
+	out = dedupeRequiredReads(out)
+	if len(out) > defaultRequiredReadLimit {
+		out = out[:defaultRequiredReadLimit]
 	}
 	return out
 }

@@ -96,7 +96,9 @@ func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, erro
 		}
 	}
 
-	pipeline := NewPipeline(store, extractor, fallback, embedder)
+	_ = EnsureMistakeProtocol(cfg.ProjectRoot)
+
+	pipeline := NewPipeline(store, extractor, fallback, embedder, cfg.ProjectRoot)
 	pipeline.Start(ctx)
 
 	memoryFile, err := newMemoryFileManager(cfg.DataDir, cfg.ProjectRoot)
@@ -107,7 +109,7 @@ func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, erro
 		return nil, fmt.Errorf("memory: create memory file manager: %w", err)
 	}
 
-	return &System{
+	system := &System{
 		Store:           store,
 		Pipeline:        pipeline,
 		Extractor:       extractor,
@@ -116,7 +118,9 @@ func NewSystem(ctx context.Context, sessionID string, cfg Config) (*System, erro
 		History:         history,
 		MemoryFile:      memoryFile,
 		maxRecallTokens: cfg.MaxRecallTokens,
-	}, nil
+	}
+	pipeline.SetSaveArchitecturalDecision(system.saveArchitecturalDecisionFromMistake)
+	return system, nil
 }
 
 // Close stops the pipeline and closes the store.
@@ -615,6 +619,29 @@ func (s *System) RefreshMemory(ctx context.Context, sessionID string, force bool
 		return nil
 	}
 	return s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, force)
+}
+
+func (s *System) saveArchitecturalDecisionFromMistake(ctx context.Context, sessionID string, decision ArchitecturalDecision) error {
+	if s == nil {
+		return nil
+	}
+	payload, err := json.Marshal(decision)
+	if err != nil {
+		return err
+	}
+	if err := s.WriteRecord(ctx, MemoryRecord{
+		SessionID:               strings.TrimSpace(sessionID),
+		EventType:               "architectural_decision",
+		Timestamp:               timeNowUnix(),
+		TurnIndex:               0,
+		Salience:                1.0,
+		ContentJSON:             string(payload),
+		IsArchitecturalDecision: true,
+	}); err != nil {
+		return err
+	}
+	s.RecordSavedMemory(ctx, sessionID, "architectural_decision", string(payload))
+	return nil
 }
 
 func (s *System) shouldRefreshAfterRepoScan(sessionID, toolName string) bool {

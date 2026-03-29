@@ -120,6 +120,7 @@ func (c *Compiler) CreateResumePoint(ctx context.Context, req ResumeRequest) (ap
 		AgentID:             req.AgentID,
 		WorkingDir:          req.WorkingDir,
 		Task:                req.Task,
+		IncludeMistakesRead: true,
 		ProjectConstitution: req.ProjectConstitution,
 		LongHorizonContext:  req.LongHorizonContext,
 		HistoricalContext:   req.HistoricalContext,

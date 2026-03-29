@@ -25,6 +25,7 @@ const (
 	PatrolActionRequestStatus    PatrolAction = "request_status"
 	PatrolActionRecoveryNudge    PatrolAction = "recovery_nudge"
 	PatrolActionLoopBreak        PatrolAction = "loop_break"
+	PatrolActionLogMistake       PatrolAction = "log_mistake"
 	PatrolActionCompletionReview PatrolAction = "completion_review"
 	PatrolActionReassign         PatrolAction = "reassign"
 	PatrolActionEscalate         PatrolAction = "escalate"

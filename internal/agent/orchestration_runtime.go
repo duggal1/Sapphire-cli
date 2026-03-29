@@ -614,9 +614,10 @@ func (c *coordinator) buildSharedSubAgentLaunchMemoryContext(ctx context.Context
 	var sections []string
 	if c.memoryCompiler != nil {
 		req := agentmemory.CompileRequest{
-			SessionID:  sessionID,
-			AgentID:    mainAgentMailboxID(sessionID),
-			WorkingDir: workDir,
+			SessionID:           sessionID,
+			AgentID:             mainAgentMailboxID(sessionID),
+			WorkingDir:          workDir,
+			IncludeMistakesRead: true,
 		}
 		compiled := c.memoryCompiler.RenderCachedPromptInjection(ctx, req)
 		if compiled == "" {

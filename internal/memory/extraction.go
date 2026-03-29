@@ -44,9 +44,17 @@ type FileModified struct {
 
 // FailureEncountered records a failure, its root cause, and resolution.
 type FailureEncountered struct {
-	WhatFailed string `json:"what_failed"`
-	RootCause  string `json:"root_cause"`
-	Resolution string `json:"resolution"`
+	WhatFailed     string `json:"what_failed"`
+	RootCause      string `json:"root_cause"`
+	Resolution     string `json:"resolution"`
+	TaskDomain     string `json:"task_domain,omitempty"`
+	RootCauseClass string `json:"root_cause_class,omitempty"`
+	DeepAnalysis   string `json:"deep_analysis,omitempty"`
+	WhyThisClass   string `json:"why_this_class,omitempty"`
+	Severity       string `json:"severity,omitempty"`
+	PreventionRule string `json:"prevention_rule,omitempty"`
+	IsNonTrivial   bool   `json:"is_non_trivial,omitempty"`
+	IsIgnorable    bool   `json:"is_ignorable,omitempty"`
 }
 
 // NegativeConstraint records something that must NOT be done.
@@ -83,7 +91,19 @@ Never invent information. Only extract what is explicitly present.
     {"file": "...", "change_summary": "...", "semantic_change": "..."}
   ],
   "failures_encountered": [
-    {"what_failed": "...", "root_cause": "...", "resolution": "..."}
+    {
+      "what_failed": "...",
+      "root_cause": "...",
+      "resolution": "...",
+      "task_domain": "...",
+      "root_cause_class": "HALLUCINATION|CONTEXT_GAP|COMPLEXITY_OVERLOAD|WRONG_ASSUMPTION|ORCHESTRATION_FAILURE|TOOL_MISUSE",
+      "deep_analysis": "...",
+      "why_this_class": "...",
+      "severity": "LOW|MEDIUM|HIGH|CRITICAL",
+      "prevention_rule": "...",
+      "is_non_trivial": true,
+      "is_ignorable": false
+    }
   ],
   "negative_constraints": [
     {"constraint": "...", "reason": "..."}
@@ -98,6 +118,51 @@ Never invent information. Only extract what is explicitly present.
     {"discovery": "...", "location": "...", "importance": "high|medium|low"}
   ]
 }`
+
+func (f FailureEncountered) NormalizedRootCauseClass() MistakeRootCauseClass {
+	return NormalizeMistakeRootCauseClass(f.RootCauseClass)
+}
+
+func (f FailureEncountered) NormalizedSeverity() MistakeSeverity {
+	if severity := NormalizeMistakeSeverity(f.Severity); severity != "" {
+		return severity
+	}
+	switch {
+	case f.IsNonTrivial:
+		return MistakeSeverityHigh
+	default:
+		return MistakeSeverityMedium
+	}
+}
+
+func (f FailureEncountered) ShouldPersistToMistakes() bool {
+	if strings.TrimSpace(f.WhatFailed) == "" && strings.TrimSpace(f.RootCause) == "" && strings.TrimSpace(f.Resolution) == "" {
+		return false
+	}
+	if f.IsNonTrivial {
+		return true
+	}
+	if severity := f.NormalizedSeverity(); severity == MistakeSeverityHigh || severity == MistakeSeverityCritical {
+		return true
+	}
+	if class := f.NormalizedRootCauseClass(); class != "" && class != MistakeRootCauseHallucination {
+		return true
+	}
+	combined := strings.ToLower(strings.Join([]string{f.WhatFailed, f.RootCause, f.Resolution}, " "))
+	for _, marker := range []string{"build", "regression", "backtrack", "architect", "assumption", "failed test", "panic"} {
+		if strings.Contains(combined, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f FailureEncountered) PreventionRuleText() string {
+	if rule := strings.TrimSpace(f.PreventionRule); rule != "" {
+		return rule
+	}
+	return strings.TrimSpace(f.Resolution)
+}
 
 // Extractor calls the extraction model to produce structured memory from raw context.
 type Extractor struct {

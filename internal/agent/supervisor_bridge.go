@@ -40,6 +40,8 @@ func (c *coordinator) supervisorRuntimeSnapshot(agentID string) (agentsupervisor
 		SessionID:            sessionID,
 		ParentSessionID:      parentSessionID,
 		WorkItemID:           workItemID,
+		RepoRoot:             c.cfg.WorkingDir(),
+		WorkingDir:           snap.WorkDir,
 		Status:               string(snap.Status),
 		DefinitionOfDone:     snap.DefinitionOfDone,
 		LastResult:           snap.LastResult,

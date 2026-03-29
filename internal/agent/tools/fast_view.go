@@ -79,6 +79,7 @@ func FastViewTool(
 
 			// Pre-allocate results slice (Go 1.26 size-specialized malloc)
 			results := make([]fileResult, len(uniquePaths))
+			includeDiagnostics := shouldCollectViewDiagnostics(name, len(uniquePaths))
 			var mu sync.Mutex
 
 			for i, p := range uniquePaths {
@@ -89,7 +90,7 @@ func FastViewTool(
 						return groupCtx.Err()
 					}
 
-					result := fastReadFile(groupCtx, name, p, params, workingDir, sessionID, editGuard, permissions, filetracker, lspManager, skillsPaths, call)
+					result := fastReadFile(groupCtx, name, p, params, workingDir, sessionID, editGuard, permissions, filetracker, lspManager, skillsPaths, call, includeDiagnostics)
 
 					mu.Lock()
 					results[i] = result
@@ -124,6 +125,7 @@ func fastReadFile(
 	lspManager *lsp.Manager,
 	skillsPaths []string,
 	call fantasy.ToolCall,
+	includeDiagnostics bool,
 ) fileResult {
 	// Handle relative paths
 	fullPath := filepathext.SmartJoin(workingDir, filePath)
@@ -218,14 +220,14 @@ func fastReadFile(
 		return fileResult{filePath: filePath, err: fmt.Errorf("File content %s is not valid UTF-8", filePath)}
 	}
 
-	// Parallel LSP diagnostics (non-blocking)
-	openInLSPs(ctx, lspManager, fullPath)
-	waitForLSPDiagnostics(ctx, lspManager, fullPath, 300*time.Millisecond)
-
 	// Build output with pre-allocated strings.Builder
 	output := buildViewOutput(filePath, content, hasMore, params.Offset)
 	output += detectLiteralEscapes(content)
-	output += getDiagnostics(ctx, fullPath, lspManager)
+	if includeDiagnostics {
+		openInLSPs(ctx, lspManager, fullPath)
+		waitForLSPDiagnostics(ctx, lspManager, fullPath, 300*time.Millisecond)
+		output += getDiagnostics(ctx, fullPath, lspManager)
+	}
 
 	// Record file read (lock-free in filetracker)
 	filetracker.RecordRead(ctx, sessionID, fullPath)
@@ -247,6 +249,13 @@ func fastReadFile(
 	}
 
 	return fileResult{filePath: filePath, output: output, meta: meta}
+}
+
+func shouldCollectViewDiagnostics(toolName string, fileCount int) bool {
+	if strings.TrimSpace(toolName) == AgenticViewToolName {
+		return false
+	}
+	return fileCount <= 8
 }
 
 // fastReadTextFile reads text with optimized buffering.

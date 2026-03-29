@@ -29,6 +29,8 @@ import (
 
 type repoSnapshot struct {
 	RepoRoot     string
+	RepoIdentity string
+	ScopeRel     string
 	ScopePath    string
 	Branch       string
 	HeadCommit   string
@@ -599,12 +601,33 @@ func captureRepoSnapshot(ctx context.Context, workingDir string) (repoSnapshot, 
 	}
 	scopePath, _ = filepath.Abs(scopePath)
 	scopePath = filepath.Clean(scopePath)
+	if resolved, err := filepath.EvalSymlinks(scopePath); err == nil && strings.TrimSpace(resolved) != "" {
+		scopePath = filepath.Clean(resolved)
+	}
 
 	repoRoot := gitOutput(ctx, scopePath, "rev-parse", "--show-toplevel")
 	if strings.TrimSpace(repoRoot) == "" {
 		repoRoot = scopePath
 	}
 	repoRoot = filepath.Clean(strings.TrimSpace(repoRoot))
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil && strings.TrimSpace(resolved) != "" {
+		repoRoot = filepath.Clean(resolved)
+	}
+	repoIdentity := strings.TrimSpace(gitOutput(ctx, scopePath, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+	if repoIdentity == "" {
+		repoIdentity = repoRoot
+	}
+	repoIdentity = filepath.Clean(repoIdentity)
+	if resolved, err := filepath.EvalSymlinks(repoIdentity); err == nil && strings.TrimSpace(resolved) != "" {
+		repoIdentity = filepath.Clean(resolved)
+	}
+	scopeRel := "."
+	if rel, err := filepath.Rel(repoRoot, scopePath); err == nil {
+		scopeRel = filepath.ToSlash(rel)
+	}
+	if strings.TrimSpace(scopeRel) == "" {
+		scopeRel = "."
+	}
 	branch := strings.TrimSpace(gitOutput(ctx, scopePath, "rev-parse", "--abbrev-ref", "HEAD"))
 	headCommit := strings.TrimSpace(gitOutput(ctx, scopePath, "rev-parse", "HEAD"))
 	status := strings.TrimSpace(gitOutput(ctx, scopePath, "status", "--porcelain"))
@@ -619,17 +642,23 @@ func captureRepoSnapshot(ctx context.Context, workingDir string) (repoSnapshot, 
 			if idx := strings.Index(path, " -> "); idx >= 0 {
 				path = path[idx+4:]
 			}
+			path = filepath.ToSlash(path)
+			if path == ".sapphire" || strings.HasPrefix(path, ".sapphire/") {
+				continue
+			}
 			if path != "" {
-				changed = append(changed, filepath.ToSlash(path))
+				changed = append(changed, path)
 			}
 		}
 	}
 	return repoSnapshot{
 		RepoRoot:     repoRoot,
+		RepoIdentity: repoIdentity,
+		ScopeRel:     scopeRel,
 		ScopePath:    scopePath,
 		Branch:       branch,
 		HeadCommit:   headCommit,
-		Dirty:        status != "",
+		Dirty:        len(changed) > 0,
 		ChangedFiles: uniqueSortedStrings(changed),
 	}, nil
 }

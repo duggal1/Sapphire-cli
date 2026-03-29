@@ -156,6 +156,60 @@ func TestCompilerRenderCachedPromptInjectionUsesFreshPacket(t *testing.T) {
 	require.Contains(t, rendered, packet.ArtifactPath)
 }
 
+func TestCompilerSharesRepoSubstrateAcrossEquivalentWorktrees(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	initMemoryTestGitRepo(t, repoRoot)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	worktreeDir := filepath.Join(t.TempDir(), "shared-memory-worktree")
+	cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", "--detach", worktreeDir, "HEAD")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	t.Cleanup(func() {
+		cleanupCmd := exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", worktreeDir)
+		_ = cleanupCmd.Run()
+	})
+
+	packetMain, err := compiler.Compile(context.Background(), CompileRequest{
+		SessionID:  "session-main",
+		AgentID:    "agent-main",
+		WorkingDir: repoRoot,
+		Task:       "Read the repository deeply",
+	})
+	require.NoError(t, err)
+	mainSnapshot, err := captureRepoSnapshot(context.Background(), repoRoot)
+	require.NoError(t, err)
+	worktreeSnapshot, err := captureRepoSnapshot(context.Background(), worktreeDir)
+	require.NoError(t, err)
+	require.Equal(t, sharedRepoCacheKey(mainSnapshot), sharedRepoCacheKey(worktreeSnapshot))
+
+	compiler.sharedRepoMu.Lock()
+	require.Len(t, compiler.sharedRepoCache, 1)
+	compiler.sharedRepoMu.Unlock()
+
+	packetWorktree, err := compiler.Compile(context.Background(), CompileRequest{
+		SessionID:  "session-worktree",
+		AgentID:    "agent-worktree",
+		WorkingDir: worktreeDir,
+		Task:       "Read the repository deeply from another sub-agent",
+	})
+	require.NoError(t, err)
+	require.Equal(t, packetMain.RepoSnapshot.HeadCommit, packetWorktree.RepoSnapshot.HeadCommit)
+	resolvedWorktree, err := filepath.EvalSymlinks(worktreeDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Clean(resolvedWorktree), filepath.Clean(packetWorktree.RepoSnapshot.RepoRoot))
+	require.FileExists(t, packetMain.ArtifactPath)
+	require.FileExists(t, packetWorktree.ArtifactPath)
+
+	var scopeCount int
+	err = conn.QueryRowContext(context.Background(), `SELECT COUNT(1) FROM memory_repo_scopes`).Scan(&scopeCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, scopeCount)
+}
+
 func TestCompilerIndexStatusAndWarmCodebase(t *testing.T) {
 	t.Parallel()
 

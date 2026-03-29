@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -102,6 +103,59 @@ func Foo() string {
 	require.Greater(t, packet2.RepoSnapshot.IndexEpoch, packet1.RepoSnapshot.IndexEpoch)
 }
 
+func TestCompilerReusesFreshCompiledPacketForImmediateRepeat(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	initMemoryTestGitRepo(t, repoRoot)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	req := CompileRequest{
+		SessionID:  "session-cache",
+		AgentID:    "main:session-cache",
+		WorkingDir: repoRoot,
+		Task:       "Inspect Foo in foo.go",
+	}
+
+	packet1, err := compiler.Compile(context.Background(), req)
+	require.NoError(t, err)
+
+	packet2, err := compiler.Compile(context.Background(), req)
+	require.NoError(t, err)
+
+	require.Equal(t, packet1.ArtifactPath, packet2.ArtifactPath)
+
+	bootPackets, err := appdb.New(conn).ListMemoryBootPacketsBySession(context.Background(), req.SessionID)
+	require.NoError(t, err)
+	require.Len(t, bootPackets, 1)
+}
+
+func TestCompilerRenderCachedPromptInjectionUsesFreshPacket(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	initMemoryTestGitRepo(t, repoRoot)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	req := CompileRequest{
+		SessionID:  "session-render-cache",
+		AgentID:    "main:session-render-cache",
+		WorkingDir: repoRoot,
+		Task:       "Inspect Foo in foo.go",
+	}
+
+	require.Empty(t, compiler.RenderCachedPromptInjection(context.Background(), req))
+
+	packet, err := compiler.Compile(context.Background(), req)
+	require.NoError(t, err)
+
+	rendered := compiler.RenderCachedPromptInjection(context.Background(), req)
+	require.Contains(t, rendered, "## COMPILED BOOT PACKET")
+	require.Contains(t, rendered, packet.ArtifactPath)
+}
+
 func TestCompilerIndexStatusAndWarmCodebase(t *testing.T) {
 	t.Parallel()
 
@@ -125,6 +179,31 @@ func TestCompilerIndexStatusAndWarmCodebase(t *testing.T) {
 	require.GreaterOrEqual(t, result.Status.FileCount, 3)
 	require.NotEmpty(t, progress)
 	require.Equal(t, "ready", progress[len(progress)-1].Phase)
+	require.True(t, progress[len(progress)-1].Finished)
+}
+
+func TestCompilerWarmCodebaseReportsCanceledState(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := seedMemoryTestRepo(t)
+	conn := openMemoryTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var progress []WarmProgress
+	_, err := compiler.WarmCodebase(ctx, WarmRequest{
+		WorkingDir: repoRoot,
+		Force:      true,
+	}, func(item WarmProgress) {
+		progress = append(progress, item)
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotEmpty(t, progress)
+	require.Equal(t, "canceled", progress[len(progress)-1].Phase)
+	require.Equal(t, "Codebase graph indexing stopped", progress[len(progress)-1].Message)
+	require.Empty(t, progress[len(progress)-1].Error)
 	require.True(t, progress[len(progress)-1].Finished)
 }
 
@@ -168,4 +247,20 @@ func openMemoryTestDB(t *testing.T, repoRoot string) *sql.DB {
 		_ = conn.Close()
 	})
 	return conn
+}
+
+func initMemoryTestGitRepo(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoRoot}, args...)...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	run("init")
+	run("config", "user.name", "Sapphire Tests")
+	run("config", "user.email", "sapphire-tests@example.com")
+	run("add", ".")
+	run("commit", "-m", "initial")
 }

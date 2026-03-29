@@ -366,3 +366,21 @@ func TestPublishSubAgentCompletionNotificationDeduplicates(t *testing.T) {
 	require.True(t, found)
 	require.True(t, strings.Contains(text.Text, "\"submission_id\":\"submission-1\""))
 }
+
+func TestSubAgentSnapshotIncludesWorkItemID(t *testing.T) {
+	t.Parallel()
+
+	runner := &subAgentRunner{
+		id:          "agent-1",
+		sessionID:   "session-1",
+		status:      subAgentStatusRunning,
+		submissions: make(map[string]*subAgentSubmission),
+		assignment: subAgentAssignment{
+			ID:    "work-auth",
+			Title: "Auth flow",
+		},
+	}
+
+	snapshot := runner.snapshot()
+	require.Equal(t, "work-auth", snapshot.WorkItemID)
+}

@@ -43,3 +43,39 @@ func TestClassifyProviderTransportError_OpenRouterConnectionReset(t *testing.T) 
 		t.Fatalf("expected retry guidance, got %q", details)
 	}
 }
+
+func TestClassifyProviderTransportError_DNSLookupFailure(t *testing.T) {
+	t.Parallel()
+
+	title, details, ok := classifyProviderTransportError(
+		errors.New(`doRequest: error sending request: Post "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse": dial tcp: lookup generativelanguage.googleapis.com: no such host`),
+		lipgloss.NewStyle(),
+	)
+	if !ok {
+		t.Fatal("expected DNS lookup failure to be classified")
+	}
+	if title != "Model provider DNS lookup failed" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+	if !strings.Contains(strings.ToLower(details), "dns") {
+		t.Fatalf("expected DNS guidance, got %q", details)
+	}
+}
+
+func TestClassifyProviderTransportError_NetworkTimeout(t *testing.T) {
+	t.Parallel()
+
+	title, details, ok := classifyProviderTransportError(
+		errors.New(`doRequest: error sending request: Post "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse": context deadline exceeded`),
+		lipgloss.NewStyle(),
+	)
+	if !ok {
+		t.Fatal("expected timeout to be classified")
+	}
+	if title != "Model provider network timeout" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+	if !strings.Contains(strings.ToLower(details), "timed out") {
+		t.Fatalf("expected timeout guidance, got %q", details)
+	}
+}

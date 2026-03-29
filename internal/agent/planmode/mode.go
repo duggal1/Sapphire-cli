@@ -163,6 +163,17 @@ func AvailableModes() []ModeDescriptor {
 	}
 }
 
+func SelectableModes() []ModeDescriptor {
+	items := make([]ModeDescriptor, 0, len(AvailableModes())-1)
+	for _, mode := range AvailableModes() {
+		if mode.Mode == ArchitectureMode {
+			continue
+		}
+		items = append(items, mode)
+	}
+	return items
+}
+
 func LookupMode(mode SessionMode) ModeDescriptor {
 	mode = NormalizeMode(mode)
 	for _, item := range AvailableModes() {

@@ -194,7 +194,7 @@ func (m *UI) indexingInfo(width int) string {
 	if !m.indexingProgress.Active || m.state == uiChat {
 		return ""
 	}
-	title := shimmer.RenderIndexingText("Indexing...", m.indexingFrame)
+	title := shimmer.RenderIndexingText("Indexing codebase", m.indexingFrame)
 	bar := renderIndexingBar(max(10, width-6), m.indexingProgress.Percent)
 	detail := m.com.Styles.HalfMuted.Render(fmt.Sprintf("%d/%d files · %d/%d chunks",
 		m.indexingProgress.FilesProcessed,

@@ -2,17 +2,32 @@ package orchestrationdb
 
 import "time"
 
+const (
+	MailDeliveryStatePending    = "pending"
+	MailDeliveryStateLeased     = "leased"
+	MailDeliveryStateAcked      = "acked"
+	MailDeliveryStateDeadLetter = "dead_letter"
+)
+
 type AgentMail struct {
-	ID        string    `json:"id"`
-	ToAgent   string    `json:"to_agent"`
-	FromAgent string    `json:"from_agent"`
-	Subject   string    `json:"subject"`
-	Body      string    `json:"body"`
-	Priority  int       `json:"priority"`
-	ThreadID  string    `json:"thread_id"`
-	Read      bool      `json:"read"`
-	CreatedAt time.Time `json:"created_at"`
-	ReadAt    time.Time `json:"read_at,omitempty"`
+	RowID            int64     `json:"row_id,omitempty"`
+	ID               string    `json:"id"`
+	Address          string    `json:"address,omitempty"`
+	ToAgent          string    `json:"to_agent"`
+	ResolvedToAgent  string    `json:"resolved_to_agent,omitempty"`
+	FromAgent        string    `json:"from_agent"`
+	Subject          string    `json:"subject"`
+	Body             string    `json:"body"`
+	Priority         int       `json:"priority"`
+	ThreadID         string    `json:"thread_id"`
+	DeliveryState    string    `json:"delivery_state,omitempty"`
+	DeliveryAttempts int       `json:"delivery_attempts,omitempty"`
+	LeaseOwner       string    `json:"lease_owner,omitempty"`
+	LeaseExpiresAt   time.Time `json:"lease_expires_at,omitempty"`
+	Read             bool      `json:"read"`
+	CreatedAt        time.Time `json:"created_at"`
+	ReadAt           time.Time `json:"read_at,omitempty"`
+	AckedAt          time.Time `json:"acked_at,omitempty"`
 }
 
 type AgentState struct {
@@ -30,6 +45,7 @@ type AgentState struct {
 }
 
 type AgentActivity struct {
+	RowID       int64     `json:"row_id,omitempty"`
 	ID          string    `json:"id"`
 	AgentID     string    `json:"agent_id"`
 	EventType   string    `json:"event_type"`

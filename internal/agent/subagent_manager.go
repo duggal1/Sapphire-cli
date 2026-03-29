@@ -102,6 +102,7 @@ type subAgentRunner struct {
 	staleMisses          int
 	firstStaleObservedAt time.Time
 	lastPersistedAt      time.Time
+	turnTimeout          time.Duration
 	mu                   sync.Mutex
 }
 
@@ -231,6 +232,7 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		ID:                   r.id,
 		Title:                firstNonEmptyString(strings.TrimSpace(r.assignment.Title), strings.TrimSpace(r.assignment.TaskKey), strings.TrimSpace(r.assignment.Task)),
 		Status:               r.effectiveStatusLocked(),
+		WorkItemID:           strings.TrimSpace(r.assignment.ID),
 		LastResult:           r.lastResult,
 		LastError:            r.lastError,
 		LastProgress:         r.lastProgress,
@@ -629,6 +631,7 @@ type subAgentSnapshot struct {
 	ID                   string         `json:"id"`
 	Title                string         `json:"title,omitempty"`
 	Status               subAgentStatus `json:"status"`
+	WorkItemID           string         `json:"work_item_id,omitempty"`
 	LastResult           string         `json:"last_result,omitempty"`
 	LastError            string         `json:"last_error,omitempty"`
 	LastProgress         string         `json:"last_progress,omitempty"`
@@ -698,6 +701,7 @@ type spawnAgentOptions struct {
 	ReasoningEffort  string
 	ForkContext      bool
 	CustomTools      []fantasy.AgentTool
+	TurnTimeout      time.Duration
 }
 
 func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string, opts spawnAgentOptions) (string, string, error) {
@@ -857,6 +861,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 		assignment:    assignment,
 		statusBroker:  pubsub.NewBroker[subAgentStatus](),
 		hookEnabled:   strings.TrimSpace(opts.WorkItemID) != "",
+		turnTimeout:   opts.TurnTimeout,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
@@ -945,7 +950,11 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 
 			c.publishSubAgentEvent(SubAgentStartingEvent, runner, submission.ID, SubAgentStageStarting, "")
 
-			runCtx, cancel := context.WithTimeout(context.Background(), subAgentTurnTimeout)
+			turnTimeout := runner.turnTimeout
+			if turnTimeout <= 0 {
+				turnTimeout = subAgentTurnTimeout
+			}
+			runCtx, cancel := context.WithTimeout(context.Background(), turnTimeout)
 			runner.mu.Lock()
 			runner.cancel = cancel
 			runner.mu.Unlock()
@@ -1046,7 +1055,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			submission.HeartbeatAt = now
 			runner.lastHeartbeat = now
 			if timedOut {
-				timeoutErr := fmt.Sprintf("sub-agent turn timed out after %s", subAgentTurnTimeout)
+				timeoutErr := fmt.Sprintf("sub-agent turn timed out after %s", turnTimeout)
 				submission.Status = subAgentStatusTimedOut
 				submission.Err = timeoutErr
 				runner.status = subAgentStatusTimedOut

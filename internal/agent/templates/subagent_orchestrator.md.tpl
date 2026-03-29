@@ -28,6 +28,8 @@ Follow exactly.
 
 - Use `agent_mail_send` for blockers, handoffs, or dependency requests.
 - Use `agent_mail_inbox` when mail arrives or when coordination state may have changed.
+- Use `agent_mail_ack` after you fully handle a leased coordination item.
+- Use `agent_directory` to discover stable `agent:<id>` and `work:<id>` routes when coordinating with sibling agents.
 - Report concrete evidence: files, commands, errors, validation status.
 
 ## Output

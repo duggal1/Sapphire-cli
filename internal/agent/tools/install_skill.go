@@ -56,7 +56,14 @@ func NewInstallSkillTool() fantasy.AgentTool {
 			}
 
 			name := loaded.Skill.LocalName()
-			return fantasy.NewTextResponse(fmt.Sprintf("Installed %q as a local extended skill and plugin. Next: call `load_skill` with %q.", name, name)), nil
+			return fantasy.ToolResponse{
+				Content: fmt.Sprintf(
+					"Installed %q as a local extended skill and plugin.\nExact local name: %q\nThe full installed SKILL.md is below.\n\n<instructions>\n%s\n</instructions>",
+					name,
+					name,
+					strings.TrimSpace(loaded.Markdown),
+				),
+			}, nil
 		},
 	)
 }

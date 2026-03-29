@@ -13,18 +13,20 @@ Do not guess skill names when the catalog is large.
 Preferred sequence:
 1. Use `search_skills(query: "...")` for focused routing
 2. If the right skill is not local yet, call `install_skill(query: "...")`
-3. Use `list_skills()` only when full inventory browsing is actually needed
-4. Invoke `load_skill(name: "<exact-name>")`
+3. Read the full `SKILL.md` returned by `install_skill`
+4. Use `list_skills()` only when full inventory browsing is actually needed
+5. Invoke `load_skill(name: "<exact-name>")`
 
 ## EXECUTION SEQUENCE
 
 1. Build a concise domain query from the user task
 2. Call `search_skills`
 3. If the needed skill is missing, call `install_skill`
-4. Choose exact skill names from results
-5. Invoke `load_skill(name: "<exact-name>")`
-6. Await instructions
-7. Proceed with implementation
+4. Read the full installed `SKILL.md` returned by `install_skill`
+5. Choose exact skill names from results when needed
+6. Invoke `load_skill(name: "<exact-name>")`
+7. Await instructions
+8. Proceed with implementation
 
 ## EXCEPTIONS
 

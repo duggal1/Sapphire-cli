@@ -35,6 +35,16 @@ func TestAvailableModesDescriptionsAreConcise(t *testing.T) {
 	}
 }
 
+func TestSelectableModesHideArchitectEntry(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range SelectableModes() {
+		if mode.Mode == ArchitectureMode {
+			t.Fatal("architecture mode should not appear in user-selectable modes")
+		}
+	}
+}
+
 func TestModeToolPoliciesMatchRuntimeContract(t *testing.T) {
 	t.Parallel()
 

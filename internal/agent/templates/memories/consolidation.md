@@ -55,8 +55,10 @@ Examples:
 2) Decision triggers that prevent wasted exploration
 3) Failure shields: symptom -> cause -> fix + verification + stop rules
 4) Repo/task maps: entrypoints, configs, commands
-5) Tooling quirks and reliable shortcuts
-6) Proven reproduction plans (for successes)
+5) Architecture maps: subsystem -> responsibility -> key file paths
+6) Codebase anchors: exact files with why they matter and when future agents should open them
+7) Tooling quirks and reliable shortcuts
+8) Proven reproduction plans (for successes)
 
 Non-goals:
 - Generic advice ("be careful", "check docs")
@@ -168,6 +170,7 @@ Body format (strict):
 - Header (`# Task Group: ...` + `scope: ...`) is index. Body contains task-level detail
 - Put task list first so routing anchors (`rollout_summary_files`, `keywords`) appear before consolidated guidance
 - After task list, include block-level `## User preferences`, `## Reusable knowledge`, and `## Failures and how to do differently` when meaningful. These sections consolidate from represented tasks and preserve content without flattening into generic summaries
+- For repo-backed engineering blocks, add `## Architecture snapshot` and `## Codebase anchors`
 - Every `## Task <n>` section MUST include only task-local rollout files and task-local keywords
 - Use `-` bullets for lists and task subsections. Do not use `*`
 - No bolding in memory body
@@ -202,6 +205,16 @@ Required task-oriented body shape (strict):
 - preserve enough user's original wording that preference is auditable and actionable [Task 1][Task 2]
 - promote repeated or stable signals; do not flatten distinct requests into vague umbrella preference
 
+## Architecture snapshot
+
+- subsystem=<name>; role=<what this part of the system owns>; key_paths=<path1, path2, ...>; use_when=<when this subsystem is the right starting point> [Task 1]
+- keep this concise, operational, and specific to the real repo layout [Task 1][Task 2]
+
+## Codebase anchors
+
+- path=<file>; role=<what the file controls>; why_it_matters=<why it is a control point>; open_when=<when a future agent should read it first> [Task 1]
+- include exact file paths, not vague directory-only references, for the highest-signal files [Task 1][Task 2]
+
 ## Reusable knowledge
 
 - validated repo/system facts, reusable procedures, decision triggers, concrete know-how consolidated at task-group level [Task 1]
@@ -215,8 +228,9 @@ Required task-oriented body shape (strict):
 Schema rules (strict):
 
 - A) Structure and consistency
-  - Exact block shape: `# Task Group`, `scope:`, optional `## User preferences`, `## Reusable knowledge`, `## Failures and how to do differently`, one or more `## Task <n>`, with task sections appearing before block-level consolidated sections
+  - Exact block shape: `# Task Group`, `scope:`, optional `## User preferences`, `## Architecture snapshot`, `## Codebase anchors`, `## Reusable knowledge`, `## Failures and how to do differently`, one or more `## Task <n>`, with task sections appearing before block-level consolidated sections
   - Include `## User preferences` when block has meaningful user-preference signal; omit only when nothing worth preserving
+  - For repo-backed engineering work, `## Architecture snapshot` and `## Codebase anchors` are required
   - `## Reusable knowledge` and `## Failures and how to do differently` expected for substantive blocks; preserve high-value procedural content from rollouts
   - Keep all tasks and tips inside task family implied by block header
   - Keep entries retrieval-friendly, not shallow

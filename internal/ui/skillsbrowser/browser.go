@@ -22,6 +22,8 @@ type focusState uint8
 const (
 	focusList focusState = iota
 	focusInput
+
+	initialBrowseLimit = 120
 )
 
 type loadResultsMsg struct {
@@ -248,7 +250,7 @@ func (m *Model) fetchResults(query string) tea.Cmd {
 	}
 
 	m.loading = true
-	m.loadingLabel = "Loading top 2,000 extended skills..."
+	m.loadingLabel = fmt.Sprintf("Loading %d extended skills...", initialBrowseLimit)
 	if query != "" {
 		m.loadingLabel = "Searching Sapphire extended skills for " + query + "..."
 	}
@@ -259,7 +261,15 @@ func (m *Model) fetchResults(query string) tea.Cmd {
 	m.query = query
 	m.input.SetValue(query)
 	return tea.Batch(m.spinner.Tick, func() tea.Msg {
-		items, err := m.client.Search(context.Background(), query)
+		var (
+			items []skillsmp.Skill
+			err   error
+		)
+		if query == "" {
+			items, err = m.client.List(context.Background(), initialBrowseLimit)
+		} else {
+			items, err = m.client.Search(context.Background(), query)
+		}
 		return loadResultsMsg{Seq: seq, Query: query, Items: items, Err: err}
 	})
 }

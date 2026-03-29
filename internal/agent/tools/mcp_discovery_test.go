@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -89,4 +90,36 @@ func TestScoreConnectedToolMatchesServerAndToolQuery(t *testing.T) {
 	score, ok := scoreConnectedTool("com.stripe/mcp", "create_checkout_session", "Create a checkout session", "stripe checkout", mcpQueryTerms("stripe checkout"))
 	require.True(t, ok)
 	require.Greater(t, score, 0)
+}
+
+func TestListAvailableMCPsFallsBackToLiveRegistryWhenLocalInventoryMisses(t *testing.T) {
+	cfg := &config.Config{}
+	perm := permission.NewPermissionService(t.TempDir(), true, nil)
+
+	originalFetcher := fetchLiveRegistryDefinitions
+	fetchLiveRegistryDefinitions = func(ctx context.Context) ([]config.RegistryMCPDefinition, error) {
+		return []config.RegistryMCPDefinition{
+			{
+				Name:        "io.github.example/zapier-mcp",
+				Description: "Zapier automation MCP server",
+				Type:        config.MCPStdio,
+				Command:     "npx",
+				Args:        []string{"-y", "zapier-mcp"},
+			},
+		}, nil
+	}
+	defer func() {
+		fetchLiveRegistryDefinitions = originalFetcher
+	}()
+
+	tool := NewListAvailableMCPsTool(cfg, perm)
+	ctx := context.WithValue(t.Context(), SessionIDContextKey, "session-live-registry")
+	resp := runTool(t, tool, ListAvailableMCPsToolName, ListAvailableMCPsParams{
+		Query: "zapier",
+		Limit: 5,
+	}, ctx)
+
+	require.Contains(t, resp.Content, "Registry source: live official registry fallback")
+	require.Contains(t, resp.Content, "io.github.example/zapier-mcp")
+	require.Contains(t, resp.Content, "Zapier automation MCP server")
 }

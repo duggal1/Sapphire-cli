@@ -16,6 +16,7 @@ const (
 	sweepDuration  = 1650 * time.Millisecond
 	bandHalfWidth  = 8.0
 	shimmerPadding = 8
+	spinnerCycle   = 900 * time.Millisecond
 )
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -287,14 +288,36 @@ func renderRune(mode renderMode, intensity float32, ch string) string {
 	}
 }
 
-func renderSpinnerFrame(mode renderMode, frame string) string {
+func renderSpinnerFrame(mode renderMode, frame string, intensity float32) string {
+	intensity = clamp01(intensity)
 	switch mode {
 	case renderTrueColor:
-		return renderRGB(164, 95, 255, frame)
+		baseColor := [3]uint8{132, 97, 208}
+		highlightColor := [3]uint8{229, 221, 255}
+		r, g, b := blend(highlightColor, baseColor, intensity)
+		return renderRGB(r, g, b, frame)
 	case renderANSI256:
-		return renderIndexedColor(135, true, frame)
+		switch {
+		case intensity < 0.2:
+			return renderIndexedColor(98, false, frame)
+		case intensity < 0.45:
+			return renderIndexedColor(135, false, frame)
+		case intensity < 0.75:
+			return renderIndexedColor(177, true, frame)
+		default:
+			return renderIndexedColor(189, true, frame)
+		}
 	case renderDecorated:
-		return "\033[1m\033[38;5;135m" + frame + "\033[0m"
+		switch {
+		case intensity < 0.2:
+			return "\033[2m\033[38;5;98m" + frame + "\033[0m"
+		case intensity < 0.45:
+			return "\033[38;5;135m" + frame + "\033[0m"
+		case intensity < 0.75:
+			return "\033[1m\033[38;5;177m" + frame + "\033[0m"
+		default:
+			return "\033[1m\033[38;5;189m" + frame + "\033[0m"
+		}
 	default:
 		return frame
 	}
@@ -344,7 +367,7 @@ func Spinner(startTime *time.Time, animationsEnabled bool) string {
 
 	mode := currentRenderMode()
 	if mode != renderPlain {
-		return renderSpinnerFrame(mode, frame)
+		return renderSpinnerFrame(mode, frame, spinnerIntensityAt(startTime))
 	}
 	return frame
 }
@@ -359,16 +382,13 @@ func ShimmerWithDot(text string) string {
 }
 
 func CurrentSpinnerFrameAt(startTime *time.Time) string {
-	var elapsed time.Duration
-	if startTime != nil {
-		elapsed = time.Since(*startTime)
-	} else {
-		elapsed = elapsedSinceStart()
-	}
 	if len(spinnerFrames) == 0 {
 		return "⠋"
 	}
-	index := int((elapsed / (80 * time.Millisecond)) % time.Duration(len(spinnerFrames)))
+	index := int(spinnerPhaseAt(startTime) * float64(len(spinnerFrames)))
+	if index >= len(spinnerFrames) {
+		index = len(spinnerFrames) - 1
+	}
 	if index < 0 {
 		index = 0
 	}
@@ -377,4 +397,27 @@ func CurrentSpinnerFrameAt(startTime *time.Time) string {
 
 func CurrentSpinnerFrame() string {
 	return CurrentSpinnerFrameAt(nil)
+}
+
+func spinnerPhaseAt(startTime *time.Time) float64 {
+	var elapsed time.Duration
+	if startTime != nil {
+		elapsed = time.Since(*startTime)
+	} else {
+		elapsed = elapsedSinceStart()
+	}
+	progress := math.Mod(elapsed.Seconds(), spinnerCycle.Seconds()) / spinnerCycle.Seconds()
+	if progress < 0 {
+		return 0
+	}
+	return progress
+}
+
+func spinnerIntensityAt(startTime *time.Time) float32 {
+	phase := spinnerPhaseAt(startTime) * float64(len(spinnerFrames))
+	fraction := phase - math.Floor(phase)
+	if fraction < 0 {
+		fraction = 0
+	}
+	return 0.35 + 0.65*float32(0.5*(1+math.Cos((fraction-0.5)*math.Pi)))
 }

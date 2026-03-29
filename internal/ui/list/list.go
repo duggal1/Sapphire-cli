@@ -52,6 +52,29 @@ type renderedItem struct {
 	lines   []string
 }
 
+func (l *List) invalidateSelectionChange(previous, next int) {
+	if previous >= 0 {
+		l.InvalidateItem(previous)
+	}
+	if next >= 0 && next != previous {
+		l.InvalidateItem(next)
+	}
+}
+
+func (l *List) setSelectedIndex(index int) bool {
+	previous := l.selectedIdx
+	if index < 0 || index >= len(l.items) {
+		l.selectedIdx = -1
+	} else {
+		l.selectedIdx = index
+	}
+	if previous == l.selectedIdx {
+		return false
+	}
+	l.invalidateSelectionChange(previous, l.selectedIdx)
+	return true
+}
+
 func (l *List) ensureCacheSize() {
 	if len(l.heightCache) == len(l.items) && len(l.heightValid) == len(l.items) && len(l.renderCache) == len(l.items) && len(l.renderValid) == len(l.items) && len(l.prefixHeights) == len(l.items) {
 		return
@@ -637,12 +660,20 @@ func (l *List) Focused() bool {
 
 // Focus sets the focus state of the list.
 func (l *List) Focus() {
+	if l.focused {
+		return
+	}
 	l.focused = true
+	l.InvalidateItem(l.selectedIdx)
 }
 
 // Blur removes the focus state from the list.
 func (l *List) Blur() {
+	if !l.focused {
+		return
+	}
 	l.focused = false
+	l.InvalidateItem(l.selectedIdx)
 }
 
 // ScrollToTop scrolls the list to the top.
@@ -708,11 +739,7 @@ func (l *List) SelectedItemInView() bool {
 // SetSelected sets the selected item index in the list.
 // It returns -1 if the index is out of bounds.
 func (l *List) SetSelected(index int) {
-	if index < 0 || index >= len(l.items) {
-		l.selectedIdx = -1
-	} else {
-		l.selectedIdx = index
-	}
+	l.setSelectedIndex(index)
 }
 
 // Selected returns the index of the currently selected item. It returns -1 if
@@ -737,14 +764,12 @@ func (l *List) SelectPrev() bool {
 	if l.reverse {
 		// In reverse, visual up = higher index
 		if l.selectedIdx < len(l.items)-1 {
-			l.selectedIdx++
-			return true
+			return l.setSelectedIndex(l.selectedIdx + 1)
 		}
 	} else {
 		// Normal: visual up = lower index
 		if l.selectedIdx > 0 {
-			l.selectedIdx--
-			return true
+			return l.setSelectedIndex(l.selectedIdx - 1)
 		}
 	}
 	return false
@@ -756,14 +781,12 @@ func (l *List) SelectNext() bool {
 	if l.reverse {
 		// In reverse, visual down = lower index
 		if l.selectedIdx > 0 {
-			l.selectedIdx--
-			return true
+			return l.setSelectedIndex(l.selectedIdx - 1)
 		}
 	} else {
 		// Normal: visual down = higher index
 		if l.selectedIdx < len(l.items)-1 {
-			l.selectedIdx++
-			return true
+			return l.setSelectedIndex(l.selectedIdx + 1)
 		}
 	}
 	return false
@@ -775,8 +798,7 @@ func (l *List) SelectFirst() bool {
 	if len(l.items) == 0 {
 		return false
 	}
-	l.selectedIdx = 0
-	return true
+	return l.setSelectedIndex(0)
 }
 
 // SelectLast selects the last item in the list (highest index).
@@ -785,8 +807,7 @@ func (l *List) SelectLast() bool {
 	if len(l.items) == 0 {
 		return false
 	}
-	l.selectedIdx = len(l.items) - 1
-	return true
+	return l.setSelectedIndex(len(l.items) - 1)
 }
 
 // WrapToStart wraps selection to the visual start (for circular navigation).
@@ -796,11 +817,9 @@ func (l *List) WrapToStart() bool {
 		return false
 	}
 	if l.reverse {
-		l.selectedIdx = len(l.items) - 1
-	} else {
-		l.selectedIdx = 0
+		return l.setSelectedIndex(len(l.items) - 1)
 	}
-	return true
+	return l.setSelectedIndex(0)
 }
 
 // WrapToEnd wraps selection to the visual end (for circular navigation).
@@ -810,11 +829,9 @@ func (l *List) WrapToEnd() bool {
 		return false
 	}
 	if l.reverse {
-		l.selectedIdx = 0
-	} else {
-		l.selectedIdx = len(l.items) - 1
+		return l.setSelectedIndex(0)
 	}
-	return true
+	return l.setSelectedIndex(len(l.items) - 1)
 }
 
 // SelectedItem returns the currently selected item. It may be nil if no item
@@ -829,13 +846,13 @@ func (l *List) SelectedItem() Item {
 // SelectFirstInView selects the first item currently in view.
 func (l *List) SelectFirstInView() {
 	startIdx, _ := l.VisibleItemIndices()
-	l.selectedIdx = startIdx
+	l.setSelectedIndex(startIdx)
 }
 
 // SelectLastInView selects the last item currently in view.
 func (l *List) SelectLastInView() {
 	_, endIdx := l.VisibleItemIndices()
-	l.selectedIdx = endIdx
+	l.setSelectedIndex(endIdx)
 }
 
 // ItemAt returns the item at the given index.

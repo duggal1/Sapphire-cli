@@ -41,8 +41,8 @@ func TestModeCommandsIncludeEveryAvailableMode(t *testing.T) {
 		},
 	}).modeCommands(planmode.ReviewMode)
 
-	if len(cmds) != len(planmode.AvailableModes()) {
-		t.Fatalf("expected %d mode commands, got %d", len(planmode.AvailableModes()), len(cmds))
+	if len(cmds) != len(planmode.SelectableModes()) {
+		t.Fatalf("expected %d mode commands, got %d", len(planmode.SelectableModes()), len(cmds))
 	}
 
 	seen := make(map[planmode.SessionMode]bool, len(cmds))
@@ -54,7 +54,7 @@ func TestModeCommandsIncludeEveryAvailableMode(t *testing.T) {
 		seen[action.Mode] = true
 	}
 
-	for _, mode := range planmode.AvailableModes() {
+	for _, mode := range planmode.SelectableModes() {
 		if !seen[mode.Mode] {
 			t.Fatalf("expected command item for mode %s", mode.Mode)
 		}

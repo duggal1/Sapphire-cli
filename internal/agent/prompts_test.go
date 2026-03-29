@@ -42,6 +42,12 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "# SOUL.md") {
 		t.Fatalf("expected SOUL prompt section in coder prompt")
 	}
+	if !strings.Contains(out, "# autonomous.md") {
+		t.Fatalf("expected autonomous prompt section in coder prompt")
+	}
+	if !strings.Contains(out, "Do not stop at a plan when execution is possible.") {
+		t.Fatalf("expected autonomous execution guardrails in coder prompt")
+	}
 	if !strings.Contains(out, "If there is even slight uncertainty about which skill applies, call `search_skills` first") {
 		t.Fatalf("expected strict skill policy in coder prompt")
 	}
@@ -103,6 +109,7 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 				"Today's date is in the runtime context below.",
 				"If asked for today's date, day, or current time, answer from the runtime context, not model memory.",
 				"For anything time-sensitive or likely to have changed since the cutoff, verify with tools or web search before answering.",
+				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
 			},
 		},
 		{
@@ -117,6 +124,7 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 			needle: []string{
 				"Your knowledge cutoff is mid-2025.",
 				"Today's date is in the runtime context below.",
+				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
 			},
 		},
 	} {
@@ -126,6 +134,67 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 				t.Fatalf("build %s prompt: %v", tc.name, err)
 			}
 			for _, needle := range tc.needle {
+				if !strings.Contains(out, needle) {
+					t.Fatalf("expected %q in %s prompt", needle, tc.name)
+				}
+			}
+		})
+	}
+}
+
+func TestPromptsRequireAutonomousCurrentIntegrationDiscovery(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "autonomy-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		build func() (string, error)
+	}{
+		{
+			name: "coder",
+			build: func() (string, error) {
+				p, err := coderPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+		{
+			name: "task",
+			build: func() (string, error) {
+				p, err := taskPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.build()
+			if err != nil {
+				t.Fatalf("build %s prompt: %v", tc.name, err)
+			}
+			for _, needle := range []string{
+				"assume model memory may be stale and verify current reality first",
+				"Do not ask the user to paste public docs when you can retrieve current docs",
+				"Use this discovery ladder for non-trivial integrations unless the user explicitly narrows scope",
+				"If MCP is missing or insufficient, use `google_search` and `web_search`, and include URL context",
+				"If the local inventory and live official registry still do not provide a usable MCP, do not stall.",
+			} {
 				if !strings.Contains(out, needle) {
 					t.Fatalf("expected %q in %s prompt", needle, tc.name)
 				}

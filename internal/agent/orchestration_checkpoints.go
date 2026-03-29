@@ -26,6 +26,7 @@ func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, age
 	status := firstSummaryString(summary, "status")
 	prompt := firstSummaryString(summary, "prompt")
 	result := firstSummaryString(summary, "result")
+	mailCursor, activityCursor := c.currentCheckpointCursors(ctx, sessionID, agentID)
 	_, _, _ = c.checkpointService.Record(ctx, agentmemory.CheckpointParams{
 		SessionID:      sessionID,
 		AgentID:        agentID,
@@ -37,15 +38,15 @@ func (c *coordinator) writeSessionCheckpoint(ctx context.Context, sessionID, age
 		Status:         status,
 		Summary:        summary,
 		Force:          true,
-		MailCursor:     time.Now().UTC().Unix(),
-		ActivityCursor: time.Now().UTC().Unix(),
+		MailCursor:     mailCursor,
+		ActivityCursor: activityCursor,
 	})
-	if c.memoryCompiler != nil {
+	if c.shouldPersistCheckpointHandoff(sessionID, agentID, strings.TrimSpace(workItemID), prompt, status) {
 		_ = c.memoryCompiler.PersistHandoff(ctx, agentmemory.CompileRequest{
 			SessionID:  sessionID,
 			AgentID:    agentID,
 			WorkingDir: c.mainWorkingDir(),
-			Task:       firstSummaryString(summary, "prompt"),
+			Task:       prompt,
 		})
 	}
 }
@@ -166,6 +167,7 @@ func (c *coordinator) checkpointTurn(ctx context.Context, sessionID, prompt, res
 			auditTail = c.GetLongHorizonAuditTail(runner.parentSession, maxLongHorizonChars)
 		}
 	}
+	mailCursor, activityCursor := c.currentCheckpointCursors(ctx, sessionID, agentID)
 	_, _, _ = c.checkpointService.Record(ctx, agentmemory.CheckpointParams{
 		SessionID:      sessionID,
 		AgentID:        agentID,
@@ -176,10 +178,10 @@ func (c *coordinator) checkpointTurn(ctx context.Context, sessionID, prompt, res
 		Result:         result,
 		Status:         status,
 		Force:          force,
-		MailCursor:     time.Now().UTC().Unix(),
-		ActivityCursor: time.Now().UTC().Unix(),
+		MailCursor:     mailCursor,
+		ActivityCursor: activityCursor,
 	})
-	if c.memoryCompiler != nil {
+	if c.shouldPersistCheckpointHandoff(sessionID, agentID, strings.TrimSpace(workItemID), prompt, status) {
 		workingDir := c.mainWorkingDir()
 		task := strings.TrimSpace(prompt)
 		if runner := c.runnerBySessionID(sessionID); runner != nil {
@@ -202,6 +204,44 @@ func (c *coordinator) checkpointTurn(ctx context.Context, sessionID, prompt, res
 			Task:       task,
 		})
 	}
+}
+
+func (c *coordinator) shouldPersistCheckpointHandoff(sessionID, agentID, workItemID, prompt, status string) bool {
+	if c == nil || c.memoryCompiler == nil {
+		return false
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" || status == "running" {
+		return false
+	}
+	if strings.TrimSpace(workItemID) != "" {
+		return true
+	}
+	if strings.TrimSpace(agentID) != "" && strings.TrimSpace(agentID) != mainAgentMailboxID(sessionID) {
+		return true
+	}
+	if strings.TrimSpace(c.GetLongHorizonState(sessionID)) != "" {
+		return true
+	}
+	prompt = strings.TrimSpace(prompt)
+	return len(strings.Fields(prompt)) >= 80 || shouldDelegateToSubAgents(prompt)
+}
+
+func (c *coordinator) currentCheckpointCursors(ctx context.Context, sessionID, agentID string) (int64, int64) {
+	if c == nil || c.orchestrationStore == nil {
+		return 0, 0
+	}
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return 0, 0
+	}
+	mailCursor, _ := c.orchestrationStore.LatestMailRowID(ctx, agentID)
+	activityAgentIDs := []string{agentID}
+	if agentID == mainAgentMailboxID(sessionID) {
+		activityAgentIDs = collectAgentIDs(c.listAgentStateSnapshots(ctx, sessionID, agentID, maxOrchestrationAgents), agentID)
+	}
+	activityCursor, _ := c.orchestrationStore.LatestActivityRowID(ctx, activityAgentIDs)
+	return mailCursor, activityCursor
 }
 
 func renderPreferencesInline(items []orchestrationdb.UserPreference, max int) string {

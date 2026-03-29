@@ -37,6 +37,7 @@ import (
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
 	agentsupervisor "github.com/duggal1/Sapphire-cli/internal/agent/supervisor"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/codebasesurvey"
 	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
@@ -112,43 +113,54 @@ func (c *coordinator) ConsolidateMemory(ctx context.Context, sessionID string) e
 }
 
 func (c *coordinator) IndexCodebase(ctx context.Context, force bool) (codeindex.Stats, error) {
-	if c == nil || c.memoryCompiler == nil {
-		return codeindex.Stats{}, fmt.Errorf("durable codebase graph is not initialized")
+	stats, _, err := c.indexCodebaseWithOptions(ctx, indexCodebaseOptions{Force: force})
+	return stats, err
+}
+
+func (c *coordinator) beginCodebaseIndex(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	result, err := c.memoryCompiler.WarmCodebase(ctx, memory.WarmRequest{
-		WorkingDir: c.mainWorkingDir(),
-		Force:      force,
-	}, func(progress memory.WarmProgress) {
-		codeindex.PublishProgress(codeindex.Progress{
-			Workspace:       progress.Workspace,
-			Phase:           progress.Phase,
-			Message:         progress.Message,
-			Active:          progress.Active,
-			Finished:        progress.Finished,
-			FilesDiscovered: progress.FilesDiscovered,
-			FilesProcessed:  progress.FilesProcessed,
-			FilesIndexed:    progress.FilesIndexed,
-			Percent:         progress.Percent,
-			StartedAt:       progress.StartedAt,
-			UpdatedAt:       progress.UpdatedAt,
-			Error:           progress.Error,
-		})
-	})
-	if err != nil {
-		return codeindex.Stats{}, err
+
+	c.codeIndexMu.Lock()
+	defer c.codeIndexMu.Unlock()
+	if c.codeIndexCancel != nil {
+		return nil, nil, fmt.Errorf("codebase indexing is already running")
 	}
-	lastIndexedAt := result.Status.LastIndexedAt
-	if lastIndexedAt.IsZero() {
-		lastIndexedAt = time.Now().UTC()
+
+	indexCtx, cancel := context.WithCancel(ctx)
+	runID := fmt.Sprintf("codeindex:%d", time.Now().UnixNano())
+	c.codeIndexCancel = cancel
+	c.codeIndexSig = runID
+
+	release := func() {
+		cancel()
+		c.codeIndexMu.Lock()
+		defer c.codeIndexMu.Unlock()
+		if c.codeIndexSig == runID {
+			c.codeIndexSig = ""
+			c.codeIndexCancel = nil
+		}
 	}
-	fileCount := result.Status.FileCount
-	if fileCount == 0 {
-		fileCount = result.DiscoveredFiles
+
+	return indexCtx, release, nil
+}
+
+func (c *coordinator) stopActiveCodebaseIndexing() bool {
+	if c == nil {
+		return false
 	}
-	return codeindex.Stats{
-		FileCount:     fileCount,
-		LastIndexedAt: lastIndexedAt,
-	}, nil
+
+	c.codeIndexMu.Lock()
+	cancel := c.codeIndexCancel
+	c.codeIndexCancel = nil
+	c.codeIndexSig = ""
+	c.codeIndexMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
 }
 
 func (c *coordinator) renderCodebaseIndexStatusPrompt(ctx context.Context, sessionID, workingDir string) string {
@@ -185,6 +197,26 @@ func (c *coordinator) renderCodebaseIndexStatusPrompt(ctx context.Context, sessi
 		fmt.Sprintf("- indexed_files: %d", status.FileCount),
 		fmt.Sprintf("- working_tree_dirty: %t", status.Dirty),
 		"- boot_packet: regenerated from the durable graph for each new model context",
+	}
+	if c != nil && c.cfg != nil && c.cfg.Options != nil {
+		if survey, ok, err := codebasesurvey.ReadManifest(c.cfg.Options.DataDirectory); err == nil && ok {
+			surveyState := strings.TrimSpace(survey.Status)
+			if surveyState == "" {
+				surveyState = "ready"
+			}
+			if survey.IndexEpoch != 0 && status.IndexEpoch != 0 && survey.IndexEpoch < status.IndexEpoch {
+				surveyState = "stale"
+			}
+			lines = append(lines, "- ai_codebase_graph: "+surveyState)
+			lines = append(lines, fmt.Sprintf("- ai_codebase_graph_agents: %d", survey.AgentCount))
+			lines = append(lines, fmt.Sprintf("- ai_codebase_graph_files: %d", survey.TotalFiles))
+			if !survey.GeneratedAt.IsZero() {
+				lines = append(lines, "- ai_codebase_graph_generated_at: "+survey.GeneratedAt.UTC().Format(time.RFC3339))
+			}
+			if strings.TrimSpace(survey.OverviewPath) != "" {
+				lines = append(lines, "- ai_codebase_graph_overview: "+strings.TrimSpace(survey.OverviewPath))
+			}
+		}
 	}
 	if !status.LastIndexedAt.IsZero() {
 		lines = append(lines, "- last_indexed_at: "+status.LastIndexedAt.Format(time.RFC3339))
@@ -223,21 +255,22 @@ func (c *coordinator) GetLongHorizonAuditTail(sessionID string, maxBytes int) st
 
 // coordinator implements the Coordinator interface and manages multiple AI agents.
 type coordinator struct {
-	cfg            *config.Config
-	sessions       session.Service
-	messages       message.Service
-	permissions    permission.Service
-	history        history.Service
-	filetracker    filetracker.Service
-	editGuard      *tools.EditGuard
-	lspManager     *lsp.Manager
-	memory         memory.MemoryService
-	memoryCompiler *memory.Compiler
-	codeIndex      *codeindex.Service
-	codeIndexMu    sync.Mutex
-	codeIndexSig   string
-	pmem           *pmem.System
-	longHorizon    *longhorizon.Manager
+	cfg             *config.Config
+	sessions        session.Service
+	messages        message.Service
+	permissions     permission.Service
+	history         history.Service
+	filetracker     filetracker.Service
+	editGuard       *tools.EditGuard
+	lspManager      *lsp.Manager
+	memory          memory.MemoryService
+	memoryCompiler  *memory.Compiler
+	codeIndex       *codeindex.Service
+	codeIndexMu     sync.Mutex
+	codeIndexCancel context.CancelFunc
+	codeIndexSig    string
+	pmem            *pmem.System
+	longHorizon     *longhorizon.Manager
 
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
@@ -427,7 +460,9 @@ func NewCoordinator(
 		return nil, fmt.Errorf("initialize dispatcher: %w", err)
 	}
 	c.daemon = agentdaemon.NewService(c.dispatcher, c.supervisor)
-	c.startOrchestrationServices()
+	if err := c.recoverOrchestrationState(ctx); err != nil {
+		slog.Warn("Failed to recover orchestration state", "error", err)
+	}
 	c.worktreeManager = newWorktreeManager(c)
 	worktreeDir, worktreeBranch, err := c.prepareMainWorktree(ctx)
 	if err == nil && worktreeDir != "" {
@@ -856,6 +891,7 @@ func (c *coordinator) ensureCodeIndex(ctx context.Context) error {
 		_ = c.codeIndex.Close()
 		c.codeIndex = nil
 	}
+	c.codeIndexCancel = nil
 	c.codeIndexSig = ""
 	return nil
 }
@@ -1698,6 +1734,20 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		}
 		allTools = append(allTools, tool)
 	}
+	if slices.Contains(agent.AllowedTools, AgentMailAckToolName) {
+		tool, err := c.agentMailAckTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, tool)
+	}
+	if slices.Contains(agent.AllowedTools, AgentDirectoryToolName) {
+		tool, err := c.agentDirectoryTool(ctx)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, tool)
+	}
 	if slices.Contains(agent.AllowedTools, CheckHookToolName) {
 		tool, err := c.checkHookTool(ctx)
 		if err != nil {
@@ -1720,6 +1770,11 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		return names
 	}
 	allTools = append(allTools, tools.NewListToolsTool(listTools))
+	allTools = append(
+		allTools,
+		tools.NewWebSearchTool(nil),
+		tools.NewWebFetchTool(workingDir, nil),
+	)
 	if c.cfg.Options.GoogleGrounding && c.googleSearchClient != nil {
 		// We use a small Gemini model for grounding search to keep it fast.
 		searchModel := c.resolveGeminiExtractionModel()

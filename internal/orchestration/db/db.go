@@ -87,26 +87,47 @@ func (s *Store) SendMail(ctx context.Context, mail AgentMail) (AgentMail, error)
 	if stringsTrim(mail.ThreadID) == "" {
 		mail.ThreadID = "thread-" + uuid.NewString()
 	}
+	if stringsTrim(mail.Address) == "" {
+		mail.Address = mail.ToAgent
+	}
+	if stringsTrim(mail.ResolvedToAgent) == "" {
+		mail.ResolvedToAgent = mail.ToAgent
+	}
+	if stringsTrim(mail.DeliveryState) == "" {
+		mail.DeliveryState = MailDeliveryStatePending
+	}
 	if mail.CreatedAt.IsZero() {
 		mail.CreatedAt = time.Now().UTC()
 	}
 	if mail.Read {
 		mail.ReadAt = mail.CreatedAt
 	}
+	if mail.DeliveryState == MailDeliveryStateAcked && mail.AckedAt.IsZero() {
+		mail.AckedAt = mail.CreatedAt
+	}
 	_, err := s.conn.ExecContext(
 		ctx,
-		`INSERT INTO agent_mail (id, to_agent, from_agent, subject, body, priority, thread_id, read, created_at, read_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO agent_mail (
+			id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+			delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		mail.ID,
+		mail.Address,
 		mail.ToAgent,
+		mail.ResolvedToAgent,
 		mail.FromAgent,
 		mail.Subject,
 		mail.Body,
 		mail.Priority,
 		mail.ThreadID,
+		mail.DeliveryState,
+		mail.DeliveryAttempts,
+		mail.LeaseOwner,
+		timeToUnix(mail.LeaseExpiresAt),
 		boolToInt(mail.Read),
 		mail.CreatedAt.Unix(),
 		timeToUnix(mail.ReadAt),
+		timeToUnix(mail.AckedAt),
 	)
 	if err != nil {
 		return AgentMail{}, fmt.Errorf("insert agent mail: %w", err)
@@ -125,14 +146,15 @@ func (s *Store) ListInbox(ctx context.Context, agentID string, unreadOnly bool, 
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	query := `SELECT id, to_agent, from_agent, subject, body, priority, thread_id, read, created_at, read_at
+	query := `SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
 		FROM agent_mail
-		WHERE to_agent = ?`
+		WHERE resolved_to_agent = ?`
 	args := []any{agentID}
 	if unreadOnly {
 		query += ` AND read = 0`
 	}
-	query += ` ORDER BY created_at ASC LIMIT ?`
+	query += ` ORDER BY priority DESC, created_at ASC, rowid ASC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.conn.QueryContext(ctx, query, args...)
@@ -140,29 +162,7 @@ func (s *Store) ListInbox(ctx context.Context, agentID string, unreadOnly bool, 
 		return nil, fmt.Errorf("list inbox: %w", err)
 	}
 	defer rows.Close()
-
-	var items []AgentMail
-	for rows.Next() {
-		var (
-			item        AgentMail
-			readInt     int
-			createdUnix int64
-			readUnix    int64
-		)
-		if err := rows.Scan(&item.ID, &item.ToAgent, &item.FromAgent, &item.Subject, &item.Body, &item.Priority, &item.ThreadID, &readInt, &createdUnix, &readUnix); err != nil {
-			return nil, fmt.Errorf("scan inbox item: %w", err)
-		}
-		item.Read = readInt != 0
-		item.CreatedAt = time.Unix(createdUnix, 0).UTC()
-		if readUnix > 0 {
-			item.ReadAt = time.Unix(readUnix, 0).UTC()
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate inbox: %w", err)
-	}
-	return items, nil
+	return scanMailRows(rows)
 }
 
 func (s *Store) MarkRead(ctx context.Context, agentID, messageID string) error {
@@ -171,7 +171,7 @@ func (s *Store) MarkRead(ctx context.Context, agentID, messageID string) error {
 	}
 	_, err := s.conn.ExecContext(
 		ctx,
-		`UPDATE agent_mail SET read = 1, read_at = ? WHERE id = ? AND to_agent = ?`,
+		`UPDATE agent_mail SET read = 1, read_at = ? WHERE id = ? AND resolved_to_agent = ?`,
 		time.Now().UTC().Unix(),
 		stringsTrim(messageID),
 		stringsTrim(agentID),
@@ -191,10 +191,11 @@ func (s *Store) Thread(ctx context.Context, agentID, threadID string, limit int)
 	}
 	rows, err := s.conn.QueryContext(
 		ctx,
-		`SELECT id, to_agent, from_agent, subject, body, priority, thread_id, read, created_at, read_at
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
 		 FROM agent_mail
-		 WHERE thread_id = ? AND (to_agent = ? OR from_agent = ?)
-		 ORDER BY created_at ASC
+		 WHERE thread_id = ? AND (resolved_to_agent = ? OR from_agent = ?)
+		 ORDER BY created_at ASC, rowid ASC
 		 LIMIT ?`,
 		stringsTrim(threadID),
 		stringsTrim(agentID),
@@ -205,29 +206,403 @@ func (s *Store) Thread(ctx context.Context, agentID, threadID string, limit int)
 		return nil, fmt.Errorf("list thread: %w", err)
 	}
 	defer rows.Close()
+	return scanMailRows(rows)
+}
 
-	var items []AgentMail
-	for rows.Next() {
-		var (
-			item        AgentMail
-			readInt     int
-			createdUnix int64
-			readUnix    int64
+func (s *Store) ListActionableMail(ctx context.Context, agentID string, limit int) ([]AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if agentID = stringsTrim(agentID); agentID == "" {
+		return nil, fmt.Errorf("agent id is required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE resolved_to_agent = ?
+		    AND delivery_state IN (?, ?)
+		  ORDER BY priority DESC, created_at ASC, rowid ASC
+		  LIMIT ?`,
+		agentID,
+		MailDeliveryStatePending,
+		MailDeliveryStateLeased,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list actionable mail: %w", err)
+	}
+	defer rows.Close()
+	return scanMailRows(rows)
+}
+
+func (s *Store) LeaseInbox(ctx context.Context, agentID, leaseOwner string, limit int, leaseTTL time.Duration) ([]AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if agentID = stringsTrim(agentID); agentID == "" {
+		return nil, fmt.Errorf("agent id is required")
+	}
+	if leaseOwner = stringsTrim(leaseOwner); leaseOwner == "" {
+		return nil, fmt.Errorf("lease owner is required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if leaseTTL <= 0 {
+		leaseTTL = 2 * time.Minute
+	}
+
+	now := time.Now().UTC()
+	expiry := now.Add(leaseTTL)
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin mail lease transaction: %w", err)
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	existingRows, err := tx.QueryContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE resolved_to_agent = ?
+		    AND delivery_state = ?
+		    AND lease_owner = ?
+		    AND lease_expires_at > ?
+		  ORDER BY priority DESC, created_at ASC, rowid ASC
+		  LIMIT ?`,
+		agentID,
+		MailDeliveryStateLeased,
+		leaseOwner,
+		now.Unix(),
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query active mail leases: %w", err)
+	}
+	existing, err := scanMailRows(existingRows)
+	existingRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) >= limit {
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit mail lease transaction: %w", err)
+		}
+		tx = nil
+		return existing, nil
+	}
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE resolved_to_agent = ?
+		    AND delivery_state = ?
+		  ORDER BY priority DESC, created_at ASC, rowid ASC
+		  LIMIT ?`,
+		agentID,
+		MailDeliveryStatePending,
+		limit-len(existing),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query pending mail leases: %w", err)
+	}
+	pending, err := scanMailRows(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	leased := append([]AgentMail{}, existing...)
+	for _, item := range pending {
+		result, execErr := tx.ExecContext(
+			ctx,
+			`UPDATE agent_mail
+			    SET delivery_state = ?, delivery_attempts = delivery_attempts + 1, lease_owner = ?, lease_expires_at = ?
+			  WHERE rowid = ? AND delivery_state = ?`,
+			MailDeliveryStateLeased,
+			leaseOwner,
+			expiry.Unix(),
+			item.RowID,
+			MailDeliveryStatePending,
 		)
-		if err := rows.Scan(&item.ID, &item.ToAgent, &item.FromAgent, &item.Subject, &item.Body, &item.Priority, &item.ThreadID, &readInt, &createdUnix, &readUnix); err != nil {
-			return nil, fmt.Errorf("scan thread item: %w", err)
+		if execErr != nil {
+			return nil, fmt.Errorf("lease mail %s: %w", item.ID, execErr)
 		}
-		item.Read = readInt != 0
-		item.CreatedAt = time.Unix(createdUnix, 0).UTC()
-		if readUnix > 0 {
-			item.ReadAt = time.Unix(readUnix, 0).UTC()
+		affected, affErr := result.RowsAffected()
+		if affErr != nil {
+			return nil, fmt.Errorf("lease mail rows affected %s: %w", item.ID, affErr)
 		}
-		items = append(items, item)
+		if affected == 0 {
+			continue
+		}
+		item.DeliveryState = MailDeliveryStateLeased
+		item.DeliveryAttempts++
+		item.LeaseOwner = leaseOwner
+		item.LeaseExpiresAt = expiry
+		leased = append(leased, item)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate thread: %w", err)
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit mail lease transaction: %w", err)
 	}
-	return items, nil
+	tx = nil
+	return leased, nil
+}
+
+func (s *Store) AckMail(ctx context.Context, agentID, messageID string) (AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return AgentMail{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	agentID = stringsTrim(agentID)
+	messageID = stringsTrim(messageID)
+	if agentID == "" {
+		return AgentMail{}, fmt.Errorf("agent id is required")
+	}
+	if messageID == "" {
+		return AgentMail{}, fmt.Errorf("message id is required")
+	}
+
+	ackedAt := time.Now().UTC()
+	result, err := s.conn.ExecContext(
+		ctx,
+		`UPDATE agent_mail
+		    SET delivery_state = ?, acked_at = ?, lease_owner = '', lease_expires_at = 0, read = 1, read_at = CASE WHEN read_at = 0 THEN ? ELSE read_at END
+		  WHERE id = ? AND resolved_to_agent = ? AND delivery_state IN (?, ?)`,
+		MailDeliveryStateAcked,
+		ackedAt.Unix(),
+		ackedAt.Unix(),
+		messageID,
+		agentID,
+		MailDeliveryStatePending,
+		MailDeliveryStateLeased,
+	)
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("ack mail: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("ack mail rows affected: %w", err)
+	}
+	if affected == 0 {
+		return AgentMail{}, sql.ErrNoRows
+	}
+
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE id = ?`,
+		messageID,
+	)
+	item, err := scanMail(row)
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("load acked mail: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) DeadLetterMail(ctx context.Context, messageID string) (AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return AgentMail{}, fmt.Errorf("orchestration store is not initialized")
+	}
+	messageID = stringsTrim(messageID)
+	if messageID == "" {
+		return AgentMail{}, fmt.Errorf("message id is required")
+	}
+
+	result, err := s.conn.ExecContext(
+		ctx,
+		`UPDATE agent_mail
+		    SET delivery_state = ?, lease_owner = '', lease_expires_at = 0
+		  WHERE id = ? AND delivery_state IN (?, ?)`,
+		MailDeliveryStateDeadLetter,
+		messageID,
+		MailDeliveryStatePending,
+		MailDeliveryStateLeased,
+	)
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("dead-letter mail: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("dead-letter mail rows affected: %w", err)
+	}
+	if affected == 0 {
+		return AgentMail{}, sql.ErrNoRows
+	}
+
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE id = ?`,
+		messageID,
+	)
+	item, err := scanMail(row)
+	if err != nil {
+		return AgentMail{}, fmt.Errorf("load dead-letter mail: %w", err)
+	}
+	return item, nil
+}
+
+func (s *Store) RequeueExpiredMailLeases(ctx context.Context, maxAttempts int) ([]AgentMail, []AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return nil, nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	now := time.Now().UTC()
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin expired mail requeue transaction: %w", err)
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE delivery_state = ?
+		    AND lease_expires_at > 0
+		    AND lease_expires_at <= ?
+		  ORDER BY lease_expires_at ASC, rowid ASC`,
+		MailDeliveryStateLeased,
+		now.Unix(),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query expired mail leases: %w", err)
+	}
+	items, err := scanMailRows(rows)
+	rows.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	requeued := make([]AgentMail, 0, len(items))
+	deadLetters := make([]AgentMail, 0, len(items))
+	for _, item := range items {
+		nextState := MailDeliveryStatePending
+		target := &requeued
+		if item.DeliveryAttempts >= maxAttempts {
+			nextState = MailDeliveryStateDeadLetter
+			target = &deadLetters
+		}
+		if _, execErr := tx.ExecContext(
+			ctx,
+			`UPDATE agent_mail
+			    SET delivery_state = ?, lease_owner = '', lease_expires_at = 0
+			  WHERE rowid = ? AND delivery_state = ?`,
+			nextState,
+			item.RowID,
+			MailDeliveryStateLeased,
+		); execErr != nil {
+			return nil, nil, fmt.Errorf("requeue expired mail %s: %w", item.ID, execErr)
+		}
+		item.DeliveryState = nextState
+		item.LeaseOwner = ""
+		item.LeaseExpiresAt = time.Time{}
+		*target = append(*target, item)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit expired mail requeue transaction: %w", err)
+	}
+	tx = nil
+	return requeued, deadLetters, nil
+}
+
+func (s *Store) ListStalePendingMail(ctx context.Context, olderThan time.Time, limit int) ([]AgentMail, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT rowid, id, address, to_agent, resolved_to_agent, from_agent, subject, body, priority, thread_id,
+		        delivery_state, delivery_attempts, lease_owner, lease_expires_at, read, created_at, read_at, acked_at
+		   FROM agent_mail
+		  WHERE delivery_state = ?
+		    AND created_at > 0
+		    AND created_at <= ?
+		  ORDER BY created_at ASC, rowid ASC
+		  LIMIT ?`,
+		MailDeliveryStatePending,
+		olderThan.UTC().Unix(),
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list stale pending mail: %w", err)
+	}
+	defer rows.Close()
+	return scanMailRows(rows)
+}
+
+func (s *Store) LatestMailRowID(ctx context.Context, agentID string) (int64, error) {
+	if s == nil || s.conn == nil {
+		return 0, fmt.Errorf("orchestration store is not initialized")
+	}
+	row := s.conn.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(MAX(rowid), 0)
+		   FROM agent_mail
+		  WHERE resolved_to_agent = ?`,
+		stringsTrim(agentID),
+	)
+	var latest int64
+	if err := row.Scan(&latest); err != nil {
+		return 0, fmt.Errorf("latest mail row id: %w", err)
+	}
+	return latest, nil
+}
+
+func (s *Store) LatestActivityRowID(ctx context.Context, agentIDs []string) (int64, error) {
+	if s == nil || s.conn == nil {
+		return 0, fmt.Errorf("orchestration store is not initialized")
+	}
+	agentIDs = normalizeStringArgs(agentIDs)
+	if len(agentIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, 0, len(agentIDs))
+	args := make([]any, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, agentID)
+	}
+	query := fmt.Sprintf(
+		`SELECT COALESCE(MAX(rowid), 0)
+		   FROM agent_activity
+		  WHERE agent_id IN (%s)`,
+		strings.Join(placeholders, ","),
+	)
+	row := s.conn.QueryRowContext(ctx, query, args...)
+	var latest int64
+	if err := row.Scan(&latest); err != nil {
+		return 0, fmt.Errorf("latest activity row id: %w", err)
+	}
+	return latest, nil
 }
 
 func (s *Store) UpsertAgentState(ctx context.Context, state AgentState) error {
@@ -292,6 +667,28 @@ func (s *Store) GetAgentState(ctx context.Context, agentID string) (AgentState, 
 		return AgentState{}, fmt.Errorf("get agent state: %w", err)
 	}
 	return state, nil
+}
+
+func (s *Store) ListAgentStates(ctx context.Context, limit int) ([]AgentState, error) {
+	if s == nil || s.conn == nil {
+		return nil, fmt.Errorf("orchestration store is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.conn.QueryContext(
+		ctx,
+		`SELECT agent_id, role, status, session_id, worktree_path, branch, hook_bead_id, parent_agent_id, last_heartbeat, created_at, updated_at
+		 FROM agent_state
+		 ORDER BY updated_at DESC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list agent states: %w", err)
+	}
+	defer rows.Close()
+	return scanAgentStateRows(rows)
 }
 
 func (s *Store) ListAgentStatesByParent(ctx context.Context, parentAgentID string, limit int) ([]AgentState, error) {
@@ -404,7 +801,7 @@ func (s *Store) ListRecentActivity(ctx context.Context, agentID string, limit in
 	}
 	rows, err := s.conn.QueryContext(
 		ctx,
-		`SELECT id, agent_id, event_type, details_json, created_at
+		`SELECT rowid, id, agent_id, event_type, details_json, created_at
 		 FROM agent_activity
 		 WHERE agent_id = ?
 		 ORDER BY created_at DESC
@@ -444,7 +841,7 @@ func (s *Store) ListActivityFeed(ctx context.Context, agentIDs []string, limit i
 	}
 	args = append(args, limit)
 	query := fmt.Sprintf(
-		`SELECT id, agent_id, event_type, details_json, created_at
+		`SELECT rowid, id, agent_id, event_type, details_json, created_at
 		 FROM agent_activity
 		 WHERE agent_id IN (%s)
 		 ORDER BY created_at DESC
@@ -1687,13 +2084,81 @@ func scanActivity(row scanner) (AgentActivity, error) {
 		item        AgentActivity
 		createdUnix int64
 	)
-	if err := row.Scan(&item.ID, &item.AgentID, &item.EventType, &item.DetailsJSON, &createdUnix); err != nil {
+	if err := row.Scan(&item.RowID, &item.ID, &item.AgentID, &item.EventType, &item.DetailsJSON, &createdUnix); err != nil {
 		return AgentActivity{}, err
 	}
 	if createdUnix > 0 {
 		item.CreatedAt = time.Unix(createdUnix, 0).UTC()
 	}
 	return item, nil
+}
+
+func scanMail(row scanner) (AgentMail, error) {
+	var (
+		item             AgentMail
+		leaseExpiresUnix int64
+		readInt          int
+		createdUnix      int64
+		readUnix         int64
+		ackedUnix        int64
+	)
+	if err := row.Scan(
+		&item.RowID,
+		&item.ID,
+		&item.Address,
+		&item.ToAgent,
+		&item.ResolvedToAgent,
+		&item.FromAgent,
+		&item.Subject,
+		&item.Body,
+		&item.Priority,
+		&item.ThreadID,
+		&item.DeliveryState,
+		&item.DeliveryAttempts,
+		&item.LeaseOwner,
+		&leaseExpiresUnix,
+		&readInt,
+		&createdUnix,
+		&readUnix,
+		&ackedUnix,
+	); err != nil {
+		return AgentMail{}, err
+	}
+	item.Read = readInt != 0
+	if item.Address == "" {
+		item.Address = item.ToAgent
+	}
+	if item.ResolvedToAgent == "" {
+		item.ResolvedToAgent = item.ToAgent
+	}
+	if createdUnix > 0 {
+		item.CreatedAt = time.Unix(createdUnix, 0).UTC()
+	}
+	if leaseExpiresUnix > 0 {
+		item.LeaseExpiresAt = time.Unix(leaseExpiresUnix, 0).UTC()
+	}
+	if readUnix > 0 {
+		item.ReadAt = time.Unix(readUnix, 0).UTC()
+	}
+	if ackedUnix > 0 {
+		item.AckedAt = time.Unix(ackedUnix, 0).UTC()
+	}
+	return item, nil
+}
+
+func scanMailRows(rows *sql.Rows) ([]AgentMail, error) {
+	var items []AgentMail
+	for rows.Next() {
+		item, err := scanMail(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan mail: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate mail: %w", err)
+	}
+	return items, nil
 }
 
 func scanActivityRows(rows *sql.Rows) ([]AgentActivity, error) {

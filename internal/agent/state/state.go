@@ -46,6 +46,13 @@ func (s *Service) Status(ctx context.Context, agentID string) (Snapshot, error) 
 	return s.store.GetAgentState(ctx, agentID)
 }
 
+func (s *Service) List(ctx context.Context, limit int) ([]Snapshot, error) {
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("agent state service is not initialized")
+	}
+	return s.store.ListAgentStates(ctx, limit)
+}
+
 func (s *Service) ListByParent(ctx context.Context, parentAgentID string, limit int) ([]Snapshot, error) {
 	if s == nil || s.store == nil {
 		return nil, fmt.Errorf("agent state service is not initialized")

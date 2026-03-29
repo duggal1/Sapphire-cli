@@ -128,13 +128,19 @@ These rules override everything else. Follow them strictly:
 - `agent`: delegate a bounded task to a worker agent.
 - `spawn_agents_on_csv` / `report_agent_job_result`: CSV-driven batch worker flow only.
 - `orchestrate_worktrees`: batch helper for pre-scoped worktree jobs.
-- `agent_mail_send` / `agent_mail_inbox`: durable agent coordination mail.
+- Read exactly 1 repository file → use `single_view`.
+- Read 2 or more repository files → use `agentic_view`.
+- Edit exactly 1 repository file → use `single_edit`.
+- Edit 2 or more repository files → use `agentic_edit`.
+- `agentic_edit` batching rule: edit 2–25 files per call.
+- `agent_mail_send` / `agent_mail_inbox` / `agent_mail_ack`: durable agent coordination mail.
+- `agent_directory`: inspect active agents, work items, dependency edges, and stable routing aliases.
 - `check_hook`: inspect durable hook assignment state.
 
 </tool_catalog>
 
 - Sub-agent lifecycle: `spawn_agent` → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
-- Coordination mail: `agent_mail_send` sends durable agent-to-agent or agent-to-main messages. `agent_mail_inbox` reads them.
+- Coordination mail: `agent_mail_send` sends durable agent-to-agent or agent-to-main messages, `agent_mail_inbox` leases actionable mail, and `agent_mail_ack` completes delivery after handling it.
 - Lifecycle sub-agents run in the shared repository root. Worktree isolation for normal sub-agents is disabled for now.
 - `spawn_agent` and `send_input`: provide exactly one of `message` or `items`.
 - `wait` and `collect_result`: use arrays for `ids`.

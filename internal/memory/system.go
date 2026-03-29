@@ -24,6 +24,17 @@ type Config struct {
 	MaxRecallTokens int // Token budget for context injection
 }
 
+type ContextLoadStage int
+
+const (
+	ContextLoadStageCold ContextLoadStage = 0
+	ContextLoadStage10   ContextLoadStage = 10
+	ContextLoadStage20   ContextLoadStage = 20
+	ContextLoadStage30   ContextLoadStage = 30
+	ContextLoadStage40   ContextLoadStage = 40
+	ContextLoadStage50   ContextLoadStage = 50
+)
+
 // System is the top-level entry point for the persistent memory system.
 // It coordinates the Store, Pipeline, Extractor, and Tools.
 type System struct {
@@ -192,6 +203,12 @@ func (s *System) BuildContextInjection(ctx context.Context, maxContextTokens int
 
 // BuildContextInjectionForSession assembles the memory block for one session.
 func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID string, maxContextTokens int) string {
+	return s.BuildContextInjectionForSessionAtStage(ctx, sessionID, maxContextTokens, ContextLoadStage50)
+}
+
+// BuildContextInjectionForSessionAtStage assembles a progressively larger memory block
+// as the active model context fills up.
+func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, sessionID string, maxContextTokens int, stage ContextLoadStage) string {
 	if s == nil || s.Store == nil {
 		return ""
 	}
@@ -203,11 +220,14 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	if sessionID == "" {
 		return ""
 	}
+	if stage < ContextLoadStage10 {
+		return ""
+	}
 	if s.MemoryFile != nil {
 		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
 	}
 
-	budget := s.resolveMemoryBudget(maxContextTokens)
+	budget := s.resolveMemoryBudgetForStage(maxContextTokens, stage)
 	if budget <= 0 {
 		return ""
 	}
@@ -218,6 +238,7 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	// 1. Project Constitution — core + recent decisions
 	if s.MemoryFile != nil && remaining > 0 {
 		if memoryFileContent, err := s.MemoryFile.Read(); err == nil && memoryFileContent != "" {
+			memoryFileContent = trimMemoryContentForStage(memoryFileContent, stage)
 			block, used := fitBlockToBudget("persistent_memory_map", memoryFileContent, remaining)
 			if used > 0 {
 				sb.WriteString(block)
@@ -227,40 +248,42 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	}
 
 	// 2. Project Constitution — core + recent decisions
-	core, err := s.Store.GetConstitution(ctx)
-	if err != nil {
-		core = ""
-	}
-	if len(core) > 1024 {
-		core = core[:1024]
-	}
-
-	recentDecisions, err := s.Store.QueryRecordsBySession(ctx, sessionID, "architectural", 20)
-	if err != nil {
-		recentDecisions = nil
-	}
-	recentText := formatArchitecturalDecisions(recentDecisions)
-
-	if core != "" || recentText != "" {
-		var content strings.Builder
-		if core != "" {
-			content.WriteString("## Core Constitution (Immutable)\n")
-			content.WriteString(core)
-			content.WriteString("\n")
+	if stage >= ContextLoadStage20 && remaining > 0 {
+		core, err := s.Store.GetConstitution(ctx)
+		if err != nil {
+			core = ""
 		}
-		if recentText != "" {
-			content.WriteString("\n## Recent Decisions (Rolling)\n")
-			content.WriteString(recentText)
+		if len(core) > 1024 {
+			core = core[:1024]
 		}
-		block, used := fitBlockToBudget("persistent_memory_constitution", content.String(), remaining)
-		if used > 0 {
-			sb.WriteString(block)
-			remaining -= used
+
+		recentDecisions, err := s.Store.QueryRecordsBySession(ctx, sessionID, "architectural", 20)
+		if err != nil {
+			recentDecisions = nil
+		}
+		recentText := formatArchitecturalDecisions(recentDecisions)
+
+		if core != "" || recentText != "" {
+			var content strings.Builder
+			if core != "" {
+				content.WriteString("## Core Constitution (Immutable)\n")
+				content.WriteString(core)
+				content.WriteString("\n")
+			}
+			if recentText != "" {
+				content.WriteString("\n## Recent Decisions (Rolling)\n")
+				content.WriteString(recentText)
+			}
+			block, used := fitBlockToBudget("persistent_memory_constitution", content.String(), remaining)
+			if used > 0 {
+				sb.WriteString(block)
+				remaining -= used
+			}
 		}
 	}
 
 	// 3. Negative Constraints — high priority
-	if remaining > 0 {
+	if stage >= ContextLoadStage30 && remaining > 0 {
 		constraints, err := s.Store.GetNegativeConstraintsBySession(ctx, sessionID)
 		if err == nil && len(constraints) > 0 {
 			block, used := buildRecordBlock("persistent_memory_constraints",
@@ -276,7 +299,7 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	}
 
 	// 4. Top-K Relevant Records by retrieval score
-	if remaining > 0 {
+	if stage >= ContextLoadStage40 && remaining > 0 {
 		records, err := s.Store.QueryRecordsBySession(ctx, sessionID, "all", 15)
 		if err == nil && len(records) > 0 {
 			block, used := buildRecordBlock("persistent_memory_records",
@@ -292,7 +315,7 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	}
 
 	// 5. Latest Compaction Checkpoint
-	if remaining > 0 {
+	if stage >= ContextLoadStage50 && remaining > 0 {
 		checkpoint, err := s.Store.GetLatestCheckpointBySession(ctx, sessionID)
 		if err == nil && checkpoint != "" {
 			if len(checkpoint) > 1500 {
@@ -308,6 +331,24 @@ func (s *System) BuildContextInjectionForSession(ctx context.Context, sessionID 
 	}
 
 	return sb.String()
+}
+
+func (s *System) resolveMemoryBudgetForStage(maxContextTokens int, stage ContextLoadStage) int {
+	fullBudget := s.resolveMemoryBudget(maxContextTokens)
+	switch {
+	case stage < ContextLoadStage10:
+		return 0
+	case stage < ContextLoadStage20:
+		return min(max(fullBudget/3, 180), 600)
+	case stage < ContextLoadStage30:
+		return min(max(fullBudget/2, 320), 900)
+	case stage < ContextLoadStage40:
+		return min(max((fullBudget*2)/3, 500), 1400)
+	case stage < ContextLoadStage50:
+		return min(max((fullBudget*4)/5, 700), 2000)
+	default:
+		return fullBudget
+	}
 }
 
 func (s *System) resolveMemoryBudget(maxContextTokens int) int {
@@ -583,7 +624,7 @@ func (s *System) shouldRefreshAfterRepoScan(sessionID, toolName string) bool {
 		return false
 	}
 	switch toolName {
-	case "ls", "glob", "grep", "view", "single_view", "agentic_view":
+	case "ls", "glob", "grep", "view", "single_view", "agentic_view", "index_codebase":
 	default:
 		return false
 	}

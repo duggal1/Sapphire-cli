@@ -44,8 +44,10 @@ type WebSearchParams struct {
 // GoogleSearchParams defines the parameters for the google_search tool.
 // Query is optional to align with Gemini grounding, which can infer queries from the prompt.
 type GoogleSearchParams struct {
-	Query      string `json:"query,omitempty" description:"The search query to ground (optional; defaults to the current user request)"`
-	MaxResults int    `json:"max_results,omitempty" description:"Maximum number of results to return (default: 10, max: 20)"`
+	Query      string   `json:"query,omitempty" description:"The search query to ground (optional; defaults to the current user request)"`
+	URL        string   `json:"url,omitempty" description:"Optional URL to analyze with Gemini URL context alongside grounding search"`
+	URLs       []string `json:"urls,omitempty" description:"Optional URLs to analyze with Gemini URL context alongside grounding search"`
+	MaxResults int      `json:"max_results,omitempty" description:"Maximum number of grounded sources to return (default: 10, max: 20)"`
 }
 
 // FetchParams defines the parameters for the simple fetch tool.
@@ -106,6 +108,41 @@ func (p *WebSearchParams) UnmarshalJSON(data []byte) error {
 
 	p.Query = firstFetchString(raw.Query, raw.Q, raw.Search, raw.SearchTerm, raw.Term)
 	p.Queries = normalizeBatchTargets(p.Query, append(append([]string{}, raw.Queries...), raw.Searches...), "")
+	p.MaxResults = firstFetchInt(raw.MaxResults, raw.NumResults, raw.Count, raw.Limit, raw.Results)
+	return nil
+}
+
+func (p *GoogleSearchParams) UnmarshalJSON(data []byte) error {
+	type rawGoogleSearchParams struct {
+		Query      string   `json:"query,omitempty"`
+		Q          string   `json:"q,omitempty"`
+		Search     string   `json:"search,omitempty"`
+		Prompt     string   `json:"prompt,omitempty"`
+		URL        string   `json:"url,omitempty"`
+		URI        string   `json:"uri,omitempty"`
+		Link       string   `json:"link,omitempty"`
+		Href       string   `json:"href,omitempty"`
+		URLs       []string `json:"urls,omitempty"`
+		Links      []string `json:"links,omitempty"`
+		Resources  []string `json:"resources,omitempty"`
+		MaxResults int      `json:"max_results,omitempty"`
+		NumResults int      `json:"num_results,omitempty"`
+		Count      int      `json:"count,omitempty"`
+		Limit      int      `json:"limit,omitempty"`
+		Results    int      `json:"results,omitempty"`
+	}
+
+	var raw rawGoogleSearchParams
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.Query = firstFetchString(raw.Query, raw.Q, raw.Search, raw.Prompt)
+	p.URL = firstFetchString(raw.URL, raw.URI, raw.Link, raw.Href)
+	p.URLs = normalizeBatchTargets(p.URL, append(append([]string{}, raw.URLs...), raw.Links...), "")
+	if len(raw.Resources) > 0 {
+		p.URLs = append(p.URLs, normalizeBatchTargets("", raw.Resources, "")...)
+	}
 	p.MaxResults = firstFetchInt(raw.MaxResults, raw.NumResults, raw.Count, raw.Limit, raw.Results)
 	return nil
 }

@@ -588,6 +588,8 @@ func TestBuildToolsTaskAgentMatchesCoderCapabilities(t *testing.T) {
 	require.Contains(t, taskNames, tools.SingleViewToolName)
 	require.Contains(t, taskNames, tools.AgenticViewToolName)
 	require.Contains(t, taskNames, tools.PythonToolName)
+	require.Contains(t, taskNames, tools.WebSearchToolName)
+	require.Contains(t, taskNames, tools.WebFetchToolName)
 	require.Contains(t, taskNames, tools.GoogleSearchToolName)
 	require.NotContains(t, taskNames, AgentToolName)
 	require.NotContains(t, taskNames, SpawnAgentToolName)

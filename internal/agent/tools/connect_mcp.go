@@ -119,9 +119,20 @@ func installMCPConfig(ctx context.Context, cfg *config.Config, name string) (con
 		return existing, true, false, nil
 	}
 
-	registryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	registryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	for _, def := range config.DefaultRegistryDefinitions(registryCtx) {
+		if def.Name != name {
+			continue
+		}
+		installCfg := config.RegistryDefinitionToMCPConfig(def, false)
+		if err := cfg.UpsertMCPConfig(name, installCfg); err != nil {
+			return config.MCPConfig{}, false, false, err
+		}
+		return installCfg, true, true, nil
+	}
+
+	for _, def := range loadLiveRegistryDefinitions(ctx) {
 		if def.Name != name {
 			continue
 		}

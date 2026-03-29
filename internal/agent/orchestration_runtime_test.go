@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,7 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 		activityService:    agentactivity.NewService(store),
 		memory:             orchestrationMemoryStub{},
 		mailbox:            agentmailbox.NewService(store, nil),
+		subAgentRegistry:   newSubAgentRegistry(),
 	}
 	coord.checkpointService = agentmemory.NewCheckpointService(store, checkpointMessageSourceStub{}, coord.memory, nil)
 	runner := &subAgentRunner{
@@ -77,6 +79,7 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 			CreatedAt:        time.Now().UTC().Add(-5 * time.Minute),
 		},
 	}
+	coord.subAgentRegistry.upsert(runner.id, runner)
 	require.NoError(t, store.UpsertAgentState(ctx, orchestrationdb.AgentState{
 		AgentID:       "agent-auth",
 		Role:          "subagent",
@@ -131,8 +134,11 @@ func TestBuildSubAgentPersistentMemoryContextIncludesStateWorkAndSummary(t *test
 	require.Contains(t, ctxBlock, "Latest Checkpoint")
 	require.Contains(t, ctxBlock, "auth path updated")
 	require.Contains(t, ctxBlock, "verify auth tests")
-	require.Contains(t, ctxBlock, "Unread Mail")
+	require.Contains(t, ctxBlock, "Actionable Mail")
 	require.Contains(t, ctxBlock, "Dependency update")
+	require.Contains(t, ctxBlock, "Peer Directory")
+	require.Contains(t, ctxBlock, "agent:agent-auth")
+	require.Contains(t, ctxBlock, "work:work-auth")
 }
 
 func TestReportSubAgentOutcomeToParentSendsStructuredMail(t *testing.T) {
@@ -181,4 +187,74 @@ type checkpointMessageSourceStub struct{}
 
 func (checkpointMessageSourceStub) List(context.Context, string) ([]message.Message, error) {
 	return nil, nil
+}
+
+func TestCurrentCheckpointCursorsUseDurableRowIDs(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	sessionID := "parent-session"
+	mainAgentID := mainAgentMailboxID(sessionID)
+	coord := &coordinator{
+		orchestrationStore: store,
+		stateService:       agentstate.NewService(store),
+		subAgentRegistry:   newSubAgentRegistry(),
+	}
+
+	require.NoError(t, store.UpsertAgentState(ctx, orchestrationdb.AgentState{
+		AgentID:       "agent-auth",
+		Role:          "subagent",
+		Status:        "running",
+		SessionID:     "sub-session",
+		HookBeadID:    "work-auth",
+		ParentAgentID: mainAgentID,
+		LastHeartbeat: time.Now().UTC(),
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}))
+	require.NoError(t, store.RecordActivity(ctx, orchestrationdb.AgentActivity{
+		AgentID:     mainAgentID,
+		EventType:   "main_running",
+		DetailsJSON: `{}`,
+		CreatedAt:   time.Now().UTC(),
+	}))
+	require.NoError(t, store.RecordActivity(ctx, orchestrationdb.AgentActivity{
+		AgentID:     "agent-auth",
+		EventType:   "sub_running",
+		DetailsJSON: `{}`,
+		CreatedAt:   time.Now().UTC(),
+	}))
+	_, err = store.SendMail(ctx, orchestrationdb.AgentMail{
+		Address:         "main",
+		ToAgent:         mainAgentID,
+		ResolvedToAgent: mainAgentID,
+		FromAgent:       "agent-auth",
+		Subject:         "handoff",
+		Body:            "done",
+	})
+	require.NoError(t, err)
+
+	expectedMailCursor, err := store.LatestMailRowID(ctx, mainAgentID)
+	require.NoError(t, err)
+	expectedActivityCursor, err := store.LatestActivityRowID(ctx, []string{mainAgentID, "agent-auth"})
+	require.NoError(t, err)
+
+	mailCursor, activityCursor := coord.currentCheckpointCursors(ctx, sessionID, mainAgentID)
+	require.Equal(t, expectedMailCursor, mailCursor)
+	require.Equal(t, expectedActivityCursor, activityCursor)
+}
+
+func TestShouldPersistCheckpointHandoffSkipsOrdinaryMainTurns(t *testing.T) {
+	coord := &coordinator{}
+	require.False(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", "hi", "completed"))
+	require.False(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", "continue", "running"))
+
+	coord.memoryCompiler = &agentmemory.Compiler{}
+	require.False(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", "hi", "completed"))
+	require.True(t, coord.shouldPersistCheckpointHandoff("session-1", "agent-1", "work-1", "finish implementation", "completed"))
+	require.True(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", strings.Repeat("complex ", 90), "completed"))
 }

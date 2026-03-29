@@ -16,6 +16,9 @@ var coderPromptTmpl []byte
 //go:embed templates/Personality/soul/SOUL.md
 var soulPromptSection []byte
 
+//go:embed templates/Personality/autonomous/autonomous.md
+var autonomousPromptSection []byte
+
 //go:embed templates/skills_policy.md
 var skillsPolicyPromptSection []byte
 
@@ -147,6 +150,7 @@ func coderPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*prom
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
 	sections := [][]byte{
 		soulPromptSection,
+		autonomousPromptSection,
 		coderPromptTmpl,
 		skillsPolicyPromptSection,
 		extendedSkillsPromptSection,
@@ -176,6 +180,7 @@ func taskPromptForMode(mode planmode.SessionMode, opts ...prompt.Option) (*promp
 	opts = append(opts, prompt.WithPlanToolPrompt(string(planToolPromptTmpl)))
 	sections := [][]byte{
 		soulPromptSection,
+		autonomousPromptSection,
 		taskPromptTmpl,
 		skillsPolicyPromptSection,
 		extendedSkillsPromptSection,

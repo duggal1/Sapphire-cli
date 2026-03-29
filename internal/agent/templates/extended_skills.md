@@ -2,12 +2,14 @@
 - Built-in local skills are the first stop. If a built-in skill already covers the task, use it immediately and do not install anything.
 - Extended skills are for complex or specialized work that benefits from extra procedural depth, narrower domain coverage, or broader ecosystem coverage than the built-in set.
 - Use extended skills for meaningful implementation, debugging, architecture, auth, backend, frontend, infra, cloud, security, deployment, data, or integration work when the built-in set is incomplete for the task at hand.
+- For vendor integrations and fast-changing APIs, use extended skills proactively when they can shorten discovery or provide better execution structure, but still verify current vendor details with live tools when freshness matters.
 - Skip extended-skill discovery for trivial chat, tiny one-step tasks, or cases already fully covered by a built-in skill.
 - Be autonomous: do not wait for permission to search, install, and load relevant extended skills when they materially improve task quality.
 - Use exact tool calls in this order when needed:
   1. `search_skills(query: "...")` to inspect the local skill store
   2. If the needed skill is missing, `install_skill(query: "...")`
-  3. After install, call `search_skills(query: "...")` again if you need the exact identifier
+  3. `install_skill` returns the exact installed local name and the full `SKILL.md`; read it immediately
+  4. After install, call `search_skills(query: "...")` again only if you still need ranking or exact confirmation
   4. `load_skill(name: "<exact-name>")`
 - For multi-domain tasks, load multiple skills sequentially. Example pattern:
   `search_skills` -> `install_skill` if needed -> `load_skill` -> `load_skill`

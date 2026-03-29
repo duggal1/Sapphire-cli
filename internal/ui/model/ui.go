@@ -1992,7 +1992,19 @@ func (m *UI) startCodebaseIndexing(force bool) tea.Cmd {
 	if m == nil || m.com == nil || m.com.App == nil || m.com.App.AgentCoordinator == nil {
 		return util.ReportError(errors.New("agent coordinator is not initialized"))
 	}
-	return func() tea.Msg {
+	now := time.Now().UTC()
+	m.indexingProgress = codeindex.Progress{
+		Workspace: m.com.Config().WorkingDir(),
+		Phase:     "starting",
+		Message:   "Launching durable graph indexer",
+		Active:    true,
+		StartedAt: now,
+		UpdatedAt: now,
+		Percent:   0.01,
+	}
+	m.setState(uiChat, uiFocusEditor)
+	initialSync := m.syncIndexingMessageItem()
+	return tea.Batch(initialSync, shimmer.IndexingTickCmd(), func() tea.Msg {
 		stats, err := m.com.App.AgentCoordinator.IndexCodebase(context.Background(), force)
 		if err != nil {
 			return util.ReportError(err)()
@@ -2001,7 +2013,7 @@ func (m *UI) startCodebaseIndexing(force bool) tea.Cmd {
 			return util.NewInfoMsg(fmt.Sprintf("Codebase graph indexed (%d files)", stats.FileCount))
 		}
 		return util.NewInfoMsg("Codebase graph indexed")
-	}
+	})
 }
 
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
@@ -3173,7 +3185,7 @@ func (m *UI) renderIndexingFooter(width int) string {
 	if m == nil || width <= 0 || !m.indexingProgress.Active || m.state == uiChat {
 		return ""
 	}
-	label := shimmer.RenderIndexingText("Indexing codebase...", m.indexingFrame)
+	label := shimmer.RenderIndexingText("Indexing codebase", m.indexingFrame)
 	barWidth := max(12, min(28, width/5))
 	bar := renderIndexingBar(barWidth, m.indexingProgress.Percent)
 	detail := fmt.Sprintf("%d/%d files", m.indexingProgress.FilesProcessed, max(m.indexingProgress.FilesDiscovered, m.indexingProgress.FilesIndexed))
@@ -3199,8 +3211,10 @@ func renderIndexingBar(width int, percent float64) string {
 		filled = width
 	}
 	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#A855F7")).
-		Render(strings.Repeat("━", filled) + strings.Repeat("─", width-filled))
+		Render(
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#A8A29E")).Render(strings.Repeat("━", filled)) +
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#44403C")).Render(strings.Repeat("─", width-filled)),
+		)
 }
 
 func (m *UI) renderModeFooter(width int) string {

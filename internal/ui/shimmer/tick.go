@@ -8,7 +8,7 @@ import (
 
 type ShimmerTickMsg time.Time
 
-const shimmerTickInterval = 16 * time.Millisecond
+const shimmerTickInterval = time.Second / 80
 
 func ShimmerTickCmd() tea.Cmd {
 	return tea.Tick(shimmerTickInterval, func(t time.Time) tea.Msg {

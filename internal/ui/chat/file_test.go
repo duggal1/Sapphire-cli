@@ -119,3 +119,27 @@ func TestAgenticViewPendingRendersLoaderActivity(t *testing.T) {
 		t.Fatalf("expected pending agentic view loader activity, got %q", rendered)
 	}
 }
+
+func TestPendingViewInvalidatesOnEveryShimmerTick(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewViewToolMessageItem(&sty, message.ToolCall{
+		ID:       "view-agentic-pending-tick",
+		Name:     "agentic_view",
+		Input:    `{"file_paths":["internal/cmd/root.go","internal/ui/chat/file.go"]}`,
+		Finished: false,
+	}, nil, false)
+
+	tickable, ok := item.(ShimmerTickable)
+	if !ok {
+		t.Fatal("expected pending view item to support shimmer ticks")
+	}
+
+	if !tickable.OnShimmerTick() {
+		t.Fatal("expected first shimmer tick to invalidate pending view loader")
+	}
+	if !tickable.OnShimmerTick() {
+		t.Fatal("expected consecutive shimmer ticks to keep invalidating pending view loader")
+	}
+}

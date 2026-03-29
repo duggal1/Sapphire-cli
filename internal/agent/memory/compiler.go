@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	appdb "github.com/duggal1/Sapphire-cli/internal/db"
@@ -26,13 +27,26 @@ const (
 	defaultGraphSymbolLimit  = 40
 	defaultGraphEdgeLimit    = 64
 	defaultRequiredReadLimit = 10
+	defaultCompileCacheTTL   = 45 * time.Second
+	defaultPruneDelay        = 45 * time.Second
+	defaultPruneInterval     = 5 * time.Minute
+	defaultPruneTimeout      = 15 * time.Second
 )
 
 type Compiler struct {
-	conn  *sql.DB
-	q     *appdb.Queries
-	store *orchestrationdb.Store
-	now   func() time.Time
+	conn            *sql.DB
+	q               *appdb.Queries
+	store           *orchestrationdb.Store
+	now             func() time.Time
+	compileCacheMu  sync.Mutex
+	compileCache    map[string]compiledPacketCacheEntry
+	compileCacheTTL time.Duration
+	pruneDelay      time.Duration
+	pruneInterval   time.Duration
+	pruneTimeout    time.Duration
+	pruneMu         sync.Mutex
+	pruneLastRun    map[string]time.Time
+	pruneQueued     map[string]struct{}
 }
 
 type CompileRequest struct {
@@ -200,6 +214,12 @@ type compiledGraph struct {
 	fileSymbols map[string][]storedRepoSymbol
 }
 
+type compiledPacketCacheEntry struct {
+	packet      BootPacket
+	snapshotKey string
+	expiresAt   time.Time
+}
+
 type storedRepoScope struct {
 	ID            string
 	RepoRoot      string
@@ -287,10 +307,17 @@ func NewCompiler(conn *sql.DB, store *orchestrationdb.Store) *Compiler {
 		return nil
 	}
 	return &Compiler{
-		conn:  conn,
-		q:     appdb.New(conn),
-		store: store,
-		now:   func() time.Time { return time.Now().UTC() },
+		conn:            conn,
+		q:               appdb.New(conn),
+		store:           store,
+		now:             func() time.Time { return time.Now().UTC() },
+		compileCache:    map[string]compiledPacketCacheEntry{},
+		compileCacheTTL: defaultCompileCacheTTL,
+		pruneDelay:      defaultPruneDelay,
+		pruneInterval:   defaultPruneInterval,
+		pruneTimeout:    defaultPruneTimeout,
+		pruneLastRun:    map[string]time.Time{},
+		pruneQueued:     map[string]struct{}{},
 	}
 }
 
@@ -299,6 +326,18 @@ func (c *Compiler) RenderPromptInjection(ctx context.Context, req CompileRequest
 	if err != nil {
 		return ""
 	}
+	return renderBootPacketInjection(packet)
+}
+
+func (c *Compiler) RenderCachedPromptInjection(ctx context.Context, req CompileRequest) string {
+	packet, ok := c.cachedCompilePacket(ctx, req)
+	if !ok {
+		return ""
+	}
+	return renderBootPacketInjection(packet)
+}
+
+func renderBootPacketInjection(packet BootPacket) string {
 	raw, err := json.Marshal(packet)
 	if err != nil {
 		return ""
@@ -309,6 +348,9 @@ func (c *Compiler) RenderPromptInjection(ctx context.Context, req CompileRequest
 func (c *Compiler) Compile(ctx context.Context, req CompileRequest) (BootPacket, error) {
 	if c == nil || c.conn == nil {
 		return BootPacket{}, fmt.Errorf("memory compiler is not initialized")
+	}
+	if packet, ok := c.cachedCompilePacket(ctx, req); ok {
+		return packet, nil
 	}
 	scope, err := c.ensureIndexedScope(ctx, req.WorkingDir)
 	if err != nil {
@@ -359,7 +401,76 @@ func (c *Compiler) Compile(ctx context.Context, req CompileRequest) (BootPacket,
 		packet.ArtifactPath = artifactPath
 		_ = c.recordBootPacket(ctx, req, scope.ID, packet)
 	}
+	c.storeCompiledPacket(req, packet, scope)
 	return packet, nil
+}
+
+func (c *Compiler) cachedCompilePacket(ctx context.Context, req CompileRequest) (BootPacket, bool) {
+	if c == nil || c.compileCacheTTL <= 0 {
+		return BootPacket{}, false
+	}
+	key := c.compileCacheKey(req)
+	now := c.now()
+
+	c.compileCacheMu.Lock()
+	entry, ok := c.compileCache[key]
+	if ok && !entry.expiresAt.After(now) {
+		delete(c.compileCache, key)
+		ok = false
+	}
+	c.compileCacheMu.Unlock()
+	if !ok {
+		return BootPacket{}, false
+	}
+
+	snapshot, err := captureRepoSnapshot(ctx, req.WorkingDir)
+	if err != nil || !isCacheableCompileSnapshot(snapshot.Branch, snapshot.HeadCommit) || entry.snapshotKey != compileSnapshotKey(snapshot.RepoRoot, snapshot.ScopePath, snapshot.Branch, snapshot.HeadCommit, snapshot.Dirty, snapshot.ChangedFiles) {
+		return BootPacket{}, false
+	}
+	return entry.packet, true
+}
+
+func (c *Compiler) storeCompiledPacket(req CompileRequest, packet BootPacket, scope storedRepoScope) {
+	if c == nil || c.compileCacheTTL <= 0 || !isCacheableCompileSnapshot(scope.Branch, scope.HeadCommit) {
+		return
+	}
+	key := c.compileCacheKey(req)
+	entry := compiledPacketCacheEntry{
+		packet:      packet,
+		snapshotKey: compileSnapshotKey(scope.RepoRoot, scope.ScopePath, scope.Branch, scope.HeadCommit, scope.Dirty, scope.ChangedFiles),
+		expiresAt:   c.now().Add(c.compileCacheTTL),
+	}
+
+	c.compileCacheMu.Lock()
+	c.compileCache[key] = entry
+	c.compileCacheMu.Unlock()
+}
+
+func (c *Compiler) compileCacheKey(req CompileRequest) string {
+	return hashText(
+		strings.TrimSpace(req.SessionID),
+		strings.TrimSpace(req.AgentID),
+		filepath.Clean(strings.TrimSpace(req.WorkingDir)),
+		strings.TrimSpace(req.Task),
+		strings.TrimSpace(req.ProjectConstitution),
+		strings.TrimSpace(req.LongHorizonContext),
+		strings.TrimSpace(req.HistoricalContext),
+	)
+}
+
+func compileSnapshotKey(repoRoot, scopePath, branch, headCommit string, dirty bool, changedFiles []string) string {
+	return hashText(
+		strings.TrimSpace(repoRoot),
+		strings.TrimSpace(scopePath),
+		strings.TrimSpace(branch),
+		strings.TrimSpace(headCommit),
+		fmt.Sprintf("%t", dirty),
+		strings.Join(changedFiles, "\n"),
+	)
+}
+
+func isCacheableCompileSnapshot(branch, headCommit string) bool {
+	return strings.TrimSpace(branch) != "" || strings.TrimSpace(headCommit) != ""
 }
 
 func (c *Compiler) IndexStatus(ctx context.Context, workingDir string) (IndexStatus, error) {
@@ -408,14 +519,24 @@ func (c *Compiler) WarmCodebase(ctx context.Context, req WarmRequest, report fun
 	})
 	if err != nil {
 		if report != nil {
+			phase := "failed"
+			message := "Codebase graph indexing failed"
+			errText := err.Error()
+			percent := 1.0
+			if errors.Is(err, context.Canceled) {
+				phase = "canceled"
+				message = "Codebase graph indexing stopped"
+				errText = ""
+				percent = 0
+			}
 			report(WarmProgress{
 				Workspace: strings.TrimSpace(req.WorkingDir),
-				Phase:     "failed",
-				Message:   "Codebase graph indexing failed",
+				Phase:     phase,
+				Message:   message,
 				Active:    false,
 				Finished:  true,
-				Error:     err.Error(),
-				Percent:   1,
+				Error:     errText,
+				Percent:   percent,
 				StartedAt: startedAt,
 				UpdatedAt: c.now(),
 			})
@@ -1194,8 +1315,56 @@ func (c *Compiler) recordBootPacket(ctx context.Context, req CompileRequest, sco
 	if err == nil {
 		_ = c.linkFactProvenance(ctx, "boot_packet", bootPacketID, provenanceID)
 	}
-	_ = c.pruneDurableMemory(ctx, strings.TrimSpace(req.SessionID), scopeID)
+	c.scheduleDurableMemoryPrune(strings.TrimSpace(req.SessionID), scopeID)
 	return nil
+}
+
+func (c *Compiler) scheduleDurableMemoryPrune(sessionID, scopeID string) {
+	if c == nil || c.q == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	scopeID = strings.TrimSpace(scopeID)
+	if sessionID == "" && scopeID == "" {
+		return
+	}
+
+	key := sessionID + "|" + scopeID
+	delay := c.pruneDelay
+	now := c.now()
+
+	c.pruneMu.Lock()
+	if _, queued := c.pruneQueued[key]; queued {
+		c.pruneMu.Unlock()
+		return
+	}
+	if last := c.pruneLastRun[key]; !last.IsZero() {
+		if since := now.Sub(last); since < c.pruneInterval {
+			remaining := c.pruneInterval - since
+			if remaining > delay {
+				delay = remaining
+			}
+		}
+	}
+	c.pruneQueued[key] = struct{}{}
+	c.pruneMu.Unlock()
+
+	go func() {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			<-timer.C
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), c.pruneTimeout)
+		defer cancel()
+		_ = c.pruneDurableMemory(ctx, sessionID, scopeID)
+
+		c.pruneMu.Lock()
+		c.pruneLastRun[key] = c.now()
+		delete(c.pruneQueued, key)
+		c.pruneMu.Unlock()
+	}()
 }
 
 func (c *Compiler) lookupScopeID(ctx context.Context, repoRoot, scopePath, branch string) string {

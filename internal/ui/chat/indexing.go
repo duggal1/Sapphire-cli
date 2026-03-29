@@ -3,6 +3,7 @@ package chat
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/duggal1/Sapphire-cli/internal/codeindex"
@@ -79,79 +80,113 @@ func (i *IndexingMessageItem) Render(width int) string {
 
 func (i *IndexingMessageItem) renderContent(width int) string {
 	title := i.renderTitle()
-	messageText := strings.TrimSpace(i.progress.Message)
-	if errText := strings.TrimSpace(i.progress.Error); errText != "" {
-		messageText = errText
-	}
-	if messageText == "" {
-		messageText = "Preparing codebase indexing"
-	}
+	workspace := i.renderWorkspace()
+	status := i.renderStatus()
 	percentLabel := fmt.Sprintf("%d%%", clampIndexPercent(i.progress.Percent))
-	barWidth := max(18, min(42, width-12))
+	barWidth := max(18, min(42, width-10))
 	bar := renderIndexingProgressBar(barWidth, i.progress.Percent)
-
-	detail := i.renderDetail(percentLabel)
 
 	progressLine := lipgloss.JoinHorizontal(
 		lipgloss.Left,
 		bar,
-		"   ",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#F3E8FF")).Bold(true).Render(percentLabel),
+		"  ",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#E7E5E4")).Bold(true).Render(percentLabel),
 	)
 
-	body := lipgloss.JoinVertical(
-		lipgloss.Left,
-		"",
-		title,
-		"",
-		i.sty.HalfMuted.Render(i.progress.Workspace),
-		"",
-		i.sty.Muted.Render(messageText),
-		"",
-		progressLine,
-		"",
-		i.sty.HalfMuted.Render(detail),
-		"",
-	)
+	lines := []string{title}
+	if workspace != "" {
+		lines = append(lines, i.sty.HalfMuted.Render(workspace))
+	}
+	if status != "" {
+		lines = append(lines, i.sty.Muted.Render(status))
+	}
+	lines = append(lines, progressLine)
+	if detail := i.renderMetrics(); detail != "" {
+		lines = append(lines, i.sty.HalfMuted.Render(detail))
+	}
 
 	return lipgloss.NewStyle().
 		PaddingLeft(2).
 		PaddingRight(2).
-		Render(body)
+		Render(strings.Join(lines, "\n"))
 }
 
 func (i *IndexingMessageItem) renderTitle() string {
 	switch {
 	case i.progress.Active:
-		return shimmer.RenderIndexingText("Indexing codebase...", i.frame)
+		if i.progress.Phase == "starting" {
+			return shimmer.RenderIndexingText("Preparing codebase index", i.frame)
+		}
+		return shimmer.RenderIndexingText("Indexing codebase", i.frame)
+	case i.progress.Phase == "canceled":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B")).Bold(true).Render("Codebase indexing stopped")
 	case strings.TrimSpace(i.progress.Error) != "":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FB7185")).Bold(true).Render("Codebase indexing failed")
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC")).Bold(true).Render("Codebase indexing complete")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#E7E5E4")).Bold(true).Render("Codebase indexing complete")
 	}
 }
 
-func (i *IndexingMessageItem) renderDetail(percentLabel string) string {
+func (i *IndexingMessageItem) renderWorkspace() string {
+	workspace := strings.TrimSpace(formatRelativePath(i.progress.Workspace))
+	if workspace == "" {
+		workspace = strings.TrimSpace(i.progress.Workspace)
+	}
+	return workspace
+}
+
+func (i *IndexingMessageItem) renderStatus() string {
+	messageText := strings.TrimSpace(i.progress.Message)
+	if errText := strings.TrimSpace(i.progress.Error); errText != "" {
+		return errText
+	}
+	if messageText != "" {
+		return messageText
+	}
+
 	phase := strings.ReplaceAll(strings.TrimSpace(i.progress.Phase), "_", " ")
 	switch i.progress.Phase {
+	case "starting":
+		return "Starting durable indexer"
+	case "canceled":
+		return "Indexing stopped"
 	case "discovering":
-		return fmt.Sprintf("%s · %d/%d files · %s", percentLabel, i.progress.FilesProcessed, max(1, i.progress.FilesDiscovered), phase)
+		return "Discovering files"
 	case "parsing":
-		return fmt.Sprintf("%s · %d/%d files · extracting graph facts", percentLabel, i.progress.FilesProcessed, max(1, i.progress.FilesDiscovered))
+		return "Extracting structure"
 	case "persisting":
-		return fmt.Sprintf("%s · %d files indexed · writing durable graph", percentLabel, max(i.progress.FilesIndexed, i.progress.FilesProcessed))
+		return "Writing graph index"
 	case "preparing":
-		return fmt.Sprintf("%s · %d chunks prepared · %s", percentLabel, max(0, i.progress.ChunksTotal), phase)
+		return "Preparing chunks"
 	case "embedding":
-		return fmt.Sprintf("%s · %d/%d chunks · %s", percentLabel, i.progress.ChunksEmbedded, max(1, i.progress.ChunksTotal), phase)
+		return "Embedding chunks"
 	case "upserting":
-		return fmt.Sprintf("%s · writing vectors · %s", percentLabel, phase)
+		return "Writing vectors"
 	default:
-		if phase == "" {
-			return percentLabel
-		}
-		return fmt.Sprintf("%s · %s", percentLabel, phase)
+		return phase
 	}
+}
+
+func (i *IndexingMessageItem) renderMetrics() string {
+	parts := make([]string, 0, 3)
+
+	fileTotal := max(i.progress.FilesDiscovered, i.progress.FilesIndexed)
+	if fileTotal > 0 {
+		processed := max(i.progress.FilesProcessed, i.progress.FilesIndexed)
+		parts = append(parts, fmt.Sprintf("%d/%d files", processed, fileTotal))
+	} else if i.progress.FilesProcessed > 0 {
+		parts = append(parts, fmt.Sprintf("%d files", i.progress.FilesProcessed))
+	}
+
+	if i.progress.ChunksTotal > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d chunks", i.progress.ChunksEmbedded, i.progress.ChunksTotal))
+	}
+
+	if elapsed := renderIndexingElapsed(i.progress); elapsed != "" {
+		parts = append(parts, elapsed)
+	}
+
+	return strings.Join(parts, " · ")
 }
 
 func renderIndexingProgressBar(width int, percent float64) string {
@@ -166,8 +201,8 @@ func renderIndexingProgressBar(width int, percent float64) string {
 	if filled > width {
 		filled = width
 	}
-	fill := lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC")).Bold(true).Render(strings.Repeat("█", filled))
-	rest := lipgloss.NewStyle().Foreground(lipgloss.Color("#4C1D95")).Render(strings.Repeat("░", width-filled))
+	fill := lipgloss.NewStyle().Foreground(lipgloss.Color("#A8A29E")).Render(strings.Repeat("█", filled))
+	rest := lipgloss.NewStyle().Foreground(lipgloss.Color("#44403C")).Render(strings.Repeat("█", width-filled))
 	return fill + rest
 }
 
@@ -184,4 +219,27 @@ func clampIndexPercent(percent float64) int {
 		}
 		return value
 	}
+}
+
+func renderIndexingElapsed(progress codeindex.Progress) string {
+	if progress.StartedAt.IsZero() {
+		return ""
+	}
+	end := progress.UpdatedAt
+	if end.IsZero() {
+		end = time.Now()
+	}
+	if end.Before(progress.StartedAt) {
+		return ""
+	}
+	elapsed := end.Sub(progress.StartedAt).Round(time.Second)
+	if elapsed < time.Second {
+		return "0s"
+	}
+	minutes := int(elapsed / time.Minute)
+	seconds := int((elapsed % time.Minute) / time.Second)
+	if minutes == 0 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	return fmt.Sprintf("%dm %ds", minutes, seconds)
 }

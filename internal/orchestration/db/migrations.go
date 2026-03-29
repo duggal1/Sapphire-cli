@@ -9,15 +9,22 @@ import (
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS agent_mail (
 		id TEXT PRIMARY KEY,
+		address TEXT NOT NULL DEFAULT '',
 		to_agent TEXT NOT NULL,
+		resolved_to_agent TEXT NOT NULL DEFAULT '',
 		from_agent TEXT NOT NULL,
 		subject TEXT NOT NULL,
 		body TEXT NOT NULL,
 		priority INTEGER NOT NULL DEFAULT 0,
 		thread_id TEXT NOT NULL,
+		delivery_state TEXT NOT NULL DEFAULT 'pending',
+		delivery_attempts INTEGER NOT NULL DEFAULT 0,
+		lease_owner TEXT NOT NULL DEFAULT '',
+		lease_expires_at INTEGER NOT NULL DEFAULT 0,
 		read INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL,
-		read_at INTEGER NOT NULL DEFAULT 0
+		read_at INTEGER NOT NULL DEFAULT 0,
+		acked_at INTEGER NOT NULL DEFAULT 0
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_agent_mail_to_created_at ON agent_mail(to_agent, created_at DESC);`,
 	`CREATE INDEX IF NOT EXISTS idx_agent_mail_thread_id ON agent_mail(thread_id, created_at ASC);`,
@@ -172,6 +179,27 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 	if err := ensureColumn(ctx, conn, "agent_state", "created_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "address", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "resolved_to_agent", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "delivery_state", "TEXT NOT NULL DEFAULT 'pending'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "delivery_attempts", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "lease_owner", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "lease_expires_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, conn, "agent_mail", "acked_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, conn, "session_checkpoints", "parent_checkpoint_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -205,9 +233,20 @@ func ensureSchema(ctx context.Context, conn *sql.DB) error {
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_work_items_convoy_status ON work_items(convoy_id, status, created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_hooks_status_hooked_at ON agent_hooks(status, hooked_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_mail_delivery ON agent_mail(resolved_to_agent, delivery_state, created_at ASC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_mail_lease_expiry ON agent_mail(delivery_state, lease_expires_at ASC);`,
 	} {
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("apply orchestration schema: %w", err)
+		}
+	}
+	for _, stmt := range []string{
+		`UPDATE agent_mail SET address = to_agent WHERE address = '';`,
+		`UPDATE agent_mail SET resolved_to_agent = to_agent WHERE resolved_to_agent = '';`,
+		`UPDATE agent_mail SET delivery_state = 'pending' WHERE delivery_state = '';`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfill orchestration schema: %w", err)
 		}
 	}
 	return nil

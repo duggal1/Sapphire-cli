@@ -479,6 +479,9 @@ func (s *Service) unblockWaitingAgents(ctx context.Context) {
 		if !s.areAllDependenciesComplete(ctx, item) {
 			continue
 		}
+		if s.hasBlockedDispatchBarrier(ctx, item.ID) {
+			continue
+		}
 		item.Status = "open"
 		item.ClosedAt = time.Time{}
 		_ = s.store.UpsertWorkItem(ctx, item)
@@ -489,6 +492,14 @@ func (s *Service) unblockWaitingAgents(ctx context.Context) {
 			"work_item_id": item.ID,
 		})
 	}
+}
+
+func (s *Service) hasBlockedDispatchBarrier(ctx context.Context, workItemID string) bool {
+	if s == nil || s.store == nil || strings.TrimSpace(workItemID) == "" {
+		return false
+	}
+	dispatches, err := s.store.ListDispatchesByWorkItem(ctx, workItemID, []string{"blocked"}, 1)
+	return err == nil && len(dispatches) > 0
 }
 
 func (s *Service) unblockDependents(ctx context.Context, completedWorkItemID string) {
@@ -614,7 +625,7 @@ func (s *Service) hasUnreadMail(ctx context.Context, agentID string) bool {
 	if s == nil || s.mailbox == nil {
 		return false
 	}
-	items, err := s.mailbox.Inbox(ctx, agentID, true, 1)
+	items, err := s.mailbox.Actionable(ctx, agentID, 1)
 	return err == nil && len(items) > 0
 }
 

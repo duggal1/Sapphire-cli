@@ -230,8 +230,11 @@ func (s *Store) QueryRecordsBySession(ctx context.Context, sessionID, filter str
 		query += " AND event_type = 'task_progress'"
 	}
 
-	query += " ORDER BY salience DESC, timestamp DESC LIMIT ?"
-	args = append(args, limit*3) // fetch extra for decay scoring
+	query += " ORDER BY salience DESC, timestamp DESC"
+	if limit > 0 {
+		args = append(args, limit*3) // fetch extra for decay scoring
+		query += " LIMIT ?"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -266,7 +269,7 @@ func (s *Store) QueryRecordsBySession(ctx context.Context, sessionID, filter str
 	// Re-sort by decayed salience
 	sortRecordsBySalience(records)
 
-	if len(records) > limit {
+	if limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
 	return records, nil

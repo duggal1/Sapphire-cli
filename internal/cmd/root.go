@@ -42,6 +42,7 @@ func init() {
 
 	rootCmd.AddCommand(
 		runCmd,
+		stopCmd,
 		worktreesCmd,
 		dirsCmd,
 		projectsCmd,
@@ -299,13 +300,19 @@ func ResolveCwd(cmd *cobra.Command) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to change directory: %v", err)
 		}
-		return cwd, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get current working directory: %v", err)
 	}
-	return cwd, nil
+	cwd, err = filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve current working directory: %v", err)
+	}
+	if realPath, err := filepath.EvalSymlinks(cwd); err == nil && realPath != "" {
+		cwd = realPath
+	}
+	return filepath.Clean(cwd), nil
 }
 
 func createDotSapphireDir(dir string) error {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
@@ -19,6 +20,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/lsp"
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genai"
 )
 
 func TestDownloadTool(t *testing.T) {
@@ -202,6 +204,113 @@ func TestWebAndGoogleSearchTools(t *testing.T) {
 	}, t.Context())
 	require.Contains(t, googleResp.Content, "Found 2 search results")
 	require.Contains(t, googleResp.Content, "Example One")
+}
+
+func TestFormatGoogleSearchResponseIncludesURLContextMetadata(t *testing.T) {
+	t.Parallel()
+
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{Text: "Zapier can be used through an MCP server."},
+					},
+				},
+				GroundingMetadata: &genai.GroundingMetadata{
+					WebSearchQueries: []string{"zapier mcp server"},
+					GroundingChunks: []*genai.GroundingChunk{
+						{
+							Web: &genai.GroundingChunkWeb{
+								Title: "Zapier MCP",
+								URI:   "https://example.com/zapier-mcp",
+							},
+						},
+					},
+				},
+				URLContextMetadata: &genai.URLContextMetadata{
+					URLMetadata: []*genai.URLMetadata{
+						{
+							RetrievedURL:       "https://zapier.com",
+							URLRetrievalStatus: genai.URLRetrievalStatusSuccess,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out := formatGoogleSearchResponse(resp, 5)
+	require.Contains(t, out, "Answer:")
+	require.Contains(t, out, "Google search queries:")
+	require.Contains(t, out, "Grounded web sources (1):")
+	require.Contains(t, out, "URL context retrieval:")
+	require.Contains(t, out, "https://zapier.com [URL_RETRIEVAL_STATUS_SUCCESS]")
+}
+
+func TestInstallSkillToolReturnsFullMarkdown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/skills/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{
+						"skill_id":      "zapier-automation",
+						"folder_name":   "zapier-automation",
+						"skill_name":    "zapier-automation",
+						"relative_path": "zapier-automation/SKILL.md",
+						"markdown_path": "zapier-automation/SKILL.md",
+						"size_bytes":    128,
+						"is_nested":     false,
+						"category":      "automation",
+					},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/skills/zapier-automation":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"skill": map[string]any{
+					"skill_id":      "zapier-automation",
+					"folder_name":   "zapier-automation",
+					"skill_name":    "zapier-automation",
+					"relative_path": "zapier-automation/SKILL.md",
+					"markdown_path": "zapier-automation/SKILL.md",
+					"size_bytes":    128,
+					"is_nested":     false,
+					"category":      "automation",
+				},
+				"markdown": "# Zapier Automation\n\nUse Zapier carefully.\n",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("SAPPHIRE_API_KEY", "token")
+	t.Setenv("SAPPHIRE_API_BASE_URL", server.URL)
+
+	workingDir, err := os.MkdirTemp("", "install-skill-*")
+	require.NoError(t, err)
+	defer func() {
+		for range 5 {
+			if removeErr := os.RemoveAll(workingDir); removeErr == nil || os.IsNotExist(removeErr) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	ctx := context.WithValue(t.Context(), WorkingDirContextKey, workingDir)
+	resp := runTool(t, NewInstallSkillTool(), InstallSkillToolName, InstallSkillParams{
+		Query: "zapier automation",
+	}, ctx)
+
+	require.Contains(t, resp.Content, `Exact local name: "zapier-automation"`)
+	require.Contains(t, resp.Content, "<instructions>")
+	require.Contains(t, resp.Content, "Use Zapier carefully.")
+
+	data, err := os.ReadFile(filepath.Join(workingDir, ".sapphire", "skills", "zapier-automation", "SKILL.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "Zapier Automation")
 }
 
 func TestSourcegraphFormatting(t *testing.T) {

@@ -15,6 +15,8 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 )
 
+var fetchLiveRegistryDefinitions = config.FetchRegistryDefinitions
+
 type ListAvailableMCPsParams struct {
 	Query string `json:"query,omitempty" description:"Optional search query for MCP names or descriptions"`
 	Limit int    `json:"limit,omitempty" description:"Maximum number of MCP servers to return"`
@@ -78,47 +80,21 @@ func NewListAvailableMCPsTool(cfg *config.Config, permissions permission.Service
 			if len(defs) == 0 {
 				return fantasy.NewTextResponse("No MCP servers available"), nil
 			}
-			catalog := config.CuratedRegistryCatalog(defs)
-			catalog = includeUncategorizedDefs(defs, catalog)
-			catalog = mergeConfigMCPs(catalog, cfg)
-			summary := collectMCPInventorySummary(cfg, len(catalog))
-
-			type scoredEntry struct {
-				entry mcpServerSnapshot
-				score int
-			}
-
-			snapshots := buildMCPSnapshots(catalog, cfg)
-			queryTerms := mcpQueryTerms(params.Query)
-			scored := make([]scoredEntry, 0, len(snapshots))
-			for _, entry := range snapshots {
-				score, ok := scoreMCPSnapshot(entry, params.Query, queryTerms)
-				if len(queryTerms) > 0 && !ok {
-					continue
-				}
-				scored = append(scored, scoredEntry{entry: entry, score: score})
-			}
-
-			sort.SliceStable(scored, func(i, j int) bool {
-				if scored[i].score != scored[j].score {
-					return scored[i].score > scored[j].score
-				}
-				if scored[i].entry.Entry.Priority != scored[j].entry.Entry.Priority {
-					return scored[i].entry.Entry.Priority > scored[j].entry.Entry.Priority
-				}
-				return scored[i].entry.Name < scored[j].entry.Name
-			})
-
-			lines := make([]string, 0, len(scored))
-			for _, item := range scored {
-				lines = append(lines, describeMCPServer(item.entry))
-				if params.Limit > 0 && len(lines) >= params.Limit {
-					break
+			lines, summary := describeMCPMatches(cfg, defs, params.Query, params.Limit)
+			liveFallbackUsed := false
+			if params.Query != "" && len(lines) == 0 {
+				liveDefs := loadLiveRegistryDefinitions(ctx)
+				if len(liveDefs) > 0 {
+					lines, summary = describeMCPMatches(cfg, liveDefs, params.Query, params.Limit)
+					liveFallbackUsed = len(lines) > 0
 				}
 			}
 
 			var sb strings.Builder
 			sb.WriteString(formatMCPInventorySummary(summary))
+			if liveFallbackUsed {
+				sb.WriteString("Registry source: live official registry fallback\n")
+			}
 			if params.Query != "" {
 				sb.WriteString("\n")
 				sb.WriteString(fmt.Sprintf("Query: %s\n", params.Query))
@@ -133,6 +109,53 @@ func NewListAvailableMCPsTool(cfg *config.Config, permissions permission.Service
 			return fantasy.NewTextResponse(strings.TrimSpace(sb.String())), nil
 		},
 	)
+}
+
+func describeMCPMatches(cfg *config.Config, defs []config.RegistryMCPDefinition, query string, limit int) ([]string, mcpInventorySummary) {
+	catalog := config.CuratedRegistryCatalog(defs)
+	catalog = includeUncategorizedDefs(defs, catalog)
+	catalog = mergeConfigMCPs(catalog, cfg)
+	summary := collectMCPInventorySummary(cfg, len(catalog))
+
+	snapshots := buildMCPSnapshots(catalog, cfg)
+	queryTerms := mcpQueryTerms(query)
+	scored := make([]scoredEntry, 0, len(snapshots))
+	for _, entry := range snapshots {
+		score, ok := scoreMCPSnapshot(entry, query, queryTerms)
+		if len(queryTerms) > 0 && !ok {
+			continue
+		}
+		scored = append(scored, scoredEntry{entry: entry, score: score})
+	}
+
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		if scored[i].entry.Entry.Priority != scored[j].entry.Entry.Priority {
+			return scored[i].entry.Entry.Priority > scored[j].entry.Entry.Priority
+		}
+		return scored[i].entry.Name < scored[j].entry.Name
+	})
+
+	lines := make([]string, 0, len(scored))
+	for _, item := range scored {
+		lines = append(lines, describeMCPServer(item.entry))
+		if limit > 0 && len(lines) >= limit {
+			break
+		}
+	}
+	return lines, summary
+}
+
+func loadLiveRegistryDefinitions(ctx context.Context) []config.RegistryMCPDefinition {
+	liveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 6*time.Second)
+	defer cancel()
+	defs, err := fetchLiveRegistryDefinitions(liveCtx)
+	if err != nil || len(defs) == 0 {
+		return nil
+	}
+	return defs
 }
 
 func collectMCPInventorySummary(cfg *config.Config, registryCount int) mcpInventorySummary {

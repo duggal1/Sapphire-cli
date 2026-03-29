@@ -222,6 +222,52 @@ func helper() string {
 	require.GreaterOrEqual(t, len(epochs), 2)
 }
 
+func TestCompilerIndexesDistinctGenericReceiverMethods(t *testing.T) {
+	ctx := context.Background()
+	repoRoot := seedMemoryTestRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "generic.go"), []byte(`package sample
+
+type Foo[T any] struct{}
+type Bar[T any] struct{}
+
+func (f *Foo[T]) Run() string {
+	return "foo"
+}
+
+func (b *Bar[T]) Run() string {
+	return "bar"
+}
+`), 0o644))
+
+	conn := openMemoryRuntimeTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+
+	scope, err := compiler.ensureIndexedScope(ctx, repoRoot)
+	require.NoError(t, err)
+
+	q := appdb.New(conn)
+	files, err := q.ListMemoryRepoFilesByScope(ctx, scope.ID)
+	require.NoError(t, err)
+	genericFile := memoryFileByPath(t, files, "generic.go")
+
+	symbols, err := q.ListMemoryRepoSymbolsByScope(ctx, scope.ID)
+	require.NoError(t, err)
+
+	runKeys := make([]string, 0, 2)
+	for _, item := range symbols {
+		if item.FileID != genericFile.ID || item.Kind != "method" || item.Name != "Run" {
+			continue
+		}
+		runKeys = append(runKeys, item.StableKey)
+	}
+
+	require.Len(t, runKeys, 2)
+	require.NotEqual(t, runKeys[0], runKeys[1])
+	require.Contains(t, runKeys, "generic.go::method::Foo::Run")
+	require.Contains(t, runKeys, "generic.go::method::Bar::Run")
+	require.NotContains(t, genericFile.Facts, "duplicate_symbol_keys")
+}
+
 func TestCompilerPrunesDurableMemoryArtifactsAndHistory(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := seedMemoryTestRepo(t)
@@ -388,6 +434,52 @@ func TestCompilerPrunesDurableMemoryArtifactsAndHistory(t *testing.T) {
 	require.FileExists(t, newestHandoffArtifact)
 	require.FileExists(t, newestBootArtifact)
 	require.FileExists(t, newestResumeBootArtifact)
+}
+
+func TestCompilerCompileSchedulesDurableMemoryPruneOffCriticalPath(t *testing.T) {
+	ctx := context.Background()
+	repoRoot := seedMemoryTestRepo(t)
+	conn := openMemoryRuntimeTestDB(t, repoRoot)
+	compiler := NewCompiler(conn, nil)
+	compiler.pruneDelay = 150 * time.Millisecond
+	compiler.pruneInterval = time.Millisecond
+	compiler.pruneTimeout = 5 * time.Second
+
+	scope, err := compiler.ensureIndexedScope(ctx, repoRoot)
+	require.NoError(t, err)
+
+	q := appdb.New(conn)
+	sessionID := "session-async-prune"
+	base := time.Now().UTC().Add(-time.Hour).Unix()
+	for i := 0; i < maxRetainedBootPackets+8; i++ {
+		require.NoError(t, q.InsertMemoryBootPacket(ctx, appdb.InsertMemoryBootPacketParams{
+			ID:            uuid.NewString(),
+			SessionID:     sessionID,
+			AgentID:       "main:async-prune",
+			RepoScopeID:   scope.ID,
+			TaskHash:      fmt.Sprintf("task-%d", i),
+			ArtifactPath:  writeMemoryTestArtifact(t, repoRoot, "boot_packets", 2000+i),
+			RequiredReads: []byte(`[]`),
+			CreatedAt:     base + int64(i),
+		}))
+	}
+
+	_, err = compiler.Compile(ctx, CompileRequest{
+		SessionID:  sessionID,
+		AgentID:    "main:async-prune",
+		WorkingDir: repoRoot,
+		Task:       "Inspect Foo in foo.go",
+	})
+	require.NoError(t, err)
+
+	packets, err := q.ListMemoryBootPacketsBySession(ctx, sessionID)
+	require.NoError(t, err)
+	require.Greater(t, len(packets), maxRetainedBootPackets)
+
+	require.Eventually(t, func() bool {
+		packets, err := q.ListMemoryBootPacketsBySession(ctx, sessionID)
+		return err == nil && len(packets) == maxRetainedBootPackets
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func openMemoryRuntimeTestDB(t *testing.T, repoRoot string) *sql.DB {

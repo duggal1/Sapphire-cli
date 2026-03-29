@@ -205,6 +205,12 @@ func repairToolCall(
 		normalizeKey(input, "timeout", "timeout_seconds", "max_timeout")
 	case WebSearchToolName:
 		normalizeKey(input, "query", "q", "search", "search_query", "term")
+		normalizeKey(input, "queries", "searches")
+		normalizeKey(input, "max_results", "num_results", "count", "limit", "results")
+	case GoogleSearchToolName:
+		normalizeKey(input, "query", "q", "search", "search_query", "term", "prompt")
+		normalizeKey(input, "url", "uri", "link", "href")
+		normalizeKey(input, "urls", "links", "resources")
 		normalizeKey(input, "max_results", "num_results", "count", "limit", "results")
 	case AgenticFetchToolName:
 		normalizeKey(input, "url", "urls", "links")

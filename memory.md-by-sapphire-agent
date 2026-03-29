@@ -1,0 +1,352 @@
+# Sapphire Memory
+
+Concise project and session memory. Use it as a map, not as the full transcript.
+
+## Session State
+- session: bf434e5d-0db0-476e-9772-23231987872a
+- current_task: ???
+
+## Codebase Map
+- project_root: /Users/harshitduggal/workspace/sapphire-cli
+- indexed_files: 6177
+- AGENTS.md: AGENTS.md
+- README.md: Sapphire CLI
+- main.go: Go source file
+- LICENSE.md: Functional Source License, Version 1.1, MIT Future License
+- PERSISTENT_MEMORY_IMPLEMENTATION_PROMPT.md: Sapphire CLI: Persistent Memory Implementation Prompt
+- PERSISTENT_MEMORY_PLAN.md: Sapphire CLI: Persistent Memory Implementation Plan
+- SAPPHIRE_SUBAGENT_FILES.md: Sapphire CLI Sub-Agent + Main Agent: Complete File Reference
+- TODO.md: Work Plan
+- Taskfile.yaml: https://taskfile.dev
+- agent.md: Sapphire CLI - Agent Codebase Documentation
+- agent_files.txt: Project file
+- agent_memory_status.md: Agent Memory & Runtime Status
+- all_go_files.txt: Project file
+- auth_plan.md: Supabase Auth Flow Implementation Plan
+- batch1.txt: Project file
+- batch2.txt: Project file
+- cmd_files.txt: Project file
+- codex-plan-mode-architecture.md: Codex Plan Mode Architecture
+- codex-rs-architecture.md: Codex-rs Architecture Documentation
+- codex-sub-agent-architecture.md: Codex Sub-Agent Architecture
+- codex-sub-agents.md: Codex Sub-Agent Architecture
+- codex_subagent_architecture.md: Codex (codex-rs) Sub-Agent System Architecture
+- codex_todo_architecture.md: Codex To-Do List (update_plan) Architecture
+- crush.json: Project configuration file
+- db_files.txt: Project file
+- gemini-embedding.md: Markdown document
+- install.sh: Shell script
+- schema.json: Project configuration file
+- skills-lock.json: Project configuration file
+- skills_files.txt: Project file
+- sqlc.yaml: Project configuration file
+- stripe-mcp.md: Markdown document
+- subagent_instructions.txt: Project file
+- test_tool_check.txt: Project file
+- testing.go: go:build ignore
+- third_party_files.txt: Project file
+- ui_files.txt: Project file
+- internal/agent/activity/activity.go: Go source file
+- internal/agent/activity/types.go: Go source file
+- internal/agent/agent.go: Package agent is the core orchestration layer for Sapphire AI agents.
+- internal/agent/agent_directory.go: Go source file
+- internal/agent/agent_job_manager.go: Go source file
+- internal/agent/agent_job_runner.go: Go source file
+- internal/agent/agent_job_tools.go: Go source file
+- internal/agent/agent_mail_tools.go: Go source file
+- internal/agent/agent_tool.go: Go source file
+- internal/agent/agentic_fetch_tool.go: Go source file
+- internal/agent/background/capacity.go: Go source file
+- internal/agent/background/dispatcher.go: Go source file
+- internal/agent/background/leg_prompts.go: Go source file
+- internal/agent/background/monitor.go: Go source file
+- internal/agent/background/registry.go: Go source file
+- internal/agent/background_runtime.go: Go source file
+- internal/agent/background_stop.go: Go source file
+- internal/agent/background_subagents.go: Go source file
+- internal/agent/background_ui_payload.go: Go source file
+- internal/agent/background_wait.go: Go source file
+- internal/agent/collab_tools.go: Go source file
+- internal/agent/convoy/service.go: Go source file
+- internal/agent/coordinator.go: Go source file
+- internal/agent/coordinator_planmode.go: Go source file
+- internal/agent/coordinator_response.go: Go source file
+- internal/agent/daemon/daemon.go: Go source file
+- internal/agent/errors.go: Go source file
+- internal/agent/event.go: Go source file
+- internal/agent/formula/executor.go: Go source file
+- internal/agent/formula/parser.go: Go source file
+- internal/agent/formula/synthesis.go: Go source file
+- internal/agent/formula/types.go: Go source file
+- internal/agent/formulas/plan-mode.formula.toml: Project configuration file
+- internal/agent/hook/service.go: Go source file
+- internal/agent/hook_tool.go: Go source file
+- internal/agent/hyper/provider.go: Package hyper provides a fantasy.Provider that proxies requests to Hyper.
+- internal/agent/hyper/provider.json: Project configuration file
+- internal/agent/index_codebase_tool.go: Go source file
+- internal/agent/longhorizon/manager.go: Go source file
+- internal/agent/loop_detection.go: Go source file
+- internal/agent/mailbox/mailbox.go: Go source file
+- internal/agent/mailbox/nudge.go: Go source file
+- internal/agent/mailbox/types.go: Go source file
+- internal/agent/main_worktree.go: Go source file
+- internal/agent/mcp_async.go: Go source file
+- internal/agent/mcp_autonomy.go: Go source file
+- internal/agent/mcp_inventory.go: Go source file
+- internal/agent/mcp_prompt.go: Go source file
+- internal/agent/mcp_registry.go: Go source file
+- internal/agent/mcp_runtime.go: Go source file
+- internal/agent/mcp_selection.go: Go source file
+- internal/agent/memory/checkpoint.go: Go source file
+- internal/agent/memory/compiler.go: Go source file
+- internal/agent/memory/drift_detector.go: Go source file
+- internal/agent/memory/format.go: Go source file
+- internal/agent/memory/indexer.go: Go source file
+- internal/agent/memory/ingestion.go: Go source file
+- internal/agent/memory/lifecycle.go: Go source file
+- internal/agent/memory/memory.go: Go source file
+- internal/agent/memory/runtime.go: Go source file
+- internal/agent/memory/summary.go: Go source file
+- internal/agent/memory_pipeline.go: Go source file
+- internal/agent/orchestration_checkpoints.go: Go source file
+- internal/agent/orchestration_recovery.go: Go source file
+- internal/agent/orchestration_runtime.go: Go source file
+- internal/agent/orchestration_services.go: Go source file
+- internal/agent/planmode/mode.go: Codex Plan Mode architecture implementation
+- internal/agent/planmode/plan.md: Plan Mode
+- internal/agent/planmode/plan_parser.go: Go source file
+- internal/agent/planmode/prompt.go: Codex Plan Mode prompt builder
+- internal/agent/planmode/restrictions.go: Codex Plan Mode tool restrictions
+- internal/agent/prompt/prompt.go: Go source file
+- internal/agent/prompts.go: Go source file
+- internal/agent/read_only_exploration_tools.go: Go source file
+- internal/agent/runtime_control.go: Go source file
+- internal/agent/scheduler/dispatcher.go: Go source file
+- internal/agent/skill_tool.go: Go source file
+- internal/agent/state/state.go: Go source file
+- internal/agent/state/types.go: Go source file
+- internal/agent/subagent_control_plane.go: Go source file
+- internal/agent/subagent_coordination.go: Go source file
+- internal/agent/subagent_events.go: Go source file
+- internal/agent/subagent_events_helpers.go: Go source file
+- internal/agent/subagent_guardrails.go: Go source file
+- internal/agent/subagent_launch_profile.go: Go source file
+- internal/agent/subagent_manager.go: Go source file
+- internal/agent/subagent_metadata.go: Go source file
+- internal/agent/subagent_supervisor.go: Go source file
+- internal/agent/subagent_task_context.go: Go source file
+- internal/agent/subagent_validation_gate.go: Go source file
+- internal/agent/subagent_worktree.go: Go source file
+- internal/agent/supervisor/patrol.go: Go source file
+- internal/agent/supervisor/service.go: Go source file
+- internal/agent/supervisor_bridge.go: Go source file
+- internal/agent/templates/Personality/soul/SOUL.md: SOUL.md
+- internal/agent/templates/agent_tool.md: Markdown document
+- internal/agent/templates/agentic_fetch.md: Markdown document
+- internal/agent/templates/codebase_indexing.md: Codebase Indexing
+- internal/agent/templates/extended_skills.md: Markdown document
+- internal/agent/templates/list_skills.md: list_skills
+- internal/agent/templates/load_skill.md: load_skill
+- internal/agent/templates/mcp_policy.md: Markdown document
+- internal/agent/templates/memories/consolidation.md: Markdown document
+- internal/agent/templates/memories/read_path.md: Markdown document
+- internal/agent/templates/memories/stage_one_input.md: TASK: ROLLOUT ANALYSIS
+- internal/agent/templates/memories/stage_one_system.md: Markdown document
+- internal/agent/templates/memory_consolidation.md: Markdown document
+- internal/agent/templates/memory_extraction.md: Markdown document
+- internal/agent/templates/memory_read.md: Markdown document
+- internal/agent/templates/modes/architect-mode.md: Architect Mode
+- internal/agent/templates/modes/debug-mode.md: Debug Mode
+- internal/agent/templates/modes/orchestrator-mode.md: Orchestrator Mode
+- internal/agent/templates/modes/plan.md: Plan Mode
+- internal/agent/templates/modes/review-mode.md: Review Mode
+- internal/agent/templates/modes/security-mode.md: Security Mode
+- internal/agent/templates/orchestration/00_shared_principles.md: Markdown document
+- internal/agent/templates/orchestration/10_startup_and_recovery.md: Markdown document
+- internal/agent/templates/orchestration/20_worktree_and_git.md: Markdown document
+- internal/agent/templates/orchestration/30_mail_protocol.md: Markdown document
+- internal/agent/templates/orchestration/40_health_and_stall.md: Markdown document
+- internal/agent/templates/orchestration/50_reporting_and_validation.md: Markdown document
+- internal/agent/templates/orchestration/60_orchestrator_role.md: Markdown document
+- internal/agent/templates/orchestration/70_subagent_role.md: Markdown document
+- internal/agent/templates/orchestration/80_handoff_and_long_horizon.md: Markdown document
+- internal/agent/templates/orchestration/README.md: Markdown document
+- internal/agent/templates/orchestrator.md: Markdown document
+- internal/agent/templates/plugins.md: Markdown document
+- internal/agent/templates/plugins/README.md: Markdown document
+- internal/agent/templates/python_capabilities.md: Python Tool
+- internal/agent/templates/search_skills.md: search_skills
+- internal/agent/templates/skills_policy.md: Markdown document
+- internal/agent/templates/structured_summary.md: Structured Knowledge Extraction
+- internal/agent/templates/summary.md: Markdown document
+- internal/agent/templates/summary_prefix.md: Markdown document
+- internal/agent/templates/supervisor.md: Supervisor Service Contract
+- internal/agent/templates/templates/agent_tool.md: Markdown document
+- internal/agent/templates/templates/agentic_fetch.md: Markdown document
+- internal/agent/templates/templates/summary.md: Markdown document
+- internal/agent/templates/templates/title.md: Markdown document
+- internal/agent/templates/title.md: Markdown document
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/bash_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/download_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/fetch_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/glob_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/grep_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/ls_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/multiedit_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/parallel_tool_calls.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/read_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/simple_test.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/sourcegraph_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/update_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/anthropic-sonnet/write_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/bash_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/download_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/fetch_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/glob_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/grep_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/ls_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/multiedit_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/parallel_tool_calls.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/read_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/simple_test.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/sourcegraph_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/update_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/openai-gpt-5/write_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/bash_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/download_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/fetch_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/glob_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/grep_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/ls_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/multiedit_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/parallel_tool_calls.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/read_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/simple_test.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/sourcegraph_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/update_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/openrouter-kimi-k2/write_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/bash_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/download_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/fetch_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/glob_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/grep_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/ls_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/multiedit_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/parallel_tool_calls.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/read_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/simple_test.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/sourcegraph_tool.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/update_a_file.yaml: -
+- internal/agent/testdata/TestCoderAgent/zai-glm4.6/write_tool.yaml: -
+- internal/agent/tool_cache.go: Go source file
+- internal/agent/tool_catalog_prompt.go: Go source file
+- internal/agent/tool_filter.go: Go source file
+- internal/agent/tools/agentic_edit.md: Markdown document
+- internal/agent/tools/apply_patch.go: Go source file
+- internal/agent/tools/apply_patch.md: Apply Patch Tool
+- internal/agent/tools/apply_patch_parser.go: Go source file
+- internal/agent/tools/background_jobs.go: Go source file
+- internal/agent/tools/bash.go: Go source file
+- internal/agent/tools/call_mcp_tool.go: Go source file
+- internal/agent/tools/call_mcp_tool.md: Markdown document
+- internal/agent/tools/check_hook.md: Markdown document
+- internal/agent/tools/close_agent.md: Markdown document
+- internal/agent/tools/collect_result.md: Markdown document
+- internal/agent/tools/compiler_diagnostics.go: Go source file
+- internal/agent/tools/connect_mcp.go: Go source file
+- internal/agent/tools/connect_mcp.md: Markdown document
+- internal/agent/tools/diagnostics.go: Go source file
+- internal/agent/tools/diagnostics.md: Markdown document
+- internal/agent/tools/download.go: Go source file
+- internal/agent/tools/download.md: Markdown document
+- internal/agent/tools/edit.go: Go source file
+- internal/agent/tools/edit.md: Markdown document
+- internal/agent/tools/edit_guard.go: Go source file
+- internal/agent/tools/fast_view.go: Package tools provides ultra-optimized file viewing with Go 1.26 improvements.
+- internal/agent/tools/fetch.go: Go source file
+- internal/agent/tools/fetch.md: Markdown document
+- internal/agent/tools/fetch_helpers.go: Go source file
+- internal/agent/tools/fetch_types.go: Go source file
+- internal/agent/tools/git_snapshot.go: Go source file
+- internal/agent/tools/glob.go: Go source file
+- internal/agent/tools/glob.md: Markdown document
+- internal/agent/tools/google_search.go: Go source file
+- internal/agent/tools/google_search.md: google_search
+- internal/agent/tools/grep.go: Go source file
+- internal/agent/tools/grep.md: Markdown document
+- internal/agent/tools/index_codebase.md: Markdown document
+- internal/agent/tools/install_mcp.go: Go source file
+- internal/agent/tools/install_mcp.md: Markdown document
+- internal/agent/tools/install_skill.go: Go source file
+- internal/agent/tools/install_skill.md: Markdown document
+- internal/agent/tools/job_kill.go: Go source file
+- internal/agent/tools/job_kill.md: Markdown document
+- internal/agent/tools/job_list.go: Go source file
+- internal/agent/tools/job_list.md: Markdown document
+- internal/agent/tools/job_output.go: Go source file
+- internal/agent/tools/job_output.md: Markdown document
+- internal/agent/tools/list_available_mcps.go: Go source file
+- internal/agent/tools/list_available_mcps.md: Markdown document
+- internal/agent/tools/list_mcp_resources.go: Go source file
+- internal/agent/tools/list_mcp_resources.md: Markdown document
+- internal/agent/tools/list_mcp_tools.go: Go source file
+- internal/agent/tools/list_mcp_tools.md: Markdown document
+- internal/agent/tools/list_tools.go: Go source file
+- internal/agent/tools/list_tools.md: Markdown document
+- internal/agent/tools/ls.go: Go source file
+- internal/agent/tools/ls.md: Markdown document
+- internal/agent/tools/lsp_restart.go: Go source file
+- internal/agent/tools/lsp_restart.md: Markdown document
+- internal/agent/tools/mcp-tools.go: Go source file
+- internal/agent/tools/mcp/init.go: Package mcp provides functionality for managing Model Context Protocol (MCP)
+- internal/agent/tools/mcp/manage.go: Go source file
+- internal/agent/tools/mcp/prompts.go: Go source file
+- internal/agent/tools/mcp/resources.go: Go source file
+- internal/agent/tools/mcp/timeout.go: Go source file
+- internal/agent/tools/mcp/tools.go: Go source file
+- internal/agent/tools/mcp_snapshot.go: Go source file
+- internal/agent/tools/memory_query.go: Go source file
+- internal/agent/tools/multiedit.go: Go source file
+- internal/agent/tools/orchestrate_worktrees.md: Markdown document
+- internal/agent/tools/plan_mode_filter.go: Codex Plan Mode tool filter
+- internal/agent/tools/python.go: Go source file
+- internal/agent/tools/python.md: Python
+- internal/agent/tools/read_mcp_resource.go: Go source file
+- internal/agent/tools/read_mcp_resource.md: Markdown document
+- internal/agent/tools/references.go: Go source file
+- internal/agent/tools/references.md: Markdown document
+- internal/agent/tools/registry.go: Go source file
+- internal/agent/tools/report_agent_job_result.md: Markdown document
+- internal/agent/tools/request_user_input.go: Codex-style request_user_input tool implementation
+- internal/agent/tools/request_user_input.md: request_user_input Tool
+- internal/agent/tools/resume_agent.md: Markdown document
+- internal/agent/tools/rg.go: Go source file
+- internal/agent/tools/safe.go: Go source file
+- internal/agent/tools/search.go: Go source file
+- internal/agent/tools/search_tools.go: Go source file
+- internal/agent/tools/search_tools.md: Markdown document
+- internal/agent/tools/semantic_search.go: Go source file
+- internal/agent/tools/send_input.md: Markdown document
+- internal/agent/tools/set_mode.go: Codex Plan Mode switching tool
+- internal/agent/tools/set_mode.md: set_mode Tool
+- internal/agent/tools/sourcegraph.go: Go source file
+- internal/agent/tools/sourcegraph.md: Markdown document
+- internal/agent/tools/spawn_agent.md: Markdown document
+- internal/agent/tools/spawn_agents_on_csv.md: Markdown document
+- internal/agent/tools/target_batching.go: Go source file
+- internal/agent/tools/testdata/grep.txt: Project file
+- internal/agent/tools/todos.go: COMMENTED OUT - TODO LIST CODE DISABLED
+- internal/agent/tools/todos.md: Markdown document
+- internal/agent/tools/tool_call_normalize.go: Go source file
+- internal/agent/tools/tool_call_preflight.go: Go source file
+- internal/agent/tools/tool_call_validation.go: Go source file
+- internal/agent/tools/tool_suggest.go: Go source file
+- internal/agent/tools/tool_suggest.md: Markdown document
+- internal/agent/tools/tools.go: Go source file
+- internal/agent/tools/update_plan.go: Codex-style update_plan tool implementation
+- internal/agent/tools/update_plan.md: update_plan Tool
+- internal/agent/tools/view.go: Go source file
+- internal/agent/tools/view.md: Markdown document
+- internal/agent/tools/wait.md: Markdown document
+- internal/agent/tools/web_fetch.go: Go source file
+- ... 5837 more files omitted to keep this memory concise.

@@ -65,15 +65,20 @@ func (i *SkillItem) Render(width int) string {
 		return ""
 	}
 
-	lineStyle := i.Styles.Dialog.NormalItem
+	titleStyle := i.Styles.Dialog.NormalItem
+	bodyStyle := i.Styles.HalfMuted
+	prefix := "  "
 	if i.focused {
-		lineStyle = i.Styles.Dialog.SelectedItem
+		prefix = i.Styles.Base.Foreground(i.Styles.Primary).Bold(true).Render("› ")
+		titleStyle = i.Styles.Base.Bold(true).Foreground(i.Styles.Primary)
 	}
 
+	prefixWidth := ansi.StringWidth(prefix)
+	contentWidth := max(0, width-prefixWidth)
 	badge := i.badge()
-	titleLine := i.renderTitleLine(width, badge)
-	bodyLine := i.renderBodyLine(width)
-	return lineStyle.Width(width).Render(titleLine + "\n" + bodyLine)
+	titleLine := titleStyle.Render(i.renderTitleLine(contentWidth, badge))
+	bodyLine := bodyStyle.Render(i.renderBodyLine(contentWidth))
+	return prefix + titleLine + "\n" + strings.Repeat(" ", prefixWidth) + bodyLine
 }
 
 func (i *SkillItem) renderTitleLine(width int, badge string) string {

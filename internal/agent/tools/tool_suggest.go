@@ -79,16 +79,14 @@ func NewToolSuggestTool(cfg *config.Config, permissions permission.Service) fant
 			catalog := config.CuratedRegistryCatalog(defs)
 			catalog = includeUncategorizedDefs(defs, catalog)
 			catalog = mergeConfigMCPs(catalog, cfg)
-
-			snapshots := buildMCPSnapshots(catalog, cfg)
-			queryTerms := mcpQueryTerms(params.Query)
-			scored := make([]scoredEntry, 0, len(snapshots))
-			for _, entry := range snapshots {
-				score, ok := scoreMCPSnapshot(entry, params.Query, queryTerms)
-				if len(queryTerms) > 0 && !ok {
-					continue
+			scored := rankSuggestedMCPs(catalog, cfg, params.Query)
+			if len(scored) == 0 {
+				if liveDefs := loadLiveRegistryDefinitions(ctx); len(liveDefs) > 0 {
+					liveCatalog := config.CuratedRegistryCatalog(liveDefs)
+					liveCatalog = includeUncategorizedDefs(liveDefs, liveCatalog)
+					liveCatalog = mergeConfigMCPs(liveCatalog, cfg)
+					scored = rankSuggestedMCPs(liveCatalog, cfg, params.Query)
 				}
-				scored = append(scored, scoredEntry{entry: entry, score: score})
 			}
 
 			if len(scored) == 0 {
@@ -149,6 +147,31 @@ func NewToolSuggestTool(cfg *config.Config, permissions permission.Service) fant
 			return fantasy.NewTextResponse(strings.TrimSpace(sb.String())), nil
 		},
 	)
+}
+
+func rankSuggestedMCPs(catalog []config.RegistryMCPInventoryEntry, cfg *config.Config, query string) []scoredEntry {
+	snapshots := buildMCPSnapshots(catalog, cfg)
+	queryTerms := mcpQueryTerms(query)
+	scored := make([]scoredEntry, 0, len(snapshots))
+	for _, entry := range snapshots {
+		score, ok := scoreMCPSnapshot(entry, query, queryTerms)
+		if len(queryTerms) > 0 && !ok {
+			continue
+		}
+		scored = append(scored, scoredEntry{entry: entry, score: score})
+	}
+
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		if scored[i].entry.Entry.Priority != scored[j].entry.Entry.Priority {
+			return scored[i].entry.Entry.Priority > scored[j].entry.Entry.Priority
+		}
+		return scored[i].entry.Name < scored[j].entry.Name
+	})
+
+	return scored
 }
 
 func suggestedMCPAction(entry mcpServerSnapshot) string {

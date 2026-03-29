@@ -9,6 +9,8 @@ import (
 
 var runtimeToolSummaries = map[string]string{
 	"agent":                   "delegate one bounded task to a worker agent",
+	"agent_directory":         "inspect the active agent and work-item directory with routeable aliases",
+	"agent_mail_ack":          "durably acknowledge handled coordination mail",
 	"agent_mail_inbox":        "read durable coordination mail from other agents",
 	"agent_mail_send":         "send durable coordination mail to another agent",
 	"agentic_edit":            "edit multiple files in one structured operation",

@@ -373,9 +373,21 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 				"agent_id":      agentID,
 				"submission_id": submissionID,
 				"status":        status,
+				"work_item_id":  "",
 				"work_dir":      workDir,
 				"started_at":    startedAt,
 			})
+			if runner, getErr := c.getSubAgent(agentID); getErr == nil {
+				snapshot := runner.snapshot()
+				payload, _ = json.Marshal(map[string]any{
+					"agent_id":      agentID,
+					"submission_id": submissionID,
+					"status":        snapshot.Status,
+					"work_item_id":  snapshot.WorkItemID,
+					"work_dir":      snapshot.WorkDir,
+					"started_at":    snapshot.StartedAt,
+				})
+			}
 			return fantasy.NewTextResponse(string(payload)), nil
 		},
 	), nil
@@ -401,8 +413,9 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			payload := map[string]any{
-				"agent_id": params.ID,
-				"status":   status,
+				"agent_id":     params.ID,
+				"status":       status,
+				"work_item_id": "",
 			}
 			if submissionID != "" {
 				payload["submission_id"] = submissionID
@@ -411,6 +424,7 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 				snapshot := runner.snapshot()
 				payload["work_dir"] = snapshot.WorkDir
 				payload["started_at"] = snapshot.StartedAt
+				payload["work_item_id"] = snapshot.WorkItemID
 			}
 			encoded, _ := json.Marshal(payload)
 			return fantasy.NewTextResponse(string(encoded)), nil

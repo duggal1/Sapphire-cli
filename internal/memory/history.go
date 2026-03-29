@@ -266,10 +266,17 @@ func (m *sessionHistoryManager) View(ctx context.Context, currentSessionID strin
 }
 
 type sessionStateSnapshot struct {
-	CurrentTask      string
-	LastDecision     string
-	LastModifiedFile string
-	RecentTools      []string
+	CurrentTask            string
+	RecentUserPrompts      []string
+	LastDecision           string
+	RecentDecisions        []string
+	LastModifiedFile       string
+	RecentTools            []string
+	RecentFiles            []string
+	RecentFailures         []string
+	AchievementSignals     []string
+	MajorChangeLikely      bool
+	MajorAchievementLikely bool
 }
 
 func (m *sessionHistoryManager) BuildSessionState(ctx context.Context, sessionID string) (sessionStateSnapshot, error) {
@@ -279,25 +286,87 @@ func (m *sessionHistoryManager) BuildSessionState(ctx context.Context, sessionID
 	}
 
 	var state sessionStateSnapshot
+	var sawWriteTool bool
+	var sawDecision bool
+	var sawIndexCodebase bool
+	writeTouchedFiles := make(map[string]struct{})
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		switch {
 		case state.CurrentTask == "" && entry.Kind == historyKindUserPrompt:
 			state.CurrentTask = truncate(entry.Content, 240)
-		case state.LastDecision == "" && entry.Kind == historyKindDecision:
-			state.LastDecision = truncate(entry.Content, 220)
-		case state.LastModifiedFile == "" && (entry.Kind == historyKindToolCall || entry.Kind == historyKindToolResult):
-			state.LastModifiedFile = inferLastModifiedFile(entry.Content)
+		}
+		if entry.Kind == historyKindUserPrompt {
+			state.RecentUserPrompts = append(state.RecentUserPrompts, truncate(entry.Content, 240))
+		}
+		if entry.Kind == historyKindDecision {
+			sawDecision = true
+			decision := truncate(entry.Content, 320)
+			if state.LastDecision == "" {
+				state.LastDecision = decision
+			}
+			state.RecentDecisions = append(state.RecentDecisions, decision)
+		}
+		if entry.Kind == historyKindToolResult && entry.IsError {
+			state.RecentFailures = append(state.RecentFailures, truncate(entry.Content, 240))
+		}
+		if entry.Kind == historyKindToolCall || entry.Kind == historyKindToolResult {
+			if file := inferLastModifiedFile(entry.Content); file != "" {
+				if state.LastModifiedFile == "" {
+					state.LastModifiedFile = file
+				}
+				state.RecentFiles = append(state.RecentFiles, file)
+				if isStructuralWriteTool(entry.ToolName) {
+					writeTouchedFiles[file] = struct{}{}
+				}
+			}
+			if isStructuralWriteTool(entry.ToolName) {
+				sawWriteTool = true
+			}
+			if strings.TrimSpace(entry.ToolName) == "index_codebase" && !entry.IsError {
+				sawIndexCodebase = true
+			}
 		}
 		if entry.ToolName != "" {
 			state.RecentTools = append(state.RecentTools, entry.ToolName)
-			if len(state.RecentTools) >= 5 {
-				break
-			}
+		}
+		if state.CurrentTask != "" && state.LastDecision != "" && len(state.RecentTools) >= 5 && len(state.RecentFiles) >= 8 && len(state.RecentUserPrompts) >= 3 {
+			break
 		}
 	}
+	if sawDecision {
+		state.AchievementSignals = append(state.AchievementSignals, "architectural_decision")
+	}
+	if len(writeTouchedFiles) >= 3 {
+		state.AchievementSignals = append(state.AchievementSignals, "multi_file_write")
+	}
+	if sawIndexCodebase {
+		state.AchievementSignals = append(state.AchievementSignals, "semantic_codebase_refresh")
+	}
+	if len(state.RecentFailures) > 0 {
+		state.AchievementSignals = append(state.AchievementSignals, "failure_capture")
+	}
+	if len(state.RecentUserPrompts) > 0 {
+		state.AchievementSignals = append(state.AchievementSignals, "active_workstream")
+	}
+	state.RecentUserPrompts = uniqueStrings(state.RecentUserPrompts)
+	state.RecentDecisions = uniqueStrings(state.RecentDecisions)
 	state.RecentTools = uniqueStrings(state.RecentTools)
+	state.RecentFiles = uniqueStrings(state.RecentFiles)
+	state.RecentFailures = uniqueStrings(state.RecentFailures)
+	state.AchievementSignals = uniqueStrings(state.AchievementSignals)
+	state.MajorChangeLikely = sawDecision || len(state.RecentFiles) >= 3 || (sawWriteTool && len(state.RecentFiles) > 0)
+	state.MajorAchievementLikely = sawDecision || sawIndexCodebase || len(writeTouchedFiles) >= 3
 	return state, nil
+}
+
+func isStructuralWriteTool(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "apply_patch", "edit", "single_edit", "write", "agentic_edit":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *sessionHistoryManager) writeEntry(ctx context.Context, sessionID, kind, role, toolName, content string, isError bool, metadata map[string]any, incrementTurn bool) error {

@@ -227,10 +227,11 @@ func (m *Modes) FullHelp() [][]key.Binding {
 }
 
 func (m *Modes) setModeItems() error {
-	items := make([]list.FilterableItem, 0, len(planmode.AvailableModes()))
+	selectableModes := planmode.SelectableModes()
+	items := make([]list.FilterableItem, 0, len(selectableModes))
 	selectedIndex := 0
 
-	for i, mode := range planmode.AvailableModes() {
+	for i, mode := range selectableModes {
 		items = append(items, &ModeOption{
 			mode:        mode.Mode,
 			title:       mode.Title,

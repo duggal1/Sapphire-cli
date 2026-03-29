@@ -43,6 +43,14 @@ func TestDetectRenderModeHonorsNoColor(t *testing.T) {
 	}
 }
 
+func TestShimmerTickIntervalTargetsEightyFPS(t *testing.T) {
+	t.Parallel()
+
+	if shimmerTickInterval != time.Second/80 {
+		t.Fatalf("expected 80 FPS animation cadence, got %s", shimmerTickInterval)
+	}
+}
+
 func TestShimmerSpansAtANSI256MovesBullet(t *testing.T) {
 	t.Parallel()
 

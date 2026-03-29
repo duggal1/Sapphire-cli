@@ -144,6 +144,7 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	}
 
 	app.setupEvents()
+	app.startRuntimeControlLoop()
 
 	// Check for updates in the background.
 	go app.checkForUpdates(ctx)

@@ -12,8 +12,16 @@ import (
 )
 
 func TestMailboxIdentityAndTargetResolution(t *testing.T) {
+	ctx := context.Background()
+	store, err := orchestrationdb.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
 	coord := &coordinator{
-		subAgentRegistry: newSubAgentRegistry(),
+		orchestrationStore: store,
+		subAgentRegistry:   newSubAgentRegistry(),
 	}
 	runner := &subAgentRunner{
 		id:            "agent-child",
@@ -21,21 +29,41 @@ func TestMailboxIdentityAndTargetResolution(t *testing.T) {
 		parentSession: "parent-session",
 	}
 	coord.subAgentRegistry.upsert(runner.id, runner)
+	require.NoError(t, store.UpsertWorkItem(ctx, orchestrationdb.WorkItem{
+		ID:          "work-auth",
+		Type:        "task",
+		Title:       "Auth flow",
+		Description: "Finish auth orchestration",
+		Status:      "in_progress",
+		Assignee:    runner.id,
+		CreatedAt:   time.Now().UTC(),
+	}))
 
 	require.Equal(t, "agent-child", coord.mailboxIdentityForSession("child-session"))
 	require.Equal(t, "main:parent-session", mainAgentMailboxID("parent-session"))
 
-	target, err := coord.resolveMailTarget("child-session", "main")
+	target, err := coord.resolveMailTarget(ctx, "child-session", "main")
 	require.NoError(t, err)
 	require.Equal(t, "main:parent-session", target)
 
-	target, err = coord.resolveMailTarget("child-session", "self")
+	target, err = coord.resolveMailTarget(ctx, "child-session", "self")
 	require.NoError(t, err)
 	require.Equal(t, "agent-child", target)
 
-	target, err = coord.resolveMailTarget("parent-session", "self")
+	target, err = coord.resolveMailTarget(ctx, "parent-session", "self")
 	require.NoError(t, err)
 	require.Equal(t, "main:parent-session", target)
+
+	target, err = coord.resolveMailTarget(ctx, "child-session", "agent:agent-child")
+	require.NoError(t, err)
+	require.Equal(t, "agent-child", target)
+
+	target, err = coord.resolveMailTarget(ctx, "child-session", "work:work-auth")
+	require.NoError(t, err)
+	require.Equal(t, "agent-child", target)
+
+	_, err = coord.resolveMailTarget(ctx, "child-session", "work:missing-work")
+	require.Error(t, err)
 }
 
 func TestNudgeMailboxRecipientQueuesDurableDispatchWithoutHiddenRun(t *testing.T) {

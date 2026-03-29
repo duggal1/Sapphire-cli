@@ -20,7 +20,7 @@ import (
 
 const (
 	mainAgentMailboxPrefix = "main:"
-	mailboxNudgePrompt     = "You have new agent mail. Call `agent_mail_inbox` immediately, incorporate any coordination requests, then continue your assigned task."
+	mailboxNudgePrompt     = "You have new agent mail. Call `agent_mail_inbox` immediately, handle the coordination request, then call `agent_mail_ack` for completed items before continuing your assigned task."
 	maxOrchestrationMail   = 10
 	maxOrchestrationAgents = 8
 	maxOrchestrationFeed   = 12
@@ -275,22 +275,20 @@ func (c *coordinator) drainRunnerInboxSummary(ctx context.Context, runner *subAg
 	if c == nil || c.mailbox == nil || runner == nil {
 		return ""
 	}
-	items, err := c.mailbox.Inbox(ctx, runner.id, true, 20)
+	c.requeueExpiredMailLeases(ctx)
+	items, err := c.mailbox.LeaseInbox(ctx, runner.id, runner.id, 20, agentmailbox.DefaultLeaseTTL)
 	c.countSubAgentLaunchMetric("mail.inbox_read", 1)
 	if err != nil || len(items) == 0 {
 		return ""
 	}
 	var lines []string
 	for _, item := range items {
-		lines = append(lines, fmt.Sprintf("- From: %s | Subject: %s | Body: %s", item.FromAgent, item.Subject, item.Body))
-		if markErr := c.mailbox.MarkRead(ctx, runner.id, item.ID); markErr != nil {
-			slog.Warn("Failed to mark agent mail as read", "agent_id", runner.id, "message_id", item.ID, "error", markErr)
-		}
+		lines = append(lines, fmt.Sprintf("- [%s] From: %s | Subject: %s | Body: %s", item.ID, item.FromAgent, item.Subject, item.Body))
 	}
 	c.recordOrchestrationActivity(ctx, runner.id, "mail_received", map[string]any{
 		"count": len(items),
 	})
-	return "Mailbox update:\n" + strings.Join(lines, "\n") + "\n\nUse `agent_mail_inbox` if you need the full thread history. Continue your assigned task after incorporating the messages."
+	return "Mailbox update:\n" + strings.Join(lines, "\n") + "\n\nIf you fully handle any of these items, acknowledge them with `agent_mail_ack`. Use `agent_mail_inbox` if you need the full thread history. Continue your assigned task after incorporating the messages."
 }
 
 func (c *coordinator) nudgeMailboxRecipient(ctx context.Context, recipient string) error {
@@ -330,13 +328,66 @@ func (c *coordinator) nudgeMailboxRecipient(ctx context.Context, recipient strin
 	return nil
 }
 
-func (c *coordinator) resolveMailTarget(sessionID, rawTo string) (string, error) {
+func (c *coordinator) requeueExpiredMailLeases(ctx context.Context) {
+	if c == nil || c.mailbox == nil {
+		return
+	}
+	requeued, deadLetters, err := c.mailbox.RequeueExpiredLeases(ctx, agentmailbox.DefaultMaxLeaseAttempts)
+	if err != nil {
+		slog.Warn("Failed to requeue expired mail leases", "error", err)
+		return
+	}
+	for _, item := range requeued {
+		c.recordOrchestrationActivity(ctx, item.ResolvedToAgent, "mail_requeued", map[string]any{
+			"id":                item.ID,
+			"thread_id":         item.ThreadID,
+			"delivery_attempts": item.DeliveryAttempts,
+		})
+		if err := c.nudgeMailboxRecipient(ctx, item.ResolvedToAgent); err != nil {
+			slog.Warn("Failed to nudge requeued mail recipient", "recipient", item.ResolvedToAgent, "error", err)
+		}
+	}
+	for _, item := range deadLetters {
+		c.recordOrchestrationActivity(ctx, item.ResolvedToAgent, "mail_dead_letter", map[string]any{
+			"id":                item.ID,
+			"thread_id":         item.ThreadID,
+			"delivery_attempts": item.DeliveryAttempts,
+		})
+	}
+}
+
+func (c *coordinator) resolveMailTarget(ctx context.Context, sessionID, rawTo string) (string, error) {
 	to := strings.TrimSpace(rawTo)
 	if to == "" {
 		return "", fmt.Errorf("recipient is required")
 	}
 	senderRunner := c.runnerBySessionID(sessionID)
-	switch strings.ToLower(to) {
+	lower := strings.ToLower(to)
+	if strings.HasPrefix(lower, "agent:") {
+		agentID := strings.TrimSpace(strings.TrimPrefix(to, "agent:"))
+		if agentID == "" {
+			return "", fmt.Errorf("agent recipient is required")
+		}
+		return agentID, nil
+	}
+	if strings.HasPrefix(lower, "work:") {
+		workItemID := strings.TrimSpace(strings.TrimPrefix(to, "work:"))
+		if workItemID == "" {
+			return "", fmt.Errorf("work item recipient is required")
+		}
+		if c == nil || c.orchestrationStore == nil {
+			return "", fmt.Errorf("orchestration store not initialized")
+		}
+		item, err := c.orchestrationStore.GetWorkItem(ctx, workItemID)
+		if err != nil {
+			return "", fmt.Errorf("resolve work recipient %s: %w", workItemID, err)
+		}
+		if strings.TrimSpace(item.Assignee) == "" {
+			return "", fmt.Errorf("work item %s has no assignee", workItemID)
+		}
+		return strings.TrimSpace(item.Assignee), nil
+	}
+	switch lower {
 	case "main", "parent":
 		if senderRunner == nil || strings.TrimSpace(senderRunner.parentSession) == "" {
 			return mainAgentMailboxID(sessionID), nil
@@ -364,7 +415,7 @@ func (c *coordinator) buildMainOrchestrationMemoryContext(ctx context.Context, s
 	parentID := mainAgentMailboxID(sessionID)
 	var sections []string
 	if c.memoryCompiler != nil {
-		if compiled := c.memoryCompiler.RenderPromptInjection(ctx, agentmemory.CompileRequest{
+		if compiled := c.memoryCompiler.RenderCachedPromptInjection(ctx, agentmemory.CompileRequest{
 			SessionID:  sessionID,
 			AgentID:    parentID,
 			WorkingDir: c.mainWorkingDir(),
@@ -375,6 +426,9 @@ func (c *coordinator) buildMainOrchestrationMemoryContext(ctx context.Context, s
 
 	if mailbox := c.buildMailboxContext(ctx, parentID, true, maxOrchestrationMail); mailbox != "" {
 		sections = append(sections, mailbox)
+	}
+	if directorySection := c.buildAgentDirectoryContext(ctx, sessionID, maxOrchestrationAgents); directorySection != "" {
+		sections = append(sections, directorySection)
 	}
 
 	agentStates := c.listAgentStateSnapshots(ctx, sessionID, parentID, maxOrchestrationAgents)
@@ -458,6 +512,9 @@ func (c *coordinator) buildSubAgentPersistentMemoryContext(ctx context.Context, 
 	}
 	if mailboxSection := c.buildMailboxContext(ctx, runner.id, true, maxOrchestrationMail); mailboxSection != "" {
 		sections = append(sections, mailboxSection)
+	}
+	if directorySection := c.buildAgentDirectoryContext(ctx, sessionID, maxOrchestrationAgents); directorySection != "" {
+		sections = append(sections, directorySection)
 	}
 	if activitySection := c.renderRecentAgentActivityContext(ctx, runner.id); activitySection != "" {
 		sections = append(sections, activitySection)
@@ -597,19 +654,22 @@ func (c *coordinator) buildMailboxContext(ctx context.Context, agentID string, u
 	if c == nil || c.mailbox == nil || strings.TrimSpace(agentID) == "" {
 		return ""
 	}
-	items, err := c.mailbox.Inbox(ctx, agentID, unreadOnly, limit)
+	items, err := c.mailbox.Actionable(ctx, agentID, limit)
 	if err != nil || len(items) == 0 {
 		return ""
 	}
 	lines := make([]string, 0, len(items))
 	for _, item := range items {
-		line := fmt.Sprintf("- %s | %s", strings.TrimSpace(item.FromAgent), truncateForContext(item.Subject, 72))
+		line := fmt.Sprintf("- [%s] %s | %s | %s", item.ID, item.DeliveryState, strings.TrimSpace(item.FromAgent), truncateForContext(item.Subject, 72))
 		if body := truncateForContext(strings.ReplaceAll(strings.TrimSpace(item.Body), "\n", " "), 120); body != "" {
 			line += " | " + body
 		}
+		if !item.LeaseExpiresAt.IsZero() {
+			line += fmt.Sprintf(" | lease %s", time.Until(item.LeaseExpiresAt).Truncate(time.Second))
+		}
 		lines = append(lines, line)
 	}
-	return "### Unread Mail\n" + strings.Join(lines, "\n")
+	return "### Actionable Mail\n" + strings.Join(lines, "\n")
 }
 
 func (c *coordinator) listAgentStateSnapshots(ctx context.Context, sessionID, parentID string, limit int) []orchestrationdb.AgentState {

@@ -1554,6 +1554,18 @@ func classifyProviderTransportError(err error, linkStyle lipgloss.Style) (string
 			true
 	}
 
+	if strings.Contains(lower, "no such host") || (strings.Contains(lower, "dial tcp") && strings.Contains(lower, "lookup ")) {
+		return "Model provider DNS lookup failed",
+			"Sapphire could not resolve the selected model provider host. Check internet connectivity, DNS, VPN/proxy settings, or firewall rules, then retry the request.",
+			true
+	}
+
+	if strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "context deadline exceeded") {
+		return "Model provider network timeout",
+			"Sapphire reached the model provider but the network request timed out before a response arrived. Retry the request, or check connectivity and provider availability.",
+			true
+	}
+
 	return "", "", false
 }
 
@@ -1953,6 +1965,16 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	if postCompaction && contextWindow > 0 {
 		charBudget = int(float64(contextWindow) * postCompactionInjectionRatio * postCompactionContextCharsPerTok)
 	}
+	contextStage := pmem.ContextLoadStageCold
+	if a.sessions != nil && strings.TrimSpace(sessionID) != "" {
+		if sessionState, err := a.getSessionWithTimeout(ctx, sessionID); err == nil {
+			contextStage = determineContextLoadStage(sessionState.PromptTokens+sessionState.CompletionTokens, contextWindow, postCompaction)
+		} else if postCompaction {
+			contextStage = pmem.ContextLoadStage50
+		}
+	} else if postCompaction {
+		contextStage = pmem.ContextLoadStage50
+	}
 
 	constitution := ""
 	if a.memory != nil {
@@ -1968,12 +1990,12 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}
 
 	historicalContext := ""
-	if a.pmem != nil {
+	if a.pmem != nil && contextStage >= pmem.ContextLoadStage10 {
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			if charBudget > 0 {
-				historicalContext = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, charBudget/postCompactionContextCharsPerTok)
+				historicalContext = a.pmem.BuildContextInjectionForSessionAtStage(memCtx, sessionID, charBudget/postCompactionContextCharsPerTok, contextStage)
 			} else {
-				historicalContext = a.pmem.BuildContextInjectionForSession(memCtx, sessionID, contextWindow)
+				historicalContext = a.pmem.BuildContextInjectionForSessionAtStage(memCtx, sessionID, contextWindow, contextStage)
 			}
 			cancel()
 		}
@@ -1997,7 +2019,7 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 			cancel()
 		}
 	}
-	if compiledInjection == "" && a.memoryCompiler != nil {
+	if compiledInjection == "" && a.memoryCompiler != nil && shouldInjectCompiledCodebase(contextStage) {
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			compiledInjection = a.memoryCompiler.RenderPromptInjection(memCtx, memory.CompileRequest{
 				SessionID:           sessionID,
@@ -2011,7 +2033,7 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 		}
 	}
 	codebaseIndexStatus := ""
-	if a.codebaseIndexStatus != nil {
+	if a.codebaseIndexStatus != nil && shouldInjectCompiledCodebase(contextStage) {
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			codebaseIndexStatus = a.codebaseIndexStatus(memCtx, sessionID, workDir)
 			cancel()
@@ -2090,6 +2112,34 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.S
 // Aligned with Codex's is_summary_message function.
 func isSummaryMessage(message string) bool {
 	return strings.HasPrefix(message, string(summaryPrefix))
+}
+
+func determineContextLoadStage(tokens int64, contextWindow int, postCompaction bool) pmem.ContextLoadStage {
+	if postCompaction {
+		return pmem.ContextLoadStage50
+	}
+	if contextWindow <= 0 || tokens <= 0 {
+		return pmem.ContextLoadStageCold
+	}
+	percentUsed := int((tokens * 100) / int64(contextWindow))
+	switch {
+	case percentUsed >= 50:
+		return pmem.ContextLoadStage50
+	case percentUsed >= 40:
+		return pmem.ContextLoadStage40
+	case percentUsed >= 30:
+		return pmem.ContextLoadStage30
+	case percentUsed >= 20:
+		return pmem.ContextLoadStage20
+	case percentUsed >= 10:
+		return pmem.ContextLoadStage10
+	default:
+		return pmem.ContextLoadStageCold
+	}
+}
+
+func shouldInjectCompiledCodebase(stage pmem.ContextLoadStage) bool {
+	return stage >= pmem.ContextLoadStage50
 }
 
 // isContextWindowExceeded checks if an error is a context window exceeded error.

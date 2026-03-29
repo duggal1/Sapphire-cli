@@ -133,6 +133,9 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 	if err != nil {
 		return storedRepoScope{}, indexOperationStats{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return storedRepoScope{}, indexOperationStats{}, err
+	}
 	reportWarmProgress(opts.Report, WarmProgress{
 		Workspace: snapshot.ScopePath,
 		Phase:     "discovering",
@@ -144,6 +147,9 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 	})
 	candidates, err := scanRepoFileCandidates(snapshot.ScopePath)
 	if err != nil {
+		return storedRepoScope{}, indexOperationStats{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return storedRepoScope{}, indexOperationStats{}, err
 	}
 	stats := indexOperationStats{DiscoveredFiles: len(candidates)}
@@ -260,7 +266,7 @@ func (c *Compiler) ensureIndexedScopeWithOptions(ctx context.Context, workingDir
 		StartedAt:       startedAt,
 		UpdatedAt:       c.now(),
 	})
-	parsedChanged, err := loadIndexedRepoFilesParallel(snapshot.ScopePath, currentByPath, changedPaths, func(processed, total int) {
+	parsedChanged, err := loadIndexedRepoFilesParallel(ctx, snapshot.ScopePath, currentByPath, changedPaths, func(processed, total int) {
 		percent := 0.12
 		if total > 0 {
 			percent = 0.12 + (0.68 * (float64(processed) / float64(total)))
@@ -820,7 +826,7 @@ func loadIndexedRepoFile(root, path string) (indexedRepoFile, bool, error) {
 	return file, true, nil
 }
 
-func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCandidate, changedPaths []string, report func(processed, total int)) ([]indexedRepoFile, error) {
+func loadIndexedRepoFilesParallel(ctx context.Context, root string, candidates map[string]repoFileCandidate, changedPaths []string, report func(processed, total int)) ([]indexedRepoFile, error) {
 	if len(changedPaths) == 0 {
 		return nil, nil
 	}
@@ -831,7 +837,7 @@ func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCan
 		err   error
 	}
 
-	workers := min(len(changedPaths), max(1, runtime.GOMAXPROCS(0)))
+	workers := min(len(changedPaths), max(1, min(4, max(1, runtime.GOMAXPROCS(0)/2))))
 	workCh := make(chan int)
 	resultCh := make(chan parseResult, len(changedPaths))
 	var wg sync.WaitGroup
@@ -839,21 +845,40 @@ func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCan
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for idx := range workCh {
-				path := changedPaths[idx]
-				candidate := candidates[path]
-				file, ok, err := loadIndexedRepoFile(root, candidate.AbsolutePath)
-				resultCh <- parseResult{
-					index: idx,
-					file:  file,
-					ok:    ok,
-					err:   err,
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case idx, ok := <-workCh:
+					if !ok {
+						return
+					}
+					path := changedPaths[idx]
+					candidate := candidates[path]
+					file, ok, err := loadIndexedRepoFile(root, candidate.AbsolutePath)
+					select {
+					case <-ctx.Done():
+						return
+					case resultCh <- parseResult{
+						index: idx,
+						file:  file,
+						ok:    ok,
+						err:   err,
+					}:
+					}
 				}
 			}
 		}()
 	}
 	for idx := range changedPaths {
-		workCh <- idx
+		select {
+		case <-ctx.Done():
+			close(workCh)
+			wg.Wait()
+			close(resultCh)
+			return nil, ctx.Err()
+		case workCh <- idx:
+		}
 	}
 	close(workCh)
 	wg.Wait()
@@ -862,6 +887,9 @@ func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCan
 	items := make([]parseResult, len(changedPaths))
 	processed := 0
 	for result := range resultCh {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if result.err != nil {
 			return nil, result.err
 		}
@@ -874,6 +902,9 @@ func loadIndexedRepoFilesParallel(root string, candidates map[string]repoFileCan
 
 	files := make([]indexedRepoFile, 0, len(changedPaths))
 	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !item.ok {
 			continue
 		}
@@ -1050,6 +1081,12 @@ func extractGoFacts(file *indexedRepoFile) {
 			file.Edges = append(file.Edges, edge)
 		}
 	}
+
+	duplicateKeys := dedupeIndexedSymbols(&file.Symbols)
+	if len(duplicateKeys) > 0 {
+		file.Facts["duplicate_symbol_keys"] = duplicateKeys
+	}
+	dedupeStoredRepoEdges(&file.Edges)
 }
 
 func discoverCallsForSymbol(file *ast.File, fset *token.FileSet, symbol indexedRepoSymbol) []string {
@@ -1172,9 +1209,69 @@ func receiverName(expr ast.Expr) string {
 		return typed.Name
 	case *ast.StarExpr:
 		return receiverName(typed.X)
+	case *ast.IndexExpr:
+		return receiverName(typed.X)
+	case *ast.IndexListExpr:
+		return receiverName(typed.X)
+	case *ast.ParenExpr:
+		return receiverName(typed.X)
+	case *ast.SelectorExpr:
+		base := receiverName(typed.X)
+		if base == "" {
+			return typed.Sel.Name
+		}
+		return base + "." + typed.Sel.Name
 	default:
 		return ""
 	}
+}
+
+func dedupeIndexedSymbols(items *[]indexedRepoSymbol) []string {
+	if items == nil || len(*items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(*items))
+	deduped := make([]indexedRepoSymbol, 0, len(*items))
+	duplicates := make([]string, 0)
+	duplicateSet := make(map[string]struct{})
+	for _, item := range *items {
+		if _, ok := seen[item.StableKey]; ok {
+			if _, recorded := duplicateSet[item.StableKey]; !recorded {
+				duplicates = append(duplicates, item.StableKey)
+				duplicateSet[item.StableKey] = struct{}{}
+			}
+			continue
+		}
+		seen[item.StableKey] = struct{}{}
+		deduped = append(deduped, item)
+	}
+	*items = deduped
+	sort.Strings(duplicates)
+	return duplicates
+}
+
+func dedupeStoredRepoEdges(items *[]storedRepoEdge) {
+	if items == nil || len(*items) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(*items))
+	deduped := make([]storedRepoEdge, 0, len(*items))
+	for _, item := range *items {
+		key := strings.Join([]string{
+			item.FromFile,
+			item.FromSymbol,
+			item.Type,
+			item.ToFile,
+			item.ToSymbol,
+			item.ToSymbolKey,
+		}, "\x00")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		deduped = append(deduped, item)
+	}
+	*items = deduped
 }
 
 func stableSymbolKey(path, receiver, name, kind string) string {

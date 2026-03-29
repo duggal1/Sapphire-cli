@@ -110,7 +110,7 @@ func (c *Compiler) persistHandoffPacket(ctx context.Context, req CompileRequest,
 	if err == nil {
 		_ = c.linkFactProvenance(ctx, "handoff", handoffID, provenanceID)
 	}
-	_ = c.pruneDurableMemory(ctx, strings.TrimSpace(req.SessionID), scopeID)
+	c.scheduleDurableMemoryPrune(strings.TrimSpace(req.SessionID), scopeID)
 	return handoffID, artifactPath, nil
 }
 
@@ -191,7 +191,7 @@ func (c *Compiler) CreateResumePoint(ctx context.Context, req ResumeRequest) (ap
 	if err == nil {
 		_ = c.linkFactProvenance(ctx, "resume_point", item.ID, provenanceID)
 	}
-	_ = c.pruneDurableMemory(ctx, item.SessionID, scopeID)
+	c.scheduleDurableMemoryPrune(item.SessionID, scopeID)
 	return item, nil
 }
 
@@ -329,7 +329,7 @@ func (c *Compiler) PersistSubAgentOutcome(ctx context.Context, input SubAgentOut
 			}
 		}
 	}
-	_ = c.pruneDurableMemory(ctx, strings.TrimSpace(input.ParentSessionID), scope.ID)
+	c.scheduleDurableMemoryPrune(strings.TrimSpace(input.ParentSessionID), scope.ID)
 	_ = c.pruneSubAgentReports(ctx, strings.TrimSpace(input.SessionID))
 	return nil
 }

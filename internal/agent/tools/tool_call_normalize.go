@@ -98,6 +98,10 @@ func toolNameAlias(name string) string {
 		return "agent_mail_send"
 	case "agent_mail_inbox", "mail_inbox", "check_mail", "read_mail", "inbox":
 		return "agent_mail_inbox"
+	case "agent_mail_ack", "mail_ack", "ack_mail", "acknowledge_mail":
+		return "agent_mail_ack"
+	case "agent_directory", "mail_directory", "coordination_directory", "peer_directory":
+		return "agent_directory"
 	case "check_hook", "hook_status", "hook_show", "current_hook", "work_hook":
 		return "check_hook"
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,5 +67,77 @@ func TestBuildContextInjectionForSessionIncludesDynamicMemoryFile(t *testing.T) 
 	injection := system.BuildContextInjectionForSession(context.Background(), sessionID, 4000)
 	require.Contains(t, injection, "<persistent_memory_map>")
 	require.Contains(t, injection, "current_task: Fix memory continuity")
+	require.Contains(t, injection, "## Active Workstreams")
 	require.True(t, strings.Contains(injection, "main.go") || strings.Contains(injection, "README.md"))
+}
+
+func TestBuildContextInjectionForSessionStagesMemoryMap(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "internal", "agent"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("// entrypoint\npackage main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "README.md"), []byte("# Sapphire CLI\n"), 0o644))
+	for i := 0; i < 24; i++ {
+		path := filepath.Join(projectRoot, "internal", "agent", "file"+strconv.Itoa(i)+".go")
+		require.NoError(t, os.WriteFile(path, []byte("package agent\n"), 0o644))
+	}
+
+	system, err := NewSystem(t.Context(), "", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: projectRoot,
+	})
+	require.NoError(t, err)
+	t.Cleanup(system.Close)
+
+	const sessionID = "session-staged-map"
+	system.RecordUserTurn(context.Background(), sessionID, "Stabilize long-horizon prompt assembly")
+	system.RecordSavedMemory(context.Background(), sessionID, "architectural_decision", `{"decision":"load memory in context buckets"}`)
+
+	stage10 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage10)
+	require.Contains(t, stage10, "<persistent_memory_map>")
+	require.Contains(t, stage10, "## Session Snapshot")
+	require.Contains(t, stage10, "## Active Workstreams")
+	require.NotContains(t, stage10, "## Architecture Overview")
+
+	stage30 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage30)
+	require.Contains(t, stage30, "## Architecture Overview")
+	require.NotContains(t, stage30, "## Critical Files")
+
+	stage40 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage40)
+	require.Contains(t, stage40, "## Critical Files")
+	require.NotContains(t, stage40, "## Supporting Files")
+
+	stage50 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage50)
+	require.Contains(t, stage50, "## Supporting Files")
+	require.Contains(t, stage50, "load memory in context buckets")
+}
+
+func TestBuildSessionStateFlagsMajorAchievementSignals(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("package main\n"), 0o644))
+
+	system, err := NewSystem(t.Context(), "", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: projectRoot,
+	})
+	require.NoError(t, err)
+	t.Cleanup(system.Close)
+
+	const sessionID = "session-achievement-state"
+	system.RecordUserTurn(context.Background(), sessionID, "Upgrade durable memory")
+	system.RecordToolCall(context.Background(), sessionID, "apply_patch", `{"file":"internal/agent/a.go"}`)
+	system.RecordToolCall(context.Background(), sessionID, "apply_patch", `{"file":"internal/agent/b.go"}`)
+	system.RecordToolCall(context.Background(), sessionID, "apply_patch", `{"file":"internal/memory/c.go"}`)
+	system.RecordToolResult(context.Background(), sessionID, "index_codebase", "semantic graph refreshed", false)
+	system.RecordSavedMemory(context.Background(), sessionID, "architectural_decision", `{"decision":"persist a deeper handbook"}`)
+
+	state, err := system.History.BuildSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.True(t, state.MajorAchievementLikely)
+	require.Contains(t, state.AchievementSignals, "architectural_decision")
+	require.Contains(t, state.AchievementSignals, "multi_file_write")
+	require.Contains(t, state.AchievementSignals, "semantic_codebase_refresh")
 }

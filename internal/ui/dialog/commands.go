@@ -506,9 +506,10 @@ func (c *Commands) currentMode() planmode.SessionMode {
 }
 
 func (c *Commands) modeCommands(currentMode planmode.SessionMode) []*CommandItem {
-	items := make([]*CommandItem, 0, len(planmode.AvailableModes()))
+	selectableModes := planmode.SelectableModes()
+	items := make([]*CommandItem, 0, len(selectableModes))
 	currentMode = planmode.NormalizeMode(currentMode)
-	for _, mode := range planmode.AvailableModes() {
+	for _, mode := range selectableModes {
 		label := "Switch to " + mode.Title + " Mode"
 		if mode.Mode == planmode.DefaultMode() {
 			label = "Switch to Default Mode"

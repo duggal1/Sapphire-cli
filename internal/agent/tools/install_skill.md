@@ -1,1 +1,2 @@
 Install the best matching Sapphire extended skill by query. Use this when a built-in skill does not cover the task and the right external skill needs to be fetched, installed locally, and then loaded before continuing. Register the result in both `<data-dir>/skills/<name>/SKILL.md` and `<data-dir>/plugins/<name>/`.
+This tool returns the exact installed local skill name and the full installed `SKILL.md` so the agent can read it immediately in the same turn.

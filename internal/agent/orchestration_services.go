@@ -52,14 +52,11 @@ func mailNudgeDispatchWorkItem(recipient string) string {
 }
 
 func (c *coordinator) startOrchestrationServices() {
-	if c == nil || c.orchestrationStore == nil || c.orchestrationSvcCancel != nil {
+	if c == nil || c.orchestrationStore == nil || c.orchestrationSvcCancel != nil || c.daemon == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.orchestrationSvcCancel = cancel
-	if c.daemon == nil {
-		return
-	}
 	c.orchestrationSvcWG.Add(1)
 	go func() {
 		defer c.orchestrationSvcWG.Done()
@@ -121,6 +118,7 @@ func (c *coordinator) enqueueSubAgentDispatch(ctx context.Context, sessionID, wo
 		"work_item":   item.WorkItemID,
 		"target":      item.TargetScope,
 	})
+	c.startOrchestrationServices()
 	return item.ID, nil
 }
 
@@ -170,6 +168,7 @@ func (c *coordinator) enqueueAgentNudgeDispatch(ctx context.Context, recipient, 
 		"dispatch_id": item.ID,
 		"recipient":   recipient,
 	})
+	c.startOrchestrationServices()
 	return item.ID, nil
 }
 
@@ -310,11 +309,12 @@ func (c *coordinator) dispatchMailNudgeItem(ctx context.Context, item orchestrat
 		return c.failDispatchItem(ctx, item, fmt.Errorf("mail nudge recipient is empty"))
 	}
 
-	unread, err := c.mailbox.Inbox(ctx, payload.Recipient, true, 1)
+	c.requeueExpiredMailLeases(ctx)
+	actionable, err := c.mailbox.Actionable(ctx, payload.Recipient, 1)
 	if err != nil {
-		return c.failDispatchItem(ctx, item, fmt.Errorf("load unread mail for %s: %w", payload.Recipient, err))
+		return c.failDispatchItem(ctx, item, fmt.Errorf("load actionable mail for %s: %w", payload.Recipient, err))
 	}
-	if len(unread) == 0 {
+	if len(actionable) == 0 {
 		return c.completeDispatchItem(ctx, item, "completed", "", payload.Recipient)
 	}
 
@@ -370,6 +370,9 @@ func (c *coordinator) dispatchMailNudgeItem(ctx context.Context, item orchestrat
 func (c *coordinator) reconcileDispatchQueue(ctx context.Context) error {
 	if c == nil || c.orchestrationStore == nil {
 		return nil
+	}
+	if err := c.healStaleMailDeliveries(ctx); err != nil {
+		slog.Warn("Failed to self-heal stale mail deliveries", "error", err)
 	}
 	items, err := c.orchestrationStore.ListDispatches(ctx, "", []string{"leased", "running"}, defaultDispatchQueueCapacity)
 	if err != nil {

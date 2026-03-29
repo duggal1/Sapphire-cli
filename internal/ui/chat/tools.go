@@ -150,9 +150,8 @@ type baseToolMessageItem struct {
 	// If nil, uses the default: !toolCall.Finished && !canceled.
 	spinningFunc SpinningFunc
 
-	sty              *styles.Styles
-	expandedContent  bool
-	lastSpinnerFrame string
+	sty             *styles.Styles
+	expandedContent bool
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -447,14 +446,8 @@ func pendingTool(sty *styles.Styles, name string) string {
 // OnShimmerTick invalidates the cached render while the tool is pending.
 func (t *baseToolMessageItem) OnShimmerTick() bool {
 	if !t.isSpinning() {
-		t.lastSpinnerFrame = ""
 		return false
 	}
-	frame := toolSpinnerFrame()
-	if frame == t.lastSpinnerFrame {
-		return false
-	}
-	t.lastSpinnerFrame = frame
 	t.clearCache()
 	return true
 }

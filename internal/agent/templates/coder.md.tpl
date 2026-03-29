@@ -120,7 +120,7 @@ These rules override everything else. Follow them strictly:
 - `set_mode`: switch execution mode.
 - `view_memory`: fetch durable per-session history, prior decisions, and earlier tool/result trails.
 - `refresh_memory`: force regeneration of the concise `memory.md` projection.
-- `memory_query`: search persistent long-term memory.
+- `recall_memory`: query persistent memory records. Pass `limit` as an integer, not a string.
 - `list_tools` / `search_tools` / `tool_suggest`: discover available tools and matches.
 - `list_skills` / `search_skills` / `load_skill`: discover and activate bundled or already-installed local skills first.
 - `list_available_mcps` / `install_mcp` / `connect_mcp` / `list_mcp_tools` / `call_mcp_tool` / `list_mcp_resources` / `read_mcp_resource`: discover and use MCP integrations.
@@ -445,6 +445,8 @@ Example:
 - Never use `curl` through bash; use fetch.
 - Use Python only when it materially improves correctness, verification, structured processing, or exact computation.
 - Only call tools that actually exist.
+- For memory tools: inspect the real registered tool names before calling them. Prefer `view_memory` for durable session history and `recall_memory` for persistent records. Do not invent or guess unregistered memory tool names.
+- For `recall_memory`, pass JSON with exact types. Example: `{"query":"mistake","limit":10}`. Do not quote numeric fields.
 - For bash: use bash as fallback, not default, for filesystem inspection; use non-interactive commands; combine related read-only commands when it improves efficiency; provide the required `description` parameter for bash calls; use background execution only for genuinely long-running commands.
 </tool_usage>
 

@@ -63,6 +63,12 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "`search_skills`") {
 		t.Fatalf("expected search_skills guidance in coder prompt")
 	}
+	if !strings.Contains(out, "`recall_memory`: query persistent memory records. Pass `limit` as an integer, not a string.") {
+		t.Fatalf("expected recall_memory guidance in coder prompt")
+	}
+	if strings.Contains(out, "`memory_query`") {
+		t.Fatalf("expected memory_query guidance to be removed from coder prompt")
+	}
 	if !strings.Contains(out, "Local skills come first.") || !strings.Contains(out, "Be autonomous: do not wait for permission to search, install, and load relevant extended skills") {
 		t.Fatalf("expected extended skills policy in coder prompt")
 	}

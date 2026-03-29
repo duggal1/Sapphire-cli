@@ -247,6 +247,9 @@ func repairToolCall(
 		normalizeKey(input, "limit", "count", "max_results")
 		normalizeKey(input, "query", "q", "search", "term")
 		normalizeKey(input, "since", "timestamp", "after")
+		if limit, ok := coerceInt(input["limit"]); ok && limit != 0 {
+			input["limit"] = limit
+		}
 	case "refresh_memory":
 		normalizeKey(input, "session_id", "session", "id")
 		normalizeKey(input, "reason", "note", "why")
@@ -254,6 +257,9 @@ func repairToolCall(
 		normalizeKey(input, "query", "q", "search", "term")
 		normalizeKey(input, "filter", "type", "scope")
 		normalizeKey(input, "limit", "count", "max_results")
+		if limit, ok := coerceInt(input["limit"]); ok && limit != 0 {
+			input["limit"] = limit
+		}
 	case "save_memory":
 		normalizeKey(input, "event_type", "type", "event", "kind", "category")
 		normalizeKey(input, "content", "data", "value", "payload")
@@ -270,6 +276,9 @@ func repairToolCall(
 	case "search_skills":
 		normalizeKey(input, "query", "q", "search", "term")
 		normalizeKey(input, "limit", "count", "max_results")
+		if limit, ok := coerceInt(input["limit"]); ok && limit != 0 {
+			input["limit"] = limit
+		}
 
 	// ── Agent delegation tool ────────────────────────────────────────
 	case "agent":
@@ -971,6 +980,14 @@ func coerceInt(v any) (int, bool) {
 		return int(value), true
 	case float32:
 		return int(value), true
+	case string:
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return 0, false
+		}
+		if i, err := strconv.Atoi(value); err == nil {
+			return i, true
+		}
 	case json.Number:
 		if i, err := value.Int64(); err == nil {
 			return int(i), true

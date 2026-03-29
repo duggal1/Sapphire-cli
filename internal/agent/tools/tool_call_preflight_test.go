@@ -307,6 +307,36 @@ func TestPrepareToolCallRejectsBashRepoReadCompoundCommand(t *testing.T) {
 	require.Contains(t, err.Error(), "do not use bash for repository discovery")
 }
 
+func TestPrepareToolCallCoercesRecallMemoryLimitStringToInt(t *testing.T) {
+	t.Parallel()
+
+	recallTool := fantasy.NewAgentTool(
+		"recall_memory",
+		"",
+		func(ctx context.Context, params struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit,omitempty"`
+		}, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		"recall_memory": recallTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "recall-memory-1",
+		Name:  "recall_memory",
+		Input: `{"query":"mistake","limit":"10"}`,
+	}, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "mistake", input["query"])
+	require.Equal(t, float64(10), input["limit"])
+}
+
 func TestPrepareToolCallDoesNotRewriteMultiPathViewToAgenticView(t *testing.T) {
 	t.Parallel()
 

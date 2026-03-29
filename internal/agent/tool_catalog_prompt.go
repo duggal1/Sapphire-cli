@@ -45,7 +45,6 @@ var runtimeToolSummaries = map[string]string{
 	"lsp_diagnostics":         "read current diagnostics for a file",
 	"lsp_references":          "find symbol references via LSP",
 	"lsp_restart":             "restart language servers",
-	"memory_query":            "search persistent memory and prior facts",
 	"orchestrate_worktrees":   "run pre-scoped worktree batches",
 	"python":                  "run structured computation, parsing, or verification",
 	"read_mcp_resource":       "read a specific MCP resource",

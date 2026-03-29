@@ -17,6 +17,7 @@ Common shell builtins and core utils available on Windows.
 
 <usage_notes>
 - Command required, working_dir optional (defaults to current directory)
+- `description` is required. Always provide a short explanation with every bash call.
 - IMPORTANT: Use Grep/Glob/Agent tools instead of 'find'/'grep'. Use View/LS tools instead of 'cat'/'head'/'tail'/'ls'
 - Repository discovery and code reading via `bash` are wrong when structured tools exist and may be rejected at preflight. Use `ls`, `glob`, `grep`, `single_view`, or `agentic_view` instead.
 - Never use `bash` to create temporary `.txt` or `.csv` prompt payloads for `spawn_agent`, `send_input`, or related delegation tools. Pass the prompt directly in the tool call.

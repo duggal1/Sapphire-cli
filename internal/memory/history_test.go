@@ -92,9 +92,31 @@ func TestBuildContextInjectionForSessionStagesMemoryMap(t *testing.T) {
 
 	const sessionID = "session-staged-map"
 	system.RecordUserTurn(context.Background(), sessionID, "Stabilize long-horizon prompt assembly")
-	system.RecordSavedMemory(context.Background(), sessionID, "architectural_decision", `{"decision":"load memory in context buckets"}`)
-	system.RecordSavedMemory(context.Background(), sessionID, MemoryEventStrategyPattern, `{"task_shape":"long-horizon prompt assembly","strategy":"Read constitution and prior strategy records before changing staged injection.","validation_probe":"go test ./internal/memory"}`)
-	system.RecordSavedMemory(context.Background(), sessionID, MemoryEventImprovementEval, `{"task_shape":"long-horizon prompt assembly","failure_signature":"missing stage-gated memory sections","probe":"go test ./internal/memory -run TestBuildContextInjectionForSessionStagesMemoryMap","success_criteria":"stage assertions pass"}`)
+	require.NoError(t, system.writeSavedRecord(context.Background(), sessionID, MemoryRecord{
+		SessionID:               sessionID,
+		EventType:               MemoryEventArchitecturalDecision,
+		Timestamp:               timeNowUnix(),
+		TurnIndex:               0,
+		Salience:                1.0,
+		ContentJSON:             `{"decision":"load memory in context buckets"}`,
+		IsArchitecturalDecision: true,
+	}))
+	require.NoError(t, system.writeSavedRecord(context.Background(), sessionID, MemoryRecord{
+		SessionID:   sessionID,
+		EventType:   MemoryEventStrategyPattern,
+		Timestamp:   timeNowUnix(),
+		TurnIndex:   0,
+		Salience:    1.0,
+		ContentJSON: `{"task_shape":"long-horizon prompt assembly","strategy":"Read constitution and prior strategy records before changing staged injection.","validation_probe":"go test ./internal/memory"}`,
+	}))
+	require.NoError(t, system.writeSavedRecord(context.Background(), sessionID, MemoryRecord{
+		SessionID:   sessionID,
+		EventType:   MemoryEventImprovementEval,
+		Timestamp:   timeNowUnix(),
+		TurnIndex:   0,
+		Salience:    1.0,
+		ContentJSON: `{"task_shape":"long-horizon prompt assembly","failure_signature":"missing stage-gated memory sections","probe":"go test ./internal/memory -run TestBuildContextInjectionForSessionStagesMemoryMap","success_criteria":"stage assertions pass"}`,
+	}))
 
 	stage10 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage10)
 	require.Contains(t, stage10, "<persistent_memory_map>")
@@ -104,12 +126,13 @@ func TestBuildContextInjectionForSessionStagesMemoryMap(t *testing.T) {
 	require.NotContains(t, stage10, "<persistent_memory_strategies>")
 
 	stage20 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage20)
-	require.Contains(t, stage20, "<persistent_memory_strategies>")
-	require.NotContains(t, stage20, "<persistent_memory_evals>")
+	require.Contains(t, stage20, "## Proven Strategies")
+	require.Contains(t, stage20, "Read constitution and prior strategy records before changing staged injection.")
+	require.NotContains(t, stage20, "## Validated Improvement Probes")
 
 	stage30 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage30)
 	require.Contains(t, stage30, "## Architecture Overview")
-	require.Contains(t, stage30, "<persistent_memory_evals>")
+	require.Contains(t, stage30, "## Validated Improvement Probes")
 	require.NotContains(t, stage30, "## Critical Files")
 
 	stage40 := system.BuildContextInjectionForSessionAtStage(context.Background(), sessionID, 4000, ContextLoadStage40)

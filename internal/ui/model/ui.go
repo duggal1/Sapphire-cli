@@ -2573,7 +2573,7 @@ func (m *UI) View() tea.View {
 		v.BackgroundColor = m.com.Styles.Background
 	}
 	v.MouseMode = tea.MouseModeCellMotion
-	v.WindowTitle = "crush " + home.Short(m.com.Config().WorkingDir())
+	v.WindowTitle = "sapphire " + home.Short(m.com.Config().WorkingDir())
 
 	canvas := uv.NewScreenBuffer(m.width, m.height)
 	v.Cursor = m.Draw(canvas, canvas.Bounds())
@@ -3297,7 +3297,7 @@ func (m *UI) openEditor(value string) tea.Cmd {
 		return util.ReportError(err)
 	}
 	cmd, err := editor.Command(
-		"crush",
+		"sapphire",
 		tmpfile.Name(),
 		editor.AtPosition(
 			m.textarea.Line()+1,

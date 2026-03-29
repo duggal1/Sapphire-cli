@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -95,4 +97,28 @@ Do not regress the long-horizon memory path.
 	require.Contains(t, stage40, "## AI Codebase Graph")
 	require.Contains(t, stage40, "## Critical Files")
 	require.NotContains(t, stage40, "## Supporting Files")
+}
+
+func TestMemoryFileManagerLoadCodebaseSnapshotReusesPersistedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("package main\n"), 0o644))
+
+	manager, err := newMemoryFileManager(dataDir, projectRoot)
+	require.NoError(t, err)
+
+	snapshot, err := manager.loadCodebaseSnapshot(false)
+	require.NoError(t, err)
+	require.Greater(t, snapshot.TotalFiles, 0)
+
+	manager2, err := newMemoryFileManager(dataDir, projectRoot)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(projectRoot, "main.go")))
+
+	reused, err := manager2.loadCodebaseSnapshot(false)
+	require.NoError(t, err)
+	require.Equal(t, snapshot.TotalFiles, reused.TotalFiles)
+	require.Equal(t, snapshot.Architecture, reused.Architecture)
 }

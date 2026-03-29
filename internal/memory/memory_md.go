@@ -18,6 +18,7 @@ const memoryFileName = "memory.md"
 
 type memoryFileManager struct {
 	filePath    string
+	snapshotPath string
 	projectRoot string
 
 	mu               sync.Mutex
@@ -46,6 +47,7 @@ func newMemoryFileManager(dataDir, projectRoot string) (*memoryFileManager, erro
 	}
 	return &memoryFileManager{
 		filePath:         filepath.Join(dir, memoryFileName),
+		snapshotPath:     filepath.Join(dir, "codebase_snapshot.json"),
 		projectRoot:      projectRoot,
 		lastRefreshTurn:  make(map[string]uint64),
 		lastRefreshState: make(map[string]string),
@@ -310,6 +312,14 @@ func (m *memoryFileManager) loadCodebaseSnapshot(rebuild bool) (memoryCodebaseSn
 	if !rebuild && cached.TotalFiles > 0 {
 		return cached, nil
 	}
+	if !rebuild {
+		if snapshot, err := m.readPersistedCodebaseSnapshot(); err == nil && snapshot.TotalFiles > 0 {
+			m.mu.Lock()
+			m.codebaseSnapshot = snapshot
+			m.mu.Unlock()
+			return snapshot, nil
+		}
+	}
 
 	snapshot, err := m.buildCodebaseSnapshot()
 	if err != nil {
@@ -319,7 +329,37 @@ func (m *memoryFileManager) loadCodebaseSnapshot(rebuild bool) (memoryCodebaseSn
 	m.mu.Lock()
 	m.codebaseSnapshot = snapshot
 	m.mu.Unlock()
+	_ = m.writePersistedCodebaseSnapshot(snapshot)
 	return snapshot, nil
+}
+
+func (m *memoryFileManager) readPersistedCodebaseSnapshot() (memoryCodebaseSnapshot, error) {
+	if m == nil || strings.TrimSpace(m.snapshotPath) == "" {
+		return memoryCodebaseSnapshot{}, nil
+	}
+	data, err := os.ReadFile(m.snapshotPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return memoryCodebaseSnapshot{}, nil
+		}
+		return memoryCodebaseSnapshot{}, err
+	}
+	var snapshot memoryCodebaseSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return memoryCodebaseSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (m *memoryFileManager) writePersistedCodebaseSnapshot(snapshot memoryCodebaseSnapshot) error {
+	if m == nil || strings.TrimSpace(m.snapshotPath) == "" || snapshot.TotalFiles <= 0 {
+		return nil
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(m.snapshotPath, data, 0o644)
 }
 
 func (m *memoryFileManager) buildCodebaseSnapshot() (memoryCodebaseSnapshot, error) {

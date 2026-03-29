@@ -228,9 +228,6 @@ func (s *System) BuildContextInjectionForSessionAtStage(ctx context.Context, ses
 	if stage < ContextLoadStage10 {
 		return ""
 	}
-	if s.MemoryFile != nil {
-		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
-	}
 
 	budget := s.resolveMemoryBudgetForStage(maxContextTokens, stage)
 	if budget <= 0 {
@@ -593,9 +590,6 @@ func (s *System) RecordUserTurn(ctx context.Context, sessionID, prompt string) {
 		return
 	}
 	_ = s.History.RecordUserPrompt(ctx, sessionID, prompt)
-	if s.MemoryFile != nil {
-		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
-	}
 }
 
 func (s *System) RecordAssistantTurn(ctx context.Context, sessionID, content string) {
@@ -603,9 +597,6 @@ func (s *System) RecordAssistantTurn(ctx context.Context, sessionID, content str
 		return
 	}
 	_ = s.History.RecordAssistantResponse(ctx, sessionID, content)
-	if s.MemoryFile != nil {
-		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, false)
-	}
 }
 
 func (s *System) RecordToolCall(ctx context.Context, sessionID, toolName, input string) {
@@ -621,7 +612,11 @@ func (s *System) RecordToolResult(ctx context.Context, sessionID, toolName, outp
 	}
 	_ = s.History.RecordToolResult(ctx, sessionID, toolName, output, isError)
 	if s.MemoryFile != nil && s.shouldRefreshAfterRepoScan(sessionID, toolName) {
-		_ = s.MemoryFile.MaybeRefresh(ctx, sessionID, s.History, s.Store, true)
+		go func(memoryFile *memoryFileManager, history *sessionHistoryManager, store *Store, sessionID string) {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = memoryFile.MaybeRefresh(refreshCtx, sessionID, history, store, true)
+		}(s.MemoryFile, s.History, s.Store, sessionID)
 	}
 }
 

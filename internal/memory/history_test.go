@@ -71,6 +71,33 @@ func TestBuildContextInjectionForSessionIncludesDynamicMemoryFile(t *testing.T) 
 	require.True(t, strings.Contains(injection, "main.go") || strings.Contains(injection, "README.md"))
 }
 
+func TestRecordUserTurnDoesNotRefreshMemoryFileSynchronously(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("package main\n"), 0o644))
+
+	system, err := NewSystem(t.Context(), "", Config{
+		DataDir:     t.TempDir(),
+		ProjectRoot: projectRoot,
+	})
+	require.NoError(t, err)
+	t.Cleanup(system.Close)
+
+	const sessionID = "session-no-sync-refresh"
+	system.RecordUserTurn(context.Background(), sessionID, "Investigate submit lag")
+
+	content, err := system.MemoryFile.Read()
+	require.NoError(t, err)
+	require.Empty(t, content)
+
+	system.RecordSavedMemory(context.Background(), sessionID, "architectural_decision", `{"decision":"refresh memory.md only on milestones"}`)
+
+	content, err = system.MemoryFile.Read()
+	require.NoError(t, err)
+	require.Contains(t, content, "refresh memory.md only on milestones")
+}
+
 func TestBuildContextInjectionForSessionStagesMemoryMap(t *testing.T) {
 	t.Parallel()
 

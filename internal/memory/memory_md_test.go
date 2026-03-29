@@ -56,8 +56,14 @@ Do not regress the long-horizon memory path.
 ## Stable Decisions
 - persist a durable handbook
 
+## Proven Strategies
+- use the narrowest targeted validation first
+
 ## Failures and Guardrails
 - guardrail: never drop durable memory silently
+
+## Validated Improvement Probes
+- probe: go test ./internal/memory
 
 ## Architecture Overview
 - internal/memory/: memory runtime
@@ -79,7 +85,9 @@ Do not regress the long-horizon memory path.
 
 	stage30 := trimMemoryContentForStage(content, ContextLoadStage30)
 	require.Contains(t, stage30, "## Stable Decisions")
+	require.Contains(t, stage30, "## Proven Strategies")
 	require.Contains(t, stage30, "## Failures and Guardrails")
+	require.Contains(t, stage30, "## Validated Improvement Probes")
 	require.Contains(t, stage30, "## Architecture Overview")
 	require.NotContains(t, stage30, "## Critical Files")
 

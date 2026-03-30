@@ -37,7 +37,12 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 		func(ctx context.Context, params ConnectMCPParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			params.MCPName = strings.TrimSpace(params.MCPName)
 			if params.MCPName == "" {
-				return fantasy.NewTextErrorResponse("mcp_name parameter is required"), nil
+				return NewGuidanceErrorResponse(
+					ConnectMCPToolName,
+					"missing_mcp_name",
+					"Missing MCP name.",
+					"connect_mcp requires mcp_name. Use an exact installed MCP server name from list_available_mcps or install_mcp output. Do not call connect_mcp with empty input.",
+				), nil
 			}
 
 			sessionID := GetSessionFromContext(ctx)
@@ -66,12 +71,22 @@ func NewConnectMCPTool(cfg *config.Config, permissions permission.Service) fanta
 
 			mcpCfg, ok := cfg.MCP[params.MCPName]
 			if !ok {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q is not installed. Call install_mcp first.", params.MCPName)), nil
+				return NewGuidanceErrorResponse(
+					ConnectMCPToolName,
+					"mcp_not_installed",
+					"MCP is not installed.",
+					fmt.Sprintf("MCP %q is not installed. Do not retry connect_mcp with the same missing name. Call list_available_mcps to inspect exact names or install_mcp first, then retry with an installed MCP name.", params.MCPName),
+				), nil
 			}
 
 			if missing := missingEnvKeys(mcpCfg.Env); len(missing) > 0 {
 				sort.Strings(missing)
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("MCP %q is installed but requires environment variables before it can connect: %s", params.MCPName, strings.Join(missing, ", "))), nil
+				return NewGuidanceErrorResponse(
+					ConnectMCPToolName,
+					"missing_mcp_env",
+					"MCP is missing required environment variables.",
+					fmt.Sprintf("MCP %q is installed but cannot connect until these environment variables are set: %s. Do not retry connect_mcp until the required env vars exist and the MCP config is valid.", params.MCPName, strings.Join(missing, ", ")),
+				), nil
 			}
 
 			mcpCfg.Disabled = false

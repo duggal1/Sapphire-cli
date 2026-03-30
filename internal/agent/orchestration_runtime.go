@@ -611,6 +611,11 @@ func (c *coordinator) buildSharedSubAgentLaunchMemoryContext(ctx context.Context
 		}
 	}
 
+	var value string
+	defer func() {
+		c.finishSubAgentLaunchMemoryFlight(key, value)
+	}()
+
 	var sections []string
 	if c.memoryCompiler != nil {
 		req := agentmemory.CompileRequest{

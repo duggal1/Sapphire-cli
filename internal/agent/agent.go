@@ -389,6 +389,16 @@ type SessionAgent interface {
 	SessionID() string // Get the current session ID (for plan mode filtering)
 }
 
+type SessionToolObserver interface {
+	OnToolInputStart(sessionID, toolName string)
+	OnToolCall(sessionID, toolName string)
+	OnToolResult(sessionID, toolName string)
+}
+
+type SessionToolObserverSetter interface {
+	SetToolObserver(observer SessionToolObserver)
+}
+
 type SubmissionStatus string
 
 const (
@@ -435,6 +445,7 @@ type sessionAgent struct {
 	memoryConsolidator      func(ctx context.Context, sessionID string) error
 	waitBackground          func(ctx context.Context, sessionID string) error
 	checkpointTurn          func(ctx context.Context, sessionID, prompt, result, status string, force bool)
+	toolObserver            SessionToolObserver
 
 	// Python tool failure tracking - quit after 3 consecutive failures
 	pythonFailures atomic.Int32
@@ -464,6 +475,7 @@ type SessionAgentOptions struct {
 	MemoryConsolidator   func(ctx context.Context, sessionID string) error
 	WaitBackground       func(ctx context.Context, sessionID string) error
 	CheckpointTurn       func(ctx context.Context, sessionID, prompt, result, status string, force bool)
+	ToolObserver         SessionToolObserver
 }
 
 // NewSessionAgent initializes a new session-based AI agent with the provided configuration options.
@@ -496,7 +508,15 @@ func NewSessionAgent(
 		longHorizonInit:         csync.NewMap[string, bool](),
 		memoryConsolidator:      opts.MemoryConsolidator,
 		checkpointTurn:          opts.CheckpointTurn,
+		toolObserver:            opts.ToolObserver,
 	}
+}
+
+func (a *sessionAgent) SetToolObserver(observer SessionToolObserver) {
+	if a == nil {
+		return
+	}
+	a.toolObserver = observer
 }
 
 func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -1046,6 +1066,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if genCtx.Err() != nil {
 				return genCtx.Err()
 			}
+			if a.toolObserver != nil {
+				a.toolObserver.OnToolInputStart(call.SessionID, toolName)
+			}
 			activeTools.Add(toolName)
 			if firstToolName == "" {
 				firstToolName = toolName
@@ -1072,6 +1095,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if genCtx.Err() != nil {
 				return genCtx.Err()
 			}
+			if a.toolObserver != nil {
+				a.toolObserver.OnToolCall(call.SessionID, tc.ToolName)
+			}
 			activeTools.Add(tc.ToolName)
 			if firstToolName == "" {
 				firstToolName = tc.ToolName
@@ -1096,6 +1122,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
+			}
+			if a.toolObserver != nil {
+				a.toolObserver.OnToolResult(call.SessionID, result.ToolName)
 			}
 
 			toolResult := a.convertToToolResult(result)

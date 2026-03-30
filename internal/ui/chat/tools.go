@@ -45,6 +45,7 @@ type ToolMessageItem interface {
 	ToolCall() message.ToolCall
 	SetToolCall(tc message.ToolCall)
 	SetResult(res *message.ToolResult)
+	Result() *message.ToolResult
 	MessageID() string
 	SetMessageID(id string)
 	SetStatus(status ToolStatus)
@@ -256,6 +257,8 @@ func NewToolMessageItem(
 		item = NewAgentMailInboxToolMessageItem(sty, toolCall, result, canceled)
 	case agent.AgentMailSendToolName:
 		item = NewAgentMailSendToolMessageItem(sty, toolCall, result, canceled)
+	case agent.AgentDirectoryToolName:
+		item = NewAgentDirectoryToolMessageItem(sty, toolCall, result, canceled)
 	case tools.AgenticFetchToolName:
 		item = NewAgenticFetchToolMessageItem(sty, toolCall, result, canceled)
 	case tools.WebFetchToolName:
@@ -364,6 +367,10 @@ func (t *baseToolMessageItem) SetToolCall(tc message.ToolCall) {
 func (t *baseToolMessageItem) SetResult(res *message.ToolResult) {
 	t.result = res
 	t.clearCache()
+}
+
+func (t *baseToolMessageItem) Result() *message.ToolResult {
+	return t.result
 }
 
 // MessageID returns the ID of the message containing this tool call.

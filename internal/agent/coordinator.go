@@ -1517,7 +1517,13 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		MemoryConsolidator:   c.ConsolidateMemory,
 		WaitBackground:       c.waitForBackgroundWork,
 		CheckpointTurn:       c.checkpointTurn,
-		WriteScope:           writeScope,
+		ToolObserver: func() SessionToolObserver {
+			if isSubAgent {
+				return c
+			}
+			return nil
+		}(),
+		WriteScope: writeScope,
 	})
 
 	initAgent := func() (err error) {

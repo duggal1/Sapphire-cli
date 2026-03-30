@@ -16,11 +16,16 @@ import (
 )
 
 type subAgentSpawnResult struct {
-	AgentID      string    `json:"agent_id"`
-	SubmissionID string    `json:"submission_id,omitempty"`
-	Status       string    `json:"status,omitempty"`
-	WorkDir      string    `json:"work_dir,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
+	AgentID          string    `json:"agent_id"`
+	SubmissionID     string    `json:"submission_id,omitempty"`
+	Title            string    `json:"title,omitempty"`
+	Status           string    `json:"status,omitempty"`
+	WorkDir          string    `json:"work_dir,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
+	CurrentTool      string    `json:"current_tool,omitempty"`
+	LastTool         string    `json:"last_tool,omitempty"`
+	ToolCallCount    int       `json:"tool_call_count,omitempty"`
 }
 
 type subAgentStatusEntry struct {
@@ -31,6 +36,9 @@ type subAgentStatusEntry struct {
 	WorkDir          string    `json:"work_dir,omitempty"`
 	StartedAt        time.Time `json:"started_at,omitempty"`
 	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
+	CurrentTool      string    `json:"current_tool,omitempty"`
+	LastTool         string    `json:"last_tool,omitempty"`
+	ToolCallCount    int       `json:"tool_call_count,omitempty"`
 }
 
 type subAgentWaitResult struct {
@@ -39,20 +47,53 @@ type subAgentWaitResult struct {
 }
 
 type subAgentCollectedResult struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title,omitempty"`
-	SubmissionID string    `json:"submission_id,omitempty"`
-	Status       string    `json:"status"`
-	Result       string    `json:"result,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	Progress     string    `json:"progress,omitempty"`
-	WorkDir      string    `json:"work_dir,omitempty"`
-	Branch       string    `json:"branch,omitempty"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
+	ID               string    `json:"id"`
+	Title            string    `json:"title,omitempty"`
+	SubmissionID     string    `json:"submission_id,omitempty"`
+	Status           string    `json:"status"`
+	Result           string    `json:"result,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	Progress         string    `json:"progress,omitempty"`
+	WorkDir          string    `json:"work_dir,omitempty"`
+	Branch           string    `json:"branch,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
+	CurrentTool      string    `json:"current_tool,omitempty"`
+	LastTool         string    `json:"last_tool,omitempty"`
+	ToolCallCount    int       `json:"tool_call_count,omitempty"`
 }
 
 type subAgentCollectResult struct {
 	Agents []subAgentCollectedResult `json:"agents"`
+}
+
+type agentDirectorySnapshot struct {
+	SessionID       string                   `json:"session_id"`
+	ParentSessionID string                   `json:"parent_session_id"`
+	CurrentAgentID  string                   `json:"current_agent_id"`
+	Agents          []agentDirectoryAgent    `json:"agents"`
+	WorkItems       []agentDirectoryWorkItem `json:"work_items"`
+}
+
+type agentDirectoryAgent struct {
+	AgentID          string    `json:"agent_id"`
+	Title            string    `json:"title,omitempty"`
+	Status           string    `json:"status"`
+	WorkItemID       string    `json:"work_item_id,omitempty"`
+	Worktree         string    `json:"worktree,omitempty"`
+	HeartbeatAge     string    `json:"heartbeat_age,omitempty"`
+	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	CurrentTool      string    `json:"current_tool,omitempty"`
+	LastTool         string    `json:"last_tool,omitempty"`
+	ToolCallCount    int       `json:"tool_call_count,omitempty"`
+}
+
+type agentDirectoryWorkItem struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Status       string   `json:"status"`
+	Dependencies []string `json:"dependencies,omitempty"`
 }
 
 type subAgentReport struct {
@@ -249,6 +290,49 @@ func (c *CloseAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 }
 
 // -----------------------------------------------------------------------------
+// Agent Directory Tool
+// -----------------------------------------------------------------------------
+
+type AgentDirectoryToolMessageItem struct {
+	*baseToolMessageItem
+}
+
+var _ ToolMessageItem = (*AgentDirectoryToolMessageItem)(nil)
+
+func NewAgentDirectoryToolMessageItem(
+	sty *styles.Styles,
+	toolCall message.ToolCall,
+	result *message.ToolResult,
+	canceled bool,
+) ToolMessageItem {
+	return newBaseToolMessageItem(sty, toolCall, result, &AgentDirectoryToolRenderContext{}, canceled)
+}
+
+type AgentDirectoryToolRenderContext struct{}
+
+func (r *AgentDirectoryToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
+	cappedWidth := cappedMessageWidth(width)
+	if opts.IsPending() {
+		return pendingTool(sty, "Agent Directory")
+	}
+
+	header := toolHeader(sty, opts.Status, "Agent Directory", cappedWidth, opts.Compact)
+	if opts.Compact {
+		return header
+	}
+
+	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
+		return joinToolParts(header, earlyState)
+	}
+
+	body := renderAgentDirectoryBody(sty, resultContent(opts), cappedWidth-toolBodyLeftPaddingTotal)
+	if body == "" {
+		return header
+	}
+	return joinToolParts(header, sty.Tool.Body.Render(body))
+}
+
+// -----------------------------------------------------------------------------
 // Rendering Helpers
 // -----------------------------------------------------------------------------
 
@@ -316,7 +400,7 @@ func parseSubAgentSimpleParams(sty *styles.Styles, raw string) []*TreeNode {
 	if len(payload.IDs) > 0 {
 		children := make([]*TreeNode, 0, len(payload.IDs))
 		for i, id := range payload.IDs {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{ID: id}, fmt.Sprintf("Sub-Agent %d", i+1))})
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{ID: id}, fmt.Sprintf("Structured Submission %d", i+1))})
 		}
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -408,11 +492,27 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 	if payload != nil {
 		if payload.AgentID != "" || payload.Status != "" {
 			sections = append(sections, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{
-				ID:        payload.AgentID,
-				Status:    payload.Status,
-				WorkDir:   payload.WorkDir,
-				StartedAt: payload.StartedAt,
-			}, "Sub-Agent 1")})
+				ID:               payload.AgentID,
+				Title:            payload.Title,
+				Status:           payload.Status,
+				WorkDir:          payload.WorkDir,
+				StartedAt:        payload.StartedAt,
+				HeartbeatContext: payload.HeartbeatContext,
+				CurrentTool:      payload.CurrentTool,
+				LastTool:         payload.LastTool,
+				ToolCallCount:    payload.ToolCallCount,
+			}, "Structured Submission 1")})
+			sections = append(sections, renderSubAgentTelemetryNodes(sty, subAgentStatusEntry{
+				ID:               payload.AgentID,
+				Title:            payload.Title,
+				Status:           payload.Status,
+				WorkDir:          payload.WorkDir,
+				StartedAt:        payload.StartedAt,
+				HeartbeatContext: payload.HeartbeatContext,
+				CurrentTool:      payload.CurrentTool,
+				LastTool:         payload.LastTool,
+				ToolCallCount:    payload.ToolCallCount,
+			})...)
 		}
 	}
 
@@ -421,7 +521,7 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 	}
 
 	root := &TreeNode{
-		Label:    renderSubAgentRootLabel(sty, "Sub-Agent"),
+		Label:    renderSubAgentRootLabel(sty, "Structured Submission"),
 		Children: sections,
 	}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
@@ -447,10 +547,8 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 	if len(payload.Agents) > 0 {
 		children := make([]*TreeNode, 0, len(payload.Agents))
 		for i, entry := range payload.Agents {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Sub-Agent %d", i+1))})
-			if ctx := strings.TrimSpace(entry.HeartbeatContext); ctx != "" && normalizeSubAgentStatus(entry.Status) != "completed" {
-				children = append(children, &TreeNode{Label: renderSubAgentField(sty, "State Detail", oneLine(ctx))})
-			}
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Structured Submission %d", i+1))})
+			children = append(children, renderSubAgentTelemetryNodes(sty, entry)...)
 		}
 		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -458,7 +556,7 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Wait result", "timed out")})
 	}
 
-	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Sub-Agents"), Children: sections}
+	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Structured Submissions"), Children: sections}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
@@ -471,7 +569,7 @@ func renderSubAgentCollectBody(sty *styles.Styles, payload subAgentCollectResult
 	for i, entry := range payload.Agents {
 		children = append(children, renderCollectedSubAgent(sty, entry, i+1))
 	}
-	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Sub-Agents"), Children: children}
+	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Structured Submissions"), Children: children}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
@@ -480,13 +578,17 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 
 	if entry.ID != "" || entry.Status != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{
-			ID:           entry.ID,
-			Title:        entry.Title,
-			Status:       entry.Status,
-			SubmissionID: entry.SubmissionID,
-			WorkDir:      entry.WorkDir,
-			StartedAt:    entry.StartedAt,
-		}, fmt.Sprintf("Sub-Agent %d", index))})
+			ID:               entry.ID,
+			Title:            entry.Title,
+			Status:           entry.Status,
+			SubmissionID:     entry.SubmissionID,
+			WorkDir:          entry.WorkDir,
+			StartedAt:        entry.StartedAt,
+			HeartbeatContext: entry.HeartbeatContext,
+			CurrentTool:      entry.CurrentTool,
+			LastTool:         entry.LastTool,
+			ToolCallCount:    entry.ToolCallCount,
+		}, fmt.Sprintf("Structured Submission %d", index))})
 	}
 	if entry.Status != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "State", humanizeSubAgentStatus(entry.Status))})
@@ -500,6 +602,18 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 	if entry.Error != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Issue", oneLine(entry.Error))})
 	}
+	sections = append(sections, renderSubAgentTelemetryNodes(sty, subAgentStatusEntry{
+		ID:               entry.ID,
+		Title:            entry.Title,
+		Status:           entry.Status,
+		SubmissionID:     entry.SubmissionID,
+		WorkDir:          entry.WorkDir,
+		StartedAt:        entry.StartedAt,
+		HeartbeatContext: entry.HeartbeatContext,
+		CurrentTool:      entry.CurrentTool,
+		LastTool:         entry.LastTool,
+		ToolCallCount:    entry.ToolCallCount,
+	})...)
 
 	report := parseSubAgentReport(entry.Result)
 	if report.Summary != "" {
@@ -525,8 +639,84 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Blockers", oneLine(report.Blockers))})
 	}
 
-	label := firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), fmt.Sprintf("Sub-Agent %d", index))
+	label := firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), fmt.Sprintf("Structured Submission %d", index))
 	return &TreeNode{Label: renderSubAgentAgentTitle(sty, label), Children: sections}
+}
+
+func renderSubAgentTelemetryNodes(sty *styles.Styles, entry subAgentStatusEntry) []*TreeNode {
+	nodes := make([]*TreeNode, 0, 3)
+	if entry.ToolCallCount > 0 {
+		label := "1 tool call"
+		if entry.ToolCallCount != 1 {
+			label = fmt.Sprintf("%d tool calls", entry.ToolCallCount)
+		}
+		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Live Tools", label)})
+	}
+	if current := strings.TrimSpace(entry.CurrentTool); current != "" {
+		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Current Tool", current)})
+	} else if last := strings.TrimSpace(entry.LastTool); last != "" {
+		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Last Tool", last)})
+	}
+	if ctx := strings.TrimSpace(entry.HeartbeatContext); ctx != "" && normalizeSubAgentStatus(entry.Status) != "completed" {
+		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "State Detail", oneLine(ctx))})
+	}
+	return nodes
+}
+
+func renderAgentDirectoryBody(sty *styles.Styles, raw string, width int) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var payload agentDirectorySnapshot
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+
+	sections := make([]*TreeNode, 0, 3)
+	if len(payload.Agents) > 0 {
+		children := make([]*TreeNode, 0, len(payload.Agents))
+		submissionIndex := 0
+		for _, item := range payload.Agents {
+			label := strings.TrimSpace(item.Title)
+			switch {
+			case item.AgentID == payload.CurrentAgentID:
+				label = firstNonEmptyOrchestrationValue(label, "Current Agent")
+			case strings.HasPrefix(strings.TrimSpace(item.AgentID), "main:"):
+				label = firstNonEmptyOrchestrationValue(label, "Main Agent")
+			default:
+				submissionIndex++
+				label = firstNonEmptyOrchestrationValue(label, fmt.Sprintf("Structured Submission %d", submissionIndex))
+			}
+			entry := subAgentStatusEntry{
+				ID:               item.AgentID,
+				Title:            label,
+				Status:           item.Status,
+				WorkDir:          item.Worktree,
+				StartedAt:        item.StartedAt,
+				HeartbeatContext: item.HeartbeatContext,
+				CurrentTool:      item.CurrentTool,
+				LastTool:         item.LastTool,
+				ToolCallCount:    item.ToolCallCount,
+			}
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, label)})
+			children = append(children, renderSubAgentTelemetryNodes(sty, entry)...)
+		}
+		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
+	}
+	if len(payload.WorkItems) > 0 {
+		children := make([]*TreeNode, 0, len(payload.WorkItems))
+		for _, item := range payload.WorkItems {
+			label := firstNonEmptyOrchestrationValue(strings.TrimSpace(item.Title), item.ID)
+			children = append(children, &TreeNode{Label: renderSubAgentField(sty, label, humanizeSubAgentStatus(item.Status))})
+		}
+		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Work Items"), Children: children})
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Agent Directory"), Children: sections}
+	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
 func renderWorktreeNode(sty *styles.Styles, enabled *bool, path, branch string) *TreeNode {
@@ -857,6 +1047,89 @@ func backgroundSubAgentsPayloadActive(result *message.ToolResult) bool {
 		}
 	}
 	return false
+}
+
+func MergeSubAgentSpawnResult(raw string, event agent.SubAgentLifecycleEvent) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.TrimSpace(event.AgentID) == "" {
+		return "", false
+	}
+	var payload subAgentSpawnResult
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(payload.AgentID) != strings.TrimSpace(event.AgentID) {
+		return "", false
+	}
+	payload.Title = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.Title), payload.Title)
+	payload.Status = firstNonEmptyOrchestrationValue(string(event.Status), payload.Status)
+	payload.WorkDir = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.WorkDir), payload.WorkDir)
+	if !event.StartedAt.IsZero() {
+		payload.StartedAt = event.StartedAt
+	}
+	payload.HeartbeatContext = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.HeartbeatContext), payload.HeartbeatContext)
+	payload.CurrentTool = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.CurrentTool), payload.CurrentTool)
+	payload.LastTool = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.LastTool), payload.LastTool)
+	if event.ToolCallCount > payload.ToolCallCount {
+		payload.ToolCallCount = event.ToolCallCount
+	}
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(updated), true
+}
+
+func MergeSubAgentWaitResult(raw string, event agent.SubAgentLifecycleEvent) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.TrimSpace(event.AgentID) == "" {
+		return "", false
+	}
+	var payload subAgentWaitResult
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", false
+	}
+	changed := false
+	for i := range payload.Agents {
+		if strings.TrimSpace(payload.Agents[i].ID) != strings.TrimSpace(event.AgentID) {
+			continue
+		}
+		entry := &payload.Agents[i]
+		entry.Title = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.Title), entry.Title)
+		entry.Status = firstNonEmptyOrchestrationValue(string(event.Status), entry.Status)
+		entry.WorkDir = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.WorkDir), entry.WorkDir)
+		if !event.StartedAt.IsZero() {
+			entry.StartedAt = event.StartedAt
+		}
+		entry.HeartbeatContext = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.HeartbeatContext), entry.HeartbeatContext)
+		entry.CurrentTool = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.CurrentTool), entry.CurrentTool)
+		entry.LastTool = firstNonEmptyOrchestrationValue(strings.TrimSpace(event.LastTool), entry.LastTool)
+		if event.ToolCallCount > entry.ToolCallCount {
+			entry.ToolCallCount = event.ToolCallCount
+		}
+		changed = true
+		break
+	}
+	if !changed {
+		payload.Agents = append(payload.Agents, subAgentStatusEntry{
+			ID:               strings.TrimSpace(event.AgentID),
+			Title:            strings.TrimSpace(event.Title),
+			Status:           string(event.Status),
+			SubmissionID:     strings.TrimSpace(event.SubmissionID),
+			WorkDir:          strings.TrimSpace(event.WorkDir),
+			StartedAt:        event.StartedAt,
+			HeartbeatContext: strings.TrimSpace(event.HeartbeatContext),
+			CurrentTool:      strings.TrimSpace(event.CurrentTool),
+			LastTool:         strings.TrimSpace(event.LastTool),
+			ToolCallCount:    event.ToolCallCount,
+		})
+		changed = true
+	}
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(updated), true
 }
 
 func isActiveSubAgentStatus(status string) bool {

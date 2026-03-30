@@ -14,6 +14,7 @@ const (
 	SubAgentStageStarting      SubAgentLifecycleStage = "starting"
 	SubAgentStageReady         SubAgentLifecycleStage = "ready"
 	SubAgentStageRunning       SubAgentLifecycleStage = "running"
+	SubAgentStageTooling       SubAgentLifecycleStage = "tooling"
 	SubAgentStageDegraded      SubAgentLifecycleStage = "degraded"
 	SubAgentStageHeartbeat     SubAgentLifecycleStage = "heartbeat"
 	SubAgentStageWaiting       SubAgentLifecycleStage = "waiting"
@@ -31,6 +32,7 @@ const (
 	SubAgentStartingEvent      pubsub.EventType = "subagent_starting"
 	SubAgentReadyEvent         pubsub.EventType = "subagent_ready"
 	SubAgentRunningEvent       pubsub.EventType = "subagent_running"
+	SubAgentToolingEvent       pubsub.EventType = "subagent_tooling"
 	SubAgentDegradedEvent      pubsub.EventType = "subagent_degraded"
 	SubAgentHeartbeatEvent     pubsub.EventType = "subagent_heartbeat"
 	SubAgentWaitingEvent       pubsub.EventType = "subagent_waiting"
@@ -44,20 +46,27 @@ const (
 )
 
 type SubAgentLifecycleEvent struct {
-	AgentID         string                 `json:"agent_id"`
-	SessionID       string                 `json:"session_id"`
-	ParentSessionID string                 `json:"parent_session_id,omitempty"`
-	SubmissionID    string                 `json:"submission_id,omitempty"`
-	Stage           SubAgentLifecycleStage `json:"stage"`
-	Status          subAgentStatus         `json:"status"`
-	Task            string                 `json:"task,omitempty"`
-	TaskKey         string                 `json:"task_key,omitempty"`
-	Domains         []string               `json:"domains,omitempty"`
-	Result          string                 `json:"result,omitempty"`
-	Progress        string                 `json:"progress,omitempty"`
-	Error           string                 `json:"error,omitempty"`
-	Pending         int                    `json:"pending,omitempty"`
-	Timestamp       time.Time              `json:"timestamp"`
+	AgentID          string                 `json:"agent_id"`
+	SessionID        string                 `json:"session_id"`
+	ParentSessionID  string                 `json:"parent_session_id,omitempty"`
+	SubmissionID     string                 `json:"submission_id,omitempty"`
+	Stage            SubAgentLifecycleStage `json:"stage"`
+	Status           subAgentStatus         `json:"status"`
+	Title            string                 `json:"title,omitempty"`
+	WorkDir          string                 `json:"work_dir,omitempty"`
+	StartedAt        time.Time              `json:"started_at,omitempty"`
+	HeartbeatContext string                 `json:"heartbeat_context,omitempty"`
+	CurrentTool      string                 `json:"current_tool,omitempty"`
+	LastTool         string                 `json:"last_tool,omitempty"`
+	ToolCallCount    int                    `json:"tool_call_count,omitempty"`
+	Task             string                 `json:"task,omitempty"`
+	TaskKey          string                 `json:"task_key,omitempty"`
+	Domains          []string               `json:"domains,omitempty"`
+	Result           string                 `json:"result,omitempty"`
+	Progress         string                 `json:"progress,omitempty"`
+	Error            string                 `json:"error,omitempty"`
+	Pending          int                    `json:"pending,omitempty"`
+	Timestamp        time.Time              `json:"timestamp"`
 }
 
 var subAgentEventBroker = pubsub.NewBroker[SubAgentLifecycleEvent]()

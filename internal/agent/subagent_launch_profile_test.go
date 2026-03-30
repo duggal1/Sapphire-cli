@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -159,4 +160,59 @@ func TestSubAgentBurstLaunchProfileUsesSharedStartupContext(t *testing.T) {
 	require.GreaterOrEqual(t, counters["subagent_memory.launch_context_cache_hit"]+counters["subagent_memory.launch_context_flight_wait"], int64(4))
 	require.Equal(t, int64(5), counters["subagent_memory.launch_lightweight"])
 	require.NotZero(t, steps["turn.build_memory_context"])
+}
+
+func TestSpawnedSubAgentsUseIsolatedSessions(t *testing.T) {
+	t.Parallel()
+
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+	cfg.Providers.Set("test-provider", config.ProviderConfig{ID: "test-provider"})
+
+	var (
+		mu       sync.Mutex
+		sessions []string
+	)
+
+	coord := &coordinator{
+		cfg:                       cfg,
+		sessions:                  env.sessions,
+		messages:                  env.messages,
+		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
+		subAgents:                 make(map[string]*subAgentRunner),
+		subAgentRegistry:          newSubAgentRegistry(),
+	}
+	coord.subAgentFactory = func(ctx context.Context, workDir string, normalizedManifest []string, opts spawnAgentOptions) (SessionAgent, error) {
+		return newMockAgent("test-provider", 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+			mu.Lock()
+			sessions = append(sessions, call.SessionID)
+			mu.Unlock()
+			return agentResultWithText("STATUS: done\nSUMMARY: isolated session"), nil
+		}), nil
+	}
+
+	parentSession, err := env.sessions.Create(context.Background(), "Parent")
+	require.NoError(t, err)
+
+	ids := make([]string, 0, 2)
+	for i := 0; i < 2; i++ {
+		agentID, _, err := coord.spawnSubAgent(context.Background(), parentSession.ID, spawnAgentOptions{
+			Prompt: "Inspect a distinct subsystem and return concise findings.",
+			Title:  "Isolated Session Check",
+		})
+		require.NoError(t, err)
+		ids = append(ids, agentID)
+	}
+
+	statuses, timedOut := coord.waitSubAgentStatuses(context.Background(), ids, 3*time.Second)
+	require.False(t, timedOut)
+	require.Len(t, statuses, 2)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, sessions, 2)
+	require.NotEqual(t, sessions[0], sessions[1])
+	require.NotEqual(t, parentSession.ID, sessions[0])
+	require.NotEqual(t, parentSession.ID, sessions[1])
 }

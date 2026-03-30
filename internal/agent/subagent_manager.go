@@ -51,7 +51,7 @@ const (
 	subAgentHeartbeatDegradedAge = 30 * time.Second
 	subAgentHeartbeatStuckAge    = 2 * time.Minute
 	subAgentStuckMissThreshold   = 3
-	subAgentTurnTimeout          = 5 * time.Minute
+	subAgentTurnTimeout          = 6 * time.Minute
 	subAgentWaitPollInterval     = 5 * time.Second
 )
 
@@ -87,6 +87,9 @@ type subAgentRunner struct {
 	lastError            string
 	lastProgress         string
 	lastSubmission       string
+	currentTool          string
+	lastTool             string
+	toolCallCount        int
 	validationPassed     bool
 	validationErrors     string
 	validationHasChanges bool
@@ -239,6 +242,9 @@ func (r *subAgentRunner) snapshot() subAgentSnapshot {
 		LastError:            r.lastError,
 		LastProgress:         r.lastProgress,
 		LastSubmission:       r.lastSubmission,
+		CurrentTool:          r.currentTool,
+		LastTool:             r.lastTool,
+		ToolCallCount:        r.toolCallCount,
 		Pending:              r.pending,
 		WorkDir:              r.workDir,
 		Branch:               r.assignment.Branch,
@@ -385,6 +391,9 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 	r.lastResult = ""
 	r.lastError = ""
 	r.lastProgress = ""
+	r.currentTool = ""
+	r.lastTool = ""
+	r.toolCallCount = 0
 	r.staleMisses = 0
 	r.firstStaleObservedAt = time.Time{}
 	r.lastHeartbeat = time.Now().UTC()
@@ -638,6 +647,9 @@ type subAgentSnapshot struct {
 	LastError            string         `json:"last_error,omitempty"`
 	LastProgress         string         `json:"last_progress,omitempty"`
 	LastSubmission       string         `json:"last_submission,omitempty"`
+	CurrentTool          string         `json:"current_tool,omitempty"`
+	LastTool             string         `json:"last_tool,omitempty"`
+	ToolCallCount        int            `json:"tool_call_count,omitempty"`
 	Pending              int            `json:"pending"`
 	WorkDir              string         `json:"work_dir,omitempty"`
 	Branch               string         `json:"branch,omitempty"`
@@ -663,6 +675,9 @@ type subAgentStatusEntry struct {
 	WorkDir          string         `json:"work_dir,omitempty"`
 	StartedAt        time.Time      `json:"started_at,omitempty"`
 	HeartbeatContext string         `json:"heartbeat_context,omitempty"`
+	CurrentTool      string         `json:"current_tool,omitempty"`
+	LastTool         string         `json:"last_tool,omitempty"`
+	ToolCallCount    int            `json:"tool_call_count,omitempty"`
 }
 
 type subAgentCollectedResult struct {
@@ -681,6 +696,9 @@ type subAgentCollectedResult struct {
 	ValidationHasChanges bool           `json:"validation_has_changes,omitempty"`
 	LastHeartbeat        time.Time      `json:"last_heartbeat,omitempty"`
 	HeartbeatContext     string         `json:"heartbeat_context,omitempty"`
+	CurrentTool          string         `json:"current_tool,omitempty"`
+	LastTool             string         `json:"last_tool,omitempty"`
+	ToolCallCount        int            `json:"tool_call_count,omitempty"`
 }
 
 type spawnAgentOptions struct {
@@ -935,6 +953,9 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 			runner.lastSubmission = input.submissionID
 			runner.lastError = ""
 			runner.lastProgress = ""
+			runner.currentTool = ""
+			runner.lastTool = ""
+			runner.toolCallCount = 0
 			runner.staleMisses = 0
 			runner.firstStaleObservedAt = time.Time{}
 			runner.lastHeartbeat = now
@@ -1117,7 +1138,8 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 				eventType = pubsub.EventType(disposition.EventType)
 				errMsg = disposition.ErrMsg
 				if c.memoryPipe != nil && disposition.Status == subAgentStatusCompleted {
-					c.memoryPipe.TriggerPostCompletion(runner.sessionID, finalResult)
+					targetSessionID := firstNonEmptyString(strings.TrimSpace(runner.parentSession), strings.TrimSpace(runner.sessionID))
+					c.memoryPipe.TriggerPostCompletion(targetSessionID, renderSubAgentMemoryRollout(runner.assignment, input.submissionID, parsedReport, finalResult))
 				}
 			}
 			runner.assignment.UpdatedAt = now
@@ -1528,6 +1550,9 @@ func (r *subAgentRunner) latestCollectedResult() subAgentCollectedResult {
 		ValidationHasChanges: r.validationHasChanges,
 		LastHeartbeat:        r.lastHeartbeat,
 		HeartbeatContext:     r.heartbeatContext,
+		CurrentTool:          r.currentTool,
+		LastTool:             r.lastTool,
+		ToolCallCount:        r.toolCallCount,
 	}
 	if submission := r.submissions[r.lastSubmission]; submission != nil {
 		if submission.Status != "" {
@@ -1555,6 +1580,9 @@ func (c *coordinator) waitSubAgentStatuses(ctx context.Context, ids []string, ti
 			WorkDir:          snap.WorkDir,
 			StartedAt:        snap.StartedAt,
 			HeartbeatContext: snap.HeartbeatContext,
+			CurrentTool:      snap.CurrentTool,
+			LastTool:         snap.LastTool,
+			ToolCallCount:    snap.ToolCallCount,
 		})
 	}
 	return statuses, timedOut

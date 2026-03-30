@@ -317,3 +317,20 @@ func splitCommaList(raw string) []string {
 	}
 	return out
 }
+
+func renderSubAgentMemoryRollout(assignment subAgentAssignment, submissionID string, report subAgentReport, rawResult string) string {
+	lines := []string{
+		"SUB-AGENT OUTCOME",
+		"Title: " + firstNonEmptyString(strings.TrimSpace(assignment.Title), strings.TrimSpace(assignment.TaskKey), "sub-agent task"),
+		"Submission: " + firstNonEmptyString(strings.TrimSpace(submissionID), "none"),
+		"Status: " + firstNonEmptyString(strings.TrimSpace(report.Status), "done"),
+		"Summary: " + firstNonEmptyString(strings.TrimSpace(report.Summary), strings.TrimSpace(report.Progress), truncateForContext(strings.TrimSpace(rawResult), 360), "none"),
+		"Progress: " + firstNonEmptyString(strings.TrimSpace(report.Progress), "none"),
+		"Files: " + joinOrNone(report.Files),
+		"Commands: " + joinOrNone(report.Commands),
+		"Risks: " + firstNonEmptyString(strings.TrimSpace(report.Risks), "none"),
+		"Next: " + firstNonEmptyString(strings.TrimSpace(report.Next), "none"),
+		"Blockers: " + firstNonEmptyString(strings.TrimSpace(report.Blockers), "none"),
+	}
+	return strings.Join(lines, "\n")
+}

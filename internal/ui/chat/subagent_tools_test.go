@@ -47,7 +47,7 @@ func TestRenderSubAgentWaitBodyUsesFriendlySummaryLine(t *testing.T) {
 		},
 	}, 120))
 
-	if !strings.Contains(rendered, "Sub-Agent 1") {
+	if !strings.Contains(rendered, "Structured Submission 1") {
 		t.Fatalf("expected friendly label, got %q", rendered)
 	}
 	if strings.Contains(rendered, "d5655f40") {
@@ -111,6 +111,87 @@ func TestRenderSubAgentSpawnBodyShowsPromptPreview(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Brief: Read the core agent orchestration paths") {
 		t.Fatalf("expected prompt preview, got %q", rendered)
+	}
+}
+
+func TestMergeSubAgentSpawnResultAppliesLiveTelemetry(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(subAgentSpawnResult{
+		AgentID:   "agent-1",
+		Status:    "queued",
+		StartedAt: time.Now().UTC().Add(-30 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("marshal spawn result: %v", err)
+	}
+
+	merged, ok := MergeSubAgentSpawnResult(string(raw), agent.SubAgentLifecycleEvent{
+		AgentID:          "agent-1",
+		Status:           "running",
+		Title:            "Core Agent Logic",
+		HeartbeatContext: "running tool agentic_view",
+		CurrentTool:      "agentic_view",
+		ToolCallCount:    3,
+	})
+	if !ok {
+		t.Fatal("expected spawn result merge to succeed")
+	}
+
+	sty := styles.DefaultStyles(false)
+	rendered := ansi.Strip(renderSubAgentSpawnBody(&sty, &agent.SpawnAgentParams{
+		Title:   "Core Agent Logic",
+		Message: "Inspect the runtime path.",
+	}, func() *subAgentSpawnResult {
+		var payload subAgentSpawnResult
+		if err := json.Unmarshal([]byte(merged), &payload); err != nil {
+			t.Fatalf("unmarshal merged payload: %v", err)
+		}
+		return &payload
+	}(), 120, false))
+
+	if !strings.Contains(rendered, "Current Tool: agentic_view") {
+		t.Fatalf("expected current tool telemetry, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Live Tools: 3 tool calls") {
+		t.Fatalf("expected tool call count, got %q", rendered)
+	}
+}
+
+func TestRenderAgentDirectoryBodyHidesRawJSONAndIDs(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	raw, err := json.Marshal(agentDirectorySnapshot{
+		SessionID:       "session-1",
+		ParentSessionID: "session-1",
+		CurrentAgentID:  "main:session-1",
+		Agents: []agentDirectoryAgent{
+			{
+				AgentID:       "agent-12345678",
+				Title:         "UI Analysis",
+				Status:        "running",
+				ToolCallCount: 2,
+				CurrentTool:   "agentic_view",
+			},
+		},
+		WorkItems: []agentDirectoryWorkItem{
+			{ID: "work-1", Title: "UI audit", Status: "running"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal agent directory: %v", err)
+	}
+
+	rendered := ansi.Strip(renderAgentDirectoryBody(&sty, string(raw), 120))
+	if !strings.Contains(rendered, "Agent Directory") {
+		t.Fatalf("expected agent directory label, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Structured Submission 1") && !strings.Contains(rendered, "UI Analysis") {
+		t.Fatalf("expected friendly agent label, got %q", rendered)
+	}
+	if strings.Contains(rendered, "session_id") || strings.Contains(rendered, "\"agents\"") {
+		t.Fatalf("expected raw JSON to be hidden, got %q", rendered)
 	}
 }
 

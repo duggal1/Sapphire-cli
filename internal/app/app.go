@@ -477,6 +477,7 @@ func (app *App) setupEvents() {
 	setupSubscriber(ctx, app.serviceEventsWG, "mcp", mcp.SubscribeEvents, app.events, subscriberBestEffort)
 	setupSubscriber(ctx, app.serviceEventsWG, "lsp", SubscribeLSPEvents, app.events, subscriberBestEffort)
 	setupSubscriber(ctx, app.serviceEventsWG, "codeindex", codeindex.SubscribeEvents, app.events, subscriberBestEffort)
+	setupSubscriber(ctx, app.serviceEventsWG, "subagents", agent.SubscribeSubAgentEvents, app.events, subscriberBestEffort)
 	cleanupFunc := func(context.Context) error {
 		cancel()
 		app.serviceEventsWG.Wait()

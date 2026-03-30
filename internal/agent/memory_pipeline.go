@@ -20,6 +20,7 @@ import (
 const (
 	memoryPipelineTimeout      = 30 * time.Second
 	memoryExtractionMaxRetries = 2
+	memoryExtractionDebounce   = 8 * time.Second
 	memoryFolderName           = ".sapphire-memory"
 	memoryMDFile               = "MEMORY.md"
 	memorySummaryFile          = "memory_summary.md"
@@ -32,7 +33,11 @@ const (
 type memoryPipeline struct {
 	coordinator *coordinator
 	mu          sync.Mutex
-	active      map[string]bool // sessionID -> extraction in progress
+	active      map[string]bool     // sessionID -> extraction in progress
+	pending     map[string][]string // sessionID -> queued rollout texts
+	timers      map[string]*time.Timer
+	debounce    time.Duration
+	extractFunc func(ctx context.Context, sessionID, rolloutText string) (*memoryExtractionResult, error)
 }
 
 // newMemoryPipeline creates a new memory pipeline.
@@ -40,6 +45,9 @@ func newMemoryPipeline(c *coordinator) *memoryPipeline {
 	return &memoryPipeline{
 		coordinator: c,
 		active:      make(map[string]bool),
+		pending:     make(map[string][]string),
+		timers:      make(map[string]*time.Timer),
+		debounce:    memoryExtractionDebounce,
 	}
 }
 
@@ -74,7 +82,7 @@ func (p *memoryPipeline) ExtractFromRollout(ctx context.Context, sessionID, roll
 	// Build the extraction prompt with rollout content using the input template
 	rolloutContents := rolloutText
 	// In a full implementation, we would apply truncation here to match Codex's 70% budget.
-	
+
 	inputMsg := string(memoryExtractionInputPrompt)
 	inputMsg = strings.ReplaceAll(inputMsg, "{{ rollout_path }}", sessionID) // Using sessionID as proxy for path
 	inputMsg = strings.ReplaceAll(inputMsg, "{{ rollout_cwd }}", p.coordinator.mainWorkingDir())
@@ -139,7 +147,7 @@ func (p *memoryPipeline) runExtraction(ctx context.Context, sessionID, prompt st
 	if err != nil {
 		return nil, fmt.Errorf("failed to build extraction agent: %w", err)
 	}
-	
+
 	systemPromptPrefix := ""
 	if cfg, ok := p.coordinator.cfg.Providers.Get(p.coordinator.currentAgent.Model().ModelCfg.Provider); ok {
 		systemPromptPrefix = cfg.SystemPromptPrefix
@@ -201,7 +209,7 @@ func (p *memoryPipeline) writeRolloutSummary(sessionID string, result *memoryExt
 	filename := stem + ".md"
 
 	summaryPath := filepath.Join(summariesDir, filename)
-	
+
 	// Literal Rollout Summary Header
 	summaryHeader := memory.FormatRolloutSummaryHeader(sessionID, timestamp, "rollout_summaries/"+filename, cwd, "")
 	if err := os.WriteFile(summaryPath, []byte(summaryHeader+result.RolloutSummary), 0o644); err != nil {
@@ -270,7 +278,7 @@ func (p *memoryPipeline) ConsolidateMemory(ctx context.Context, sessionID string
 
 	consolidationContent := string(memoryConsolidationPrompt)
 	consolidationContent = strings.ReplaceAll(consolidationContent, "{{ memory_root }}", memoryRoot)
-	
+
 	// Literal Input Selection Rendering
 	inputSelection := p.renderPhase2InputSelection(rawData)
 	consolidationContent = strings.ReplaceAll(consolidationContent, "{{ phase2_input_selection }}", inputSelection)
@@ -300,7 +308,7 @@ func (p *memoryPipeline) ConsolidateMemory(ctx context.Context, sessionID string
 	// 2. Run the consolidation session
 	consolidationSessionID := fmt.Sprintf("memory-consolidation-%s-%d", sessionID, time.Now().Unix())
 	userPrompt := "Proceed with memory consolidation as specified in your instructions. Update MEMORY.md and memory_summary.md based on the provided raw memories."
-	
+
 	_, err = memoryAgent.Run(consolidateCtx, SessionAgentCall{
 		SessionID:       consolidationSessionID,
 		Prompt:          userPrompt,
@@ -324,16 +332,58 @@ func (p *memoryPipeline) renderPhase2InputSelection(rawData []byte) string {
 
 // TriggerPostCompletion fires an async memory extraction after sub-agent completion.
 func (p *memoryPipeline) TriggerPostCompletion(sessionID, rolloutText string) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*memoryPipelineTimeout)
-		defer cancel()
-		if _, err := p.ExtractFromRollout(ctx, sessionID, rolloutText); err != nil {
-			slog.Warn("Post-completion memory extraction failed",
-				"session_id", sessionID,
-				"error", err,
-			)
-		}
-	}()
+	sessionID = strings.TrimSpace(sessionID)
+	rolloutText = strings.TrimSpace(rolloutText)
+	if p == nil || sessionID == "" || rolloutText == "" {
+		return
+	}
+
+	p.mu.Lock()
+	p.pending[sessionID] = append(p.pending[sessionID], rolloutText)
+	if timer := p.timers[sessionID]; timer != nil {
+		timer.Reset(memoryExtractionDebounce)
+		p.mu.Unlock()
+		return
+	}
+	debounce := p.debounce
+	if debounce <= 0 {
+		debounce = memoryExtractionDebounce
+	}
+	p.timers[sessionID] = time.AfterFunc(debounce, func() {
+		p.flushPostCompletion(sessionID)
+	})
+	p.mu.Unlock()
+}
+
+func (p *memoryPipeline) flushPostCompletion(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if p == nil || sessionID == "" {
+		return
+	}
+
+	p.mu.Lock()
+	batch := append([]string{}, p.pending[sessionID]...)
+	delete(p.pending, sessionID)
+	delete(p.timers, sessionID)
+	p.mu.Unlock()
+
+	combined := strings.TrimSpace(strings.Join(batch, "\n\n---\n\n"))
+	if combined == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*memoryPipelineTimeout)
+	defer cancel()
+	extract := p.extractFunc
+	if extract == nil {
+		extract = p.ExtractFromRollout
+	}
+	if _, err := extract(ctx, sessionID, combined); err != nil {
+		slog.Warn("Post-completion memory extraction failed",
+			"session_id", sessionID,
+			"error", err,
+		)
+	}
 }
 
 // memoryRoot returns the memory folder path.

@@ -85,6 +85,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/x/editor"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
@@ -605,6 +606,10 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.Payload.Role == message.Assistant {
 			m.syncPlanApprovalDialogForMessage(&msg.Payload)
+		}
+	case pubsub.Event[agent.SubAgentLifecycleEvent]:
+		if cmd := m.handleSubAgentLifecycleEvent(msg); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	case pubsub.Event[history.File]:
 		cmds = append(cmds, m.handleFileEvent(msg.Payload))
@@ -1368,6 +1373,57 @@ func (m *UI) handleChildSessionMessage(event pubsub.Event[message.Message]) tea.
 	}
 
 	return tea.Sequence(cmds...)
+}
+
+func (m *UI) handleSubAgentLifecycleEvent(event pubsub.Event[agent.SubAgentLifecycleEvent]) tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+	payload := event.Payload
+	if payload.ParentSessionID != m.session.ID && payload.SessionID != m.session.ID {
+		return nil
+	}
+
+	updated := false
+	for _, item := range m.chat.MessageItems() {
+		toolItem, ok := item.(chat.ToolMessageItem)
+		if !ok {
+			continue
+		}
+		if toolItem.Status() == chat.ToolStatusCanceled {
+			continue
+		}
+		result := toolItem.Result()
+		if result == nil {
+			continue
+		}
+		switch toolItem.ToolCall().Name {
+		case agent.SpawnAgentToolName:
+			if merged, ok := chat.MergeSubAgentSpawnResult(result.Content, payload); ok {
+				cloned := *result
+				cloned.Content = merged
+				toolItem.SetResult(&cloned)
+				m.chat.InvalidateMessage(toolItem.ToolCall().ID)
+				updated = true
+			}
+		case agent.WaitAgentsToolName:
+			if merged, ok := chat.MergeSubAgentWaitResult(result.Content, payload); ok {
+				cloned := *result
+				cloned.Content = merged
+				toolItem.SetResult(&cloned)
+				m.chat.InvalidateMessage(toolItem.ToolCall().ID)
+				updated = true
+			}
+		}
+	}
+
+	if !updated {
+		return nil
+	}
+	if m.chat.Follow() {
+		return m.chat.ScrollToBottomAndAnimate()
+	}
+	return nil
 }
 
 func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {

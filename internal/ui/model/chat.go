@@ -467,6 +467,18 @@ func (m *Chat) MessageItem(id string) chat.MessageItem {
 	return item
 }
 
+func (m *Chat) MessageItems() []chat.MessageItem {
+	items := make([]chat.MessageItem, 0, m.list.Len())
+	for i := 0; i < m.list.Len(); i++ {
+		item, ok := m.list.ItemAt(i).(chat.MessageItem)
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
 // InvalidateMessage invalidates cached layout for the message item with the given ID.
 func (m *Chat) InvalidateMessage(id string) {
 	idx, ok := m.idInxMap[id]

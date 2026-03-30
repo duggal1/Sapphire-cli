@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,13 +28,19 @@ type agentDirectoryAlias struct {
 }
 
 type agentDirectoryAgent struct {
-	AgentID      string `json:"agent_id"`
-	Status       string `json:"status"`
-	WorkItemID   string `json:"work_item_id,omitempty"`
-	Branch       string `json:"branch,omitempty"`
-	Worktree     string `json:"worktree,omitempty"`
-	RouteAlias   string `json:"route_alias,omitempty"`
-	HeartbeatAge string `json:"heartbeat_age,omitempty"`
+	AgentID          string    `json:"agent_id"`
+	Status           string    `json:"status"`
+	Title            string    `json:"title,omitempty"`
+	WorkItemID       string    `json:"work_item_id,omitempty"`
+	Branch           string    `json:"branch,omitempty"`
+	Worktree         string    `json:"worktree,omitempty"`
+	RouteAlias       string    `json:"route_alias,omitempty"`
+	HeartbeatAge     string    `json:"heartbeat_age,omitempty"`
+	HeartbeatContext string    `json:"heartbeat_context,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	CurrentTool      string    `json:"current_tool,omitempty"`
+	LastTool         string    `json:"last_tool,omitempty"`
+	ToolCallCount    int       `json:"tool_call_count,omitempty"`
 }
 
 type agentDirectoryWorkItem struct {
@@ -106,14 +111,35 @@ func (c *coordinator) buildAgentDirectorySnapshot(ctx context.Context, sessionID
 	agentEntries := make([]agentDirectoryAgent, 0, len(states))
 	workItemIDs := make([]string, 0, len(states))
 	for _, state := range states {
+		title := ""
+		startedAt := time.Time{}
+		heartbeatContext := ""
+		currentTool := ""
+		lastTool := ""
+		toolCallCount := 0
+		if runner := c.ensureSubAgentRegistry().get(strings.TrimSpace(state.AgentID)); runner != nil {
+			snapshot := runner.snapshot()
+			title = strings.TrimSpace(snapshot.Title)
+			startedAt = snapshot.StartedAt
+			heartbeatContext = strings.TrimSpace(snapshot.HeartbeatContext)
+			currentTool = strings.TrimSpace(snapshot.CurrentTool)
+			lastTool = strings.TrimSpace(snapshot.LastTool)
+			toolCallCount = snapshot.ToolCallCount
+		}
 		agentEntries = append(agentEntries, agentDirectoryAgent{
-			AgentID:      state.AgentID,
-			Status:       state.Status,
-			WorkItemID:   strings.TrimSpace(state.HookBeadID),
-			Branch:       strings.TrimSpace(state.Branch),
-			Worktree:     filepath.Base(strings.TrimSpace(state.WorktreePath)),
-			RouteAlias:   "agent:" + strings.TrimSpace(state.AgentID),
-			HeartbeatAge: formatHeartbeatAge(state.LastHeartbeat),
+			AgentID:          state.AgentID,
+			Status:           state.Status,
+			Title:            title,
+			WorkItemID:       strings.TrimSpace(state.HookBeadID),
+			Branch:           strings.TrimSpace(state.Branch),
+			Worktree:         strings.TrimSpace(state.WorktreePath),
+			RouteAlias:       "agent:" + strings.TrimSpace(state.AgentID),
+			HeartbeatAge:     formatHeartbeatAge(state.LastHeartbeat),
+			HeartbeatContext: heartbeatContext,
+			StartedAt:        startedAt,
+			CurrentTool:      currentTool,
+			LastTool:         lastTool,
+			ToolCallCount:    toolCallCount,
 		})
 		if workItemID := strings.TrimSpace(state.HookBeadID); workItemID != "" {
 			workItemIDs = append(workItemIDs, workItemID)

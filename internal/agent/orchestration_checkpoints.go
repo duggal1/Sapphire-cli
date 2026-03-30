@@ -210,14 +210,17 @@ func (c *coordinator) shouldPersistCheckpointHandoff(sessionID, agentID, workIte
 	if c == nil || c.memoryCompiler == nil {
 		return false
 	}
+	if runner := c.runnerBySessionID(strings.TrimSpace(sessionID)); runner != nil {
+		return false
+	}
 	status = strings.ToLower(strings.TrimSpace(status))
 	if status == "" || status == "running" {
 		return false
 	}
-	if strings.TrimSpace(workItemID) != "" {
-		return true
-	}
 	if strings.TrimSpace(agentID) != "" && strings.TrimSpace(agentID) != mainAgentMailboxID(sessionID) {
+		return false
+	}
+	if strings.TrimSpace(workItemID) != "" {
 		return true
 	}
 	if strings.TrimSpace(c.GetLongHorizonState(sessionID)) != "" {

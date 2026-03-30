@@ -339,6 +339,38 @@ func TestShouldPersistCheckpointHandoffSkipsOrdinaryMainTurns(t *testing.T) {
 
 	coord.memoryCompiler = &agentmemory.Compiler{}
 	require.False(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", "hi", "completed"))
-	require.True(t, coord.shouldPersistCheckpointHandoff("session-1", "agent-1", "work-1", "finish implementation", "completed"))
 	require.True(t, coord.shouldPersistCheckpointHandoff("session-1", mainAgentMailboxID("session-1"), "", strings.Repeat("complex ", 90), "completed"))
+
+	coord.subAgentRegistry = newSubAgentRegistry()
+	coord.subAgentRegistry.upsert("agent-1", &subAgentRunner{
+		id:            "agent-1",
+		sessionID:     "sub-session",
+		parentSession: "session-1",
+		submissions:   make(map[string]*subAgentSubmission),
+	})
+	require.False(t, coord.shouldPersistCheckpointHandoff("sub-session", "agent-1", "work-1", "finish implementation", "completed"))
+}
+
+func TestCoordinatorSubAgentToolObserverUpdatesTelemetry(t *testing.T) {
+	coord := &coordinator{subAgentRegistry: newSubAgentRegistry()}
+	runner := &subAgentRunner{
+		id:          "agent-1",
+		sessionID:   "sub-session",
+		status:      subAgentStatusRunning,
+		submissions: map[string]*subAgentSubmission{"sub-1": {ID: "sub-1", Status: subAgentStatusRunning}},
+	}
+	runner.lastSubmission = "sub-1"
+	coord.subAgentRegistry.upsert(runner.id, runner)
+
+	coord.OnToolInputStart("sub-session", "agentic_view")
+	coord.OnToolCall("sub-session", "agentic_view")
+	snap := runner.snapshot()
+	require.Equal(t, "agentic_view", snap.CurrentTool)
+	require.Equal(t, 1, snap.ToolCallCount)
+
+	coord.OnToolResult("sub-session", "agentic_view")
+	snap = runner.snapshot()
+	require.Empty(t, snap.CurrentTool)
+	require.Equal(t, "agentic_view", snap.LastTool)
+	require.Equal(t, 1, snap.ToolCallCount)
 }

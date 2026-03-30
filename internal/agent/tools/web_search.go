@@ -35,7 +35,12 @@ func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
 		func(ctx context.Context, params WebSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			queries := normalizeBatchTargets(params.Query, params.Queries, "")
 			if len(queries) == 0 {
-				return fantasy.NewTextErrorResponse("query is required"), nil
+				return NewGuidanceErrorResponse(
+					WebSearchToolName,
+					"missing_query",
+					"Missing search query.",
+					"web_search requires query or queries. Do not call it with empty input. Provide one concrete search query string or a non-empty queries array, then retry.",
+				), nil
 			}
 
 			maxResults := params.MaxResults

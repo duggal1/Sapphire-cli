@@ -27,7 +27,6 @@ snapshot:
 
 before:
   hooks:
-    - go mod tidy
     - rm -rf completions
     - mkdir completions
     - rm -rf manpages

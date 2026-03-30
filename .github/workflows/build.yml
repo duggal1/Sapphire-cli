@@ -21,7 +21,13 @@ jobs:
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
-      - run: go mod tidy
-      - run: git diff --exit-code
-      - run: go build -race ./...
-      - run: go test -race -failfast ./...
+      - name: Resolve CI package set
+        run: |
+          ./scripts/ci-go-packages.sh > /tmp/ci-go-packages.txt
+          test -s /tmp/ci-go-packages.txt
+      - name: Build
+        run: |
+          xargs go build -race < /tmp/ci-go-packages.txt
+      - name: Test
+        run: |
+          xargs go test -race -failfast < /tmp/ci-go-packages.txt

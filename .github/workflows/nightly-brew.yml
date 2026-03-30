@@ -1,0 +1,87 @@
+name: nightly-brew
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-nightly-formula:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Prepare nightly metadata
+        id: meta
+        shell: bash
+        run: |
+          base_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          base_version="${base_tag#v}"
+          short_sha="${GITHUB_SHA::7}"
+          url="https://github.com/duggal1/Sapphire-cli/archive/${GITHUB_SHA}.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/sapphire-nightly.tar.gz"
+          sha256="$(shasum -a 256 "$RUNNER_TEMP/sapphire-nightly.tar.gz" | awk '{print $1}')"
+          version="${base_version}-nightly-${short_sha}"
+          {
+            echo "base_tag=$base_tag"
+            echo "short_sha=$short_sha"
+            echo "url=$url"
+            echo "sha256=$sha256"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Clone tap repository
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PERSONAL_ACCESS_TOKEN || github.token }}
+        shell: bash
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/duggal1/homebrew-sapphire-cli.git" "$RUNNER_TEMP/homebrew-sapphire-cli"
+
+      - name: Write nightly formula
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/homebrew-sapphire-cli/Formula/sapphire-nightly.rb" <<EOF
+          class SapphireNightly < Formula
+            desc "Terminal-first AI assistant for software development (nightly)"
+            homepage "https://github.com/duggal1/Sapphire-cli"
+            url "${{ steps.meta.outputs.url }}"
+            sha256 "${{ steps.meta.outputs.sha256 }}"
+            license "FSL-1.1-MIT"
+            version "${{ steps.meta.outputs.version }}"
+
+            depends_on "go" => :build
+
+            def install
+              ldflags = "-s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version=${version}"
+              system "go", "build", *std_go_args(ldflags: ldflags), "."
+
+              generate_completions_from_executable(bin/"sapphire", "completion")
+
+              manpage = Utils.safe_popen_read(bin/"sapphire", "man")
+              (man1/"sapphire.1").write(manpage)
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/sapphire --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push nightly formula
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/homebrew-sapphire-cli"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sapphire-nightly.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "Update sapphire-nightly to ${{ steps.meta.outputs.short_sha }}"
+          git push origin main

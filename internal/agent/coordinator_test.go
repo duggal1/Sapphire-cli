@@ -54,11 +54,36 @@ func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOp
 	return nil
 }
 
+type fakeLanguageModel struct {
+	provider string
+	model    string
+}
+
+func (f fakeLanguageModel) Generate(context.Context, fantasy.Call) (*fantasy.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f fakeLanguageModel) Stream(context.Context, fantasy.Call) (fantasy.StreamResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f fakeLanguageModel) GenerateObject(context.Context, fantasy.ObjectCall) (*fantasy.ObjectResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f fakeLanguageModel) StreamObject(context.Context, fantasy.ObjectCall) (fantasy.ObjectStreamResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f fakeLanguageModel) Provider() string { return f.provider }
+func (f fakeLanguageModel) Model() string    { return f.model }
+
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
 func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCfg config.ProviderConfig) *coordinator {
 	cfg, err := config.Init(env.workingDir, "", false)
 	require.NoError(t, err)
 	cfg.Providers.Set(providerID, providerCfg)
+	cfg.SetupAgents()
 	return &coordinator{
 		cfg:                       cfg,
 		sessions:                  env.sessions,
@@ -71,6 +96,10 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 func newMockAgent(providerID string, maxTokens int64, runFunc func(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)) *mockSessionAgent {
 	return &mockSessionAgent{
 		model: Model{
+			Model: fakeLanguageModel{
+				provider: providerID,
+				model:    "test-model",
+			},
 			CatwalkCfg: catwalk.Model{
 				DefaultMaxTokens: maxTokens,
 			},
@@ -105,6 +134,7 @@ func TestCoordinatorSubmitQueuesAcceptedPrompt(t *testing.T) {
 	})
 	agent.busy = true
 	coord.currentAgent = agent
+	coord.mainAgents = map[string]SessionAgent{session.ID: agent}
 
 	result, err := coord.Submit(t.Context(), session.ID, "queued prompt")
 	require.NoError(t, err)
@@ -133,6 +163,7 @@ func TestCoordinatorSubmitStartsDetachedExecution(t *testing.T) {
 		return agentResultWithText("ok"), nil
 	})
 	coord.currentAgent = agent
+	coord.mainAgents = map[string]SessionAgent{session.ID: agent}
 
 	result, err := coord.Submit(t.Context(), session.ID, "run prompt")
 	require.NoError(t, err)

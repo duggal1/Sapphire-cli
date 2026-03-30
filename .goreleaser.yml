@@ -1,21 +1,8 @@
-# yaml-language-server: $schema=https://goreleaser.com/static/schema-pro.json
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=jcroql
 version: 2
 
 project_name: sapphire
-
-includes:
-  - from_url:
-      url: charmbracelet/meta/main/notarize.yaml
-
-metadata:
-  mod_timestamp: "{{ .CommitTimestamp }}"
-  license: "FSL-1.1-MIT"
-  homepage: "https://github.com/duggal1/Sapphire-cli"
-  description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
-  full_description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
-  maintainers:
-    - "Harshit Duggal <harshit.duggal@gmail.com>"
 
 snapshot:
   version_template: "0.0.0-{{ .Timestamp }}"
@@ -90,98 +77,16 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-aur_sources:
-  - private_key: "{{ .Env.AUR_KEY }}"
-    disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/sapphire-cli.git"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-    makedepends:
-      - go
-      - git
-    prepare: |-
-      go mod download
-    build: |-
-      mkdir completions
-      mkdir manpages
-      export CGO_CPPFLAGS="${CPPFLAGS}"
-      export CGO_CFLAGS="${CFLAGS}"
-      export CGO_CXXFLAGS="${CXXFLAGS}"
-      export CGO_LDFLAGS="${LDFLAGS}"
-      export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
-      go build -ldflags="-w -s -buildid='' -linkmode=external -X github.com/duggal1/Sapphire-cli/internal/version.Version=v${pkgver}" .
-      ./sapphire completion bash >./completions/sapphire.bash
-      ./sapphire completion zsh >./completions/sapphire.zsh
-      ./sapphire completion fish >./completions/sapphire.fish
-      ./sapphire man | gzip -c >./manpages/sapphire.1.gz
-    package: |-
-      # bin
-      install -Dm755 "./sapphire" "${pkgdir}/usr/bin/sapphire"
-      # license
-      mkdir -p "${pkgdir}/usr/share/licenses/sapphire/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/sapphire/"
-      # completions
-      mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
-      mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
-      mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/sapphire.bash" "${pkgdir}/usr/share/bash-completion/completions/sapphire"
-      install -Dm644 "./completions/sapphire.zsh" "${pkgdir}/usr/share/zsh/site-functions/_sapphire"
-      install -Dm644 "./completions/sapphire.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/sapphire.fish"
-      # man pages
-      install -Dm644 "./manpages/sapphire.1.gz" "${pkgdir}/usr/share/man/man1/sapphire.1.gz"
-      # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/sapphire/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/sapphire/"
-
-aurs:
-  - private_key: "{{ .Env.AUR_KEY }}"
-    disable: "{{ with .Prerelease }}true{{ end }}"
-    git_url: "ssh://aur@aur.archlinux.org/sapphire-cli-bin.git"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-    provides:
-      - sapphire
-    conflicts:
-      - sapphire
-    package: |-
-      case "$CARCH" in
-        aarch64)
-          cd "${srcdir}/sapphire_${pkgver}_Linux_arm64"
-          ;;
-        *)
-          cd "${srcdir}/sapphire_${pkgver}_Linux_${CARCH}"
-          ;;
-      esac
-      # bin
-      install -Dm755 "./sapphire" "${pkgdir}/usr/bin/sapphire"
-      # license
-      mkdir -p "${pkgdir}/usr/share/licenses/sapphire/"
-      install -Dm644 ./LICENSE* "${pkgdir}/usr/share/licenses/sapphire/"
-      # completions
-      mkdir -p "${pkgdir}/usr/share/bash-completion/completions/"
-      mkdir -p "${pkgdir}/usr/share/zsh/site-functions/"
-      mkdir -p "${pkgdir}/usr/share/fish/vendor_completions.d/"
-      install -Dm644 "./completions/sapphire.bash" "${pkgdir}/usr/share/bash-completion/completions/sapphire"
-      install -Dm644 "./completions/sapphire.zsh" "${pkgdir}/usr/share/zsh/site-functions/_sapphire"
-      install -Dm644 "./completions/sapphire.fish" "${pkgdir}/usr/share/fish/vendor_completions.d/sapphire.fish"
-      # man pages
-      install -Dm644 "./manpages/sapphire.1.gz" "${pkgdir}/usr/share/man/man1/sapphire.1.gz"
-      # readme
-      mkdir -pv "${pkgdir}/usr/share/doc/sapphire/"
-      install -Dm644 README* "${pkgdir}/usr/share/doc/sapphire/"
-
-furies:
-  - disable: "{{ if (or .Prerelease .IsNightly) }}true{{ end }}"
-    account: "{{ with .Env.FURY_TOKEN }}duggal1{{ else }}{{ end }}"
-    secret_name: FURY_TOKEN
-
 brews:
   - repository:
       owner: duggal1
       name: homebrew-sapphire-cli
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    name: sapphire
+    homepage: "https://github.com/duggal1/Sapphire-cli"
+    description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
+    license: "FSL-1.1-MIT"
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:
       name: "Harshit Duggal"
@@ -192,107 +97,6 @@ brews:
       zsh_completion.install "completions/{{ .ProjectName }}.zsh" => "_{{ .ProjectName }}"
       fish_completion.install "completions/{{ .ProjectName }}.fish"
       man1.install "manpages/{{ .ProjectName }}.1.gz"
-
-scoops:
-  - repository:
-      owner: duggal1
-      name: scoop-bucket
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-
-npms:
-  - name: "@duggal1/sapphire"
-    repository: "git+https://github.com/duggal1/Sapphire-cli.git"
-    bugs: https://github.com/duggal1/Sapphire-cli/issues
-    access: public
-    disable: "{{ with .Prerelease }}true{{ end }}"
-
-nfpms:
-  - formats:
-      - apk
-      - deb
-      - rpm
-      - archlinux
-      - termux.deb
-    file_name_template: "{{ .ConventionalFileName }}"
-    contents:
-      - src: ./completions/sapphire.bash
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files/usr{{ end }}/etc/bash_completion.d/sapphire'
-      - src: ./completions/sapphire.fish
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/fish/vendor_completions.d/sapphire.fish'
-      - src: ./completions/sapphire.zsh
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/zsh/site-functions/_sapphire'
-      - src: ./manpages/sapphire.1.gz
-        dst: '{{ if eq .Format "termux.deb" }}/data/data/com.termux/files{{ end }}/usr/share/man/man1/sapphire.1.gz'
-    rpm:
-      signature:
-        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
-    deb:
-      signature:
-        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
-
-signs:
-  - cmd: cosign
-    signature: "${artifact}.sigstore.json"
-    args:
-      - sign-blob
-      - "--bundle=${signature}"
-      - "${artifact}"
-      - "--yes"
-    artifacts: checksum
-    output: true
-
-source:
-  enabled: true
-
-sboms:
-  - artifacts: archive
-  - id: source
-    artifacts: source
-
-nix:
-  - repository:
-      owner: "duggal1"
-      name: nur
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-    license: fsl1Mit
-    formatter: nixfmt
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    extra_install: |-
-      installManPage ./manpages/sapphire.1.gz
-      installShellCompletion ./completions/*
-
-winget:
-  - publisher: duggal1
-    copyright: Harshit Duggal
-    publisher_url: https://github.com/duggal1
-    release_notes_url: "https://github.com/duggal1/Sapphire-cli/releases/tag/{{.Tag}}"
-    license_url: https://github.com/duggal1/Sapphire-cli/blob/main/LICENSE.md
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-    repository:
-      owner: "duggal1"
-      name: winget-pkgs
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-      branch: "sapphire-{{.Version}}"
-      pull_request:
-        enabled: true
-        draft: false
-        check_boxes: true
-        base:
-          owner: microsoft
-          name: winget-pkgs
-          branch: master
-        body: |
-          /cc @andreynering
 
 changelog:
   sort: asc
@@ -340,6 +144,3 @@ changelog:
 
 release:
   prerelease: auto
-  footer:
-    from_url:
-      url: https://raw.githubusercontent.com/charmbracelet/meta/main/footer.md

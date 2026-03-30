@@ -61,6 +61,7 @@ brews:
       name: homebrew-sapphire-cli
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     name: sapphire
+    directory: Formula
     homepage: "https://github.com/duggal1/Sapphire-cli"
     description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
     license: "FSL-1.1-MIT"

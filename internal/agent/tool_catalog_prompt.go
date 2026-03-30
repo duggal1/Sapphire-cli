@@ -17,7 +17,7 @@ var runtimeToolSummaries = map[string]string{
 	"agentic_fetch":           "fetch and analyze external web sources",
 	"agentic_view":            "read broad relevant file sets comprehensively in parallel; primary codebase exploration tool",
 	"apply_patch":             "apply precise unified-diff patches",
-	"bash":                    "run terminal commands only when structured tools cannot do the job",
+	"bash":                    "last-resort terminal escape hatch for build/test/process work when structured tools do not fit",
 	"call_mcp_tool":           "invoke an MCP tool dynamically",
 	"check_hook":              "inspect durable work-item hook state",
 	"close_agent":             "close a sub-agent and release its resources",

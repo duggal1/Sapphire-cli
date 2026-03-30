@@ -389,6 +389,115 @@ func TestPrepareToolCallRewritesFindNameBashToGlob(t *testing.T) {
 	require.Equal(t, "**/*mcp*", input["pattern"])
 }
 
+func TestPrepareToolCallRewritesLSFlagsBashToStructuredLS(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName: bashTool,
+		LSToolName:   lsTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-ls-1",
+		Name:  BashToolName,
+		Input: `{"command":"ls -la .sapphire","description":"inspect tree"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, LSToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, ".sapphire", input["path"])
+}
+
+func TestPrepareToolCallRewritesRGShellSearchToGrep(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	grepTool := fantasy.NewAgentTool(
+		GrepToolName,
+		"",
+		func(ctx context.Context, params GrepParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName: bashTool,
+		GrepToolName: grepTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-rg-1",
+		Name:  BashToolName,
+		Input: `{"command":"rg -l -i \"mistake\" --type go internal/agent","description":"search code"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, GrepToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "(?i)mistake", input["pattern"])
+	require.Equal(t, "*.go", input["include"])
+	require.Equal(t, "internal/agent", input["path"])
+}
+
+func TestPrepareToolCallRewritesSedSliceBashToSingleView(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName:       bashTool,
+		SingleViewToolName: singleViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-sed-1",
+		Name:  BashToolName,
+		Input: `{"command":"sed -n '12,20p' internal/agent/agent.go","description":"read slice"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "internal/agent/agent.go", input["file_path"])
+	require.Equal(t, float64(12), input["offset"])
+	require.Equal(t, float64(9), input["limit"])
+}
+
 func TestPrepareToolCallRejectsBashRepoReadCompoundCommand(t *testing.T) {
 	t.Parallel()
 

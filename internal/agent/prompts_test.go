@@ -90,11 +90,20 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "Would you like me to index the whole codebase?") || !strings.Contains(out, "`index_codebase`") {
 		t.Fatalf("expected codebase indexing guidance in coder prompt")
 	}
+	if !strings.Contains(out, "structured repository tools such as `ls`, `glob`, or `grep`") {
+		t.Fatalf("expected structured path-verification guidance in coder prompt")
+	}
+	if !strings.Contains(out, "last-resort terminal execution") {
+		t.Fatalf("expected bash fallback guidance in coder prompt")
+	}
 	if strings.Contains(out, "Available skills: `architect`, `backend`, `debug`, `devops`, `frontend`, `security`.") {
 		t.Fatalf("expected hardcoded skill routing to be removed from coder prompt")
 	}
 	if strings.Contains(out, "<available_skills>") {
 		t.Fatalf("expected prompt to stop inlining full available skills inventory")
+	}
+	if strings.Contains(out, "targeted shell commands such as `ls`, `find`, or `rg --files`") {
+		t.Fatalf("expected shell path verification guidance to be removed from coder prompt")
 	}
 }
 
@@ -156,6 +165,8 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 				"If memory continuity appears broken or contradictory, use `memory_health` and then recover from durable state instead of guessing.",
 				".sapphire-memory/MEMORY.md",
 				"reply directly and use no tools",
+				"repository discovery, file-reading, or code-search tool",
+				"last-resort terminal tool",
 			},
 		},
 	} {

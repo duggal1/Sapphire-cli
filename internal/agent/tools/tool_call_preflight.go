@@ -15,6 +15,7 @@ import (
 	"charm.land/fantasy/schema"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/filetracker"
+	mvdanShell "mvdan.cc/sh/v3/shell"
 )
 
 var (
@@ -1044,28 +1045,26 @@ func simpleBashToTool(command string) (string, map[string]any, bool) {
 	if strings.ContainsAny(cmd, "|&;><") || strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.Contains(cmd, "$(") {
 		return "", nil, false
 	}
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	parts, err := mvdanShell.Fields(cmd, nil)
+	if err != nil || len(parts) == 0 {
 		return "", nil, false
 	}
 	switch parts[0] {
 	case "ls":
-		if len(parts) > 1 && strings.HasPrefix(parts[1], "-") {
-			return "", nil, false
-		}
-		input := map[string]any{}
-		if len(parts) > 1 {
-			input["path"] = parts[1]
-		}
-		return LSToolName, input, true
+		return rewriteSimpleLSCommand(parts)
+	case "tree":
+		return rewriteSimpleTreeCommand(parts)
 	case "cat":
-		if len(parts) < 2 || strings.HasPrefix(parts[1], "-") {
+		if len(parts) != 2 || strings.HasPrefix(parts[1], "-") {
 			return "", nil, false
 		}
 		return SingleViewToolName, map[string]any{"file_path": parts[1]}, true
-	default:
-		return "", nil, false
+	case "grep", "rg":
+		return rewriteSimpleSearchCommand(parts)
+	case "sed":
+		return rewriteSimpleSedSliceCommand(parts)
 	}
+	return "", nil, false
 }
 
 var (
@@ -1073,6 +1072,7 @@ var (
 	catHeadCommandPattern  = regexp.MustCompile(`^\s*cat\s+(.+?)\s*\|\s*head\s+-n\s+(\d+)\s*$`)
 	findNameCommandPattern = regexp.MustCompile(`^\s*find\s+(\S+)\s+-name\s+['"]?([^'"]+)['"]?\s*$`)
 	findDirsCommandPattern = regexp.MustCompile(`^\s*find\s+(\S+)\s+-maxdepth\s+(\d+)\s+-type\s+d\s*$`)
+	sedSlicePattern        = regexp.MustCompile(`^(\d+)(?:,(\d+))?p$`)
 )
 
 func rewriteSimpleBashReadCommand(command string) (string, map[string]any, bool) {
@@ -1135,6 +1135,279 @@ func rewriteSimpleBashReadCommand(command string) (string, map[string]any, bool)
 	return "", nil, false
 }
 
+func rewriteSimpleLSCommand(parts []string) (string, map[string]any, bool) {
+	if len(parts) == 0 || parts[0] != "ls" {
+		return "", nil, false
+	}
+	paths := make([]string, 0, 2)
+	for _, part := range parts[1:] {
+		if part == "--" || strings.HasPrefix(part, "-") {
+			continue
+		}
+		paths = append(paths, trimShellQuotes(part))
+	}
+	input := map[string]any{}
+	switch len(paths) {
+	case 0:
+		return LSToolName, input, true
+	case 1:
+		input["path"] = paths[0]
+	default:
+		input["paths"] = uniqueStrings(paths)
+	}
+	return LSToolName, input, true
+}
+
+func rewriteSimpleTreeCommand(parts []string) (string, map[string]any, bool) {
+	if len(parts) == 0 || parts[0] != "tree" {
+		return "", nil, false
+	}
+	input := map[string]any{}
+	paths := make([]string, 0, 2)
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		switch {
+		case part == "--":
+			continue
+		case part == "-L" && i+1 < len(parts):
+			if depth, err := strconv.Atoi(parts[i+1]); err == nil && depth >= 0 {
+				input["depth"] = depth
+				i++
+				continue
+			}
+			return "", nil, false
+		case strings.HasPrefix(part, "-"):
+			continue
+		default:
+			paths = append(paths, trimShellQuotes(part))
+		}
+	}
+	switch len(paths) {
+	case 0:
+		return LSToolName, input, true
+	case 1:
+		input["path"] = paths[0]
+	default:
+		input["paths"] = uniqueStrings(paths)
+	}
+	return LSToolName, input, true
+}
+
+func rewriteSimpleSedSliceCommand(parts []string) (string, map[string]any, bool) {
+	if len(parts) != 4 || parts[0] != "sed" || parts[1] != "-n" {
+		return "", nil, false
+	}
+	matches := sedSlicePattern.FindStringSubmatch(parts[2])
+	if len(matches) != 3 {
+		return "", nil, false
+	}
+	start, err := strconv.Atoi(matches[1])
+	if err != nil || start <= 0 {
+		return "", nil, false
+	}
+	end := start
+	if strings.TrimSpace(matches[2]) != "" {
+		end, err = strconv.Atoi(matches[2])
+		if err != nil || end < start {
+			return "", nil, false
+		}
+	}
+	return SingleViewToolName, map[string]any{
+		"file_path": parts[3],
+		"offset":    start,
+		"limit":     end - start + 1,
+	}, true
+}
+
+func rewriteSimpleSearchCommand(parts []string) (string, map[string]any, bool) {
+	if len(parts) == 0 || (parts[0] != "grep" && parts[0] != "rg") {
+		return "", nil, false
+	}
+
+	var (
+		pattern         string
+		include         string
+		literalText     bool
+		caseInsensitive bool
+		targets         []string
+	)
+
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		switch {
+		case part == "--":
+			continue
+		case part == "-n" || part == "-l" || part == "-H" || part == "-S" || part == "-s" || part == "--line-number" || part == "--files-with-matches" || part == "--with-filename":
+			continue
+		case part == "-F" || part == "--fixed-strings":
+			literalText = true
+			continue
+		case part == "-i" || part == "--ignore-case":
+			caseInsensitive = true
+			continue
+		case part == "-e" || part == "--regexp":
+			if i+1 >= len(parts) {
+				return "", nil, false
+			}
+			pattern = parts[i+1]
+			i++
+			continue
+		case strings.HasPrefix(part, "-e") && len(part) > 2:
+			pattern = part[2:]
+			continue
+		case part == "-g" || part == "--glob":
+			if i+1 >= len(parts) {
+				return "", nil, false
+			}
+			include = trimShellQuotes(parts[i+1])
+			i++
+			continue
+		case strings.HasPrefix(part, "-g") && len(part) > 2:
+			include = trimShellQuotes(part[2:])
+			continue
+		case strings.HasPrefix(part, "--glob="):
+			include = trimShellQuotes(strings.TrimPrefix(part, "--glob="))
+			continue
+		case part == "-t" || part == "--type":
+			if i+1 >= len(parts) {
+				return "", nil, false
+			}
+			mapped := languageTypeToInclude(parts[i+1])
+			if mapped == "" {
+				return "", nil, false
+			}
+			include = mapped
+			i++
+			continue
+		case strings.HasPrefix(part, "-t") && len(part) > 2:
+			mapped := languageTypeToInclude(part[2:])
+			if mapped == "" {
+				return "", nil, false
+			}
+			include = mapped
+			continue
+		case strings.HasPrefix(part, "--type="):
+			mapped := languageTypeToInclude(strings.TrimPrefix(part, "--type="))
+			if mapped == "" {
+				return "", nil, false
+			}
+			include = mapped
+			continue
+		case strings.HasPrefix(part, "-"):
+			return "", nil, false
+		case pattern == "":
+			pattern = trimShellQuotes(part)
+		default:
+			targets = append(targets, trimShellQuotes(part))
+		}
+	}
+
+	if strings.TrimSpace(pattern) == "" {
+		return "", nil, false
+	}
+
+	input := map[string]any{}
+	if caseInsensitive {
+		if literalText || !patternLooksRegex(pattern) {
+			input["pattern"] = "(?i)" + regexp.QuoteMeta(pattern)
+		} else {
+			input["pattern"] = "(?i)" + pattern
+		}
+	} else {
+		input["pattern"] = pattern
+		if literalText {
+			input["literal_text"] = true
+		}
+	}
+	if include != "" {
+		input["include"] = include
+	}
+
+	searchRoots, searchInclude, ok := normalizeSearchTargetsForStructuredTool(targets)
+	if !ok {
+		return "", nil, false
+	}
+	if searchInclude != "" {
+		if existing, _ := input["include"].(string); existing != "" && existing != searchInclude {
+			return "", nil, false
+		}
+		input["include"] = searchInclude
+	}
+	switch len(searchRoots) {
+	case 0:
+	case 1:
+		input["path"] = searchRoots[0]
+	default:
+		input["paths"] = searchRoots
+	}
+
+	return GrepToolName, input, true
+}
+
+func normalizeSearchTargetsForStructuredTool(targets []string) ([]string, string, bool) {
+	roots := make([]string, 0, len(targets))
+	var include string
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		root := target
+		if hasShellGlob(target) {
+			root = filepath.Dir(target)
+			nextInclude := filepath.Base(target)
+			if nextInclude == "." || nextInclude == string(filepath.Separator) || nextInclude == "" {
+				return nil, "", false
+			}
+			if include != "" && include != nextInclude {
+				return nil, "", false
+			}
+			include = nextInclude
+		}
+		roots = append(roots, root)
+	}
+	return uniqueStrings(roots), include, true
+}
+
+func hasShellGlob(value string) bool {
+	return strings.ContainsAny(value, "*?[{")
+}
+
+func patternLooksRegex(value string) bool {
+	return strings.ContainsAny(value, `.+*?()[]{}^$|\`)
+}
+
+func languageTypeToInclude(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "go":
+		return "*.go"
+	case "js", "javascript":
+		return "*.js"
+	case "jsx":
+		return "*.jsx"
+	case "ts", "typescript":
+		return "*.{ts,tsx}"
+	case "tsx":
+		return "*.tsx"
+	case "py", "python":
+		return "*.py"
+	case "rs", "rust":
+		return "*.rs"
+	case "json":
+		return "*.json"
+	case "yaml", "yml":
+		return "*.{yaml,yml}"
+	case "toml":
+		return "*.toml"
+	case "md", "markdown":
+		return "*.md"
+	case "sql":
+		return "*.sql"
+	default:
+		return ""
+	}
+}
+
 func trimShellQuotes(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) >= 2 {
@@ -1150,20 +1423,20 @@ func shouldRejectBashForStructuredRepoOps(command string) bool {
 	if cmd == "" {
 		return false
 	}
-	if _, _, ok := rewriteSimpleBashReadCommand(command); ok {
+	if _, _, ok := simpleBashToTool(command); ok {
 		return false
 	}
 	if strings.Contains(cmd, "cat <<") && (strings.Contains(cmd, ".csv") || strings.Contains(cmd, ".txt")) {
 		return true
 	}
 	if strings.Contains(cmd, "&&") || strings.Contains(cmd, "||") || strings.ContainsAny(cmd, "|;") {
-		for _, token := range []string{"find ", "cat ", "head ", "tail ", "ls ", "tree", "grep ", "rg ", "sed -n", "wc "} {
+		for _, token := range []string{"find ", "cat ", "head ", "tail ", "ls ", "tree", "grep ", "rg ", "sed -n", "wc ", "fd ", "bat ", "eza"} {
 			if strings.Contains(cmd, token) {
 				return true
 			}
 		}
 	}
-	for _, prefix := range []string{"find ", "cat ", "head ", "tail ", "tree", "grep ", "rg ", "sed -n", "awk ", "wc "} {
+	for _, prefix := range []string{"find ", "cat ", "head ", "tail ", "tree", "grep ", "rg ", "sed -n", "awk ", "wc ", "fd ", "bat ", "eza"} {
 		if strings.HasPrefix(cmd, prefix) {
 			return true
 		}

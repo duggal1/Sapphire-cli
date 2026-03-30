@@ -23,7 +23,7 @@ func TestHandleFileNotFoundUsesRelativeSuggestions(t *testing.T) {
 		t.Fatal("expected missing file error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "Use ls, glob, or rg --files") {
+	if !strings.Contains(msg, "Use ls or glob") {
 		t.Fatalf("expected recovery hint, got %q", msg)
 	}
 	if !strings.Contains(msg, "internal/ui/messages.go") {

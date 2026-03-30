@@ -145,12 +145,24 @@ func DeriveToolErrorMetadata(toolName, content string) (ToolErrorMetadata, bool)
 		if strings.Contains(normalized, "you must read the file before editing") {
 			return ToolErrorMetadata{ToolName: toolName, Code: "read_before_edit", UIMessage: "Read the file before editing."}, true
 		}
+		if strings.Contains(normalized, "edit blocked: fix all current-file errors and warnings") {
+			return ToolErrorMetadata{ToolName: toolName, Code: "current_file_diagnostics_block", UIMessage: "Finish fixing the active file before editing another file."}, true
+		}
+		if strings.Contains(normalized, "has been modified since it was last read") {
+			return ToolErrorMetadata{ToolName: toolName, Code: "reread_before_edit", UIMessage: "Re-read the file before editing."}, true
+		}
 	case AgenticEditToolName:
 		if strings.Contains(normalized, "at least one file edit operation is required") || strings.Contains(normalized, "file_path is required") {
 			return ToolErrorMetadata{ToolName: toolName, Code: "missing_edit_payload", UIMessage: "Missing edit target or edits."}, true
 		}
 		if strings.Contains(normalized, "you must read the file before editing") {
 			return ToolErrorMetadata{ToolName: toolName, Code: "read_before_edit", UIMessage: "Read files before editing."}, true
+		}
+		if strings.Contains(normalized, "edit blocked: fix all current-file errors and warnings") {
+			return ToolErrorMetadata{ToolName: toolName, Code: "current_file_diagnostics_block", UIMessage: "Finish fixing the active file before editing another file."}, true
+		}
+		if strings.Contains(normalized, "has been modified since it was last read") {
+			return ToolErrorMetadata{ToolName: toolName, Code: "reread_before_edit", UIMessage: "Re-read files before editing."}, true
 		}
 	case WebSearchToolName, GoogleSearchToolName:
 		if strings.Contains(normalized, "query is required") || strings.Contains(normalized, "no query provided") {

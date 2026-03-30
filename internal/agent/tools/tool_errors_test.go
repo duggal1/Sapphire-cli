@@ -64,3 +64,11 @@ func TestAnnotateToolErrorMetadataPreservesExistingPayload(t *testing.T) {
 	require.Contains(t, metadata, `"foo":"bar"`)
 	require.True(t, strings.Contains(metadata, `"ui_message":"Missing search query."`))
 }
+
+func TestDeriveToolErrorMetadataForEditGuardBlock(t *testing.T) {
+	t.Parallel()
+
+	meta, ok := DeriveToolErrorMetadata(EditToolName, "edit blocked: fix all current-file errors and warnings in /tmp/first.go before editing /tmp/second.go")
+	require.True(t, ok)
+	require.Equal(t, "Finish fixing the active file before editing another file.", meta.UIMessage)
+}

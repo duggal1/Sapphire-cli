@@ -363,9 +363,9 @@ func viewNotFoundError(workingDir, fullPath, filePath string) error {
 			}
 		}
 		if len(suggestions) > 0 {
-			return fmt.Errorf("File not found: %s\nUse ls, glob, or rg --files to verify the exact path.\n\nDid you mean one of these?\n%s", filePath, strings.Join(suggestions, "\n"))
+			return fmt.Errorf("File not found: %s\nUse ls or glob to verify the exact path.\n\nDid you mean one of these?\n%s", filePath, strings.Join(suggestions, "\n"))
 		}
-		return fmt.Errorf("File not found: %s\nUse ls, glob, or rg --files to verify the exact path.", filePath)
+		return fmt.Errorf("File not found: %s\nUse ls or glob to verify the exact path.", filePath)
 	}
 	return fmt.Errorf("error accessing file %s: %w", filePath, err)
 }

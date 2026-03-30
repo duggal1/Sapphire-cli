@@ -340,7 +340,7 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
-- Do not use "bash" for repository discovery, file reads, content search, or temporary prompt/CSV setup when a structured tool exists.
+- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
 - Durable memory is long-horizon only. Use it only after compaction or resume, for explicit prior-context requests, in active long-horizon runs, or when the session is about 50%+ full. Repo-local memory files live under ".sapphire-memory/".
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - Use agentic_fetch for current external docs instead of guessing.</system_reminder>`
@@ -1559,6 +1559,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			mistakeSelfHealFollowUp = &followUp
 		}
 	}
+	var mistakePersistenceFollowUp *SessionAgentCall
+	if mode == planmode.DefaultSessionMode && call.MistakeSelfHealTry > 0 {
+		if evidence, ok := runtimeControl.mistakeSelfHealing.ConsumePersistenceReminder(); ok {
+			followUp := buildMistakePersistenceCall(call, evidence)
+			mistakePersistenceFollowUp = &followUp
+		}
+	}
+	var mistakeEvalFollowUp *SessionAgentCall
+	if mode == planmode.DefaultSessionMode && call.MistakeSelfHealTry > 0 {
+		if evidence, ok := runtimeControl.mistakeSelfHealing.ConsumeEvalReminder(); ok {
+			followUp := buildImprovementEvalCall(call, evidence)
+			mistakeEvalFollowUp = &followUp
+		}
+	}
 
 	// Release active request before processing queued messages.
 	a.activeRequests.Del(call.SessionID)
@@ -1569,6 +1583,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			resultText = result.Response.Content.Text()
 		}
 		a.checkpointTurn(ctx, call.SessionID, call.Prompt, resultText, "completed", false)
+	}
+	if mistakePersistenceFollowUp != nil {
+		return a.Run(ctx, *mistakePersistenceFollowUp)
+	}
+	if mistakeEvalFollowUp != nil {
+		return a.Run(ctx, *mistakeEvalFollowUp)
 	}
 	if mistakeSelfHealFollowUp != nil {
 		return a.Run(ctx, *mistakeSelfHealFollowUp)
@@ -2102,11 +2122,11 @@ Execute your assigned chunk of the tasks autonomously and efficiently.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
-- Do not use "bash" for repository discovery, file reads, content search, or temporary prompt/CSV setup when a structured tool exists.
+- Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
 - Code Execution: Use "python" tool for complex computations, data processing, or verification.
-- Shell: Use "bash" only for build/test/process control, background jobs, or commands with no structured-tool equivalent.
+- Shell: Use "bash" for terminal commands and background jobs.
 Resolve your assigned scope independently and return only verified, concise objective results back to the main agent.</system_reminder>`,
 		))
 	}

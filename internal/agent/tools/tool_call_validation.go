@@ -83,7 +83,7 @@ func validateBashInputMap(input map[string]any) error {
 			BashToolName,
 			"missing_command",
 			"Missing command.",
-			"bash requires a non-empty command string in command. Do not omit it. If the task is repository discovery, file reading, web search, or delegation setup, use structured tools instead of bash.",
+			"bash requires a non-empty command string in command. Do not omit it. If the task is repository discovery, file reading, code search, web search, or delegation setup, use structured tools instead of bash.",
 		)
 	}
 	if shouldRejectBashForStructuredRepoOps(command) {
@@ -91,7 +91,7 @@ func validateBashInputMap(input map[string]any) error {
 			BashToolName,
 			"use_structured_tools",
 			"Use structured tools instead of bash.",
-			"do not use bash for repository discovery, file reads, web search, or delegation payload setup when structured tools exist. Use ls/glob/grep for discovery, single_view for exactly one file, agentic_view for 2+ files, web_search/google_search for web lookup, and pass spawn_agent/send_input messages directly instead of writing temporary files.",
+			"do not use bash for repository discovery, code search, or file reads when structured tools exist. Shell commands like ls/find/tree/fd/eza belong to ls/glob, grep/rg belong to grep, and cat/head/tail/sed slices belong to single_view or agentic_view. Use web_search/google_search for web lookup, and pass spawn_agent/send_input messages directly instead of writing temporary payload files.",
 		)
 	}
 	return nil

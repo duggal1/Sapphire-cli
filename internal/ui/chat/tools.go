@@ -156,6 +156,7 @@ type baseToolMessageItem struct {
 
 var _ Expandable = (*baseToolMessageItem)(nil)
 var _ AnimationActive = (*baseToolMessageItem)(nil)
+var _ CopyableMessageItem = (*baseToolMessageItem)(nil)
 
 // newBaseToolMessageItem is the internal constructor for base tool message items.
 func newBaseToolMessageItem(
@@ -429,10 +430,14 @@ func (t *baseToolMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) b
 // HandleKeyEvent implements KeyEventHandler.
 func (t *baseToolMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); k == "c" || k == "y" {
-		text := t.formatToolForCopy()
-		return true, common.CopyToClipboard(text, "Tool content copied to clipboard")
+		return true, common.CopyToClipboard(t.CopyContent(), "Tool content copied to clipboard")
 	}
 	return false, nil
+}
+
+// CopyContent returns the clipboard payload for the tool call.
+func (t *baseToolMessageItem) CopyContent() string {
+	return t.formatToolForCopy()
 }
 
 // pendingTool renders a tool that is still in progress.
@@ -441,6 +446,10 @@ func pendingTool(sty *styles.Styles, name string) string {
 	toolName := sty.Tool.NameNormal.Render(name)
 
 	return fmt.Sprintf("%s %s", icon, toolName)
+}
+
+func pendingToolWithNameStyle(sty *styles.Styles, name string, nameStyle, iconStyle lipgloss.Style) string {
+	return fmt.Sprintf("%s %s", toolIconWithStyle(sty, ToolStatusRunning, iconStyle), nameStyle.Render(name))
 }
 
 // OnShimmerTick invalidates the cached render while the tool is pending.
@@ -479,7 +488,7 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 		return ""
 	}
 	contentWidth := max(0, width-3)
-	errContent := strings.TrimSpace(result.Content)
+	errContent := strings.TrimSpace(tools.UserVisibleToolError(result.Name, result.Content, result.Metadata))
 	if errContent == "" {
 		errContent = "tool execution failed"
 	}
@@ -587,6 +596,33 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 	remainingWidth := width - prefixWidth
 	paramsStr := toolParamList(sty, params, remainingWidth)
 	return prefix + paramsStr
+}
+
+func toolHeaderWithNameStyle(sty *styles.Styles, status ToolStatus, name string, width int, nameStyle, iconStyle lipgloss.Style, params ...string) string {
+	icon := toolIconWithStyle(sty, status, iconStyle)
+	toolName := nameStyle.Render(name)
+	prefix := fmt.Sprintf("%s %s", icon, toolName)
+	if len(params) > 0 {
+		prefix += " " + sty.ResourceAdditionalText.Render("·")
+	}
+	prefix += " "
+	prefixWidth := lipgloss.Width(prefix)
+	remainingWidth := width - prefixWidth
+	paramsStr := toolParamList(sty, params, remainingWidth)
+	return prefix + paramsStr
+}
+
+func toolIconWithStyle(sty *styles.Styles, status ToolStatus, iconStyle lipgloss.Style) string {
+	switch status {
+	case ToolStatusSuccess:
+		return iconStyle.Render(styles.CheckIcon)
+	case ToolStatusError:
+		return sty.Tool.IconError.String()
+	case ToolStatusCanceled:
+		return sty.Tool.IconCancelled.SetString("−").String()
+	default:
+		return iconStyle.Render(toolSpinnerFrame())
+	}
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
@@ -981,7 +1017,7 @@ func (t *baseToolMessageItem) formatToolForCopy() string {
 	if t.result != nil && t.result.ToolCallID != "" {
 		if t.result.IsError {
 			parts = append(parts, "### Error:")
-			parts = append(parts, t.result.Content)
+			parts = append(parts, tools.UserVisibleToolError(t.result.Name, t.result.Content, t.result.Metadata))
 		} else {
 			parts = append(parts, "### Result:")
 			content := t.formatResultForCopy()

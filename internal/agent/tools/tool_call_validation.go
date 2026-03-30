@@ -18,7 +18,12 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 	switch call.Name {
 	case ViewToolName, SingleViewToolName, AgenticViewToolName:
 		if len(extractViewPaths(input)) == 0 {
-			return errors.New("file_path is required")
+			return NewToolGuidanceError(
+				call.Name,
+				"missing_file_path",
+				"Missing file path.",
+				"single_view/agentic_view require explicit file path arguments. Do not pass empty input or natural language. Use file_path for one file or file_paths for multiple files, then retry with real repo-relative paths.",
+			)
 		}
 	case BashToolName:
 		return validateBashInputMap(input)
@@ -30,6 +35,36 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 		return validateEditInputMap(input)
 	case AgenticEditToolName:
 		return validateAgenticEditInputMap(input)
+	case WebSearchToolName:
+		if len(normalizeBatchTargets(firstStringValueFromMap(input, "query"), coerceStringSlice(input["queries"]), "")) == 0 {
+			return NewToolGuidanceError(
+				call.Name,
+				"missing_query",
+				"Missing search query.",
+				"web_search requires query or queries. Do not call it with empty input. Provide one concrete search query string or a non-empty queries array, then retry.",
+			)
+		}
+	case GoogleSearchToolName:
+		query := strings.TrimSpace(firstStringValueFromMap(input, "query"))
+		urls := coerceStringSlice(input["urls"])
+		urls = append(urls, coerceStringSlice(input["url"])...)
+		if query == "" && len(urls) == 0 {
+			return NewToolGuidanceError(
+				call.Name,
+				"missing_query",
+				"Missing search query.",
+				"google_search requires a grounded query or at least one URL context target. Do not call it empty. Provide query, url, or urls, then retry.",
+			)
+		}
+	case ConnectMCPToolName:
+		if strings.TrimSpace(firstStringValueFromMap(input, "mcp_name")) == "" {
+			return NewToolGuidanceError(
+				call.Name,
+				"missing_mcp_name",
+				"Missing MCP name.",
+				"connect_mcp requires mcp_name. Use an exact installed MCP server name from list_available_mcps or install_mcp output. Do not call connect_mcp with empty input.",
+			)
+		}
 	default:
 		return nil
 	}
@@ -44,10 +79,20 @@ func validateBashInputMap(input map[string]any) error {
 	command, _ := input["command"].(string)
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return errors.New("command is required")
+		return NewToolGuidanceError(
+			BashToolName,
+			"missing_command",
+			"Missing command.",
+			"bash requires a non-empty command string in command. Do not omit it. If the task is repository discovery, file reading, web search, or delegation setup, use structured tools instead of bash.",
+		)
 	}
 	if shouldRejectBashForStructuredRepoOps(command) {
-		return errors.New("do not use bash for repository discovery, file reads, or delegation payload setup when structured tools exist. Use ls/glob/grep for discovery, single_view for exactly one file, agentic_view for 2+ files, and pass spawn_agent/send_input messages directly instead of writing temporary .txt/.csv files")
+		return NewToolGuidanceError(
+			BashToolName,
+			"use_structured_tools",
+			"Use structured tools instead of bash.",
+			"do not use bash for repository discovery, file reads, web search, or delegation payload setup when structured tools exist. Use ls/glob/grep for discovery, single_view for exactly one file, agentic_view for 2+ files, web_search/google_search for web lookup, and pass spawn_agent/send_input messages directly instead of writing temporary files.",
+		)
 	}
 	return nil
 }
@@ -114,11 +159,21 @@ func validateEditInputMap(input map[string]any) error {
 	}
 	filePath, _ := input["file_path"].(string)
 	if strings.TrimSpace(filePath) == "" {
-		return errors.New("file_path is required")
+		return NewToolGuidanceError(
+			EditToolName,
+			"missing_file_path",
+			"Missing file path.",
+			"edit requires file_path. Do not call edit without an explicit target file. Retry with a real repo-relative file_path after reading the file first.",
+		)
 	}
 	if _, hasOld := input["old_string"]; !hasOld {
 		if _, hasNew := input["new_string"]; !hasNew {
-			return errors.New("at least one of old_string or new_string is required")
+			return NewToolGuidanceError(
+				EditToolName,
+				"missing_edit_payload",
+				"Missing edit payload.",
+				"edit requires old_string or new_string. Do not call edit with only a path. Provide a precise edit payload after reading the latest file contents.",
+			)
 		}
 	}
 	return nil
@@ -133,10 +188,20 @@ func validateAgenticEditInputMap(input map[string]any) error {
 	if fileEdits, ok := input["file_edits"]; ok {
 		editItems, err := coerceObjectSlice(fileEdits)
 		if err != nil {
-			return errors.New("agentic_edit file_edits must be an object or array")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"invalid_file_edits",
+				"Invalid edit payload.",
+				"agentic_edit file_edits must be an object or array of file edit specs. Do not send free-form text. Retry with structured file_edits JSON.",
+			)
 		}
 		if len(editItems) == 0 {
-			return errors.New("at least one file edit operation is required")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"missing_edit_payload",
+				"Missing edit target or edits.",
+				"agentic_edit requires at least one file edit operation. Provide file_edits with file_path and edits, or use the single-file shape with file_path plus edits.",
+			)
 		}
 		validItems := 0
 		for _, editMap := range editItems {
@@ -151,12 +216,22 @@ func validateAgenticEditInputMap(input map[string]any) error {
 				return fmt.Errorf("%s: %w", filePath, err)
 			}
 			if strings.TrimSpace(filePath) == "" {
-				return errors.New("file_path is required in each file_edit")
+				return NewToolGuidanceError(
+					AgenticEditToolName,
+					"missing_file_path",
+					"Missing edit target or edits.",
+					"each agentic_edit file_edits item requires file_path. Do not submit edit operations without explicit target files.",
+				)
 			}
 			validItems++
 		}
 		if validItems == 0 {
-			return errors.New("at least one file edit operation is required")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"missing_edit_payload",
+				"Missing edit target or edits.",
+				"agentic_edit requires at least one valid file edit operation. Empty or pathless edit items are invalid.",
+			)
 		}
 		return nil
 	}
@@ -179,7 +254,12 @@ func validateAgenticEditInputMap(input map[string]any) error {
 	if strings.TrimSpace(filePath) == "" {
 		path, _ := input["path"].(string)
 		if strings.TrimSpace(path) == "" {
-			return errors.New("at least one file edit operation is required")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"missing_edit_payload",
+				"Missing edit target or edits.",
+				"agentic_edit requires either file_edits or a single-file shape with file_path/path plus edit operations. Do not call it with empty input.",
+			)
 		}
 	}
 
@@ -190,16 +270,31 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 	if edits, ok := editMap["edits"]; ok {
 		editList, err := coerceObjectSlice(edits)
 		if err != nil {
-			return errors.New("agentic_edit edits must be an object or array")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"invalid_edits",
+				"Invalid edit payload.",
+				"agentic_edit edits must be an object or array of edit operations. Do not pass free-form text or malformed JSON.",
+			)
 		}
 		if len(editList) == 0 {
-			return errors.New("at least one file edit operation is required")
+			return NewToolGuidanceError(
+				AgenticEditToolName,
+				"missing_edit_payload",
+				"Missing edit target or edits.",
+				"agentic_edit edits cannot be empty. Provide at least one edit operation with old_string or new_string.",
+			)
 		}
 		for _, op := range editList {
 			opMap := op
 			if _, hasOld := opMap["old_string"]; !hasOld {
 				if _, hasNew := opMap["new_string"]; !hasNew {
-					return errors.New("each edit must include old_string or new_string")
+					return NewToolGuidanceError(
+						AgenticEditToolName,
+						"missing_edit_payload",
+						"Invalid edit payload.",
+						"each agentic_edit operation must include old_string or new_string. Do not submit empty edit operations.",
+					)
 				}
 			}
 		}
@@ -212,7 +307,12 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 	if _, ok := editMap["new_string"]; ok {
 		return nil
 	}
-	return errors.New("at least one file edit operation is required")
+	return NewToolGuidanceError(
+		AgenticEditToolName,
+		"missing_edit_payload",
+		"Missing edit target or edits.",
+		"agentic_edit requires at least one concrete edit operation. Provide edits or old_string/new_string instead of empty input.",
+	)
 }
 
 func hasAgenticEditOperations(editMap map[string]any) bool {
@@ -229,6 +329,22 @@ func hasAgenticEditOperations(editMap map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+func firstStringValueFromMap(input map[string]any, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := input[key]
+		if !ok {
+			continue
+		}
+		switch value := raw.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 func coerceObjectSlice(v any) ([]map[string]any, error) {

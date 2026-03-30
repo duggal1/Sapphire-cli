@@ -8,10 +8,10 @@ import (
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/duggal1/Sapphire-cli/internal/ui/common"
-	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
+	"github.com/duggal1/Sapphire-cli/internal/ui/util"
 )
 
 // DefaultStatusTTL is the default time-to-live for status messages.
@@ -99,6 +99,10 @@ func (s *Status) Draw(scr uv.Screen, area uv.Rectangle) {
 	case util.InfoTypeSuccess:
 		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "SUCCESS"
+	case util.InfoTypeCopy:
+		toastBg = s.com.Styles.Toast.CopyColor
+		textColor = s.com.Styles.Toast.CopyTextColor
+		label = "COPY"
 	default:
 		toastBg = s.com.Styles.Toast.SuccessColor
 		label = "INFO"

@@ -35,6 +35,7 @@ const (
 	InfoTypeWarn
 	InfoTypeError
 	InfoTypeUpdate
+	InfoTypeCopy
 )
 
 func NewInfoMsg(info string) InfoMsg {
@@ -58,8 +59,19 @@ func NewErrorMsg(err error) InfoMsg {
 	}
 }
 
+func NewCopyMsg(msg string) InfoMsg {
+	return InfoMsg{
+		Type: InfoTypeCopy,
+		Msg:  msg,
+	}
+}
+
 func ReportInfo(info string) tea.Cmd {
 	return CmdHandler(NewInfoMsg(info))
+}
+
+func ReportCopy(msg string) tea.Cmd {
+	return CmdHandler(NewCopyMsg(msg))
 }
 
 func ReportWarn(warn string) tea.Cmd {

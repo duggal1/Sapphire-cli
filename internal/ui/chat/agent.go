@@ -313,8 +313,10 @@ type agenticFetchParams struct {
 // RenderTool implements the [ToolRenderer] interface.
 func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
+	nameStyle := sty.Base.Foreground(sty.FgMuted).Bold(true)
+	iconStyle := sty.Base.Foreground(sty.Primary)
 	if !opts.ToolCall.Finished && !opts.IsCanceled() && len(r.fetch.nestedTools) == 0 {
-		return pendingTool(sty, "Agentic Fetch")
+		return pendingToolWithNameStyle(sty, "Agentic Fetch", nameStyle, iconStyle)
 	}
 
 	var params agenticFetchParams
@@ -329,13 +331,13 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		toolParams = append(toolParams, params.URL)
 	}
 
-	header := toolHeader(sty, opts.Status, "Agentic Fetch", cappedWidth, opts.Compact, toolParams...)
+	header := toolHeaderWithNameStyle(sty, opts.Status, "Agentic Fetch", cappedWidth, nameStyle, iconStyle, toolParams...)
 	if opts.Compact {
 		return header
 	}
 
 	// Build the prompt tag.
-	promptTag := sty.Tool.AgenticFetchPromptTag.Render("Prompt")
+	promptTag := sty.Base.Bold(true).Padding(0, 1).MarginLeft(2).Background(sty.Primary).Foreground(sty.White).Render("Prompt")
 	promptTagWidth := lipgloss.Width(promptTag)
 
 	// Calculate remaining width for prompt text.
@@ -355,11 +357,11 @@ func (r *AgenticFetchToolRenderContext) RenderTool(sty *styles.Styles, width int
 		),
 	)
 
-	childNodes := renderNestedToolPreview(sty, r.fetch.nestedTools, remainingWidth)
-
-	root := &TreeNode{Label: header, Children: childNodes}
-	lines := renderTreeWithRoot(root, cappedWidth)
-	result := strings.Join(lines, "\n")
+	root := &TreeNode{
+		Label:    header,
+		Children: renderNestedToolPreview(sty, r.fetch.nestedTools, remainingWidth),
+	}
+	result := strings.Join(renderTreeWithRoot(root, cappedWidth), "\n")
 
 	// Add body content when completed.
 	if opts.HasResult() && opts.Result.Content != "" {

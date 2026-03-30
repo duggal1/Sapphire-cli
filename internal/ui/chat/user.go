@@ -22,6 +22,8 @@ type UserMessageItem struct {
 	sty         *styles.Styles
 }
 
+var _ CopyableMessageItem = (*UserMessageItem)(nil)
+
 // NewUserMessageItem creates a new UserMessageItem.
 func NewUserMessageItem(sty *styles.Styles, message *message.Message, attachments *attachments.Renderer) MessageItem {
 	return &UserMessageItem{
@@ -146,8 +148,15 @@ func isPasteBlock(filename string) bool {
 // HandleKeyEvent implements KeyEventHandler.
 func (m *UserMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); k == "c" || k == "y" {
-		text := m.message.Content().Text
-		return true, common.CopyToClipboard(text, "Message copied to clipboard")
+		return true, common.CopyToClipboard(m.CopyContent(), "Message copied to clipboard")
 	}
 	return false, nil
+}
+
+// CopyContent returns the clipboard payload for the user message.
+func (m *UserMessageItem) CopyContent() string {
+	if m == nil || m.message == nil {
+		return ""
+	}
+	return m.message.Content().Text
 }

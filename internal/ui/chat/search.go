@@ -240,8 +240,16 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 		path = "."
 	}
 	path = formatRelativePath(path)
+	if path == "." {
+		path = ""
+	}
 
-	header := toolHeader(sty, opts.Status, "List", cappedWidth, opts.Compact, path)
+	var header string
+	if path == "" {
+		header = toolHeader(sty, opts.Status, "List", cappedWidth, opts.Compact)
+	} else {
+		header = toolHeader(sty, opts.Status, "List", cappedWidth, opts.Compact, path)
+	}
 	if opts.Compact {
 		return header
 	}
@@ -257,7 +265,9 @@ func (l *LSToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *To
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
 
 	root := &TreeNode{Label: sty.Tool.ListRoot.Render("List")}
-	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", path)})
+	if path != "" {
+		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Path", path)})
+	}
 
 	statusStr := "running"
 	if opts.HasResult() {

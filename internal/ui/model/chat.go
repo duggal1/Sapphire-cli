@@ -540,6 +540,19 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 
 	switch m.clickCount {
 	case 1:
+		if _, ok := m.list.SelectedItem().(chat.ToolMessageItem); ok {
+			selectedItem := m.list.SelectedItem()
+			if expandable, ok := selectedItem.(chat.Expandable); ok {
+				if !expandable.ToggleExpanded() {
+					m.ScrollToIndex(m.list.Selected())
+				}
+				m.list.InvalidateItem(m.list.Selected())
+				if m.AtBottom() {
+					m.ScrollToBottom()
+				}
+				return true, nil
+			}
+		}
 		// Single click - start selection and schedule delayed click action.
 		m.mouseDown = true
 		m.mouseDownItem = itemIdx
@@ -563,21 +576,10 @@ func (m *Chat) HandleMouseDown(x, y int) (bool, tea.Cmd) {
 		// Double click - copy message content to clipboard
 		selectedItem := m.list.SelectedItem()
 		if selectedItem != nil {
-			// Extract content based on item type
-			var content string
-			switch item := selectedItem.(type) {
-			case *chat.AssistantMessageItem:
-				content = item.Message().Content().Text
-			case *chat.UserMessageItem:
-				content = item.Message().Content().Text
-			default:
-				// For other types (like tool messages), use existing copy logic
-				m.selectWord(itemIdx, x, itemY)
-				return true, nil
-			}
-
-			if content != "" {
-				return true, common.CopyToClipboard(content, "Copied to clipboard")
+			if copyable, ok := selectedItem.(chat.CopyableMessageItem); ok {
+				if content := copyable.CopyContent(); content != "" {
+					return true, common.CopyToClipboard(content, "Copied to clipboard")
+				}
 			}
 		}
 		m.selectWord(itemIdx, x, itemY)

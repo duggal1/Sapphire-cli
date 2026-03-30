@@ -7,11 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/duggal1/Sapphire-cli/internal/app"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 	"github.com/duggal1/Sapphire-cli/internal/ui/util"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // MaxAttachmentSize defines the maximum allowed size for file attachments (5 MB).
@@ -95,6 +95,6 @@ func CopyToClipboardWithCallback(text, successMessage string, callback tea.Cmd) 
 			return nil
 		},
 		callback,
-		util.ReportInfo(successMessage),
+		util.ReportCopy(successMessage),
 	)
 }

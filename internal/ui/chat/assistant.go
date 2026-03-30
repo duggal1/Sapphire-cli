@@ -530,8 +530,15 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 // HandleKeyEvent implements KeyEventHandler.
 func (a *AssistantMessageItem) HandleKeyEvent(key tea.KeyMsg) (bool, tea.Cmd) {
 	if k := key.String(); k == "c" || k == "y" {
-		text := a.message.Content().Text
-		return true, common.CopyToClipboard(text, "Message copied to clipboard")
+		return true, common.CopyToClipboard(a.CopyContent(), "Message copied to clipboard")
 	}
 	return false, nil
+}
+
+// CopyContent returns the clipboard payload for the assistant message.
+func (a *AssistantMessageItem) CopyContent() string {
+	if a == nil || a.message == nil {
+		return ""
+	}
+	return a.message.Content().Text
 }

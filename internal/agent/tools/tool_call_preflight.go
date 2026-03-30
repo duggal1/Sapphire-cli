@@ -41,16 +41,33 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 
 	normalized, ok := NormalizeToolCall(call, tools)
 	if !ok {
-		// Build suggestion list for the model to self-correct
 		suggestions := FindSimilarToolNames(call.Name, tools)
 		if len(suggestions) > 0 {
-			return call, nil, fmt.Errorf("tool not found: %s. Did you mean one of: %s? Use exact tool names from the registry", call.Name, strings.Join(suggestions, ", "))
+			return call, nil, NewToolGuidanceError(
+				call.Name,
+				"tool_not_found",
+				"Unknown tool call.",
+				fmt.Sprintf(
+					"tool not found: %s. Stop inventing tool names. Use one exact tool name from the current registry only. Suggested matches: %s. If you need file reads use single_view or agentic_view; edits use edit or agentic_edit; search use ls/glob/grep/web_search/google_search; delegation use spawn_agent/send_input/wait.",
+					call.Name,
+					strings.Join(suggestions, ", "),
+				),
+			)
 		}
 		available := make([]string, 0, len(tools))
 		for name := range tools {
 			available = append(available, name)
 		}
-		return call, nil, fmt.Errorf("tool not found: %s. Available tools: %s", call.Name, strings.Join(available, ", "))
+		return call, nil, NewToolGuidanceError(
+			call.Name,
+			"tool_not_found",
+			"Unknown tool call.",
+			fmt.Sprintf(
+				"tool not found: %s. Stop inventing tool names. Use one exact tool name from the current registry only. Available tools: %s.",
+				call.Name,
+				strings.Join(available, ", "),
+			),
+		)
 	}
 	call = normalized
 	tool := tools[call.Name]

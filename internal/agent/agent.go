@@ -2723,6 +2723,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
 			baseResult.Content = r.Error.Error()
 			baseResult.IsError = true
+			baseResult.Metadata = tools.AnnotateToolErrorMetadata(result.ToolName, r.Error, baseResult.Metadata)
 		}
 	case fantasy.ToolResultContentTypeMedia:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](result.Result); ok {

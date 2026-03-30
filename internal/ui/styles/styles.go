@@ -455,11 +455,13 @@ type Styles struct {
 	}
 
 	Toast struct {
-		SuccessColor color.Color
-		ErrorColor   color.Color
-		WarnColor    color.Color
-		InfoColor    color.Color
-		TextColor    color.Color
+		SuccessColor  color.Color
+		ErrorColor    color.Color
+		WarnColor     color.Color
+		InfoColor     color.Color
+		CopyColor     color.Color
+		TextColor     color.Color
+		CopyTextColor color.Color
 	}
 
 	// Completions popup styles
@@ -597,23 +599,26 @@ func DefaultStyles(yellowMode bool) Styles {
 		info    = tertiary
 
 		// Toast backgrounds (status bar)
-		toastSuccessBg     = lipgloss.Color("#16A34A")
+		toastSuccessBg     = lipgloss.Color("#22C55E")
 		toastSuccessBorder = lipgloss.Color("#22C55E")
 		toastInfoBg        = lipgloss.Color("#241F33")
 		toastInfoBorder    = lipgloss.Color("#6C5A92")
 		toastUpdateBg      = lipgloss.Color("#241F33")
 		toastUpdateBorder  = lipgloss.Color("#6C5A92")
-		toastWarnBg        = lipgloss.Color("#31281F")
-		toastWarnBorder    = lipgloss.Color("#8F7352")
-		toastErrorBg       = lipgloss.Color("#F43F5E")
+		toastWarnBg        = lipgloss.Color("#EA580C")
+		toastWarnBorder    = lipgloss.Color("#FB923C")
+		toastErrorBg       = lipgloss.Color("#E11D48")
 		toastErrorBorder   = lipgloss.Color("#FB7185")
+		toastCopyBg        = lipgloss.Color("#16A34A")
 
 		// Toast overlay colors
-		toastSuccessColor = toastSuccessBg
-		toastWarnColor    = toastWarnBg
-		toastErrorColor   = toastErrorBg
-		toastInfoColor    = toastInfoBg
-		toastTextColor    = lipgloss.Color("#FFFFFF")
+		toastSuccessColor  = toastSuccessBg
+		toastWarnColor     = toastWarnBg
+		toastErrorColor    = toastErrorBg
+		toastInfoColor     = toastInfoBg
+		toastCopyColor     = toastCopyBg
+		toastTextColor     = lipgloss.Color("#FFFFFF")
+		toastCopyTextColor = lipgloss.Color("#FFFFFF")
 
 		// Colors
 		white = charmtone.Butter
@@ -683,7 +688,9 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Toast.WarnColor = toastWarnColor
 	s.Toast.ErrorColor = toastErrorColor
 	s.Toast.InfoColor = toastInfoColor
+	s.Toast.CopyColor = toastCopyColor
 	s.Toast.TextColor = toastTextColor
+	s.Toast.CopyTextColor = toastCopyTextColor
 
 	s.TextInput = textinput.Styles{
 		Focused: textinput.StyleState{

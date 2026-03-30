@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  goreleaser-snapshot:
+  release-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -20,10 +20,22 @@ jobs:
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean --skip=publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build sapphire
+        run: go build -buildvcs=false -o ./dist/sapphire .
+      - name: Generate shell completions
+        run: |
+          mkdir -p completions
+          ./dist/sapphire completion bash > ./completions/sapphire.bash
+          ./dist/sapphire completion zsh > ./completions/sapphire.zsh
+          ./dist/sapphire completion fish > ./completions/sapphire.fish
+      - name: Generate manpage
+        run: |
+          mkdir -p manpages
+          ./dist/sapphire man | gzip -c > ./manpages/sapphire.1.gz
+      - name: Validate release artifacts
+        run: |
+          test -s ./dist/sapphire
+          test -s ./completions/sapphire.bash
+          test -s ./completions/sapphire.zsh
+          test -s ./completions/sapphire.fish
+          test -s ./manpages/sapphire.1.gz

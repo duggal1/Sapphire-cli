@@ -27,29 +27,10 @@ builds:
       - GOEXPERIMENT=greenteagc
     binary: sapphire
     goos:
-      - linux
       - darwin
-      - windows
-      - freebsd
-      - openbsd
-      - netbsd
-      - android
     goarch:
       - amd64
       - arm64
-      - "386"
-      - arm
-    goarm:
-      - "7"
-    ignore:
-      - goos: android
-        goarch: amd64
-      - goos: android
-        goarch: arm
-      - goos: android
-        goarch: "386"
-      - goos: windows
-        goarch: arm
     ldflags:
       - -s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version={{.Version}}
     flags:
@@ -70,9 +51,6 @@ archives:
       - LICENSE*
       - manpages/*
       - completions/*
-    format_overrides:
-      - goos: windows
-        formats: [zip]
 
 checksum:
   name_template: "checksums.txt"

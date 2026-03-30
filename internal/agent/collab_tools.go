@@ -327,7 +327,12 @@ func (c *coordinator) spawnAgentTool(ctx context.Context) (fantasy.AgentTool, er
 		func(ctx context.Context, params SpawnAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if strings.TrimSpace(params.Message) == "" {
-				return fantasy.NewTextErrorResponse("message is required"), nil
+				return tools.NewGuidanceErrorResponse(
+					SpawnAgentToolName,
+					"missing_message",
+					"Missing sub-agent task.",
+					"spawn_agent requires a non-empty message. Do not spawn blank agents. Give the sub-agent a concrete assigned task, scope, and success criteria in message, then retry.",
+				), nil
 			}
 			sessionID := tools.GetSessionFromContext(ctx)
 			if sessionID == "" {
@@ -402,7 +407,12 @@ func (c *coordinator) resumeAgentTool(ctx context.Context) (fantasy.AgentTool, e
 		func(ctx context.Context, params ResumeAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if params.ID == "" {
-				return fantasy.NewTextErrorResponse("id is required"), nil
+				return tools.NewGuidanceErrorResponse(
+					ResumeAgentToolName,
+					"missing_agent_id",
+					"Missing agent id.",
+					"resume_agent requires id. Use the exact agent_id returned by spawn_agent or listed by prior tool output. Do not call resume_agent with empty input.",
+				), nil
 			}
 			sessionID := tools.GetSessionFromContext(ctx)
 			if sessionID == "" {
@@ -441,10 +451,20 @@ func (c *coordinator) sendInputTool(ctx context.Context) (fantasy.AgentTool, err
 		func(ctx context.Context, params SendInputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if params.ID == "" {
-				return fantasy.NewTextErrorResponse("id is required"), nil
+				return tools.NewGuidanceErrorResponse(
+					SendInputToolName,
+					"missing_agent_id",
+					"Missing agent id.",
+					"send_input requires id. Use the exact sub-agent id returned by spawn_agent. Do not call send_input without an explicit target agent.",
+				), nil
 			}
 			if strings.TrimSpace(params.Message) == "" {
-				return fantasy.NewTextErrorResponse("message is required"), nil
+				return tools.NewGuidanceErrorResponse(
+					SendInputToolName,
+					"missing_message",
+					"Missing sub-agent message.",
+					"send_input requires a non-empty message. Do not send blank follow-ups. Provide a concrete instruction, correction, or next step in message, then retry.",
+				), nil
 			}
 			submissionID, err := control.sendInput(ctx, params.ID, params.Message, params.Items, params.Interrupt)
 			if err != nil {
@@ -475,7 +495,12 @@ func (c *coordinator) waitAgentsTool(ctx context.Context) (fantasy.AgentTool, er
 		func(ctx context.Context, params WaitAgentsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if len(params.IDs) == 0 {
-				return fantasy.NewTextErrorResponse("ids are required"), nil
+				return tools.NewGuidanceErrorResponse(
+					WaitAgentsToolName,
+					"missing_agent_ids",
+					"Missing agent ids.",
+					"wait requires ids. Pass one or more exact sub-agent ids returned by spawn_agent or resume_agent. Do not call wait with empty input.",
+				), nil
 			}
 			timeout := 60 * time.Second
 			if params.TimeoutMS > 0 {
@@ -500,7 +525,12 @@ func (c *coordinator) collectResultTool(ctx context.Context) (fantasy.AgentTool,
 		func(ctx context.Context, params CollectResultParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if len(params.IDs) == 0 {
-				return fantasy.NewTextErrorResponse("ids are required"), nil
+				return tools.NewGuidanceErrorResponse(
+					CollectResultToolName,
+					"missing_agent_ids",
+					"Missing agent ids.",
+					"collect_result requires ids. Pass one or more exact sub-agent ids whose results you want to collect. Do not call collect_result with empty input.",
+				), nil
 			}
 			payload, _ := json.Marshal(map[string]any{
 				"agents": control.collectResult(params.IDs),
@@ -519,7 +549,12 @@ func (c *coordinator) closeAgentTool(ctx context.Context) (fantasy.AgentTool, er
 		func(ctx context.Context, params CloseAgentParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			_ = call
 			if params.ID == "" {
-				return fantasy.NewTextErrorResponse("id is required"), nil
+				return tools.NewGuidanceErrorResponse(
+					CloseAgentToolName,
+					"missing_agent_id",
+					"Missing agent id.",
+					"close_agent requires id. Use the exact sub-agent id returned by spawn_agent. Do not call close_agent with empty input.",
+				), nil
 			}
 			if err := control.close(params.ID); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil

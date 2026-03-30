@@ -61,6 +61,9 @@ jobs:
     permissions:
       security-events: write
       contents: read
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -72,11 +75,11 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Resolve CI package set
         run: |
-          ./scripts/ci-go-packages.sh > /tmp/ci-go-packages.txt
-          test -s /tmp/ci-go-packages.txt
+          ./scripts/ci-go-packages.sh > "$RUNNER_TEMP/ci-go-packages.txt"
+          test -s "$RUNNER_TEMP/ci-go-packages.txt"
       - name: Run govulncheck
         run: |
-          xargs govulncheck -C . -format sarif < /tmp/ci-go-packages.txt > results.sarif
+          xargs govulncheck -C . -format sarif < "$RUNNER_TEMP/ci-go-packages.txt" > results.sarif
       - uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4.32.4
         with:
           sarif_file: results.sarif

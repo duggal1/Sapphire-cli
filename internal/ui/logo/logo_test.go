@@ -22,8 +22,11 @@ func TestRenderFallsBackToNarrowLogoWhenFullLogoWouldClip(t *testing.T) {
 		Width:        64,
 	}))
 
-	if !strings.Contains(rendered, "SAPPHIRE") {
-		t.Fatalf("expected narrow fallback to contain small wordmark, got %q", rendered)
+	if !strings.Contains(rendered, "v0.1.0") {
+		t.Fatalf("expected narrow fallback to include version row, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "╱") {
+		t.Fatalf("expected narrow fallback to include diagonal field, got %q", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if width := lipgloss.Width(line); width > 64 {

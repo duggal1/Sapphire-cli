@@ -20,7 +20,7 @@ metadata:
 nightly:
   publish_release: true
   keep_single_release: true
-  version_template: "{{ incminor .Version }}-nightly"
+  version_template: "{{ .Version }}-nightly-{{ .ShortCommit }}"
 
 snapshot:
   version_template: "0.0.0-{{ .Timestamp }}"
@@ -187,7 +187,7 @@ brews:
       owner: duggal1
       name: homebrew-sapphire-cli
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
+    skip_upload: "{{ if or .Prerelease .IsNightly }}true{{ end }}"
     commit_author:
       name: "Harshit Duggal"
       email: "harshit.duggal@gmail.com"
@@ -195,6 +195,23 @@ brews:
     extra_install: |-
       bash_completion.install "completions/{{ .ProjectName }}.bash" => "{{ .ProjectName }}"
       zsh_completion.install "completions/{{ .ProjectName }}.zsh" => "_{{ .ProjectName }}"
+      fish_completion.install "completions/{{ .ProjectName }}.fish"
+      man1.install "manpages/{{ .ProjectName }}.1.gz"
+  - name: sapphire-nightly
+    ids:
+      - sapphire
+    repository:
+      owner: duggal1
+      name: homebrew-sapphire-cli
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: "{{ if not .IsNightly }}true{{ end }}"
+    commit_author:
+      name: "Harshit Duggal"
+      email: "harshit.duggal@gmail.com"
+    goarm: 7
+    extra_install: |-
+      bash_completion.install "completions/{{ .ProjectName }}.bash" => "sapphire"
+      zsh_completion.install "completions/{{ .ProjectName }}.zsh" => "_sapphire"
       fish_completion.install "completions/{{ .ProjectName }}.fish"
       man1.install "manpages/{{ .ProjectName }}.1.gz"
 

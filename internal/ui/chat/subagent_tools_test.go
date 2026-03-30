@@ -40,24 +40,29 @@ func TestRenderSubAgentWaitBodyUsesFriendlySummaryLine(t *testing.T) {
 	rendered := ansi.Strip(renderSubAgentWaitBody(&sty, subAgentWaitResult{
 		Agents: []subAgentStatusEntry{
 			{
-				ID:        "agent-d5655f40-f83b-46af-8b5d-2ff2becf4b78",
-				Status:    "running",
-				StartedAt: time.Time{},
+				ID:            "agent-d5655f40-f83b-46af-8b5d-2ff2becf4b78",
+				Status:        "running",
+				StartedAt:     time.Now().UTC().Add(-12 * time.Second),
+				ToolCallCount: 3,
+				CurrentTool:   "ReadFile",
 			},
 		},
 	}, 120))
 
-	if !strings.Contains(rendered, "Structured Submission 1") {
+	if !strings.Contains(rendered, "Agent 1") {
 		t.Fatalf("expected friendly label, got %q", rendered)
 	}
 	if strings.Contains(rendered, "d5655f40") {
 		t.Fatalf("expected internal id to be hidden, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "repo") {
-		t.Fatalf("expected repo workspace summary, got %q", rendered)
+	if !strings.Contains(rendered, "Agent 1 — running") {
+		t.Fatalf("expected compact status line, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "running") {
-		t.Fatalf("expected running status, got %q", rendered)
+	if !strings.Contains(rendered, "3 tools") {
+		t.Fatalf("expected tool count, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "current: ReadFile") {
+		t.Fatalf("expected current tool summary, got %q", rendered)
 	}
 }
 
@@ -150,11 +155,14 @@ func TestMergeSubAgentSpawnResultAppliesLiveTelemetry(t *testing.T) {
 		return &payload
 	}(), 120, false))
 
-	if !strings.Contains(rendered, "Current Tool: agentic_view") {
-		t.Fatalf("expected current tool telemetry, got %q", rendered)
+	if !strings.Contains(rendered, "Agent 1 — running") {
+		t.Fatalf("expected compact status line, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Live Tools: 3 tool calls") {
+	if !strings.Contains(rendered, "3 tools") {
 		t.Fatalf("expected tool call count, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "current: agentic_view") {
+		t.Fatalf("expected current tool telemetry, got %q", rendered)
 	}
 }
 
@@ -187,7 +195,7 @@ func TestRenderAgentDirectoryBodyHidesRawJSONAndIDs(t *testing.T) {
 	if !strings.Contains(rendered, "Agent Directory") {
 		t.Fatalf("expected agent directory label, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Structured Submission 1") && !strings.Contains(rendered, "UI Analysis") {
+	if !strings.Contains(rendered, "Agent 1") && !strings.Contains(rendered, "Current Agent") {
 		t.Fatalf("expected friendly agent label, got %q", rendered)
 	}
 	if strings.Contains(rendered, "session_id") || strings.Contains(rendered, "\"agents\"") {

@@ -450,13 +450,14 @@ func (t *baseToolMessageItem) CopyContent() string {
 // pendingTool renders a tool that is still in progress.
 func pendingTool(sty *styles.Styles, name string) string {
 	icon := toolIcon(sty, ToolStatusRunning, name)
-	toolName := sty.Tool.NameNormal.Render(name)
+	toolName := shimmer.ShimmerText(name)
 
 	return fmt.Sprintf("%s %s", icon, toolName)
 }
 
 func pendingToolWithNameStyle(sty *styles.Styles, name string, nameStyle, iconStyle lipgloss.Style) string {
-	return fmt.Sprintf("%s %s", toolIconWithStyle(sty, ToolStatusRunning, iconStyle), nameStyle.Render(name))
+	_ = nameStyle
+	return fmt.Sprintf("%s %s", toolIconWithStyle(sty, ToolStatusRunning, iconStyle), shimmer.ShimmerText(name))
 }
 
 // OnShimmerTick invalidates the cached render while the tool is pending.

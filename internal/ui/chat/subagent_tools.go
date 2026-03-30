@@ -400,7 +400,7 @@ func parseSubAgentSimpleParams(sty *styles.Styles, raw string) []*TreeNode {
 	if len(payload.IDs) > 0 {
 		children := make([]*TreeNode, 0, len(payload.IDs))
 		for i, id := range payload.IDs {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{ID: id}, fmt.Sprintf("Structured Submission %d", i+1))})
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, subAgentStatusEntry{ID: id}, fmt.Sprintf("Agent %d", i+1))})
 		}
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
 	}
@@ -501,7 +501,7 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 				CurrentTool:      payload.CurrentTool,
 				LastTool:         payload.LastTool,
 				ToolCallCount:    payload.ToolCallCount,
-			}, "Structured Submission 1")})
+			}, "Agent 1")})
 			sections = append(sections, renderSubAgentTelemetryNodes(sty, subAgentStatusEntry{
 				ID:               payload.AgentID,
 				Title:            payload.Title,
@@ -521,7 +521,7 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 	}
 
 	root := &TreeNode{
-		Label:    renderSubAgentRootLabel(sty, "Structured Submission"),
+		Label:    renderSubAgentRootLabel(sty, "Sub-Agent"),
 		Children: sections,
 	}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
@@ -547,7 +547,7 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 	if len(payload.Agents) > 0 {
 		children := make([]*TreeNode, 0, len(payload.Agents))
 		for i, entry := range payload.Agents {
-			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Structured Submission %d", i+1))})
+			children = append(children, &TreeNode{Label: renderSubAgentAgentLineWithLabel(sty, entry, fmt.Sprintf("Agent %d", i+1))})
 			children = append(children, renderSubAgentTelemetryNodes(sty, entry)...)
 		}
 		sections = append(sections, &TreeNode{Label: renderSubAgentSectionLabel(sty, "Agents"), Children: children})
@@ -556,7 +556,7 @@ func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, widt
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Wait result", "timed out")})
 	}
 
-	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Structured Submissions"), Children: sections}
+	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Sub-Agents"), Children: sections}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
@@ -569,7 +569,7 @@ func renderSubAgentCollectBody(sty *styles.Styles, payload subAgentCollectResult
 	for i, entry := range payload.Agents {
 		children = append(children, renderCollectedSubAgent(sty, entry, i+1))
 	}
-	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Structured Submissions"), Children: children}
+	root := &TreeNode{Label: renderSubAgentRootLabel(sty, "Sub-Agents"), Children: children}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
 
@@ -588,7 +588,7 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 			CurrentTool:      entry.CurrentTool,
 			LastTool:         entry.LastTool,
 			ToolCallCount:    entry.ToolCallCount,
-		}, fmt.Sprintf("Structured Submission %d", index))})
+		}, fmt.Sprintf("Agent %d", index))})
 	}
 	if entry.Status != "" {
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "State", humanizeSubAgentStatus(entry.Status))})
@@ -639,24 +639,12 @@ func renderCollectedSubAgent(sty *styles.Styles, entry subAgentCollectedResult, 
 		sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Blockers", oneLine(report.Blockers))})
 	}
 
-	label := firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), fmt.Sprintf("Structured Submission %d", index))
+	label := fmt.Sprintf("Agent %d", index)
 	return &TreeNode{Label: renderSubAgentAgentTitle(sty, label), Children: sections}
 }
 
 func renderSubAgentTelemetryNodes(sty *styles.Styles, entry subAgentStatusEntry) []*TreeNode {
-	nodes := make([]*TreeNode, 0, 3)
-	if entry.ToolCallCount > 0 {
-		label := "1 tool call"
-		if entry.ToolCallCount != 1 {
-			label = fmt.Sprintf("%d tool calls", entry.ToolCallCount)
-		}
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Live Tools", label)})
-	}
-	if current := strings.TrimSpace(entry.CurrentTool); current != "" {
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Current Tool", current)})
-	} else if last := strings.TrimSpace(entry.LastTool); last != "" {
-		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "Last Tool", last)})
-	}
+	nodes := make([]*TreeNode, 0, 1)
 	if ctx := strings.TrimSpace(entry.HeartbeatContext); ctx != "" && normalizeSubAgentStatus(entry.Status) != "completed" {
 		nodes = append(nodes, &TreeNode{Label: renderSubAgentField(sty, "State Detail", oneLine(ctx))})
 	}
@@ -686,7 +674,7 @@ func renderAgentDirectoryBody(sty *styles.Styles, raw string, width int) string 
 				label = firstNonEmptyOrchestrationValue(label, "Main Agent")
 			default:
 				submissionIndex++
-				label = firstNonEmptyOrchestrationValue(label, fmt.Sprintf("Structured Submission %d", submissionIndex))
+				label = fmt.Sprintf("Agent %d", submissionIndex)
 			}
 			entry := subAgentStatusEntry{
 				ID:               item.AgentID,
@@ -834,37 +822,42 @@ func renderSubAgentAgentLine(sty *styles.Styles, entry subAgentStatusEntry) stri
 }
 
 func renderSubAgentAgentLineWithLabel(sty *styles.Styles, entry subAgentStatusEntry, label string) string {
-	id := subAgentDisplayLabel(firstNonEmptyOrchestrationValue(strings.TrimSpace(entry.Title), label, entry.ID))
+	id := subAgentDisplayLabel(firstNonEmptyOrchestrationValue(label, entry.ID))
 	if id == "" {
-		id = "Sub-Agent"
+		id = "Agent"
 	}
-	workspace := subAgentWorkspaceSummary(entry.WorkDir)
 	status := normalizeSubAgentStatus(entry.Status)
 	icon := subAgentStatusIcon(status)
+	summary := id
+	if status != "" {
+		summary += " — " + status
+	}
+	parts := make([]string, 0, 4)
+	if timer := formatSubAgentElapsedAt(entry.StartedAt, time.Now()); timer != "" {
+		parts = append(parts, timer)
+	}
+	if entry.ToolCallCount > 0 {
+		toolLabel := "1 tool"
+		if entry.ToolCallCount != 1 {
+			toolLabel = fmt.Sprintf("%d tools", entry.ToolCallCount)
+		}
+		parts = append(parts, toolLabel)
+	}
+	if current := strings.TrimSpace(entry.CurrentTool); current != "" {
+		parts = append(parts, "current: "+current)
+	} else if last := strings.TrimSpace(entry.LastTool); last != "" {
+		parts = append(parts, "last: "+last)
+	}
+	if len(parts) > 0 {
+		summary += " · " + strings.Join(parts, " · ")
+	}
 	if sty == nil {
-		parts := []string{icon, id, workspace}
-		if status != "" {
-			parts = append(parts, status)
-		}
-		if timer := formatSubAgentElapsedAt(entry.StartedAt, time.Now()); timer != "" {
-			parts = append(parts, "["+timer+"]")
-		}
-		return strings.Join(parts, "  ")
+		return strings.TrimSpace(icon + " " + summary)
 	}
 
 	iconText := sty.Base.Foreground(subAgentStatusColor(status)).Render(icon)
-	idText := sty.Base.Foreground(sty.FgBase).Bold(true).Render(id)
-	workspaceText := sty.Base.Foreground(sty.FgMuted).Render(workspace)
-	statusText := sty.Base.Foreground(subAgentStatusColor(status)).Bold(true).Render(status)
-
-	parts := []string{iconText, idText, workspaceText}
-	if status != "" {
-		parts = append(parts, statusText)
-	}
-	if timer := formatSubAgentElapsedAt(entry.StartedAt, time.Now()); timer != "" {
-		parts = append(parts, sty.Base.Foreground(sty.FgHalfMuted).Render("["+timer+"]"))
-	}
-	return strings.Join(parts, "  ")
+	summaryText := sty.Base.Foreground(sty.FgMuted).Render(summary)
+	return strings.TrimSpace(iconText + " " + summaryText)
 }
 
 func shortenSubAgentID(id string) string {

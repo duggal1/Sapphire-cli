@@ -15,6 +15,7 @@ type (
 	workingDirKey         string
 	runtimeControlKey     string
 	writeScopeKey         string
+	turnPolicyKey         string
 )
 
 const (
@@ -34,6 +35,8 @@ const (
 	RuntimeControlContextKey runtimeControlKey = "runtime_control"
 	// WriteScopeContextKey is the key for sub-agent write scope constraints.
 	WriteScopeContextKey writeScopeKey = "write_scope"
+	// TurnPolicyContextKey is the key for per-turn runtime guardrails.
+	TurnPolicyContextKey turnPolicyKey = "turn_policy"
 
 	// LoadSkillToolName is the name of the tool used to load skills.
 	LoadSkillToolName = "load_skill"
@@ -52,6 +55,21 @@ type RuntimeControl interface {
 	AllowToolCall(toolName string) error
 	BeginToolExecution(toolName string)
 	FinishToolExecution(toolName string)
+}
+
+type TurnPolicy struct {
+	DirectResponseOnly       bool
+	AllowMemoryRead          bool
+	AllowMemoryWrite         bool
+	AllowAutoMemoryInjection bool
+}
+
+func DefaultTurnPolicy() TurnPolicy {
+	return TurnPolicy{
+		AllowMemoryRead:          true,
+		AllowMemoryWrite:         true,
+		AllowAutoMemoryInjection: true,
+	}
 }
 
 // getContextValue is a generic helper that retrieves a typed value from context.
@@ -125,4 +143,8 @@ func GetWriteScopeFromContext(ctx context.Context) *WriteScope {
 		return scope
 	}
 	return nil
+}
+
+func GetTurnPolicyFromContext(ctx context.Context) TurnPolicy {
+	return getContextValue(ctx, TurnPolicyContextKey, DefaultTurnPolicy())
 }

@@ -90,7 +90,7 @@ If you get "old_string not found in file":
 <best_practices>
 
 - Ensure edits result in correct, idiomatic code
-- Don't leave code in broken state
+- Don't leave the current file with errors or warnings
 - Use absolute file paths (starting with /)
 - Use forward slashes (/) for cross-platform compatibility
 - Multiple edits to same file: send all in single message with multiple tool calls

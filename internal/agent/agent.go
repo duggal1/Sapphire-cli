@@ -105,6 +105,7 @@ var pythonCapabilitiesPrompt []byte
 
 // Used to remove <think> tags from generated titles.
 var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
+var policyPromptSeparatorRegex = regexp.MustCompile(`[^a-z0-9./_]+`)
 
 type SessionAgentCall struct {
 	SessionID          string
@@ -334,9 +335,13 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 		return `<system_reminder>Complexity mode:
 - Initialize plan with update_plan immediately before technical execution.
 - Keep the plan tracker synchronized after every state change.
+- For greetings, thanks, and other short social turns, reply directly and use no tools.
 - Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
-- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
+- Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
+- After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
+- Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
 - Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
+- Durable memory is long-horizon only. Use it only after compaction or resume, for explicit prior-context requests, in active long-horizon runs, or when the session is about 50%+ full. Repo-local memory files live under ".sapphire-memory/".
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - Use agentic_fetch for current external docs instead of guessing.</system_reminder>`
 	default:
@@ -805,6 +810,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	ctx = context.WithValue(ctx, tools.SessionModeContextKey, mode)
 	runtimeControl := newRuntimeControl(call.MistakeSelfHealTry > 0)
 	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
+	postCompactionPending := false
+	if a.postCompactionInjection != nil {
+		if pending, ok := a.postCompactionInjection.Get(call.SessionID); ok && pending {
+			postCompactionPending = true
+		}
+	}
+	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), a.isLongHorizon(call.SessionID), postCompactionPending)
+	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1780,6 +1793,146 @@ func (a *sessionAgent) shouldActivateLongHorizon(call SessionAgentCall) bool {
 	return false
 }
 
+func buildTurnPolicy(call SessionAgentCall, currentSession session.Session, contextWindow int, longHorizonActive bool, postCompactionPending bool) tools.TurnPolicy {
+	policy := tools.DefaultTurnPolicy()
+	if isDirectReplyOnlyPrompt(call.Prompt, call.Attachments) {
+		policy.DirectResponseOnly = true
+		policy.AllowMemoryRead = false
+		policy.AllowMemoryWrite = false
+		policy.AllowAutoMemoryInjection = false
+		return policy
+	}
+
+	resumeOrPostCompaction := postCompactionPending || strings.TrimSpace(call.ResumePointID) != ""
+	contextStage := determineContextLoadStage(currentSession.PromptTokens+currentSession.CompletionTokens, contextWindow, resumeOrPostCompaction)
+	explicitMemoryRead := promptExplicitlyRequestsDurableMemory(call.Prompt)
+	explicitContinuity := promptRequestsPriorContext(call.Prompt)
+	explicitMemoryWrite := promptExplicitlyRequestsMemoryMaintenance(call.Prompt)
+
+	policy.AllowMemoryRead = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryRead || explicitContinuity
+	policy.AllowMemoryWrite = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryWrite
+	policy.AllowAutoMemoryInjection = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50
+	return policy
+}
+
+func isDirectReplyOnlyPrompt(prompt string, attachments []message.Attachment) bool {
+	if len(attachments) > 0 {
+		return false
+	}
+	switch normalizePromptForPolicy(prompt) {
+	case "hi",
+		"hello",
+		"hello there",
+		"hey",
+		"hey there",
+		"thanks",
+		"thank you",
+		"thank you so much",
+		"thx",
+		"ok",
+		"okay",
+		"cool",
+		"nice",
+		"sounds good",
+		"got it",
+		"understood",
+		"good morning",
+		"good afternoon",
+		"good evening",
+		"how are you",
+		"what s up":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptExplicitlyRequestsDurableMemory(prompt string) bool {
+	normalized := normalizePromptForPolicy(prompt)
+	for _, needle := range []string{
+		"view_memory",
+		"recall_memory",
+		"refresh_memory",
+		"save_memory",
+		"memory_health",
+		".sapphire-memory",
+		"memory_summary.md",
+		"memory_summary",
+		"memory handbook",
+		"durable memory",
+		"persistent memory",
+		"memory file",
+		"memory files",
+		"memory.md",
+		"memory.md-by-sapphire-agent",
+		"memory rules",
+	} {
+		if strings.Contains(normalized, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func promptExplicitlyRequestsMemoryMaintenance(prompt string) bool {
+	normalized := normalizePromptForPolicy(prompt)
+	for _, needle := range []string{
+		"refresh_memory",
+		"save_memory",
+		"memory_health",
+		"refresh memory",
+		"save memory",
+		"update memory",
+		"fix memory",
+		"repair memory",
+		".sapphire-memory",
+		"memory_summary.md",
+		"memory.md",
+		"memory.md-by-sapphire-agent",
+	} {
+		if strings.Contains(normalized, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func promptRequestsPriorContext(prompt string) bool {
+	normalized := normalizePromptForPolicy(prompt)
+	for _, needle := range []string{
+		"resume",
+		"resume work",
+		"continue from",
+		"pick up where",
+		"previous session",
+		"last session",
+		"earlier session",
+		"earlier work",
+		"older decision",
+		"prior decision",
+		"as before",
+		"from before",
+		"last time",
+		"you said earlier",
+		"we decided",
+		"earlier discussion",
+	} {
+		if strings.Contains(normalized, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePromptForPolicy(prompt string) string {
+	prompt = strings.ToLower(strings.TrimSpace(prompt))
+	if prompt == "" {
+		return ""
+	}
+	prompt = policyPromptSeparatorRegex.ReplaceAllString(prompt, " ")
+	return strings.Join(strings.Fields(prompt), " ")
+}
+
 func (a *sessionAgent) isLongHorizon(sessionID string) bool {
 	if a.longHorizonSessions == nil {
 		return false
@@ -1937,7 +2090,9 @@ func (a *sessionAgent) preparePrompt(mode planmode.SessionMode, msgs []message.M
 			`<system_reminder>Sub-agent Directive:
 Execute your assigned chunk of the tasks autonomously and efficiently.
 - Read one known repository file with "single_view". Read any multi-file target set or broad repository slice with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of minimal batches.
-- Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.
+- Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
+- After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
+- Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
 - Do not use "bash" for repository discovery, file reads, or temporary prompt/CSV setup when a structured tool exists.
 - Never write temporary .txt or .csv payload files just to call spawn_agent or send_input; pass arguments directly in the tool call.
 - External facts: Use "agentic_fetch" (retrieve documentation immediately; do not guess).
@@ -1983,6 +2138,9 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}()
 
 	retHistory = history
+	if !tools.GetTurnPolicyFromContext(ctx).AllowAutoMemoryInjection {
+		return history
+	}
 	sessionID := call.SessionID
 
 	if a == nil {

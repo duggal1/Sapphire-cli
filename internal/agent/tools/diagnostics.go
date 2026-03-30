@@ -5,14 +5,15 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/duggal1/Sapphire-cli/internal/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+	"github.com/duggal1/Sapphire-cli/internal/lsp"
 )
 
 type DiagnosticsParams struct {
@@ -162,12 +163,17 @@ func getDiagnosticsWithSummary(ctx context.Context, filePath string, manager *ls
 
 	summary := DiagnosticsSummary{}
 	compilerDiagnostics := getCompilerDiagnostics(ctx, filePath)
-	if compilerDiagnostics.Output != "" {
-		output.WriteString("\n<compiler_diagnostics>\n")
-		output.WriteString(compilerDiagnostics.Output)
-		output.WriteString("\n</compiler_diagnostics>\n")
-		summary.CompilerErrors = compilerDiagnostics.Errors
-		summary.CompilerWarnings = compilerDiagnostics.Warnings
+	compilerFileOutput, compilerProjectOutput := splitCompilerOutputByFile(compilerDiagnostics.Output, filePath)
+	if compilerFileOutput != "" {
+		output.WriteString("\n<compiler_file_diagnostics>\n")
+		output.WriteString(compilerFileOutput)
+		output.WriteString("\n</compiler_file_diagnostics>\n")
+		summary.CompilerErrors, summary.CompilerWarnings = countCompilerIssues(compilerFileOutput)
+	}
+	if compilerProjectOutput != "" {
+		output.WriteString("\n<compiler_project_diagnostics>\n")
+		output.WriteString(compilerProjectOutput)
+		output.WriteString("\n</compiler_project_diagnostics>\n")
 	}
 
 	if len(fileDiagnostics) > 0 || len(projectDiagnostics) > 0 || summary.CompilerErrors > 0 || summary.CompilerWarnings > 0 {
@@ -179,9 +185,14 @@ func getDiagnosticsWithSummary(ctx context.Context, filePath string, manager *ls
 		fmt.Fprintf(&output, "Current file: %d errors, %d warnings\n", summary.FileErrors, summary.FileWarnings)
 		fmt.Fprintf(&output, "Project: %d errors, %d warnings\n", summary.ProjectErrors, summary.ProjectWarnings)
 		if summary.CompilerErrors > 0 || summary.CompilerWarnings > 0 {
-			fmt.Fprintf(&output, "Compiler: %d errors, %d warnings\n", summary.CompilerErrors, summary.CompilerWarnings)
+			fmt.Fprintf(&output, "Compiler (current file): %d errors, %d warnings\n", summary.CompilerErrors, summary.CompilerWarnings)
 		}
 		output.WriteString("</diagnostic_summary>\n")
+		if summary.FileErrors+summary.FileWarnings+summary.CompilerErrors+summary.CompilerWarnings > 0 {
+			output.WriteString("\n<diagnostic_gate>\n")
+			output.WriteString("Current file is blocked. Fix all current-file errors and warnings to zero before editing other files or finishing.\n")
+			output.WriteString("</diagnostic_gate>\n")
+		}
 	}
 
 	out := output.String()
@@ -194,12 +205,7 @@ func writeDiagnostics(output *strings.Builder, tag string, in []string) {
 		return
 	}
 	output.WriteString("\n<" + tag + ">\n")
-	if len(in) > 10 {
-		output.WriteString(strings.Join(in[:10], "\n"))
-		fmt.Fprintf(output, "\n... and %d more diagnostics", len(in)-10)
-	} else {
-		output.WriteString(strings.Join(in, "\n"))
-	}
+	output.WriteString(strings.Join(in, "\n"))
 	output.WriteString("\n</" + tag + ">\n")
 }
 
@@ -261,6 +267,126 @@ func formatDiagnostic(pth string, diagnostic protocol.Diagnostic, source string)
 		codeInfo,
 		tagsInfo,
 		diagnostic.Message)
+}
+
+func splitCompilerOutputByFile(output, filePath string) (string, string) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "", ""
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return "", output
+	}
+
+	blocks := splitCompilerBlocks(output)
+	fileBlocks := make([]string, 0, len(blocks))
+	projectBlocks := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if compilerBlockMentionsFile(block, filePath) {
+			fileBlocks = append(fileBlocks, block)
+			continue
+		}
+		projectBlocks = append(projectBlocks, block)
+	}
+	return strings.Join(fileBlocks, "\n"), strings.Join(projectBlocks, "\n")
+}
+
+func splitCompilerBlocks(output string) []string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	blocks := make([]string, 0, len(lines))
+	current := make([]string, 0, 8)
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		blocks = append(blocks, strings.Join(current, "\n"))
+		current = current[:0]
+	}
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		if len(current) > 0 && startsNewCompilerBlock(line) {
+			flush()
+		}
+		current = append(current, line)
+	}
+	flush()
+	return blocks
+}
+
+func startsNewCompilerBlock(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "|") || strings.HasPrefix(trimmed, "=") || strings.HasPrefix(trimmed, "^") || strings.HasPrefix(trimmed, "-->") {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "help:") || strings.HasPrefix(lower, "note:") {
+		return false
+	}
+	return true
+}
+
+func compilerBlockMentionsFile(block, filePath string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		if compilerLineMentionsFile(line, filePath) {
+			return true
+		}
+	}
+	return false
+}
+
+func compilerLineMentionsFile(line, filePath string) bool {
+	if strings.TrimSpace(line) == "" || strings.TrimSpace(filePath) == "" {
+		return false
+	}
+
+	normalizedLine := filepath.ToSlash(line)
+	for _, token := range compilerPathTokens(filePath) {
+		if token == "" {
+			continue
+		}
+		if strings.Contains(normalizedLine, token+"(") ||
+			strings.Contains(normalizedLine, token+":") ||
+			strings.Contains(normalizedLine, `"`+token+`"`) ||
+			strings.Contains(normalizedLine, token+", line ") ||
+			normalizedLine == token {
+			return true
+		}
+	}
+	return false
+}
+
+func compilerPathTokens(filePath string) []string {
+	clean := filepath.ToSlash(filepath.Clean(filePath))
+	parts := strings.Split(clean, "/")
+	seen := make(map[string]struct{}, len(parts))
+	tokens := make([]string, 0, len(parts))
+	add := func(token string) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return
+		}
+		if _, ok := seen[token]; ok {
+			return
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	add(clean)
+	for i := range parts {
+		add(strings.Join(parts[i:], "/"))
+	}
+	return tokens
 }
 
 func countSeverity(diagnostics []string, severity string) int {

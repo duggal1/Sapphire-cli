@@ -65,6 +65,10 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 		return call, tool, err
 	}
 
+	if err := enforceTurnPolicy(ctx, call.Name, input); err != nil {
+		return call, tool, err
+	}
+
 	if err := enforceWriteScope(ctx, call.Name, input); err != nil {
 		return call, tool, err
 	}
@@ -141,6 +145,11 @@ func repairToolCall(
 	case WriteToolName:
 		normalizeKey(input, "file_path", "path", "file", "filename", "filepath")
 		normalizeKey(input, "content", "text", "body", "data", "file_content")
+	case ApplyPatchToolName:
+		normalizeKey(input, "file_path", "path", "file", "filename", "filepath")
+		normalizeKey(input, "unified_diff", "patch", "diff")
+		normalizeKey(input, "execution_mode", "mode")
+		normalizeKey(input, "justification", "reason", "description")
 
 	// ── Bash ─────────────────────────────────────────────────────────
 	case BashToolName:
@@ -604,8 +613,181 @@ func extractWritePaths(toolName string, input map[string]any) []string {
 				return []string{value}
 			}
 		}
+	case ApplyPatchToolName:
+		if raw, ok := input["file_path"]; ok {
+			if value, ok := raw.(string); ok && strings.TrimSpace(value) != "" {
+				return []string{value}
+			}
+		}
 	}
 	return nil
+}
+
+func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]any) error {
+	policy := GetTurnPolicyFromContext(ctx)
+	if policy.DirectResponseOnly {
+		return errors.New("tool use blocked: this turn is casual conversation only. Reply directly without tools.")
+	}
+	return enforceMemoryAccessPolicy(ctx, policy, toolName, input)
+}
+
+func enforceMemoryAccessPolicy(ctx context.Context, policy TurnPolicy, toolName string, input map[string]any) error {
+	if isDurableMemoryReadTool(toolName) && !policy.AllowMemoryRead {
+		return errors.New("durable memory reads are blocked for this turn. Use memory only after compaction or resume, when the user explicitly asks for prior context, during active long-horizon work, or when session context load is about 50%+.")
+	}
+	if isDurableMemoryWriteTool(toolName) && !policy.AllowMemoryWrite {
+		return errors.New("durable memory writes are blocked for this turn. Do not refresh, save, or rewrite memory during normal short-horizon work.")
+	}
+
+	paths := extractPotentialMemoryPaths(toolName, input)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	isWriteTool := isMemoryArtifactWriteTool(toolName)
+	for _, rawPath := range paths {
+		canonicalPath, isMemoryPath, requiresCanonicalPath := classifyMemoryArtifactPath(ctx, rawPath)
+		if !isMemoryPath {
+			continue
+		}
+		if requiresCanonicalPath {
+			return fmt.Errorf("durable memory files are not at repo root. Use %q instead of %q", canonicalPath, rawPath)
+		}
+		if isWriteTool {
+			if !policy.AllowMemoryWrite {
+				return errors.New("durable memory writes are blocked for this turn. Do not edit .sapphire-memory/* during normal short-horizon work.")
+			}
+			continue
+		}
+		if !policy.AllowMemoryRead {
+			return errors.New("durable memory file access is blocked for this turn. Do not inspect .sapphire-memory/* unless the turn is post-compaction or resume, explicitly needs prior context, is long-horizon, or the session is about 50%+ full.")
+		}
+	}
+	return nil
+}
+
+func isDurableMemoryReadTool(toolName string) bool {
+	switch toolName {
+	case MemoryQueryToolName, "view_memory", "recall_memory", "memory_health":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDurableMemoryWriteTool(toolName string) bool {
+	switch toolName {
+	case "refresh_memory", "save_memory":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMemoryArtifactWriteTool(toolName string) bool {
+	switch toolName {
+	case EditToolName, SingleEditToolName, AgenticEditToolName, WriteToolName, DownloadToolName, ApplyPatchToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func extractPotentialMemoryPaths(toolName string, input map[string]any) []string {
+	switch toolName {
+	case ViewToolName, SingleViewToolName, AgenticViewToolName:
+		return extractViewPaths(input)
+	case EditToolName, SingleEditToolName, AgenticEditToolName, WriteToolName, DownloadToolName, ApplyPatchToolName:
+		return extractWritePaths(toolName, input)
+	case LSToolName, GlobToolName, GrepToolName:
+		return extractGenericPathFields(input)
+	default:
+		return nil
+	}
+}
+
+func extractGenericPathFields(input map[string]any) []string {
+	var out []string
+	appendString := func(raw any) {
+		if value, ok := raw.(string); ok && strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	appendStrings := func(raw any) {
+		switch typed := raw.(type) {
+		case []string:
+			for _, value := range typed {
+				if strings.TrimSpace(value) != "" {
+					out = append(out, value)
+				}
+			}
+		case []any:
+			for _, item := range typed {
+				appendString(item)
+			}
+		}
+	}
+	appendString(input["path"])
+	appendStrings(input["paths"])
+	return out
+}
+
+func classifyMemoryArtifactPath(ctx context.Context, rawPath string) (canonicalPath string, isMemoryPath bool, requiresCanonicalPath bool) {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "", false, false
+	}
+
+	cleaned := filepath.ToSlash(filepath.Clean(rawPath))
+	if canonical, ok := canonicalMemoryAlias(cleaned); ok {
+		return canonical, true, true
+	}
+	if cleaned == ".sapphire-memory" || strings.HasPrefix(cleaned, ".sapphire-memory/") {
+		return cleaned, true, false
+	}
+
+	if !filepath.IsAbs(rawPath) {
+		return "", false, false
+	}
+
+	workingDir := GetWorkingDirFromContext(ctx)
+	if strings.TrimSpace(workingDir) == "" {
+		return "", false, false
+	}
+
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return "", false, false
+	}
+	absRawPath, err := filepath.Abs(rawPath)
+	if err != nil {
+		return "", false, false
+	}
+	relPath, err := filepath.Rel(absWorkingDir, absRawPath)
+	if err != nil {
+		return "", false, false
+	}
+	relPath = filepath.ToSlash(relPath)
+	if canonical, ok := canonicalMemoryAlias(relPath); ok {
+		return canonical, true, true
+	}
+	if relPath == ".sapphire-memory" || strings.HasPrefix(relPath, ".sapphire-memory/") {
+		return relPath, true, false
+	}
+	return "", false, false
+}
+
+func canonicalMemoryAlias(cleaned string) (string, bool) {
+	switch cleaned {
+	case "memory_summary.md":
+		return ".sapphire-memory/memory_summary.md", true
+	case "MEMORY.md", "memory.md", "memory.md-by-sapphire-agent":
+		return ".sapphire-memory/MEMORY.md", true
+	case "raw_memories.md":
+		return ".sapphire-memory/raw_memories.md", true
+	default:
+		return "", false
+	}
 }
 
 func unreadFilePaths(ctx context.Context, paths []string) []string {

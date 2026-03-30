@@ -1,18 +1,24 @@
 package tools
 
-import "sync"
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+)
 
-// EditGuard tracks full-file reads for prompt/runtime coordination, but it no
-// longer hard-blocks edit execution. Read-before-edit remains a tool contract
-// preference, not a fatal runtime gate.
+// EditGuard tracks full-file reads and blocks unrelated edits while a session
+// still has files with unresolved diagnostics.
 type EditGuard struct {
 	mu     sync.Mutex
 	viewed map[string]map[string]bool
+	dirty  map[string]map[string]struct{}
 }
 
 func NewEditGuard() *EditGuard {
 	return &EditGuard{
 		viewed: make(map[string]map[string]bool),
+		dirty:  make(map[string]map[string]struct{}),
 	}
 }
 
@@ -48,12 +54,43 @@ func (g *EditGuard) EnsureAllowed(sessionID, filePath string, isEdit bool) error
 		g.viewed[sessionID][filePath] = true
 	}
 
+	if dirty := g.dirty[sessionID]; len(dirty) > 0 {
+		if _, ok := dirty[filePath]; !ok {
+			return fmt.Errorf("edit blocked: fix all current-file errors and warnings in %s before editing %s", formatDirtyFiles(dirty), filePath)
+		}
+	}
+
 	return nil
 }
 
 func (g *EditGuard) SetLockedIfErrors(sessionID, filePath string, hasErrors bool) {
-	_ = g
-	_ = sessionID
-	_ = filePath
-	_ = hasErrors
+	if g == nil || sessionID == "" || filePath == "" {
+		return
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.dirty[sessionID] == nil {
+		g.dirty[sessionID] = make(map[string]struct{})
+	}
+
+	if hasErrors {
+		g.dirty[sessionID][filePath] = struct{}{}
+		return
+	}
+
+	delete(g.dirty[sessionID], filePath)
+	if len(g.dirty[sessionID]) == 0 {
+		delete(g.dirty, sessionID)
+	}
+}
+
+func formatDirtyFiles(dirty map[string]struct{}) string {
+	files := make([]string, 0, len(dirty))
+	for file := range dirty {
+		files = append(files, file)
+	}
+	slices.Sort(files)
+	return strings.Join(files, ", ")
 }

@@ -10,12 +10,15 @@ Get diagnostics for file and/or project.
 - Displays errors, warnings, and hints
 - Groups diagnostics by severity
 - Provides detailed information about each diagnostic
+- Includes exact file, line, and column locations
+- Returns the full collected diagnostics without truncating the list
 </features>
 
 <limitations>
 - Results limited to diagnostics provided by LSP clients
 - May not cover all possible code issues
 - Does not provide suggestions for fixing issues
+- Compiler diagnostics may still include other-file issues separately
 </limitations>
 
 <tips>

@@ -76,6 +76,7 @@ If some edits fail:
 
 <best_practices>
 - Ensure all edits result in correct, idiomatic code; don't leave code broken.
+- Continue repairing edited files until current-file errors and warnings are zero.
 - Use absolute file paths (starting with /).
 - Use replace_all only when you're certain; otherwise provide unique context.
 - Match existing style exactly (spaces, tabs, blank lines).

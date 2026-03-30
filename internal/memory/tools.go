@@ -39,7 +39,7 @@ type RefreshParams struct {
 func NewViewMemoryTool(system *System, resolveSessionID func(context.Context) string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		ViewToolName,
-		"Fetch durable session memory from the per-session history journal. Use it when the conversation is long, after compaction, when resuming earlier work, when the user refers to a prior decision, or when you need the exact earlier tool/result trail. Do not use it for the immediately visible local context.",
+		"Fetch durable session memory from the per-session history journal. Use it only for long-horizon continuity: after compaction, on resume, when the user explicitly asks for earlier decisions, or when current context is no longer enough. Do not use it for trivial or short-horizon turns.",
 		func(ctx context.Context, params ViewMemoryParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if system == nil || system.History == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil
@@ -65,7 +65,7 @@ func NewViewMemoryTool(system *System, resolveSessionID func(context.Context) st
 func NewRefreshTool(system *System, resolveSessionID func(context.Context) string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RefreshToolName,
-		"Force regeneration of memory.md from the live codebase map and current session state. Use after major codebase reads, major architecture changes, or when memory appears stale. Do not use repeatedly without new information.",
+		"Force regeneration of durable memory state from the live codebase map and current session state. Use only for long-horizon maintenance after substantial new understanding or when memory is stale. Do not use it on routine short tasks.",
 		func(ctx context.Context, params RefreshParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if system == nil || system.MemoryFile == nil || system.History == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil
@@ -92,7 +92,7 @@ func NewRefreshTool(system *System, resolveSessionID func(context.Context) strin
 func NewRecallTool(system *System, resolveSessionID func(context.Context) string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		RecallToolName,
-		"Query persistent memory that survives context compaction. Returns structured JSON records ranked by relevance. Use this before modifying files, after compaction, before architectural decisions, or when encountering familiar errors.",
+		"Query persistent memory that survives context compaction. Returns structured JSON records ranked by relevance. Use it only for long-horizon continuity or exact prior-fact retrieval when current context is insufficient.",
 		func(ctx context.Context, params RecallParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if system == nil || system.Store == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil
@@ -151,7 +151,7 @@ func NewRecallTool(system *System, resolveSessionID func(context.Context) string
 func NewSaveTool(system *System, resolveSessionID func(context.Context) string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		SaveToolName,
-		"Write a critical fact to persistent memory immediately, bypassing the background pipeline. Use when the agent makes a decision so important it cannot risk the pipeline missing it. Writes synchronously at maximum salience.",
+		"Write a critical fact to persistent memory immediately, bypassing the background pipeline. Use only for durable long-horizon facts that future sessions must not lose. Do not save ephemeral turn details.",
 		func(ctx context.Context, params SaveParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if system == nil || system.Store == nil {
 				return fantasy.NewTextResponse("Memory system not initialized."), nil

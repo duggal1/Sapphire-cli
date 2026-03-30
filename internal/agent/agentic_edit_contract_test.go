@@ -33,7 +33,8 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 
 	joined := strings.Join(reminders, "\n")
 	require.Contains(t, joined, `Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.`)
-	require.Contains(t, joined, `Edit exactly 1 repository file with "single_edit". Edit 2 or more repository files with "agentic_edit". Keep each "agentic_edit" batch to 2–25 files and chunk larger edits into multiple batches.`)
+	require.Contains(t, joined, `Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.`)
+	require.Contains(t, joined, `After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.`)
 }
 
 func TestPlanModePromptContractRemovesExecutionChecklistReminder(t *testing.T) {
@@ -73,9 +74,11 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	templateText := string(templateBody)
 	require.Contains(t, templateText, "Read exactly 1 repository file → use `single_view`.")
 	require.Contains(t, templateText, "Read 2 or more repository files → use `agentic_view`.")
-	require.Contains(t, templateText, "Edit exactly 1 repository file → use `single_edit`.")
-	require.Contains(t, templateText, "Edit 2 or more repository files → use `agentic_edit`.")
-	require.Contains(t, templateText, "`agentic_edit` batching rule: edit 2–25 files per call.")
+	require.Contains(t, templateText, "`agentic_edit`: preferred edit path for any multi-line or multi-file change.")
+	require.Contains(t, templateText, "`single_edit`: trivial one-line tweak in one file.")
+	require.Contains(t, templateText, "`apply_patch`: exact unified-diff patching when patch format is required.")
+	require.Contains(t, templateText, "If the file has any error or warning, keep fixing that file until current-file errors and warnings are both zero.")
+	require.Contains(t, templateText, "Add comments only when they explain genuinely non-obvious logic in a complex")
 
 	toolDocPath := filepath.Join(filepath.Dir(currentFile), "tools", "agentic_edit.md")
 	toolDocBody, err := os.ReadFile(toolDocPath)

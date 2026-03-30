@@ -19,7 +19,6 @@ import (
 	"github.com/charmbracelet/fang"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/duggal1/Sapphire-cli/internal/app"
 	"github.com/duggal1/Sapphire-cli/internal/config"
@@ -110,18 +109,21 @@ sapphire --data-dir /path/to/custom/.sapphire
 	},
 }
 
-var heartbit = lipgloss.NewStyle().Foreground(charmtone.Dolly).SetString(`
-    ▄▄▄▄▄▄▄▄    ▄▄▄▄▄▄▄▄
-  ███████████  ███████████
-████████████████████████████
-████████████████████████████
-██████████▀██████▀██████████
-██████████ ██████ ██████████
-▀▀██████▄████▄▄████▄██████▀▀
-  ████████████████████████
-    ████████████████████
-       ▀▀██████████▀▀
-           ▀▀▀▀▀▀
+var heartbit = lipgloss.NewStyle().Foreground(lipgloss.Color("#b80bdf")).SetString(`
+
+
+                                        $$\       $$\                     
+                                        $$ |      \__|                    
+ $$$$$$$\  $$$$$$\   $$$$$$\   $$$$$$\  $$$$$$$\  $$\  $$$$$$\   $$$$$$\  
+$$  _____| \____$$\ $$  __$$\ $$  __$$\ $$  __$$\ $$ |$$  __$$\ $$  __$$\ 
+\$$$$$$\   $$$$$$$ |$$ /  $$ |$$ /  $$ |$$ |  $$ |$$ |$$ |  \__|$$$$$$$$ |
+ \____$$\ $$  __$$ |$$ |  $$ |$$ |  $$ |$$ |  $$ |$$ |$$ |      $$   ____|
+$$$$$$$  |\$$$$$$$ |$$$$$$$  |$$$$$$$  |$$ |  $$ |$$ |$$ |      \$$$$$$$\ 
+\_______/  \_______|$$  ____/ $$  ____/ \__|  \__|\__|\__|       \_______|
+                    $$ |      $$ |                                        
+                    $$ |      $$ |                                        
+                    \__|      \__|                                        
+                                   
 `)
 
 // copied from cobra:

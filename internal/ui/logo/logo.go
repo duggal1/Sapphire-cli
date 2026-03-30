@@ -30,15 +30,18 @@ type Opts struct {
 
 func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 	const charm = ""
+	const leftWidth = 6
+	const minRightWidth = 3
+	const hGap = " "
 
 	fg := func(c color.Color, s string) string {
 		return lipgloss.NewStyle().Foreground(c).Render(s)
 	}
 
-	// Title.
 	sapphire := heredoc.Doc(`
 		█▀ ▄▀█ █▀█ █▀█ █░█ █ █▀█ █▀▀
 		▄█ █▀█ █▀▀ █▀▀ █▀█ █ █▀▄ ██▄`)
+		
 	sapphire = strings.TrimPrefix(sapphire, "\n")
 	sapphire = strings.TrimRight(sapphire, "\n")
 	sapphireWidth := lipgloss.Width(sapphire)
@@ -58,6 +61,15 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 	// Join the meta row and big Sapphire title.
 	sapphire = strings.TrimSpace(metaRow + "\n" + sapphire)
 
+	if o.Width > 0 {
+		if o.Width < sapphireWidth {
+			return renderNarrowLogo(s, version, o)
+		}
+		if !compact && o.Width < leftWidth+lipgloss.Width(hGap)+sapphireWidth+lipgloss.Width(hGap)+minRightWidth {
+			return renderNarrowLogo(s, version, o)
+		}
+	}
+
 	// Narrow version with gradient diagonals.
 	if compact {
 		field := fg(o.FieldColor, strings.Repeat(diag, sapphireWidth))
@@ -65,9 +77,6 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 	}
 
 	fieldHeight := lipgloss.Height(sapphire)
-
-	// Left field with gradient.
-	const leftWidth = 6
 	leftFieldRow := fg(o.FieldColor, strings.Repeat(diag, leftWidth))
 	leftField := new(strings.Builder)
 	for range fieldHeight {
@@ -75,20 +84,28 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 	}
 
 	// Right field with gradient.
-	rightWidth := max(15, o.Width-sapphireWidth-leftWidth-2) // 2 for the gap.
+	rightWidth := 0
+	if o.Width > 0 {
+		rightWidth = max(0, o.Width-sapphireWidth-leftWidth-(2*lipgloss.Width(hGap)))
+	}
 	const stepDownAt = 0
 	rightField := new(strings.Builder)
-	for i := range fieldHeight {
-		width := rightWidth
-		if i >= stepDownAt {
-			width = rightWidth - (i - stepDownAt)
+	if rightWidth > 0 {
+		for i := range fieldHeight {
+			width := rightWidth
+			if i >= stepDownAt {
+				width = max(0, rightWidth-(i-stepDownAt))
+			}
+			fmt.Fprint(rightField, fg(o.FieldColor, strings.Repeat(diag, width)), "\n")
 		}
-		fmt.Fprint(rightField, fg(o.FieldColor, strings.Repeat(diag, width)), "\n")
 	}
 
 	// Return the wide version.
-	const hGap = " "
-	logo := lipgloss.JoinHorizontal(lipgloss.Top, leftField.String(), hGap, sapphire, hGap, rightField.String())
+	parts := []string{leftField.String(), hGap, sapphire}
+	if rightWidth > 0 {
+		parts = append(parts, hGap, rightField.String())
+	}
+	logo := lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 	if o.Width > 0 {
 		// Truncate the logo to the specified width.
 		lines := strings.Split(logo, "\n")
@@ -98,6 +115,22 @@ func Render(s *styles.Styles, version string, compact bool, o Opts) string {
 		logo = strings.Join(lines, "\n")
 	}
 	return logo
+}
+
+func renderNarrowLogo(s *styles.Styles, version string, o Opts) string {
+	title := SmallRender(s, max(0, o.Width))
+	if version == "" {
+		return title
+	}
+
+	versionWidth := max(lipgloss.Width(title), o.Width)
+	versionRow := lipgloss.NewStyle().
+		Width(versionWidth).
+		Align(lipgloss.Center).
+		Foreground(o.VersionColor).
+		Render(ansi.Truncate(version, versionWidth, "…"))
+
+	return lipgloss.JoinVertical(lipgloss.Left, versionRow, title)
 }
 
 // SmallRender renders a smaller version of the Sapphire logo, suitable for

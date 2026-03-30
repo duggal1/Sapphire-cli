@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/duggal1/Sapphire-cli/internal/filetracker"
 	"github.com/duggal1/Sapphire-cli/internal/lsp"
 	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/duggal1/Sapphire-cli/internal/session"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,11 +56,12 @@ func TestEditToolIncludesImmediateDiagnostics(t *testing.T) {
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "<diagnostic_summary>")
 	require.Contains(t, resp.Content, "Current file: 1 errors, 1 warnings")
+	require.Contains(t, resp.Content, "<diagnostic_gate>")
 	require.Contains(t, resp.Content, "Error:")
 	require.Contains(t, resp.Content, "Warn:")
 }
 
-func TestMultiEditContinuesAcrossFilesAfterDiagnosticsErrors(t *testing.T) {
+func TestMultiEditStopsOtherFilesAfterDiagnosticsErrors(t *testing.T) {
 	t.Parallel()
 
 	ctx, workingDir, tracker, sessions, permissions, manager := newEditTestHarness(t)
@@ -109,13 +111,14 @@ func TestMultiEditContinuesAcrossFilesAfterDiagnosticsErrors(t *testing.T) {
 	require.False(t, resp.IsError)
 	require.Contains(t, resp.Content, "<diagnostic_summary>")
 	require.Contains(t, resp.Content, "Current file: 1 errors, 1 warnings")
+	require.Contains(t, resp.Content, "edit blocked: fix all current-file errors and warnings")
 
 	content, err := os.ReadFile(fileTwo)
 	require.NoError(t, err)
-	require.Equal(t, "BETA\n", string(content))
+	require.Equal(t, "beta\n", string(content))
 }
 
-func TestEditGuardDoesNotBlockOtherFilesAfterDiagnostics(t *testing.T) {
+func TestEditGuardBlocksOtherFilesAfterDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	guard := NewEditGuard()
@@ -124,6 +127,23 @@ func TestEditGuardDoesNotBlockOtherFilesAfterDiagnostics(t *testing.T) {
 
 	guard.SetLockedIfErrors("session-1", "/tmp/first.go", true)
 
+	err := guard.EnsureAllowed("session-1", "/tmp/second.go", true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "/tmp/first.go")
+	require.Contains(t, err.Error(), "/tmp/second.go")
+}
+
+func TestEditGuardAllowsLockedFileUntilDiagnosticsAreClear(t *testing.T) {
+	t.Parallel()
+
+	guard := NewEditGuard()
+	guard.RecordView("session-1", "/tmp/first.go", true)
+	guard.RecordView("session-1", "/tmp/second.go", true)
+
+	guard.SetLockedIfErrors("session-1", "/tmp/first.go", true)
+	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/first.go", true))
+
+	guard.SetLockedIfErrors("session-1", "/tmp/first.go", false)
 	require.NoError(t, guard.EnsureAllowed("session-1", "/tmp/second.go", true))
 }
 
@@ -163,6 +183,23 @@ func TestMultiEditAcceptsSingleEditShape(t *testing.T) {
 	content, err := os.ReadFile(filePath)
 	require.NoError(t, err)
 	require.Equal(t, "hello sapphire\n", string(content))
+}
+
+func TestWriteDiagnosticsDoesNotTruncateEntries(t *testing.T) {
+	t.Parallel()
+
+	var output strings.Builder
+	diagnostics := make([]string, 0, 12)
+	for i := 0; i < 12; i++ {
+		diagnostics = append(diagnostics, fmt.Sprintf("Error: /tmp/test.ts:%d:1 [tsserver] synthetic %d", i+1, i+1))
+	}
+
+	writeDiagnostics(&output, "file_diagnostics", diagnostics)
+
+	rendered := output.String()
+	require.Contains(t, rendered, "synthetic 1")
+	require.Contains(t, rendered, "synthetic 12")
+	require.NotContains(t, rendered, "... and")
 }
 
 func newEditTestHarness(t *testing.T) (context.Context, string, filetracker.Service, session.Service, permission.Service, *lsp.Manager) {

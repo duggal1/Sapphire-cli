@@ -231,3 +231,41 @@ func TestGetModelNameFromContext(t *testing.T) {
 		})
 	}
 }
+
+func TestGetTurnPolicyFromContext(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want TurnPolicy
+	}{
+		{
+			name: "returns policy when present",
+			ctx: context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
+				DirectResponseOnly:       true,
+				AllowMemoryRead:          false,
+				AllowMemoryWrite:         false,
+				AllowAutoMemoryInjection: false,
+			}),
+			want: TurnPolicy{
+				DirectResponseOnly:       true,
+				AllowMemoryRead:          false,
+				AllowMemoryWrite:         false,
+				AllowAutoMemoryInjection: false,
+			},
+		},
+		{
+			name: "returns defaults when missing",
+			ctx:  context.Background(),
+			want: DefaultTurnPolicy(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetTurnPolicyFromContext(tt.ctx)
+			if got != tt.want {
+				t.Errorf("GetTurnPolicyFromContext() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}

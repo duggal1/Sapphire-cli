@@ -179,6 +179,111 @@ func TestPrepareToolCallNormalizesSaveMemoryAliases(t *testing.T) {
 	require.IsType(t, map[string]any{}, input["content"])
 }
 
+func TestPrepareToolCallBlocksToolsOnDirectReplyOnlyTurn(t *testing.T) {
+	t.Parallel()
+
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
+		DirectResponseOnly:       true,
+		AllowMemoryRead:          false,
+		AllowMemoryWrite:         false,
+		AllowAutoMemoryInjection: false,
+	})
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "casual-1",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":"README.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: singleViewTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "casual conversation only")
+}
+
+func TestPrepareToolCallBlocksMemoryReadToolsWhenPolicyDisallows(t *testing.T) {
+	t.Parallel()
+
+	viewMemoryTool := fantasy.NewAgentTool(
+		"view_memory",
+		"",
+		func(ctx context.Context, params struct {
+			Mode string `json:"mode,omitempty"`
+		}, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
+		AllowMemoryRead:          false,
+		AllowMemoryWrite:         false,
+		AllowAutoMemoryInjection: false,
+	})
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "memory-read-1",
+		Name:  "view_memory",
+		Input: `{"mode":"recent"}`,
+	}, map[string]fantasy.AgentTool{"view_memory": viewMemoryTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "durable memory reads are blocked")
+}
+
+func TestPrepareToolCallBlocksMemoryArtifactReadWhenPolicyDisallows(t *testing.T) {
+	t.Parallel()
+
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
+		AllowMemoryRead:          false,
+		AllowMemoryWrite:         false,
+		AllowAutoMemoryInjection: false,
+	})
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "memory-file-1",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":".sapphire-memory/memory_summary.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: singleViewTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "durable memory file access is blocked")
+}
+
+func TestPrepareToolCallRejectsBareRepoMemoryAliasPaths(t *testing.T) {
+	t.Parallel()
+
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, DefaultTurnPolicy())
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "memory-file-2",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":"memory_summary.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: singleViewTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), ".sapphire-memory/memory_summary.md")
+}
+
 func TestPrepareToolCallDoesNotRewriteSingleAgenticViewToView(t *testing.T) {
 	t.Parallel()
 

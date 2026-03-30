@@ -271,10 +271,13 @@ func (m *Message) AppendReasoningContent(delta string) {
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
 			m.Parts[i] = ReasoningContent{
-				Thinking:   c.Thinking + delta,
-				Signature:  c.Signature,
-				StartedAt:  c.StartedAt,
-				FinishedAt: c.FinishedAt,
+				Thinking:         c.Thinking + delta,
+				Signature:        c.Signature,
+				ThoughtSignature: c.ThoughtSignature,
+				ToolID:           c.ToolID,
+				ResponsesData:    c.ResponsesData,
+				StartedAt:        c.StartedAt,
+				FinishedAt:       c.FinishedAt,
 			}
 			found = true
 		}
@@ -295,13 +298,17 @@ func (m *Message) AppendThoughtSignature(signature string, toolCallID string) {
 				ThoughtSignature: c.ThoughtSignature + signature,
 				ToolID:           toolCallID,
 				Signature:        c.Signature,
+				ResponsesData:    c.ResponsesData,
 				StartedAt:        c.StartedAt,
 				FinishedAt:       c.FinishedAt,
 			}
 			return
 		}
 	}
-	m.Parts = append(m.Parts, ReasoningContent{ThoughtSignature: signature})
+	m.Parts = append(m.Parts, ReasoningContent{
+		ThoughtSignature: signature,
+		ToolID:           toolCallID,
+	})
 }
 
 func (m *Message) AppendReasoningSignature(signature string) {

@@ -8,16 +8,10 @@ A tool for managing Sapphire agents.
 
 The shipped binary name is `sapphire`.
 
-If your tap is not added yet:
+Recommended one-command install:
 
 ```bash
-brew install duggal1/tap/sapphire
-```
-
-After the tap is added once, you can use:
-
-```bash
-brew install sapphire
+brew install duggal1/Sapphire-cli/sapphire
 ```
 
 Then launch it with:
@@ -26,14 +20,21 @@ Then launch it with:
 sapphire
 ```
 
-Note: `brew install sapphire` on a completely clean machine only works after `duggal1/tap` has already been tapped, or if the formula is accepted into `homebrew/core`. The release flow in this repo publishes to the custom tap, not `homebrew/core`.
+If you want the tap added explicitly first:
+
+```bash
+brew tap duggal1/Sapphire-cli
+brew install sapphire
+```
+
+Note: plain `brew install sapphire` on a completely clean machine only works after `duggal1/Sapphire-cli` has already been tapped, or if Sapphire is accepted into `homebrew/core`. The release flow here publishes the formula back into this repository.
 
 ## Maintainer Release Flow
 
 Production shipping is wired through GoReleaser and GitHub Actions:
 
 - `.github/workflows/snapshot.yml` validates the release pipeline on PRs and `main`
-- `.github/workflows/release.yml` publishes tagged releases and updates `duggal1/homebrew-tap`
+- `.github/workflows/release.yml` publishes tagged releases and updates the Homebrew formula in `duggal1/Sapphire-cli`
 - `.goreleaser.yml` builds the `sapphire` binary, archives, checksums, completions, manpages, and the Homebrew formula
 
 Maintainer checklist:
@@ -46,7 +47,7 @@ task release
 
 Required GitHub secrets for the release workflow:
 
-- `PERSONAL_ACCESS_TOKEN` or `HOMEBREW_TAP_GITHUB_TOKEN` for pushing the Homebrew tap formula
+- optional: `PERSONAL_ACCESS_TOKEN` or `HOMEBREW_TAP_GITHUB_TOKEN` if you do not want to rely on `GITHUB_TOKEN`
 - optional: `FURY_TOKEN`
 - optional: `AUR_KEY`
 - optional: `GPG_KEY_PATH`

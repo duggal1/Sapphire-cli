@@ -28,7 +28,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PERSONAL_ACCESS_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.PERSONAL_ACCESS_TOKEN || github.token }}
           FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
           AUR_KEY: ${{ secrets.AUR_KEY }}
           GPG_KEY_PATH: ${{ secrets.GPG_KEY_PATH }}

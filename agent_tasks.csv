@@ -1,7 +1,0 @@
-domain,instructions
-Core Agent,"Analyze internal/agent/ for core logic and coordination. Key files: agent.go, coordinator.go."
-CLI,"Analyze internal/cmd/ for Cobra command structure. Key files: root.go, run.go."
-TUI,"Analyze internal/ui/ for Bubble Tea v2 patterns."
-DB,"Analyze internal/db/ for SQLite schema and persistence logic."
-Config,"Analyze internal/config/ and internal/env/ for configuration loading."
-Utils,"Analyze internal/fsext, internal/csync, internal/stringext for utility patterns."

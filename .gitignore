@@ -154,3 +154,6 @@ beads/
 docker/
 sapphire-cli-testing/
 skills-repo/
+
+# Codex markdown orchestration
+codex-markodwn-orchestration-Explained/

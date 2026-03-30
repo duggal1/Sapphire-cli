@@ -88,10 +88,12 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 	if assignment.Title != "" {
 		builder.WriteString(fmt.Sprintf("Title: %s\n", assignment.Title))
 	}
+	builder.WriteString("Mode: execution\n")
 	builder.WriteString("\nAssignment Objective:\n")
 	builder.WriteString("- Own exactly this assignment. Do not widen scope.\n")
 	builder.WriteString("- Complete the assigned task or return a precise blocker.\n")
 	builder.WriteString("- If this run is part of a parallel batch, assume sibling agents own different scopes. Do not duplicate likely sibling work.\n")
+	builder.WriteString("- Read the real files in scope before reporting, editing, or concluding.\n")
 	builder.WriteString("\nAssigned Scope:\n")
 	builder.WriteString(fmt.Sprintf("- Workdir: %s\n", assignment.WorkDir))
 	if assignment.Branch != "" {
@@ -115,6 +117,7 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 	builder.WriteString("- Stay within the assigned task and scope.\n")
 	builder.WriteString("- Run commands inside the workdir.\n")
 	builder.WriteString("- Inspect before claiming.\n")
+	builder.WriteString("- Do not return generic analysis. Report evidence from actual inspected files.\n")
 	builder.WriteString("- If blocked or dependent on another agent, use durable mail.\n")
 	if len(assignment.WriteManifest) > 0 {
 		builder.WriteString("- Write access is restricted to the manifest below.\n")
@@ -132,7 +135,8 @@ func buildSubAgentAssignment(assignmentID, parentSessionID, title, task, workDir
 	builder.WriteString("- If blocked, report the missing dependency or decision.\n\n")
 	builder.WriteString("Deliverable:\n")
 	builder.WriteString("- Return the strict report format below.\n")
-	builder.WriteString("- Include only concrete progress, evidence, risks, and next step.\n\n")
+	builder.WriteString("- Include only concrete progress, evidence, risks, and next step.\n")
+	builder.WriteString("- Cite absolute file paths when claiming findings or edits.\n\n")
 	builder.WriteString("Validation:\n")
 	builder.WriteString("- A validation gate runs after the turn.\n")
 	builder.WriteString("- Failed validation preserves the worktree for review.\n")

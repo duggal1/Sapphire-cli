@@ -27,6 +27,7 @@ func TestBuildSubAgentAssignmentUsesStructuredTaskPacket(t *testing.T) {
 		t.Fatalf("expected assignment id to be preserved")
 	}
 	for _, needle := range []string{
+		"Mode: execution",
 		"Assignment Objective:",
 		"Assigned Scope:",
 		"Primary Task:",
@@ -35,6 +36,9 @@ func TestBuildSubAgentAssignmentUsesStructuredTaskPacket(t *testing.T) {
 		"Execution Contract:",
 		"Deliverable:",
 		"Do not duplicate likely sibling work.",
+		"Read the real files in scope before reporting, editing, or concluding.",
+		"Do not return generic analysis. Report evidence from actual inspected files.",
+		"Cite absolute file paths when claiming findings or edits.",
 		"Output format (strict):",
 	} {
 		if !strings.Contains(prompt, needle) {

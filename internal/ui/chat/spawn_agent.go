@@ -91,7 +91,7 @@ func (s *SpawnAgentToolRenderContext) RenderTool(sty *styles.Styles, width int, 
 		return joinToolParts(header, sty.Tool.Body.Render(body))
 	}
 
-	body := renderSubAgentSpawnBody(sty, &payload, &result, cappedWidth-toolBodyLeftPaddingTotal)
+	body := renderSubAgentSpawnBody(sty, &payload, &result, cappedWidth-toolBodyLeftPaddingTotal, opts.ExpandedContent)
 	if body == "" {
 		return header
 	}

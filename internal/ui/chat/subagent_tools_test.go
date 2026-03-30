@@ -93,6 +93,27 @@ func TestSpawnAgentToolKeepsAnimatingWhileSubAgentIsRunning(t *testing.T) {
 	}
 }
 
+func TestRenderSubAgentSpawnBodyShowsPromptPreview(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	rendered := ansi.Strip(renderSubAgentSpawnBody(&sty, &agent.SpawnAgentParams{
+		Title:   "Agent 1: Core Agent Logic Analysis",
+		Message: "Read the core agent orchestration paths, identify the real control flow, and report exact risks with absolute file paths.",
+		Agent:   "coder",
+	}, &subAgentSpawnResult{
+		AgentID: "agent-1",
+		Status:  "running",
+	}, 120, false))
+
+	if !strings.Contains(rendered, "Task: Agent 1: Core Agent Logic Analysis") {
+		t.Fatalf("expected task title, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Brief: Read the core agent orchestration paths") {
+		t.Fatalf("expected prompt preview, got %q", rendered)
+	}
+}
+
 func TestBackgroundSubAgentsPayloadActiveWhileRunning(t *testing.T) {
 	t.Parallel()
 

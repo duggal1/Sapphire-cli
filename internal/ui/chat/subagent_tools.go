@@ -369,12 +369,19 @@ func parseSubAgentSimpleResult(raw string) []*TreeNode {
 	return nodes
 }
 
-func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams, payload *subAgentSpawnResult, width int) string {
+func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams, payload *subAgentSpawnResult, width int, expanded bool) string {
 	sections := make([]*TreeNode, 0, 8)
 
 	if params != nil {
 		if params.Title != "" {
 			sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Task", params.Title)})
+		}
+		if prompt := summarizeSubAgentPrompt(params.Message, expanded); prompt != "" {
+			label := "Prompt"
+			if !expanded {
+				label = "Brief"
+			}
+			sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, label, prompt)})
 		}
 		if params.Agent != "" {
 			sections = append(sections, &TreeNode{Label: renderSubAgentField(sty, "Profile", params.Agent)})
@@ -418,6 +425,17 @@ func renderSubAgentSpawnBody(sty *styles.Styles, params *agent.SpawnAgentParams,
 		Children: sections,
 	}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
+}
+
+func summarizeSubAgentPrompt(prompt string, expanded bool) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	if expanded {
+		return prompt
+	}
+	return oneLine(prompt)
 }
 
 func renderSubAgentWaitBody(sty *styles.Styles, payload subAgentWaitResult, width int) string {

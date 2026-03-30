@@ -453,7 +453,12 @@ func repairViewCall(
 	offset, _ := coerceInt(input["offset"])
 	limit, _ := coerceInt(input["limit"])
 	if len(paths) == 0 {
-		return call, tool, input, errors.New("file_path is required")
+		return call, tool, input, NewToolGuidanceError(
+			call.Name,
+			"missing_file_path",
+			"Missing file path.",
+			"single_view/agentic_view require explicit file path arguments. Do not pass empty input or natural language. Use file_path for one file or file_paths for multiple files, then retry with real repo-relative paths.",
+		)
 	}
 
 	input = map[string]any{}

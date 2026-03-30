@@ -1,69 +1,218 @@
-Analyze this codebase and create/update {{.Config.Options.InitializeAs}} to enable future agents to operate effectively in this repository.
+# Analyze this Codebase/Repository and Create/Update {{.Config.Options.InitializeAs}}
 
-Capabilities (use precisely):
-- Tool discovery: `list_tools` if unsure → `search_tools` → `tool_suggest` → `install_mcp` or `connect_mcp`.
-- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for one known file, `agentic_view` for any multi-file or broad repository read. Use `agentic_view` comprehensively.
-- `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or prompt/CSV setup when structured tools exist.
-- Never create temporary `.txt` or `.csv` payload files just to call `spawn_agent` or related tools. Pass prompts directly as tool parameters.
-- `view_memory` is the long-horizon recovery tool. Use it to recover exact earlier decisions, older tool/result trails, and prior-session context when current context is no longer enough.
-- `refresh_memory` forces regeneration of `memory.md` from the live codebase map and session state. Use it only after meaningful new information.
-- `recall_memory` is for exact retrieval of prior durable facts, strategies, mistakes, and commands.
-- `save_memory` persists durable decisions and reusable tactics that future sessions should not lose.
-- Explicit sub-agent lifecycle: `spawn_agent` (supports `isolation`, `model`, `reasoning_effort`, `fork_context`, `worktree_path`, `branch`, `write_manifest`, `definition_of_done`) → `resume_agent` → `send_input` → `wait` → `collect_result` → `close_agent`.
-- Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
-- Worktree orchestration: `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees. Do not use it when the task is about real sub-agent behavior, coordination, handoffs, wait/collect flow, or sub-agent debugging.
-- Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
-- Execution loop: observe → reason → act (one tool) → wait → observe.
+Create or update `{{.Config.Options.InitializeAs}}` so future agents can understand and work in this codebase/repository correctly.
 
-**Pre-flight check**: Run `ls`. If the directory is empty or contains only config files, stop and output: "Directory appears empty or only contains config. Add source code first, then run this command to generate {{.Config.Options.InitializeAs}}."
+---
 
-**Step 1 — Complexity estimation**:
-Before executing anything, assess repository scale and complexity:
-- Count total files and directories
-- Identify languages, frameworks, and tooling present
-- Detect structural patterns: monorepo, microservices, monolith, library, CLI, etc.
-- Identify distinct domains: services, infra, migrations, schemas, SDKs, tests, configs, etc.
+## Goal
 
-Classify the repository into one of three tiers:
+Document everything an agent needs to work in this codebase — commands, patterns,
+conventions, and gotchas. Aim for **completeness over brevity**. Include everything
+an agent would need to know. Use judgment on depth based on what you actually find.
 
-- Small: compact structure, limited surface area, one dominant domain → execute analysis directly, no subagents
-- Medium: multiple meaningful domains or subsystems → spawn targeted subagents by domain
-- Large: many distinct domains, broad surface area, or multiple languages/frameworks → spawn broad domain coverage with subagents
+---
 
-**Step 2 — Adaptive orchestration**:
+## Tool Usage Rules
 
-Small repo: Analyze directly. Read one known file with `single_view`. Read any multi-file target set or broad read with `agentic_view`. Use `agentic_view` comprehensively. No subagent overhead.
+- Read first. Write second.
+- Document only what is explicitly observed.
+- Do not invent commands, paths, architecture, conventions, or workflows.
+- Use `agentic_view` aggressively for broad and multi-file repository reads.
+- Use `single_view` for one known file.
+- Use `ls`, `glob`, and `grep` for discovery.
+- Do not use `bash` for repo discovery or file reading when structured tools exist.
+- Do not force sub-agents. Use them only when repo complexity justifies them.
 
-Medium repo: Identify the highest-value domains. Spawn one subagent per domain. Each subagent reads one known file with `single_view` and uses `agentic_view` comprehensively for multi-file and broad domain reads.
+---
 
-Large repo: Map every distinct domain present in the repository. Spawn one subagent per domain. Domains may include but are not limited to: core source, services, infrastructure, CI/CD, migrations, schemas, SDKs, testing, documentation, configuration, generated code, environment setup. Each subagent reads one known file with `single_view` and uses `agentic_view` comprehensively for multi-file and broad domain reads. Return only synthesized, actionable findings — no raw file dumps.
+## Pre-Flight Check
 
-Every subagent must:
-1. Read one known assigned file with `single_view`. Read any multi-file assigned set or broad assigned slice with `agentic_view`. Use `agentic_view` comprehensively.
-2. Return only synthesized findings — no raw file content
-3. Report only what is explicitly observed — never infer or fabricate
+Run `ls`.
 
-**Step 3 — Synthesis**:
-Aggregate all findings. If {{.Config.Options.InitializeAs}} already exists, read it first and improve it. Do not overwrite valid existing content without cause.
+If the directory is empty or only contains config files, output exactly:
 
-**Output content**:
-- Essential commands: build, test, run, lint, deploy — only what exists
-- Project structure and code organization
-- Naming conventions and style patterns
-- Testing approach and patterns
-- Gotchas and non-obvious behaviors
-- Environment and setup requirements
-- Context extracted from existing rule files
+> `Directory appears empty or only contains config. Add source code first, then run
+> this command to generate {{.Config.Options.InitializeAs}}.`
 
-If subagent findings conflict on the same fact, document both in {{.Config.Options.InitializeAs}} and flag it:
-`⚠ CONFLICT: [A found X] vs [B found Y] — verify manually.`
+Then stop.
 
-If a subagent returns no findings for its domain, document the gap:
-`⚠ UNRESOLVED: [domain] — no findings returned. Manual inspection required.`
+---
 
-Never silently resolve conflicts. Never fabricate findings to fill gaps.
+## Step 1 — Assess Complexity
 
+Inspect the repo and classify it into exactly one tier:
 
-**Format**: Structured markdown. Calibrate section depth to repository complexity. Completeness over brevity — include everything an agent needs to operate without asking questions.
+| Tier       | Definition                                                                 |
+|------------|----------------------------------------------------------------------------|
+| **Small**  | Limited surface area, one main domain                                      |
+| **Medium** | Multiple meaningful subsystems                                             |
+| **Large**  | Broad surface area, many domains, multiple frameworks/languages, or monorepo |
 
-**Hard constraint**: Document only what is explicitly observed. Never invent commands, patterns, file paths, or conventions. If something cannot be found, omit it.
+### What to check
+
+- Repo size and layout
+- Languages and frameworks
+- Build tooling (Makefiles, CI configs, scripts, package managers)
+- Major domains present: app, services, infra, tests, docs, config, schemas,
+  migrations, SDKs, generated code
+
+---
+
+## Step 2 — Discovery Process
+
+Execute in this exact order:
+
+### 2.1 — Directory Contents
+
+Run `ls`. Understand top-level layout before anything else.
+
+### 2.2 — Existing Rule and Context Files
+
+Look for the following files. **Only read them if they exist.**
+
+```
+
+.cursor/rules/\*.md
+.cursorrules
+.github/copilot-instructions.md
+claude.md
+agents.md
+CLAUDE.md
+AGENTS.md
+
+```
+
+Extract all project-specific context, constraints, and conventions from these files.
+They take precedence over inferred patterns.
+
+### 2.3 — Project Type and Tooling
+
+Identify project type from:
+- Config files (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, etc.)
+- Directory structure and naming
+- CI configuration files (`.github/workflows/`, `Makefile`, `justfile`, etc.)
+
+### 2.4 — Commands
+
+Find build, test, run, lint, and deploy commands from:
+- Config files
+- Scripts directories
+- Makefiles and justfiles
+- CI workflow definitions
+
+Do **not** invent commands. If you cannot confirm a command exists, do not include it.
+
+### 2.5 — Source Code Patterns
+
+Read representative source files to understand:
+- Code organization within files
+- Naming conventions (variables, functions, files, directories)
+- Testing approach and structure
+- Any non-obvious or project-specific patterns
+
+### 2.6 — Existing `{{.Config.Options.InitializeAs}}`
+
+If the file already exists, **read it first**. Improve it incrementally instead of
+blindly overwriting it.
+
+---
+
+## Step 3 — Analyze by Complexity Tier
+
+### Small Repo
+Analyze directly. No sub-agents.
+
+### Medium Repo
+Spawn sub-agents only for major domains where coverage justifies it.
+
+### Large Repo
+Spawn one sub-agent per major domain.
+
+### Sub-Agent Requirements (if used)
+
+Each sub-agent must:
+
+1. Read at least one anchor file with `single_view`
+2. Use `agentic_view` for broad coverage of its assigned domain
+3. Return synthesized findings only — no raw file dumps
+4. Report only explicitly observed facts
+
+---
+
+## Step 4 — Synthesize and Resolve
+
+- If findings from different sources or sub-agents conflict, do **not** silently
+  resolve them.
+- Write unresolved issues explicitly using these markers:
+
+```
+
+⚠ CONFLICT: [describe the conflict and both sides]
+⚠ UNRESOLVED: [describe what could not be confirmed]
+
+```
+
+---
+
+## Required Output Structure
+
+Write `{{.Config.Options.InitializeAs}}` using this exact section structure.
+Adapt depth per section based on what was actually observed. Omit nothing major.
+
+```markdown
+# {{.Config.Options.InitializeAs}}
+
+## Repository Overview
+<!-- What this repo is, what it does, who it's for -->
+
+## Architecture Summary
+<!-- High-level system design, major components and how they relate -->
+
+## Repository Layout
+<!-- Annotated directory tree, one line per entry, only major paths -->
+
+## Entry Points and Core Files
+<!-- Where execution begins, main files, critical config -->
+
+## Key Code Areas
+<!-- Important modules, packages, services — what each does -->
+
+## Build / Run / Test / Lint
+<!-- Every confirmed command. Format: what it does + the exact command -->
+
+## Conventions and Patterns
+<!-- Naming, file structure, code style, testing patterns, anything consistent -->
+
+## Environment and Setup
+<!-- Required env vars, setup steps, external dependencies, toolchain versions -->
+
+## Rules / Memory / Existing Context Files
+<!-- Everything extracted from .cursorrules, claude.md, agents.md, etc. -->
+
+## Gotchas and Non-Obvious Behavior
+<!-- Things that will bite an agent that aren't obvious from reading the code -->
+
+## Open Questions / Conflicts / Gaps
+<!-- ⚠ CONFLICT and ⚠ UNRESOLVED items go here -->
+```
+
+---
+
+## Hard Constraints
+
+- Do **not** write output before broad repo coverage is complete.
+- Do **not** use sub-agents unless justified by complexity.
+- Do **not** dump raw file content anywhere in the output.
+- Do **not** omit any major observed domain.
+- Do **not** claim certainty without evidence.
+- Do **not** include any command, path, pattern, or convention you did not explicitly
+  observe in the repository.
+
+---
+
+## Operating Principle
+
+**observe → reason → act → observe**
+
+Every claim in the output must trace back to something you read. Nothing else.
+

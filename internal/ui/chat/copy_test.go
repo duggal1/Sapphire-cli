@@ -80,3 +80,44 @@ func TestNewCopyMsgUsesCopyToastType(t *testing.T) {
 		t.Fatalf("expected copy toast message, got %q", msg.Msg)
 	}
 }
+
+func TestToolErrorRenderUsesUserVisibleSummary(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	errResult := &message.ToolResult{
+		ToolCallID: "bash-err-1",
+		Name:       tools.BashToolName,
+		Content:    "bash requires a non-empty command string in command. Do not omit it. If the task is repository discovery, file reading, web search, or delegation setup, use structured tools instead of bash.",
+		Metadata:   `{"tool_error":{"tool_name":"bash","code":"missing_command","ui_message":"Missing command."}}`,
+		IsError:    true,
+	}
+
+	item := NewBashToolMessageItem(&sty, message.ToolCall{
+		ID:       "bash-err-1",
+		Name:     tools.BashToolName,
+		Input:    `{}`,
+		Finished: true,
+	}, errResult, false)
+	item.SetStatus(ToolStatusError)
+
+	rendered := ansi.Strip(item.Render(100))
+	if !strings.Contains(rendered, "Missing command.") {
+		t.Fatalf("expected user-visible error summary, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Do not omit it") {
+		t.Fatalf("expected strict model guidance to stay hidden from UI, got %q", rendered)
+	}
+
+	copyable, ok := item.(interface{ CopyContent() string })
+	if !ok {
+		t.Fatal("expected bash tool item to expose CopyContent")
+	}
+	copied := copyable.CopyContent()
+	if !strings.Contains(copied, "Missing command.") {
+		t.Fatalf("expected copied error to use visible summary, got %q", copied)
+	}
+	if strings.Contains(copied, "Do not omit it") {
+		t.Fatalf("expected copied error to hide strict model guidance, got %q", copied)
+	}
+}

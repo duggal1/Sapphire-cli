@@ -644,9 +644,8 @@ func (c *coordinator) buildSharedSubAgentLaunchMemoryContext(ctx context.Context
 		}
 	}
 
-	value := strings.Join(sections, "\n\n")
+	value = strings.Join(sections, "\n\n")
 	c.storeSubAgentLaunchMemory(key, value)
-	c.finishSubAgentLaunchMemoryFlight(key, value)
 	c.countSubAgentLaunchMetric("subagent_memory.launch_context_cache_miss", 1)
 	return value
 }

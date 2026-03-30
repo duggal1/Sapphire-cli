@@ -11,7 +11,7 @@ The shipped binary name is `sapphire`.
 Recommended one-command install:
 
 ```bash
-brew install duggal1/Sapphire-cli/sapphire
+brew install duggal1/sapphire-cli/sapphire
 ```
 
 Then launch it with:
@@ -23,18 +23,18 @@ sapphire
 If you want the tap added explicitly first:
 
 ```bash
-brew tap duggal1/Sapphire-cli
+brew tap duggal1/sapphire-cli
 brew install sapphire
 ```
 
-Note: plain `brew install sapphire` on a completely clean machine only works after `duggal1/Sapphire-cli` has already been tapped, or if Sapphire is accepted into `homebrew/core`. The release flow here publishes the formula back into this repository.
+Note: plain `brew install sapphire` on a completely clean machine only works after `duggal1/sapphire-cli` has already been tapped, or if Sapphire is accepted into `homebrew/core`. The release flow here publishes the formula into the dedicated tap repository `duggal1/homebrew-sapphire-cli`.
 
 ## Maintainer Release Flow
 
 Production shipping is wired through GoReleaser and GitHub Actions:
 
 - `.github/workflows/snapshot.yml` validates the release pipeline on PRs and `main`
-- `.github/workflows/release.yml` publishes tagged releases and updates the Homebrew formula in `duggal1/Sapphire-cli`
+- `.github/workflows/release.yml` publishes tagged releases and updates the Homebrew formula in `duggal1/homebrew-sapphire-cli`
 - `.goreleaser.yml` builds the `sapphire` binary, archives, checksums, completions, manpages, and the Homebrew formula
 
 Maintainer checklist:

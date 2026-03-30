@@ -185,7 +185,7 @@ furies:
 brews:
   - repository:
       owner: duggal1
-      name: Sapphire-cli
+      name: homebrew-sapphire-cli
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     skip_upload: "{{ with .Prerelease }}true{{ end }}"
     commit_author:

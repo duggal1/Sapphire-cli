@@ -11,6 +11,7 @@ import (
 )
 
 // main initializes the profiling server and executes the root command.
+// Ultra fast execution mode enabled.
 func main() {
 	if os.Getenv("CRUSH_PROFILE") != "" {
 		go func() {

@@ -215,4 +215,3 @@ Adapt depth per section based on what was actually observed. Omit nothing major.
 **observe → reason → act → observe**
 
 Every claim in the output must trace back to something you read. Nothing else.
-

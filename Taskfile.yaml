@@ -46,7 +46,7 @@ tasks:
   build:
     desc: Run build
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/charmbracelet/crush/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/duggal1/Sapphire-cli/internal/version.Version={{.VERSION}}"{{end}}'
     cmds:
       - "go build -buildvcs=false -v {{if .RACE}}-race{{end}} {{.LDFLAGS}} -o sapphire{{exeExt}} ."
     sources:
@@ -116,7 +116,7 @@ tasks:
   install:
     desc: Install the application
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/charmbracelet/crush/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/duggal1/Sapphire-cli/internal/version.Version={{.VERSION}}"{{end}}'
     cmds:
       - task: fetch-tags
       - go install -buildvcs=false {{.LDFLAGS}} -v .

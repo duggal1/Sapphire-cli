@@ -77,6 +77,7 @@ func (c *coordinator) indexCodebaseWithOptions(ctx context.Context, opts indexCo
 	if c == nil || c.memoryCompiler == nil {
 		return codeindex.Stats{}, nil, fmt.Errorf("durable codebase graph is not initialized")
 	}
+	indexStartedAt := time.Now().UTC()
 	indexCtx, release, err := c.beginCodebaseIndex(ctx)
 	if err != nil {
 		return codeindex.Stats{}, nil, err
@@ -122,7 +123,7 @@ func (c *coordinator) indexCodebaseWithOptions(ctx context.Context, opts indexCo
 		LastIndexedAt: lastIndexedAt,
 	}
 
-	survey, err := c.runMandatorySemanticCodebaseSurvey(indexCtx, opts.SessionID, result.Status, fileCount, opts.SubAgents)
+	survey, err := c.runMandatorySemanticCodebaseSurvey(indexCtx, opts.SessionID, result.Status, fileCount, opts.SubAgents, indexStartedAt)
 	if err != nil {
 		return stats, nil, err
 	}
@@ -133,7 +134,7 @@ func errorsIs(err, target error) bool {
 	return err != nil && target != nil && strings.Contains(err.Error(), target.Error())
 }
 
-func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, sessionID string, status agentmemory.IndexStatus, fileCount int, requestedAgents int) (*codebaseSemanticSurveyResult, error) {
+func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, sessionID string, status agentmemory.IndexStatus, fileCount int, requestedAgents int, startedAt time.Time) (*codebaseSemanticSurveyResult, error) {
 	if c == nil || c.memoryCompiler == nil {
 		return nil, fmt.Errorf("memory compiler is not initialized")
 	}
@@ -180,22 +181,27 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		return nil, err
 	}
 
-	reportProgress := func(message string, percent float64, agents []codeindex.SemanticAgentProgress) {
+	if startedAt.IsZero() {
+		startedAt = manifest.GeneratedAt
+	}
+
+	reportProgress := func(message string, percent float64, active bool, finished bool, agents []codeindex.SemanticAgentProgress) {
 		codeindex.PublishProgress(codeindex.Progress{
 			Workspace:       status.ScopePath,
 			Phase:           "semantic_graph",
 			Message:         message,
-			Active:          true,
+			Active:          active,
+			Finished:        finished,
 			FilesDiscovered: len(files),
 			FilesIndexed:    len(files),
 			Percent:         percent,
-			StartedAt:       manifest.GeneratedAt,
+			StartedAt:       startedAt,
 			UpdatedAt:       time.Now().UTC(),
 			SemanticAgents:  agents,
 		})
 	}
 
-	reportProgress(formatSemanticSurveyProgressMessage(0, len(shards), true), 0.92, nil)
+	reportProgress(formatSemanticSurveyProgressMessage(0, len(shards), true), 0.92, true, false, nil)
 
 	spawnPlans := make([]semanticSurveySpawnPlan, 0, len(shards))
 	for _, shard := range shards {
@@ -268,6 +274,8 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 			reportProgress(
 				formatSemanticSurveyProgressMessage(launched+1, len(shards), true),
 				launchPercent,
+				true,
+				false,
 				c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent),
 			)
 		}
@@ -293,6 +301,8 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		reportProgress(
 			formatSemanticSurveyProgressMessage(done, len(shards), false),
 			0.94+(0.04*(float64(done)/float64(len(shards)))),
+			true,
+			false,
 			c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent),
 		)
 		if done == len(shards) {
@@ -371,7 +381,19 @@ func (c *coordinator) runMandatorySemanticCodebaseSurvey(ctx context.Context, se
 		_ = c.pmem.RefreshMemory(ctx, sessionID, true)
 	}
 
-	reportProgress("AI codebase graph ready", 1, c.buildSemanticSurveyProgressAgents(agentIDs, shardByAgent))
+	codeindex.PublishProgress(codeindex.Progress{
+		Workspace:       status.ScopePath,
+		Phase:           "ready",
+		Message:         "Indexing complete",
+		Active:          false,
+		Finished:        true,
+		FilesDiscovered: len(files),
+		FilesProcessed:  len(files),
+		FilesIndexed:    len(files),
+		Percent:         1,
+		StartedAt:       startedAt,
+		UpdatedAt:       time.Now().UTC(),
+	})
 	return &codebaseSemanticSurveyResult{
 		Status:       manifest.Status,
 		AgentCount:   manifest.AgentCount,
@@ -448,7 +470,7 @@ func (c *coordinator) buildSemanticSurveyProgressAgents(agentIDs []string, shard
 		byID[snapshot.ID] = snapshot
 	}
 	progress := make([]codeindex.SemanticAgentProgress, 0, len(agentIDs))
-	for _, agentID := range agentIDs {
+	for idx, agentID := range agentIDs {
 		shard, ok := shardByAgent[agentID]
 		if !ok {
 			continue
@@ -464,9 +486,9 @@ func (c *coordinator) buildSemanticSurveyProgressAgents(agentIDs []string, shard
 		}
 		progress = append(progress, codeindex.SemanticAgentProgress{
 			ID:        agentID,
-			Label:     shard.Label,
+			Label:     fmt.Sprintf("Sub-agent %d", idx+1),
 			Status:    status,
-			Task:      "Read assigned files and write shard graph",
+			Task:      shard.Label,
 			Scope:     scope,
 			FileCount: len(shard.Files),
 		})

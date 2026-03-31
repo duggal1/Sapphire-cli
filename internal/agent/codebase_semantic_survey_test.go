@@ -252,7 +252,7 @@ func TestRunMandatorySemanticCodebaseSurveyUsesLowReasoningAndWritesArtifacts(t 
 	require.NoError(t, err)
 
 	started := time.Now()
-	result, err := coord.runMandatorySemanticCodebaseSurvey(context.Background(), parentSession.ID, status, len(files), 3)
+	result, err := coord.runMandatorySemanticCodebaseSurvey(context.Background(), parentSession.ID, status, len(files), 3, time.Now().Add(-12*time.Second))
 	elapsed := time.Since(started)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -420,7 +420,7 @@ func TestRunMandatorySemanticCodebaseSurveyLaunchesShardAgentsInParallel(t *test
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	result, err := coord.runMandatorySemanticCodebaseSurvey(ctx, parentSession.ID, status, len(files), expectedAgents)
+	result, err := coord.runMandatorySemanticCodebaseSurvey(ctx, parentSession.ID, status, len(files), expectedAgents, time.Now().Add(-12*time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 

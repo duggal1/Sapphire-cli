@@ -82,28 +82,28 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 	title := i.renderTitle()
 	workspace := i.renderWorkspace()
 	status := i.renderStatus()
-	percentLabel := fmt.Sprintf("%d%%", clampIndexPercent(i.progress.Percent))
-	barWidth := max(18, min(42, width-10))
-	bar := renderIndexingProgressBar(barWidth, i.progress.Percent)
-
-	progressLine := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		bar,
-		"  ",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#E7E5E4")).Bold(true).Render(percentLabel),
-	)
-
 	lines := []string{title}
 	if workspace != "" {
 		lines = append(lines, i.sty.HalfMuted.Render(workspace))
 	}
-	if status != "" {
+	if status != "" && i.progress.Active {
 		lines = append(lines, i.sty.Muted.Render(status))
 	}
-	if tree := i.renderSemanticAgentTree(width - 4); tree != "" {
+	if tree := i.renderSemanticAgentTree(width - 4); tree != "" && i.progress.Active {
 		lines = append(lines, tree)
 	}
-	lines = append(lines, progressLine)
+	if i.progress.Active {
+		percentLabel := fmt.Sprintf("%d%%", clampIndexPercent(i.progress.Percent))
+		barWidth := max(18, min(42, width-10))
+		bar := renderIndexingProgressBar(barWidth, i.progress.Percent)
+		progressLine := lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			bar,
+			"  ",
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Bold(true).Render(percentLabel),
+		)
+		lines = append(lines, progressLine)
+	}
 	if detail := i.renderMetrics(); detail != "" {
 		lines = append(lines, i.sty.HalfMuted.Render(detail))
 	}
@@ -117,16 +117,18 @@ func (i *IndexingMessageItem) renderContent(width int) string {
 func (i *IndexingMessageItem) renderTitle() string {
 	switch {
 	case i.progress.Active:
-		if i.progress.Phase == "starting" {
-			return shimmer.RenderIndexingText("Preparing codebase index", i.frame)
-		}
-		return shimmer.RenderIndexingText("Indexing codebase", i.frame)
+		return shimmer.ShimmerText("Indexing codebase...")
 	case i.progress.Phase == "canceled":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B")).Bold(true).Render("Codebase indexing stopped")
 	case strings.TrimSpace(i.progress.Error) != "":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FB7185")).Bold(true).Render("Codebase indexing failed")
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#E7E5E4")).Bold(true).Render("Codebase indexing complete")
+		elapsed := renderIndexingElapsed(i.progress)
+		label := "✓ Indexing complete"
+		if elapsed != "" {
+			label += " (" + elapsed + ")"
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Bold(true).Render(label)
 	}
 }
 
@@ -149,8 +151,10 @@ func (i *IndexingMessageItem) renderStatus() string {
 
 	phase := strings.ReplaceAll(strings.TrimSpace(i.progress.Phase), "_", " ")
 	switch i.progress.Phase {
+	case "ready":
+		return ""
 	case "starting":
-		return "Starting durable indexer"
+		return "Preparing index"
 	case "canceled":
 		return "Indexing stopped"
 	case "discovering":
@@ -185,7 +189,7 @@ func (i *IndexingMessageItem) renderMetrics() string {
 		parts = append(parts, fmt.Sprintf("%d/%d chunks", i.progress.ChunksEmbedded, i.progress.ChunksTotal))
 	}
 
-	if elapsed := renderIndexingElapsed(i.progress); elapsed != "" {
+	if elapsed := renderIndexingElapsed(i.progress); elapsed != "" && i.progress.Active {
 		parts = append(parts, elapsed)
 	}
 
@@ -201,30 +205,7 @@ func (i *IndexingMessageItem) renderSemanticAgentTree(width int) string {
 		Children: make([]*TreeNode, 0, len(i.progress.SemanticAgents)),
 	}
 	for _, agent := range i.progress.SemanticAgents {
-		header := strings.TrimSpace(agent.Label)
-		if header == "" {
-			header = "Shard"
-		}
-		status := strings.TrimSpace(agent.Status)
-		if status != "" {
-			header += " · " + status
-		}
-		if agent.FileCount > 0 {
-			header += fmt.Sprintf(" · %d files", agent.FileCount)
-		}
-
-		detailParts := make([]string, 0, 2)
-		if scope := strings.TrimSpace(agent.Scope); scope != "" {
-			detailParts = append(detailParts, scope)
-		}
-		if task := strings.TrimSpace(agent.Task); task != "" {
-			detailParts = append(detailParts, task)
-		}
-		label := header
-		if len(detailParts) > 0 {
-			label += "\n" + i.sty.HalfMuted.Render(strings.Join(detailParts, " · "))
-		}
-		root.Children = append(root.Children, &TreeNode{Label: label})
+		root.Children = append(root.Children, &TreeNode{Label: compactSemanticAgentProgress(agent)})
 	}
 	return strings.Join(renderTreeWithRoot(root, width), "\n")
 }
@@ -241,8 +222,8 @@ func renderIndexingProgressBar(width int, percent float64) string {
 	if filled > width {
 		filled = width
 	}
-	fill := lipgloss.NewStyle().Foreground(lipgloss.Color("#A8A29E")).Render(strings.Repeat("█", filled))
-	rest := lipgloss.NewStyle().Foreground(lipgloss.Color("#44403C")).Render(strings.Repeat("█", width-filled))
+	fill := lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA")).Render(strings.Repeat("█", filled))
+	rest := lipgloss.NewStyle().Foreground(lipgloss.Color("#4C1D95")).Render(strings.Repeat("█", width-filled))
 	return fill + rest
 }
 
@@ -266,7 +247,7 @@ func renderIndexingElapsed(progress codeindex.Progress) string {
 		return ""
 	}
 	end := progress.UpdatedAt
-	if end.IsZero() {
+	if progress.Active || end.IsZero() {
 		end = time.Now()
 	}
 	if end.Before(progress.StartedAt) {
@@ -282,4 +263,49 @@ func renderIndexingElapsed(progress codeindex.Progress) string {
 		return fmt.Sprintf("%ds", seconds)
 	}
 	return fmt.Sprintf("%dm %ds", minutes, seconds)
+}
+
+func compactSemanticAgentProgress(agent codeindex.SemanticAgentProgress) string {
+	parts := make([]string, 0, 4)
+	if label := strings.TrimSpace(agent.Label); label != "" {
+		parts = append(parts, label)
+	}
+	if shard := compactShardLabel(agent.Task); shard != "" {
+		parts = append(parts, shard)
+	}
+	if scope := strings.TrimSpace(agent.Scope); scope != "" {
+		parts = append(parts, scope)
+	}
+	if status := normalizeSemanticAgentStatus(agent.Status); status != "" {
+		parts = append(parts, status)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func compactShardLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	if open := strings.Index(label, "("); open >= 0 {
+		label = strings.TrimSpace(label[:open])
+	}
+	return strings.ToLower(label)
+}
+
+func normalizeSemanticAgentStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return "complete"
+	case "queued":
+		return "queued"
+	case "running":
+		return "running"
+	case "error", "failed":
+		return "error"
+	case "blocked":
+		return "blocked"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
 }

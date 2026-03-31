@@ -52,6 +52,17 @@ type renderedItem struct {
 	lines   []string
 }
 
+func (l *List) blockHeight(idx int) int {
+	if idx < 0 || idx >= len(l.items) {
+		return 0
+	}
+	height := l.itemHeight(idx)
+	if l.gap > 0 && idx < len(l.items)-1 {
+		height += l.gap
+	}
+	return height
+}
+
 func (l *List) invalidateSelectionChange(previous, next int) {
 	if previous >= 0 {
 		l.InvalidateItem(previous)
@@ -266,11 +277,41 @@ func (l *List) AtBottom() bool {
 	if len(l.items) == 0 {
 		return true
 	}
+	if l.height <= 0 {
+		return true
+	}
 
-	totalHeight := l.totalHeight()
-	heightBefore := l.heightBeforeIndex(l.offsetIdx)
-	visibleHeight := totalHeight - heightBefore - l.offsetLine
-	return visibleHeight <= l.height
+	currentIdx := max(l.offsetIdx, 0)
+	currentOffset := max(l.offsetLine, 0)
+	linesRemaining := l.height
+
+	for currentIdx < len(l.items) {
+		blockHeight := l.blockHeight(currentIdx)
+		if blockHeight <= 0 {
+			currentIdx++
+			currentOffset = 0
+			continue
+		}
+		if currentOffset >= blockHeight {
+			currentOffset -= blockHeight
+			currentIdx++
+			continue
+		}
+
+		visible := blockHeight - currentOffset
+		if visible > linesRemaining {
+			return false
+		}
+
+		linesRemaining -= visible
+		currentIdx++
+		currentOffset = 0
+		if linesRemaining == 0 {
+			return currentIdx >= len(l.items)
+		}
+	}
+
+	return true
 }
 
 // SetReverse shows the list in reverse order.
@@ -296,10 +337,34 @@ func (l *List) Len() int {
 // lastOffsetItem returns the index and line offsets of the last item that can
 // be partially visible in the viewport.
 func (l *List) lastOffsetItem() (int, int, int) {
-	totalHeight := l.totalHeight()
-	startLine := max(totalHeight-l.height, 0)
-	idx, lineOffset := l.findIndexForLine(startLine)
-	return idx, lineOffset, totalHeight
+	if len(l.items) == 0 {
+		return 0, 0, 0
+	}
+	if l.height <= 0 {
+		return len(l.items) - 1, 0, 0
+	}
+
+	linesRemaining := l.height
+	for idx := len(l.items) - 1; idx >= 0; idx-- {
+		itemHeight := l.itemHeight(idx)
+		if itemHeight <= 0 {
+			continue
+		}
+		if linesRemaining <= itemHeight {
+			return idx, max(itemHeight-linesRemaining, 0), 0
+		}
+		linesRemaining -= itemHeight
+
+		if l.gap > 0 && idx > 0 {
+			if linesRemaining <= l.gap {
+				prevHeight := l.itemHeight(idx - 1)
+				return idx - 1, prevHeight + (l.gap - linesRemaining), 0
+			}
+			linesRemaining -= l.gap
+		}
+	}
+
+	return 0, 0, 0
 }
 
 // getItem renders (if needed) and returns the item at the given index.
@@ -406,22 +471,68 @@ func (l *List) ScrollBy(lines int) {
 		return
 	}
 
-	totalHeight := l.totalHeight()
-	if totalHeight == 0 {
-		l.ScrollToTop()
+	if lines > 0 {
+		linesRemaining := lines
+		for linesRemaining > 0 {
+			if l.offsetIdx >= len(l.items) {
+				l.ScrollToBottom()
+				return
+			}
+
+			blockHeight := l.blockHeight(l.offsetIdx)
+			if blockHeight <= 0 {
+				if l.offsetIdx >= len(l.items)-1 {
+					l.ScrollToBottom()
+					return
+				}
+				l.offsetIdx++
+				l.offsetLine = 0
+				continue
+			}
+
+			if l.offsetLine >= blockHeight {
+				l.offsetLine -= blockHeight
+				if l.offsetIdx >= len(l.items)-1 {
+					l.ScrollToBottom()
+					return
+				}
+				l.offsetIdx++
+				continue
+			}
+
+			available := blockHeight - l.offsetLine
+			if linesRemaining < available {
+				l.offsetLine += linesRemaining
+				return
+			}
+
+			linesRemaining -= available
+			if l.offsetIdx >= len(l.items)-1 {
+				l.ScrollToBottom()
+				return
+			}
+			l.offsetIdx++
+			l.offsetLine = 0
+		}
 		return
 	}
-	currentTop := l.heightBeforeIndex(l.offsetIdx) + l.offsetLine
-	newTop := currentTop + lines
-	maxTop := max(totalHeight-l.height, 0)
-	if newTop < 0 {
-		newTop = 0
-	} else if newTop > maxTop {
-		newTop = maxTop
+
+	linesRemaining := -lines
+	for linesRemaining > 0 {
+		if l.offsetLine >= linesRemaining {
+			l.offsetLine -= linesRemaining
+			return
+		}
+
+		linesRemaining -= l.offsetLine
+		if l.offsetIdx <= 0 {
+			l.ScrollToTop()
+			return
+		}
+
+		l.offsetIdx--
+		l.offsetLine = l.blockHeight(l.offsetIdx)
 	}
-	newIdx, newOffset := l.findIndexForLine(newTop)
-	l.offsetIdx = newIdx
-	l.offsetLine = newOffset
 }
 
 // VisibleItemIndices finds the range of items that are visible in the viewport.
@@ -462,7 +573,7 @@ func (l *List) Render() string {
 		return ""
 	}
 
-	var lines []string
+	lines := make([]string, 0, max(l.height, 0))
 	currentIdx := l.offsetIdx
 	currentOffset := l.offsetLine
 

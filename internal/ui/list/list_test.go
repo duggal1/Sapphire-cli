@@ -105,3 +105,61 @@ func TestSelectionChangeInvalidatesFocusedRows(t *testing.T) {
 		t.Fatalf("expected both items to re-render on selection change, got first=%d second=%d", firstCalls, secondCalls)
 	}
 }
+
+func TestScrollByUsesViewportLocalTraversal(t *testing.T) {
+	calls := 0
+	items := make([]Item, 1000)
+	for i := range items {
+		items[i] = countingItem{calls: &calls, text: "line"}
+	}
+
+	l := NewList(items...)
+	l.SetSize(80, 5)
+
+	l.ScrollBy(1)
+
+	if l.offsetIdx != 1 || l.offsetLine != 0 {
+		t.Fatalf("expected offset (1,0) after scrolling one line, got (%d,%d)", l.offsetIdx, l.offsetLine)
+	}
+	if calls > 8 {
+		t.Fatalf("expected scroll to render only nearby items, got %d renders", calls)
+	}
+}
+
+func TestAtBottomUsesVisibleSliceOnly(t *testing.T) {
+	calls := 0
+	items := make([]Item, 1000)
+	for i := range items {
+		items[i] = countingItem{calls: &calls, text: "line"}
+	}
+
+	l := NewList(items...)
+	l.SetSize(80, 5)
+
+	if l.AtBottom() {
+		t.Fatal("expected top of long list to not be at bottom")
+	}
+	if calls > 8 {
+		t.Fatalf("expected AtBottom to inspect only the viewport, got %d renders", calls)
+	}
+}
+
+func TestScrollToBottomUsesTailTraversal(t *testing.T) {
+	calls := 0
+	items := make([]Item, 1000)
+	for i := range items {
+		items[i] = countingItem{calls: &calls, text: "line"}
+	}
+
+	l := NewList(items...)
+	l.SetSize(80, 5)
+
+	l.ScrollToBottom()
+
+	if !l.AtBottom() {
+		t.Fatal("expected list to be at bottom after ScrollToBottom")
+	}
+	if calls > 12 {
+		t.Fatalf("expected ScrollToBottom to render only tail items, got %d renders", calls)
+	}
+}

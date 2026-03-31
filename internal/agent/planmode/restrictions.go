@@ -80,6 +80,11 @@ var planModeAllowedTools = []string{
 	"glob",
 	"ls",
 	"grep",
+	"rg",
+	"rg_files",
+	"wc",
+	"wc_l",
+	"tool_search",
 	"search_tools",
 
 	// Reference tools - ALLOWED (gathering information)

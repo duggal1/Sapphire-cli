@@ -313,7 +313,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	default:
 		if shouldDelegateToSubAgents(prompt) {
 			return `Plan tool protocol for multi-step tasks (Codex update_plan):
-1. For complex tasks, read enough implementation context first; do not start editing immediately
+1. For complex tasks, read the main relevant files deeply enough to understand real behavior and integration points first; do not start editing immediately
 2. Then publish a concrete update_plan checklist before mutating files or starting execution-heavy commands
 3. This checklist flow is normal execution mode, not Plan Mode
 4. Use about 6-10 steps for genuinely complex work; use fewer only when the task is actually smaller
@@ -327,7 +327,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 Skip this only for a single non-destructive read requiring exactly one tool call.`
 		}
 
-		return `For complex or otherwise non-trivial multi-step tasks, read enough context first, then publish a concrete update_plan checklist before mutating files or starting execution-heavy commands. This is normal execution mode, not Plan Mode. Every plan item must include explicit step text; never send blank or placeholder steps. Use about 6-10 steps for genuinely complex work and fewer only when the task is actually smaller. Send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`
+		return `For complex or otherwise non-trivial multi-step tasks, read the main relevant files deeply enough to understand the real behavior and integration points first, then publish a concrete update_plan checklist before mutating files or starting execution-heavy commands. This is normal execution mode, not Plan Mode. Every plan item must include explicit step text; never send blank or placeholder steps. Use about 6-10 steps for genuinely complex work and fewer only when the task is actually smaller. Send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`
 	}
 }
 
@@ -335,11 +335,12 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 	switch planmode.NormalizeMode(mode) {
 	case planmode.DefaultSessionMode:
 		return `<system_reminder>Complexity mode:
-- For any complex task, read enough code, config, tests, docs, and runtime context to understand the real work, then create a concrete update_plan checklist before mutating repository files or starting execution-heavy commands.
+- For any complex task, read the main relevant files deeply enough to understand the real behavior, architecture, and integration points, then create a concrete update_plan checklist before mutating repository files or starting execution-heavy commands.
 - This checklist flow is normal execution mode, not Plan Mode; once the plan is clear, execute it autonomously without asking permission.
 - Complex-task checklists should usually contain 6-10 short, verifiable steps and must stay synchronized after every state change.
 - For greetings, thanks, and other short social turns, reply directly and use no tools.
-- Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file read, subsystem, architecture trace, initialization, review, or broad repository request, default to "agentic_view". Normal non-trivial investigation should start with about 8-12 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use broader sweeps of about 12-20 relevant files and continue until the major domains are covered. If the repo has fewer meaningful files, read all of them.
+- In very large repos, use "tool_search" as a bounded locator when you need the exact file, symbol, or code region before reading. Start with one focused query, refine at most 1-2 times, stop once you have a small set of strong candidates, then switch to "agentic_view" or "single_view".
+- Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file read, subsystem, architecture trace, initialization, review, or broad repository request, default to "agentic_view". Normal non-trivial investigation should start with about 10-20 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use aggressive sweeps of about 20-30 relevant files and continue until the major domains are covered. For a narrow but complex task, read all main relevant files tied to the task before editing. If the repo has fewer meaningful files, read all of them.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
@@ -1823,7 +1824,7 @@ func buildTurnPolicy(call SessionAgentCall, currentSession session.Session, cont
 
 	policy.AllowMemoryRead = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryRead || explicitContinuity
 	policy.AllowMemoryWrite = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryWrite
-	policy.AllowAutoMemoryInjection = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50
+	policy.AllowAutoMemoryInjection = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryRead || explicitContinuity
 	return policy
 }
 
@@ -2158,13 +2159,25 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	if a == nil {
 		return history
 	}
-	if a.memory == nil && a.memoryCompiler == nil {
-		return history
+
+	workDir := ""
+	if a.workingDir != nil {
+		workDir = a.workingDir.Get()
 	}
-	if a.memory != nil {
-		if val := reflect.ValueOf(a.memory); val.Kind() == reflect.Ptr && val.IsNil() && a.memoryCompiler == nil {
-			return history
+	if prompt := renderDurableMemoryReadPrompt(workDir); prompt != "" {
+		retHistory = append([]fantasy.Message{
+			fantasy.NewSystemMessage(prompt),
+		}, retHistory...)
+	}
+
+	hasMemoryService := a.memory != nil
+	if hasMemoryService {
+		if val := reflect.ValueOf(a.memory); val.Kind() == reflect.Ptr && val.IsNil() {
+			hasMemoryService = false
 		}
+	}
+	if !hasMemoryService && a.memoryCompiler == nil && a.pmem == nil && a.longHorizon == nil && a.codebaseIndexStatus == nil {
+		return retHistory
 	}
 
 	// Determine whether we're on the first turn after a compaction summary.
@@ -2216,10 +2229,6 @@ func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy
 	}
 
 	compiledInjection := ""
-	workDir := ""
-	if a.workingDir != nil {
-		workDir = a.workingDir.Get()
-	}
 	if a.memoryCompiler != nil {
 		if memCtx, cancel := withTimeout(ctx, memoryCallTimeout); memCtx != nil {
 			if strings.TrimSpace(call.ResumePointID) != "" {

@@ -127,6 +127,15 @@ func toolNameAlias(name string) string {
 		"search_text", "text_search":
 		return GrepToolName
 
+	case "tool_search", "toolsearch", "repo_search", "repository_search", "code_locator", "locate_code":
+		return ToolSearchToolName
+
+	case "rg_files", "rg_file_list", "ripgrep_files", "ripgrep_file_list":
+		return RGFilesToolName
+
+	case "wc_l", "wc_lines", "line_count", "count_lines":
+		return WCLToolName
+
 	// File glob/find aliases — fixes "tool not found: find_files"
 	case "find_files", "findfiles", "find", "find_file",
 		"file_search", "locate", "glob_files":

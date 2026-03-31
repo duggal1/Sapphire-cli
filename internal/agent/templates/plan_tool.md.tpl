@@ -2,7 +2,7 @@
 `update_plan` is the TODO/checklist tool. Use it for multi-step work, whenever the user asks for a TODO list, and by default for genuinely complex tasks. Do not use it for single-step tasks. Using `update_plan` does not enter Plan Mode.
 
 Required behavior:
-1. For complex tasks, read enough code, config, tests, docs, and runtime context to understand the real work before planning.
+1. For complex tasks, context gathering is part of the work: read the main relevant files deeply enough to understand the real behavior, architecture, and integration points before planning.
 2. Then publish a concrete `update_plan` checklist before mutating repository files or starting execution-heavy implementation commands.
 3. This checklist flow is normal execution mode, not Plan Mode. Do not open a planning-only dialogue unless the session is actually in Plan Mode.
 4. Always send the full plan on every update. Never omit existing items.

@@ -29,16 +29,17 @@ type Prompt struct {
 }
 
 type PromptDat struct {
-	Provider       string
-	Model          string
-	Config         config.Config
-	WorkingDir     string
-	IsGitRepo      bool
-	Platform       string
-	Date           string
-	GitStatus      string
-	ContextFiles   []ContextFile
-	PlanToolPrompt string
+	Provider                       string
+	Model                          string
+	Config                         config.Config
+	WorkingDir                     string
+	IsGitRepo                      bool
+	Platform                       string
+	Date                           string
+	GitStatus                      string
+	ContextFiles                   []ContextFile
+	PlanToolPrompt                 string
+	HasApplicableAgentInstructions bool
 }
 
 type ContextFile struct {
@@ -194,14 +195,15 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 
 	isGit := isGitRepo(workingDir)
 	data := PromptDat{
-		Provider:       provider,
-		Model:          model,
-		Config:         cfg,
-		WorkingDir:     filepath.ToSlash(workingDir),
-		IsGitRepo:      isGit,
-		Platform:       platform,
-		Date:           nowFn().Format("1/2/2006"),
-		PlanToolPrompt: p.planToolPrompt,
+		Provider:                       provider,
+		Model:                          model,
+		Config:                         cfg,
+		WorkingDir:                     filepath.ToSlash(workingDir),
+		IsGitRepo:                      isGit,
+		Platform:                       platform,
+		Date:                           nowFn().Format("1/2/2006"),
+		PlanToolPrompt:                 p.planToolPrompt,
+		HasApplicableAgentInstructions: hasApplicableAgentInstructions(workingDir, cmp.Or(options.InitializeAs, "AGENTS.md")),
 	}
 	if isGit {
 		var err error
@@ -215,6 +217,58 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		data.ContextFiles = append(data.ContextFiles, contextFiles...)
 	}
 	return data, nil
+}
+
+func hasApplicableAgentInstructions(workingDir, initializeAs string) bool {
+	repoRoot := findPromptRepoRoot(workingDir)
+
+	if strings.TrimSpace(initializeAs) != "" {
+		if _, err := os.Stat(filepath.Join(repoRoot, initializeAs)); err == nil {
+			return true
+		}
+	}
+
+	candidates := []string{
+		"AGENTS.md",
+		"agents.md",
+		"Agents.md",
+		"agent.md",
+	}
+
+	for dir := filepath.Clean(workingDir); ; dir = filepath.Dir(dir) {
+		for _, name := range candidates {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				return true
+			}
+		}
+		if dir == repoRoot {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	return false
+}
+
+func findPromptRepoRoot(workingDir string) string {
+	if strings.TrimSpace(workingDir) == "" {
+		return "."
+	}
+	dir := filepath.Clean(workingDir)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Clean(workingDir)
+		}
+		dir = parent
+	}
 }
 
 func isGitRepo(dir string) bool {

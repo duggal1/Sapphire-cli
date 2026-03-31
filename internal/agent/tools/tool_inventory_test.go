@@ -158,6 +158,111 @@ func TestGrepToolParallelPaths(t *testing.T) {
 	require.Contains(t, resp.Content, "worker.go")
 }
 
+func TestRGFilesTool(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workingDir, "internal", "worker"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "internal", "worker", "handler.go"), []byte("package worker"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "internal", "worker", "service.go"), []byte("package worker"), 0o644))
+
+	tool := NewRGFilesTool(workingDir)
+	resp := runTool(t, tool, RGFilesToolName, RGFilesParams{
+		Query: "handler",
+		Path:  workingDir,
+	}, t.Context())
+	require.Contains(t, resp.Content, "handler.go")
+}
+
+func TestWCTools(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	path := filepath.Join(workingDir, "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello world\nsecond line\n"), 0o644))
+
+	wcResp := runTool(t, NewWCTool(workingDir), WCToolName, WCParams{Path: path}, t.Context())
+	require.Contains(t, wcResp.Content, "lines=2")
+	require.Contains(t, wcResp.Content, "words=4")
+
+	wcLResp := runTool(t, NewWCLTool(workingDir), WCLToolName, WCParams{Path: path}, t.Context())
+	require.Contains(t, wcLResp.Content, "2\t")
+}
+
+func TestToolSearchToolUsesIndexedMatchesAndFallbacks(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	targetPath := filepath.Join(workingDir, "internal", "search", "locate_target.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(targetPath), 0o755))
+	require.NoError(t, os.WriteFile(targetPath, []byte("package search\n\nfunc LocateTarget() {}\n"), 0o644))
+
+	tool := NewToolSearchTool("", workingDir, func(context.Context, string, int) (ToolSearchIndexedResult, error) {
+		return ToolSearchIndexedResult{
+			Available: true,
+			Message:   "Durable codebase graph matches.",
+			Matches: []ToolSearchIndexedMatch{
+				{
+					Kind:      "function",
+					Path:      targetPath,
+					Name:      "LocateTarget",
+					Signature: "func LocateTarget()",
+					StartLine: 3,
+					EndLine:   3,
+					Score:     250,
+				},
+			},
+		}, nil
+	})
+
+	resp := runTool(t, tool, ToolSearchToolName, ToolSearchParams{
+		Query: "locate",
+		Path:  workingDir,
+	}, t.Context())
+	require.Contains(t, resp.Content, `Tool search results for "locate"`)
+	require.Contains(t, resp.Content, "query_variants:")
+	require.Contains(t, resp.Content, "Top candidates:")
+	require.Contains(t, resp.Content, "LocateTarget")
+	require.Contains(t, resp.Content, "sources=indexed:function(LocateTarget), filename")
+	require.Contains(t, resp.Content, "skipped text fallback")
+}
+
+func TestBuildToolSearchQueryPlanFocusesNaturalLanguageQueries(t *testing.T) {
+	t.Parallel()
+
+	plan := buildToolSearchQueryPlan("Please fix the Zapier integration issue in webhook sync flow")
+
+	require.Contains(t, plan.Indexed, "zapier integration")
+	require.Contains(t, plan.Indexed, "zapier")
+	require.Contains(t, plan.Files, "zapier")
+	require.Contains(t, plan.Text, "zapier integration")
+	require.NotContains(t, plan.All, "Please fix the Zapier integration issue in webhook sync flow")
+}
+
+func TestToolSearchToolFindsNaturalLanguageTargetsWithoutBroadReads(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	zapierPath := filepath.Join(workingDir, "integrations", "zapier", "client.go")
+	slackPath := filepath.Join(workingDir, "integrations", "slack", "client.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(zapierPath), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(slackPath), 0o755))
+	require.NoError(t, os.WriteFile(zapierPath, []byte("package zapier\n\nfunc SendZapierWebhook() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(slackPath, []byte("package slack\n\nfunc SendSlackMessage() {}\n"), 0o644))
+
+	tool := NewToolSearchTool("", workingDir, nil)
+	resp := runTool(t, tool, ToolSearchToolName, ToolSearchParams{
+		Query: "please fix the Zapier integration issue in webhook sync flow",
+		Path:  workingDir,
+		Limit: 5,
+	}, t.Context())
+
+	require.Contains(t, resp.Content, "query_variants: zapier integration | zapier")
+	require.Contains(t, resp.Content, filepath.ToSlash(zapierPath))
+	require.Contains(t, resp.Content, "Top candidates:")
+	require.NotContains(t, resp.Content, "query_variants: please")
+}
+
 func TestWebAndGoogleSearchTools(t *testing.T) {
 	t.Parallel()
 

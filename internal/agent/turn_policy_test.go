@@ -45,8 +45,8 @@ func TestBuildTurnPolicyAllowsMemoryReadsForExplicitContinuity(t *testing.T) {
 	if !policy.AllowMemoryRead {
 		t.Fatalf("expected memory reads for explicit continuity request")
 	}
-	if policy.AllowAutoMemoryInjection {
-		t.Fatalf("did not expect auto memory injection for continuity request without long-horizon pressure")
+	if !policy.AllowAutoMemoryInjection {
+		t.Fatalf("expected auto memory injection for continuity request")
 	}
 }
 

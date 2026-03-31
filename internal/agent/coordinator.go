@@ -1736,7 +1736,11 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		tools.NewGlobTool(workingDir),
 		tools.NewMemoryQueryTool(c.memory),
 		tools.NewGrepTool(workingDir, c.cfg.Tools.Grep),
+		tools.NewRGTool(workingDir),
+		tools.NewRGFilesTool(workingDir),
 		tools.NewLsTool(c.permissions, workingDir, c.cfg.Tools.Ls),
+		tools.NewWCTool(workingDir),
+		tools.NewWCLTool(workingDir),
 		tools.NewSourcegraphTool(nil),
 		// tools.NewTodosTool(c.sessions),  // COMMENTED OUT - Replaced with Codex-style update_plan
 		tools.NewUpdatePlanTool(c.sessions),       // Codex-style plan management tool
@@ -1872,6 +1876,13 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	allTools = append(allTools, tools.NewInstallSkillTool())
 	if indexCodebaseTool, err := c.indexCodebaseTool(ctx); err == nil {
 		allTools = append(allTools, indexCodebaseTool)
+	}
+	if slices.Contains(agent.AllowedTools, tools.ToolSearchToolName) {
+		toolSearchTool, err := c.toolSearchTool(ctx, workingDir)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, toolSearchTool)
 	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).

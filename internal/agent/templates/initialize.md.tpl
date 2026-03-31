@@ -12,6 +12,39 @@ deep repository survey task, not a shallow summary task.
 
 ---
 
+## AGENTS.md Semantics
+
+### Purpose
+
+- `AGENTS.md` is a repository-scoped instruction file for coding agents working in the repository.
+
+### Scope
+
+- An `AGENTS.md` file applies to the entire directory tree rooted at the folder that contains it.
+- If multiple `AGENTS.md` files apply, the more deeply nested file takes precedence within its subtree.
+- Direct system, developer, and user instructions override any `AGENTS.md` instruction.
+
+### Rules
+
+- Before modifying any file, check whether an `AGENTS.md` file applies to that file's path.
+- For every file you touch, follow all applicable `AGENTS.md` instructions for style, structure, naming, testing, and workflow.
+- Instructions in `AGENTS.md` apply only within that file's scope unless the file explicitly says otherwise.
+
+### Discovery
+
+- The root `AGENTS.md` file and any `AGENTS.md` files from the current working directory up to the repo root may already be provided by the harness.
+- If working in a subdirectory or outside the current working directory, explicitly check for additional applicable `AGENTS.md` files.
+
+### Conflict Resolution
+
+1. System instructions
+2. Developer instructions
+3. User instructions
+4. Nearest applicable `AGENTS.md`
+5. Higher-level `AGENTS.md`
+
+---
+
 ## Tool Usage Rules
 
 - Read first. Write second.
@@ -19,11 +52,12 @@ deep repository survey task, not a shallow summary task.
 - Do not invent commands, paths, architecture, conventions, or workflows.
 - `agentic_view` is the default read tool for initialization.
 - Use `single_view` only when exactly one verified file is sufficient for a local follow-up.
-- For initialization, use `agentic_view` in broad sweeps of about 12-20 files when available.
+- For initialization, use `agentic_view` in aggressive broad sweeps of about 20-30 files when available.
 - If the repo has fewer meaningful files, read all of them.
 - Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
+- Context quality is part of the deliverable. Read the main important files for each major domain deeply enough to explain actual behavior, architecture, conventions, and integration points.
 - Do not stop after root files, dependency files, and one or two entry points.
-- Use `ls`, `glob`, and `grep` for discovery.
+- Use `ls`, `tool_search`, `rg_files`, `glob`, `rg`, and `grep` for discovery.
 - Do not use `bash` for repo discovery or file reading when structured tools exist.
 - `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.
 - Do not use sub-agents as a substitute for the main agent's primary coverage sweep.
@@ -61,12 +95,13 @@ Inspect the repo and classify it into exactly one tier:
 - Build tooling (Makefiles, CI configs, scripts, package managers)
 - Major domains present: app, services, infra, tests, docs, config, schemas,
   migrations, SDKs, generated code
+- Use `wc_l` when you need exact file length before deciding whether a full-file read is reasonable.
 
 ### Minimum coverage expectation
 
-- **Small**: if the repo has 12 or fewer meaningful files, read all of them. Otherwise read at least 12 meaningful files across all major areas.
-- **Medium**: read at least 20 meaningful files if available, spanning every major domain.
-- **Large**: read at least 30 meaningful files if available, spanning every major domain, then keep reading until additional sweeps stop changing the architectural picture materially.
+- **Small**: if the repo has 20 or fewer meaningful files, read all of them. Otherwise read at least 20 meaningful files across all major areas.
+- **Medium**: read at least 30 meaningful files if available, spanning every major domain.
+- **Large**: read at least 40 meaningful files if available, spanning every major domain, then keep reading until additional sweeps stop changing the architectural picture materially.
 
 ---
 
@@ -116,8 +151,8 @@ Do **not** invent commands. If you cannot confirm a command exists, do not inclu
 
 ### 2.5 — Source Code Patterns
 
-Use `agentic_view` for broad mixed sweeps. Read representative source, test, config,
-build, and schema files to understand:
+Use `agentic_view` for aggressive broad mixed sweeps, typically about 20-30 files at a time when available. Read source, test, config,
+build, and schema files deeply enough to understand:
 - Code organization within files
 - Naming conventions (variables, functions, files, directories)
 - Testing approach and structure
@@ -131,7 +166,9 @@ The survey must include all of the following when they exist:
 - Config, schema, migration, or manifest files
 - Existing rules/context files
 
-After the first broad sweep, run targeted follow-up sweeps for any uncovered major domain.
+Do not stop at file names or top-level summaries. Read the main important files for each domain deeply enough to explain actual runtime behavior and integration points.
+
+After the first broad sweep, run targeted follow-up sweeps for any uncovered major domain or critical runtime path.
 
 ### 2.6 — Existing `{{.Config.Options.InitializeAs}}`
 
@@ -225,8 +262,10 @@ Cite exact file paths throughout the document.
 ## Hard Constraints
 
 - Do **not** write output before broad repo coverage is complete.
-- Do **not** produce a terse summary. For medium/large repos, a roughly 100-line file is presumptively incomplete.
-- Small repos should still usually produce a substantial guide. Medium/large repos should usually land around 300-400 lines of verified material when the evidence supports it.
+- Do **not** produce a terse summary. Anything materially under roughly 100 lines for a real repository is presumptively incomplete.
+- Small repos with real code should still usually produce at least roughly 100-120 lines of verified material.
+- Medium and large repos should usually land in several hundred lines of verified material, often about 300-600 lines when the evidence supports it.
+- Very large repos may require more than that, but keep the document compressed, evidence-dense, and specific instead of padded.
 - If the repo genuinely cannot support that depth, explain the missing evidence instead of padding or inventing content.
 - Do **not** leave major sections as one-line placeholders.
 - Do **not** use sub-agents unless justified by complexity.

@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
+	promptpkg "github.com/duggal1/Sapphire-cli/internal/agent/prompt"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 )
 
@@ -184,6 +186,61 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 	}
 }
 
+func TestCoderPromptIncludesMissingAgentInstructionsBootstrapWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	p, err := coderPrompt(promptpkg.WithWorkingDir(dir))
+	if err != nil {
+		t.Fatalf("coder prompt: %v", err)
+	}
+
+	out, err := p.Build(context.Background(), "", "", *cfg)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	if !strings.Contains(out, "`AGENTS.md` is a repository-scoped instruction file for coding agents.") {
+		t.Fatalf("expected missing-agent-instructions bootstrap guidance")
+	}
+	if !strings.Contains(out, "Should I create `AGENTS.md` now?") {
+		t.Fatalf("expected concise AGENTS creation question")
+	}
+}
+
+func TestCoderPromptOmitsMissingAgentInstructionsBootstrapWhenInstructionsExist(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# AGENTS.md\n"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	p, err := coderPrompt(promptpkg.WithWorkingDir(dir))
+	if err != nil {
+		t.Fatalf("coder prompt: %v", err)
+	}
+
+	out, err := p.Build(context.Background(), "", "", *cfg)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	if strings.Contains(out, "Should I create `AGENTS.md` now?") {
+		t.Fatalf("did not expect AGENTS bootstrap question when instructions already exist")
+	}
+}
+
 func TestPromptsRequireAutonomousCurrentIntegrationDiscovery(t *testing.T) {
 	t.Parallel()
 
@@ -298,6 +355,125 @@ func TestPromptsRequireComplexTaskChecklistPlanning(t *testing.T) {
 				"This checklist flow is normal execution mode, not Plan Mode.",
 				"before mutating repository files or starting execution-heavy implementation commands",
 				"usually 6-10 items for complex work",
+			} {
+				if !strings.Contains(out, needle) {
+					t.Fatalf("expected %q in %s prompt", needle, tc.name)
+				}
+			}
+		})
+	}
+}
+
+func TestPromptsPreferAggressiveAgenticViewCoverage(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "agentic-view-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		build func() (string, error)
+	}{
+		{
+			name: "coder",
+			build: func() (string, error) {
+				p, err := coderPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+		{
+			name: "task",
+			build: func() (string, error) {
+				p, err := taskPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.build()
+			if err != nil {
+				t.Fatalf("build %s prompt: %v", tc.name, err)
+			}
+			for _, needle := range []string{
+				"about 10-20 relevant files",
+				"about 20-30 relevant files",
+				"read all main relevant files tied to the task before editing",
+			} {
+				if !strings.Contains(out, needle) {
+					t.Fatalf("expected %q in %s prompt", needle, tc.name)
+				}
+			}
+		})
+	}
+}
+
+func TestPromptsDefineBoundedToolSearchUsage(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "tool-search-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		build func() (string, error)
+	}{
+		{
+			name: "coder",
+			build: func() (string, error) {
+				p, err := coderPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+		{
+			name: "task",
+			build: func() (string, error) {
+				p, err := taskPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.build()
+			if err != nil {
+				t.Fatalf("build %s prompt: %v", tc.name, err)
+			}
+			for _, needle := range []string{
+				"tool_search",
+				"bounded locator",
+				"refine at most 1-2 times",
+				"small set of strong candidates",
 			} {
 				if !strings.Contains(out, needle) {
 					t.Fatalf("expected %q in %s prompt", needle, tc.name)

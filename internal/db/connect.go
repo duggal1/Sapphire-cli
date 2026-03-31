@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
 
@@ -42,19 +43,17 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	// and trigger busy_timeout stalls in the live render path.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-
-	goose.SetBaseFS(FS)
-
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		slog.Error("Failed to set dialect", "error", err)
-		return nil, fmt.Errorf("failed to set dialect: %w", err)
-	}
 	if err := repairLegacySessionMigrationState(ctx, db); err != nil {
 		slog.Error("Failed to repair legacy session migration state", "error", err)
 		return nil, fmt.Errorf("failed to repair legacy session migration state: %w", err)
 	}
 
-	if err := goose.Up(db, "migrations"); err != nil {
+	provider, err := newGooseProvider(db)
+	if err != nil {
+		slog.Error("Failed to create migration provider", "error", err)
+		return nil, fmt.Errorf("failed to create migration provider: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
 		slog.Error("Failed to apply migrations", "error", err)
 		return nil, fmt.Errorf("failed to apply migrations: %w", err)
 	}
@@ -64,6 +63,18 @@ func Connect(ctx context.Context, dataDir string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func newGooseProvider(db *sql.DB) (*goose.Provider, error) {
+	migrationsFS, err := fs.Sub(FS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("load embedded migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrationsFS)
+	if err != nil {
+		return nil, fmt.Errorf("new goose provider: %w", err)
+	}
+	return provider, nil
 }
 
 func repairLegacySessionMigrationState(ctx context.Context, db *sql.DB) error {
@@ -160,8 +171,8 @@ func tableHasColumn(ctx context.Context, db *sql.DB, tableName, columnName strin
 }
 
 func migrationApplied(ctx context.Context, db *sql.DB, version int64) (bool, error) {
-	if _, err := goose.EnsureDBVersionContext(ctx, db); err != nil {
-		return false, fmt.Errorf("ensure goose version table: %w", err)
+	if err := ensureGooseVersionTable(ctx, db); err != nil {
+		return false, err
 	}
 	row := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM goose_db_version WHERE version_id = ? AND is_applied = 1`, version)
 	var count int
@@ -169,4 +180,26 @@ func migrationApplied(ctx context.Context, db *sql.DB, version int64) (bool, err
 		return false, fmt.Errorf("query goose version %d: %w", version, err)
 	}
 	return count > 0, nil
+}
+
+func ensureGooseVersionTable(ctx context.Context, db *sql.DB) error {
+	const createTable = `CREATE TABLE IF NOT EXISTS goose_db_version (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		version_id INTEGER NOT NULL,
+		is_applied INTEGER NOT NULL,
+		tstamp TIMESTAMP DEFAULT (datetime('now'))
+	)`
+	if _, err := db.ExecContext(ctx, createTable); err != nil {
+		return fmt.Errorf("create goose version table: %w", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(1) FROM goose_db_version`).Scan(&count); err != nil {
+		return fmt.Errorf("count goose version rows: %w", err)
+	}
+	if count == 0 {
+		if _, err := db.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (0, 1)`); err != nil {
+			return fmt.Errorf("seed goose version table: %w", err)
+		}
+	}
+	return nil
 }

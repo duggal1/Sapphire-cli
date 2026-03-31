@@ -428,19 +428,35 @@ func normalizePromptForResume(prompt string) string {
 
 func normalizeReportFiles(repoRoot string, items []string) []string {
 	out := make([]string, 0, len(items))
+	repoRoot = normalizeComparablePath(repoRoot)
 	for _, item := range items {
 		item = strings.TrimSpace(item)
 		if item == "" {
 			continue
 		}
-		if filepath.IsAbs(item) && strings.TrimSpace(repoRoot) != "" {
-			if rel, err := filepath.Rel(repoRoot, item); err == nil && !strings.HasPrefix(rel, "..") {
+		normalizedItem := normalizeComparablePath(item)
+		if filepath.IsAbs(item) && strings.TrimSpace(repoRoot) != "" && normalizedItem != "" {
+			if rel, err := filepath.Rel(repoRoot, normalizedItem); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 				item = rel
 			}
 		}
 		out = append(out, filepath.ToSlash(item))
 	}
 	return uniqueSortedStrings(out)
+}
+
+func normalizeComparablePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if eval, err := filepath.EvalSymlinks(path); err == nil {
+		path = eval
+	}
+	return filepath.Clean(path)
 }
 
 func flattenSubAgentStatuses(items []BootSubAgentRuntimeState) []string {

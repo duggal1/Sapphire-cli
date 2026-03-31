@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -35,9 +34,7 @@ func TestConnectBackfillsSessionWorktreePolicy(t *testing.T) {
 		mode TEXT DEFAULT 'pair_programming'
 	);`)
 	require.NoError(t, err)
-	require.NoError(t, goose.SetDialect("sqlite3"))
-	_, err = goose.EnsureDBVersionContext(ctx, conn)
-	require.NoError(t, err)
+	require.NoError(t, ensureGooseVersionTable(ctx, conn))
 	for _, version := range []int64{
 		20250424200609,
 		20250515105448,

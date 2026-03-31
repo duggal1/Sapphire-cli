@@ -27,11 +27,12 @@ func (m *UI) cancelAgent() tea.Cmd {
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
-		m.chat.RemoveMessage(chat.InterruptNoticeID)
+		m.fixedTailNotice = nil
 		coordinator.Cancel(m.session.ID)
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
 		m.renderPills()
+		m.updateLayoutAndSize()
 		return nil
 	}
 
@@ -43,10 +44,8 @@ func (m *UI) cancelAgent() tea.Cmd {
 
 	// First escape press - set canceling state and start timer.
 	m.isCanceling = true
-	if m.chat.MessageItem(chat.InterruptNoticeID) == nil {
-		m.chat.AppendMessages(chat.NewInterruptNoticeMessageItem(m.com.Styles))
-		m.chat.SelectLast()
-	}
+	m.fixedTailNotice = chat.NewInterruptNoticeMessageItem(m.com.Styles)
+	m.updateLayoutAndSize()
 	return tea.Batch(
 		m.chat.ScrollToBottomAndAnimate(),
 		tea.Tick(cancelConfirmationWindow, func(time.Time) tea.Msg {

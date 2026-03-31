@@ -248,6 +248,7 @@ type UI struct {
 	// Chat components
 	chat *Chat
 	// assistantFooter is the fixed footer rendered above the editor.
+	fixedTailNotice               chat.MessageItem
 	pendingUserPlaceholderID      string
 	pendingUserPlaceholderText    string
 	assistantFooter               *chat.AssistantInfoItem
@@ -552,11 +553,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pendingAssistantErrorMsg:
 		m.clearPendingAssistantPlaceholder()
-		m.chat.RemoveMessage(chat.LocalErrorNoticeID)
 		title, details := splitPendingAssistantError(msg.err)
-		m.chat.AppendMessages(chat.NewErrorNoticeMessageItem(m.com.Styles, title, details))
-		m.chat.SelectLast()
-		m.chat.ScrollToBottom()
+		m.fixedTailNotice = chat.NewErrorNoticeMessageItem(m.com.Styles, title, details)
 		m.updateLayoutAndSize()
 
 	case pubsub.Event[session.Session]:
@@ -658,7 +656,8 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handlePermissionNotification(msg.Payload)
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
-		m.chat.RemoveMessage(chat.InterruptNoticeID)
+		m.fixedTailNotice = nil
+		m.updateLayoutAndSize()
 	case tea.TerminalVersionMsg:
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -942,6 +941,7 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 
 	items = dedupeMessageItems(items)
 	m.rebuildAssistantFooter(msgPtrs)
+	m.fixedTailNotice = nil
 
 	// If the user switches between sessions while the agent is working we want
 	// to make sure the animations are shown.
@@ -3228,7 +3228,12 @@ func (m *UI) renderFooterView(width int) string {
 	if width <= 0 {
 		return ""
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
+	if m.fixedTailNotice != nil {
+		if footer := m.fixedTailNotice.RawRender(width); footer != "" {
+			parts = append(parts, footer)
+		}
+	}
 	if m.assistantFooter != nil {
 		if footer := m.assistantFooter.RawRender(width); footer != "" {
 			parts = append(parts, footer)
@@ -3809,6 +3814,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 func (m *UI) showPendingAssistantPlaceholder(sessionID string) tea.Cmd {
 	m.clearPendingAssistantPlaceholder()
+	m.fixedTailNotice = nil
 	if sessionID == "" {
 		return nil
 	}
@@ -4287,6 +4293,7 @@ func (m *UI) newSession() tea.Cmd {
 	m.textarea.Focus()
 	m.chat.Blur()
 	m.chat.ClearMessages()
+	m.fixedTailNotice = nil
 	m.pillsExpanded = false
 	m.promptQueue = 0
 	m.pillsView = ""

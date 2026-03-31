@@ -657,6 +657,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handlePermissionNotification(msg.Payload)
 	case cancelTimerExpiredMsg:
 		m.isCanceling = false
+		m.chat.RemoveMessage(chat.InterruptNoticeID)
 	case tea.TerminalVersionMsg:
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -2670,7 +2671,7 @@ func (m *UI) ShortHelp() []key.Binding {
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
-				cancelBinding.SetHelp("esc", "press again to cancel")
+				cancelBinding.SetHelp("esc", "press again to interrupt")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}
@@ -2764,7 +2765,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 		if m.isAgentBusy() {
 			cancelBinding := k.Chat.Cancel
 			if m.isCanceling {
-				cancelBinding.SetHelp("esc", "press again to cancel")
+				cancelBinding.SetHelp("esc", "press again to interrupt")
 			} else if m.com.App.AgentCoordinator.QueuedPrompts(m.session.ID) > 0 {
 				cancelBinding.SetHelp("esc", "clear queue")
 			}

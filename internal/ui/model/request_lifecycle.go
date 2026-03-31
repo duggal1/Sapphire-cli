@@ -4,19 +4,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/duggal1/Sapphire-cli/internal/ui/util"
+	"github.com/duggal1/Sapphire-cli/internal/ui/chat"
 )
 
 const cancelConfirmationWindow = 2 * time.Second
 
 type cancelTimerExpiredMsg struct{}
-
-func cancelPromptInfoMsg() util.InfoMsg {
-	return util.InfoMsg{
-		Type: util.InfoTypeError,
-		Msg:  "Interrupted. Tell the model what to do differently.",
-	}
-}
 
 // cancelAgent handles the cancel key press. The first press sets isCanceling to true
 // and starts a timer. The second press (before the timer expires) actually
@@ -34,6 +27,7 @@ func (m *UI) cancelAgent() tea.Cmd {
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
+		m.chat.RemoveMessage(chat.InterruptNoticeID)
 		coordinator.Cancel(m.session.ID)
 		// Stop the spinning todo indicator.
 		m.todoIsSpinning = false
@@ -49,8 +43,12 @@ func (m *UI) cancelAgent() tea.Cmd {
 
 	// First escape press - set canceling state and start timer.
 	m.isCanceling = true
+	if m.chat.MessageItem(chat.InterruptNoticeID) == nil {
+		m.chat.AppendMessages(chat.NewInterruptNoticeMessageItem(m.com.Styles))
+		m.chat.SelectLast()
+	}
 	return tea.Batch(
-		util.CmdHandler(cancelPromptInfoMsg()),
+		m.chat.ScrollToBottomAndAnimate(),
 		tea.Tick(cancelConfirmationWindow, func(time.Time) tea.Msg {
 			return cancelTimerExpiredMsg{}
 		}),

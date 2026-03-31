@@ -88,4 +88,7 @@ func TestThinkingTextUsesDistinctHighContrastPalette(t *testing.T) {
 	if !strings.Contains(lit, "\033[1m") {
 		t.Fatal("expected thinking shimmer to use bright emphasized frames")
 	}
+	if strings.Contains(lit, "\033[0m") {
+		t.Fatal("expected thinking shimmer to preserve parent background instead of hard resetting it")
+	}
 }

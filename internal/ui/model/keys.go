@@ -182,7 +182,7 @@ func DefaultKeyMap() KeyMap {
 	)
 	km.Chat.Cancel = key.NewBinding(
 		key.WithKeys("esc", "alt+esc"),
-		key.WithHelp("esc", "cancel"),
+		key.WithHelp("esc", "interrupt"),
 	)
 	km.Chat.Tab = key.NewBinding(
 		key.WithKeys("tab"),

@@ -56,6 +56,27 @@ func TestAssistantThinkingRenderUsesAnimatedThinkingLabel(t *testing.T) {
 	}
 }
 
+func TestAssistantCanceledRenderUsesInlineInterruptNotice(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:   "assistant-canceled",
+		Role: message.Assistant,
+		Parts: []message.ContentPart{
+			message.Finish{Reason: message.FinishReasonCanceled},
+		},
+	})
+
+	rendered := ansi.Strip(item.Render(120))
+	if !strings.Contains(rendered, "Conversation interrupted - tell the model what to do differently.") {
+		t.Fatalf("expected inline interrupt notice, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Canceled") {
+		t.Fatalf("did not expect canceled label, got %q", rendered)
+	}
+}
+
 func TestUserMessageUsesChevronPrefix(t *testing.T) {
 	t.Parallel()
 

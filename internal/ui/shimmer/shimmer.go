@@ -210,6 +210,20 @@ func renderIndexedColor(index int, bold bool, ch string) string {
 	return fmt.Sprintf("\033[38;5;%dm%s\033[0m", index, ch)
 }
 
+func renderIndexedColorPreserveBackground(index int, bold bool, ch string) string {
+	if bold {
+		return fmt.Sprintf("\033[1m\033[38;5;%dm%s\033[39m\033[22m", index, ch)
+	}
+	return fmt.Sprintf("\033[38;5;%dm%s\033[39m", index, ch)
+}
+
+func renderRGBPreserveBackground(r, g, b uint8, bold bool, ch string) string {
+	if bold {
+		return fmt.Sprintf("\033[1m\033[38;2;%d;%d;%dm%s\033[39m\033[22m", r, g, b, ch)
+	}
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[39m", r, g, b, ch)
+}
+
 func renderDim(ch string) string    { return "\033[2m" + ch + "\033[0m" }
 func renderBold(ch string) string   { return "\033[1m" + ch + "\033[0m" }
 func renderNormal(ch string) string { return ch }
@@ -303,28 +317,28 @@ func renderThinkingRune(mode renderMode, intensity float32, ch string) string {
 			t := (intensity - 0.55) / 0.45
 			r, g, b = blend(highlightColor, midColor, t)
 		}
-		return renderRGB(r, g, b, ch)
+		return renderRGBPreserveBackground(r, g, b, intensity >= 0.42, ch)
 	case renderANSI256:
 		switch {
 		case intensity < 0.16:
-			return renderIndexedColor(141, false, ch)
+			return renderIndexedColorPreserveBackground(141, false, ch)
 		case intensity < 0.42:
-			return renderIndexedColor(177, true, ch)
+			return renderIndexedColorPreserveBackground(177, true, ch)
 		case intensity < 0.72:
-			return renderIndexedColor(219, true, ch)
+			return renderIndexedColorPreserveBackground(219, true, ch)
 		default:
-			return renderIndexedColor(231, true, ch)
+			return renderIndexedColorPreserveBackground(231, true, ch)
 		}
 	case renderDecorated:
 		switch {
 		case intensity < 0.16:
-			return "\033[38;5;141m" + ch + "\033[0m"
+			return "\033[38;5;141m" + ch + "\033[39m"
 		case intensity < 0.42:
-			return "\033[1m\033[38;5;177m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;177m" + ch + "\033[39m\033[22m"
 		case intensity < 0.72:
-			return "\033[1m\033[38;5;219m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;219m" + ch + "\033[39m\033[22m"
 		default:
-			return "\033[1m\033[38;5;231m" + ch + "\033[0m"
+			return "\033[1m\033[38;5;231m" + ch + "\033[39m\033[22m"
 		}
 	default:
 		return renderBold(ch)

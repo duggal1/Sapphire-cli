@@ -233,7 +233,7 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 	if a.message.IsFinished() {
 		switch a.message.FinishReason() {
 		case message.FinishReasonCanceled:
-			messageParts = append(messageParts, a.sty.Base.Italic(true).Render("Canceled"))
+			messageParts = append(messageParts, renderInterruptNotice(a.sty, interruptNoticeText, width))
 		case message.FinishReasonError:
 			messageParts = append(messageParts, a.renderError(width))
 		}

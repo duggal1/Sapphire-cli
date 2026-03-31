@@ -55,28 +55,6 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-brews:
-  - repository:
-      owner: duggal1
-      name: homebrew-sapphire-cli
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    name: sapphire
-    directory: Formula
-    homepage: "https://github.com/duggal1/Sapphire-cli"
-    description: "A powerful terminal-based AI assistant for developers, providing intelligent coding assistance directly in your terminal."
-    license: "FSL-1.1-MIT"
-    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
-    skip_upload: "{{ with .Prerelease }}true{{ end }}"
-    commit_author:
-      name: "Harshit Duggal"
-      email: "harshit.duggal@gmail.com"
-    goarm: 7
-    extra_install: |-
-      bash_completion.install "completions/{{ .ProjectName }}.bash" => "{{ .ProjectName }}"
-      zsh_completion.install "completions/{{ .ProjectName }}.zsh" => "_{{ .ProjectName }}"
-      fish_completion.install "completions/{{ .ProjectName }}.fish"
-      man1.install "manpages/{{ .ProjectName }}.1.gz"
-
 changelog:
   sort: asc
   disable: "{{ .IsNightly }}"

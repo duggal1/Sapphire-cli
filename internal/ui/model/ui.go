@@ -2640,18 +2640,13 @@ func (m *UI) View() tea.View {
 	canvas := uv.NewScreenBuffer(m.width, m.height)
 	v.Cursor = m.Draw(canvas, canvas.Bounds())
 
-	content := strings.ReplaceAll(canvas.Render(), "\r\n", "\n") // normalize newlines
-	contentLines := strings.Split(content, "\n")
-	for i, line := range contentLines {
-		// Trim trailing spaces for concise rendering
-		contentLines[i] = strings.TrimRight(line, " ")
-	}
-
-	content = strings.Join(contentLines, "\n")
-
-	v.Content = content
+	v.Content = normalizeRenderedFrame(canvas.Render())
 
 	return v
+}
+
+func normalizeRenderedFrame(content string) string {
+	return strings.ReplaceAll(content, "\r\n", "\n")
 }
 
 // ShortHelp implements [help.KeyMap].

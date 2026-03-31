@@ -25,3 +25,13 @@ func TestSplitPendingAssistantErrorFallsBackForBlankInput(t *testing.T) {
 		t.Fatalf("expected empty details, got %q", details)
 	}
 }
+
+func TestNormalizeRenderedFramePreservesTrailingSpaces(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeRenderedFrame("abc   \r\ndef   ")
+	want := "abc   \ndef   "
+	if got != want {
+		t.Fatalf("expected trailing spaces to be preserved, got %q", got)
+	}
+}

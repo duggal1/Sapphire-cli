@@ -215,3 +215,22 @@ func TestRenderClampsAndPadsViewportWidth(t *testing.T) {
 		t.Fatalf("expected viewport-clamped line, got %q", rendered)
 	}
 }
+
+func TestScrollByDownDoesNotOvershootLastOffset(t *testing.T) {
+	l := NewList(fixedItem{lines: 2}, fixedItem{lines: 3}, fixedItem{lines: 1})
+	l.SetGap(1)
+	l.SetSize(80, 4)
+
+	l.ScrollToBottom()
+	wantIdx, wantLine := l.offsetIdx, l.offsetLine
+
+	l.ScrollBy(1)
+	if l.offsetIdx != wantIdx || l.offsetLine != wantLine {
+		t.Fatalf("expected downward scroll at tail to clamp to (%d,%d), got (%d,%d)", wantIdx, wantLine, l.offsetIdx, l.offsetLine)
+	}
+
+	l.ScrollBy(20)
+	if l.offsetIdx != wantIdx || l.offsetLine != wantLine {
+		t.Fatalf("expected large downward scroll at tail to clamp to (%d,%d), got (%d,%d)", wantIdx, wantLine, l.offsetIdx, l.offsetLine)
+	}
+}

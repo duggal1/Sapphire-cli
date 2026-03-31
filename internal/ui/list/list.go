@@ -91,6 +91,25 @@ func (l *List) blockHeight(idx int) int {
 	return height
 }
 
+func (l *List) clampToLastOffset() {
+	if len(l.items) == 0 {
+		l.offsetIdx = 0
+		l.offsetLine = 0
+		return
+	}
+	lastOffsetIdx, lastOffsetLine, _ := l.lastOffsetItem()
+	if l.offsetIdx > lastOffsetIdx || (l.offsetIdx == lastOffsetIdx && l.offsetLine > lastOffsetLine) {
+		l.offsetIdx = lastOffsetIdx
+		l.offsetLine = lastOffsetLine
+	}
+	if l.offsetIdx < 0 {
+		l.offsetIdx = 0
+	}
+	if l.offsetLine < 0 {
+		l.offsetLine = 0
+	}
+}
+
 func (l *List) invalidateSelectionChange(previous, next int) {
 	if previous >= 0 {
 		l.InvalidateItem(previous)
@@ -531,6 +550,7 @@ func (l *List) ScrollBy(lines int) {
 			available := blockHeight - l.offsetLine
 			if linesRemaining < available {
 				l.offsetLine += linesRemaining
+				l.clampToLastOffset()
 				return
 			}
 
@@ -542,6 +562,7 @@ func (l *List) ScrollBy(lines int) {
 			l.offsetIdx++
 			l.offsetLine = 0
 		}
+		l.clampToLastOffset()
 		return
 	}
 
@@ -561,6 +582,7 @@ func (l *List) ScrollBy(lines int) {
 		l.offsetIdx--
 		l.offsetLine = l.blockHeight(l.offsetIdx)
 	}
+	l.clampToLastOffset()
 }
 
 // VisibleItemIndices finds the range of items that are visible in the viewport.
@@ -847,6 +869,7 @@ func (l *List) ScrollToBottom() {
 	lastOffsetIdx, lastOffsetLine, _ := l.lastOffsetItem()
 	l.offsetIdx = lastOffsetIdx
 	l.offsetLine = lastOffsetLine
+	l.clampToLastOffset()
 }
 
 // ScrollToSelected scrolls the list to the selected item.

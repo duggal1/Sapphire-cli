@@ -145,7 +145,7 @@ func Execute() {
 	if err := fang.Execute(
 		context.Background(),
 		rootCmd,
-		fang.WithVersion(version.Version),
+		fang.WithVersion(version.Display()),
 		fang.WithNotifySignal(os.Interrupt),
 	); err != nil {
 		os.Exit(1)

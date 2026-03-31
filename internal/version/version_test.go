@@ -13,8 +13,10 @@ func TestDisplay(t *testing.T) {
 		version string
 		want    string
 	}{
-		{name: "stable", version: "v1.1.7", want: "1.1.7"},
+		{name: "stable", version: "v1.1.8", want: "1.1.8"},
 		{name: "dev build", version: "1.1.7.dev.20260331182836", want: "1.1.7"},
+		{name: "main build", version: "1.1.8.main.386.20260401003950", want: "1.1.8"},
+		{name: "dot nightly", version: "1.1.8.nightly.386.6364d79", want: "1.1.8 nightly"},
 		{name: "nightly", version: "1.1.7-nightly-a061aaf", want: "1.1.7 nightly"},
 		{name: "blank", version: "", want: ""},
 	}

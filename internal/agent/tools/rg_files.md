@@ -4,6 +4,7 @@ Use this tool when:
 - you need filename or path discovery only
 - the repo is large and browsing with `ls` would be noisy
 - you know part of the filename, extension, directory, or a glob shape
+- `tool_search` is unnecessary because the path shape is already clear
 
 Do not use this tool for:
 - content search inside files; use `rg` or `grep`

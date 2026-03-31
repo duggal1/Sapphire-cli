@@ -474,6 +474,9 @@ func TestPromptsDefineBoundedToolSearchUsage(t *testing.T) {
 				"bounded locator",
 				"refine at most 1-2 times",
 				"small set of strong candidates",
+				"code location is unknown",
+				"`rg_files` when you already know the filename/path shape",
+				"`rg` when you already know the exact text or symbol string",
 			} {
 				if !strings.Contains(out, needle) {
 					t.Fatalf("expected %q in %s prompt", needle, tc.name)

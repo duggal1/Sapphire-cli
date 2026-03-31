@@ -174,6 +174,23 @@ func TestRGFilesTool(t *testing.T) {
 	require.Contains(t, resp.Content, "handler.go")
 }
 
+func TestRankRGFileQueryPrefersImplementationOverGeneratedNoise(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{
+		"pkg/zapier/service.go",
+		"pkg/generated/zapier_service_generated.go",
+		"pkg/zapier/service_test.go",
+		"pkg/zapier/testdata/service_fixture.json",
+	}
+
+	ranked := rankRGFileQuery(paths, "zapier service")
+
+	require.NotEmpty(t, ranked)
+	require.Equal(t, "pkg/zapier/service.go", ranked[0])
+	require.NotEqual(t, "pkg/generated/zapier_service_generated.go", ranked[0])
+}
+
 func TestWCTools(t *testing.T) {
 	t.Parallel()
 

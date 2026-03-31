@@ -41,7 +41,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 <tips>
 - Use `ls` or `tree` to discover file names before reading
 - Use with Glob to find files after a directory listing
-- For code exploration: Grep to find relevant files, then use `agentic_view` to inspect them in parallel
+- For code exploration: use `tool_search` first when the code location is unknown, `rg_files` when the path shape is known, `rg` when the exact text is known, then use `agentic_view` to inspect the winners in parallel
 - For “read the repo”, “inspect this subsystem”, initialization, or architecture requests, default to large `agentic_view` batches instead of serial `single_view`
 - For initialization or codebase mapping, prefer aggressive 20-30 file batches, then follow with targeted sweeps until the important domains and runtime paths are actually understood
 - For large files: read segmented ranges with `offset`/`limit`; issue multiple parallel View calls for different ranges

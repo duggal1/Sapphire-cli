@@ -206,14 +206,24 @@ func rankRGFileQuery(paths []string, query string) []string {
 func scoreFilePathQuery(path, query string, terms []string) int {
 	pathLower := strings.ToLower(filepath.ToSlash(path))
 	baseLower := strings.ToLower(filepath.Base(path))
+	stemLower := strings.TrimSuffix(baseLower, filepath.Ext(baseLower))
 	score := 0
 	switch {
 	case baseLower == query:
+		score += 260
+	case stemLower == query:
 		score += 240
-	case strings.TrimSuffix(baseLower, filepath.Ext(baseLower)) == query:
-		score += 220
 	case pathLower == query:
-		score += 200
+		score += 220
+	}
+	if strings.HasPrefix(baseLower, query) {
+		score += 150
+	}
+	if strings.HasPrefix(stemLower, query) {
+		score += 140
+	}
+	if strings.HasPrefix(pathLower, query) {
+		score += 120
 	}
 	if strings.Contains(baseLower, query) {
 		score += 120
@@ -221,15 +231,105 @@ func scoreFilePathQuery(path, query string, terms []string) int {
 	if strings.Contains(pathLower, query) {
 		score += 90
 	}
+	coveredTerms := 0
 	for _, term := range terms {
+		if term == "" {
+			continue
+		}
+		matched := false
 		switch {
+		case stemLower == term:
+			score += 48
+			matched = true
+		case strings.HasPrefix(stemLower, term):
+			score += 42
+			matched = true
+		case containsRGFilePathSegment(pathLower, term):
+			score += 36
+			matched = true
 		case strings.Contains(baseLower, term):
 			score += 35
+			matched = true
 		case strings.Contains(pathLower, term):
 			score += 20
+			matched = true
+		}
+		if matched {
+			coveredTerms++
 		}
 	}
+	score += coveredTerms * 18
+	if coveredTerms > 1 && coveredTerms == len(terms) {
+		score += 30
+	}
+	score -= rgFilePathNoisePenalty(pathLower, terms)
+	score -= min(max(strings.Count(pathLower, "/")-8, 0)*3, 18)
+	if score < 0 {
+		return 0
+	}
 	return score
+}
+
+func containsRGFilePathSegment(path, term string) bool {
+	if term == "" {
+		return false
+	}
+	for _, segment := range strings.Split(path, "/") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		stem := strings.TrimSuffix(segment, filepath.Ext(segment))
+		if segment == term || strings.Contains(segment, term) || stem == term || strings.Contains(stem, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func rgFilePathNoisePenalty(path string, terms []string) int {
+	switch {
+	case strings.Contains(path, "/node_modules/"), strings.Contains(path, "/vendor/"), strings.Contains(path, "/third_party/"):
+		return 80
+	case strings.Contains(path, "/dist/"), strings.Contains(path, "/build/"), strings.Contains(path, "/out/"), strings.Contains(path, "/coverage/"), strings.Contains(path, "/target/"), strings.Contains(path, "/.next/"), strings.Contains(path, "/.turbo/"):
+		return 44
+	case strings.Contains(path, ".pb.go"), strings.Contains(path, "/generated/"), strings.Contains(path, "_generated"), strings.Contains(path, ".gen."), strings.Contains(path, "/gen/"):
+		if toolSearchPathNeedsGeneratedAssets(terms) {
+			return 8
+		}
+		return 28
+	case strings.Contains(path, "/testdata/"), strings.Contains(path, "/fixtures/"), strings.Contains(path, "/fixture/"), strings.Contains(path, "/mock/"), strings.Contains(path, "/mocks/"):
+		if toolSearchPathNeedsTestAssets(terms) {
+			return 4
+		}
+		return 18
+	default:
+		return 0
+	}
+}
+
+func toolSearchPathNeedsGeneratedAssets(terms []string) bool {
+	return toolSearchPathHasAnyTerm(terms, "generated", "generator", "proto", "protobuf", "pb", "codegen")
+}
+
+func toolSearchPathNeedsTestAssets(terms []string) bool {
+	return toolSearchPathHasAnyTerm(terms, "test", "tests", "spec", "coverage", "mock", "fixture")
+}
+
+func toolSearchPathHasAnyTerm(terms []string, candidates ...string) bool {
+	if len(terms) == 0 || len(candidates) == 0 {
+		return false
+	}
+	wanted := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		wanted[candidate] = struct{}{}
+	}
+	for _, term := range terms {
+		if _, ok := wanted[term]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func toolSearchScoreTerms(query string) []string {

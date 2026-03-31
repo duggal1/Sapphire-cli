@@ -30,7 +30,8 @@ Shows files and subdirectories in tree structure for exploring project organizat
 
 <tips>
 - If you need multiple directory listings, batch them into one `ls` call with `paths`
-- Use Glob for finding files by name patterns instead of browsing
-- Use Grep for searching file contents
+- Use `tool_search` first when the code location is unknown instead of browsing deeply
+- Use `rg_files` for filename/path discovery when the path shape is known
+- Use `rg` or `grep` for searching file contents
 - Combine with other tools for effective exploration
 </tips>

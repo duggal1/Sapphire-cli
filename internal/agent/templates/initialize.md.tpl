@@ -57,7 +57,9 @@ deep repository survey task, not a shallow summary task.
 - Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
 - Context quality is part of the deliverable. Read the main important files for each major domain deeply enough to explain actual behavior, architecture, conventions, and integration points.
 - Do not stop after root files, dependency files, and one or two entry points.
-- Use `ls`, `tool_search`, `rg_files`, `glob`, `rg`, and `grep` for discovery.
+- Use `tool_search` first when the right file, symbol, subsystem anchor, or product term is still unknown.
+- Use `rg_files` when the filename/path shape is already known, `rg` when the exact text pattern is already known, and `wc_l` / `wc` before large reads when file size matters.
+- Use `ls`, `glob`, and `grep` for layout inspection, glob expansion, or fallback discovery when the narrower tool is insufficient.
 - Do not use `bash` for repo discovery or file reading when structured tools exist.
 - `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.
 - Do not use sub-agents as a substitute for the main agent's primary coverage sweep.

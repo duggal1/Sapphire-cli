@@ -463,6 +463,7 @@ func (candidate toolSearchCandidate) totalScore() int {
 	if candidate.TextHits > 1 {
 		score += minInt((candidate.TextHits-1)*4, 12)
 	}
+	score += toolSearchCandidatePathAdjustment(candidate.Path)
 	return score
 }
 
@@ -528,6 +529,29 @@ func trimToolSearchPreview(text string, limit int) string {
 		return text
 	}
 	return strings.TrimSpace(text[:limit]) + "..."
+}
+
+func toolSearchCandidatePathAdjustment(path string) int {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if path == "" {
+		return 0
+	}
+	score := 0
+	switch {
+	case strings.Contains(path, "/node_modules/"), strings.Contains(path, "/vendor/"), strings.Contains(path, "/third_party/"):
+		score -= 72
+	case strings.Contains(path, "/dist/"), strings.Contains(path, "/build/"), strings.Contains(path, "/out/"), strings.Contains(path, "/coverage/"), strings.Contains(path, "/target/"), strings.Contains(path, "/.next/"), strings.Contains(path, "/.turbo/"):
+		score -= 42
+	case strings.Contains(path, ".pb.go"), strings.Contains(path, "/generated/"), strings.Contains(path, "_generated"), strings.Contains(path, ".gen."), strings.Contains(path, "/gen/"):
+		score -= 24
+	case strings.Contains(path, "/testdata/"), strings.Contains(path, "/fixtures/"), strings.Contains(path, "/fixture/"), strings.Contains(path, "/mock/"), strings.Contains(path, "/mocks/"):
+		score -= 16
+	}
+	if strings.Contains(path, "/internal/") || strings.HasPrefix(path, "internal/") {
+		score += 6
+	}
+	score -= minInt(maxInt(strings.Count(path, "/")-8, 0)*3, 18)
+	return score
 }
 
 func formatToolSearchOutput(query string, searchPaths []string, plan toolSearchQueryPlan, ranked []toolSearchCandidate, indexMessages, errors []string, stopReason string, fileTruncated, textTruncated bool) string {

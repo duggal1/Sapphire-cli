@@ -495,29 +495,24 @@ func toolErrorContent(sty *styles.Styles, result *message.ToolResult, width int)
 	if result == nil {
 		return ""
 	}
-	contentWidth := max(0, width-3)
+	contentWidth := max(1, width-lipgloss.Width(sty.Tool.ErrorTag.Render("Error"))-1)
 	errContent := strings.TrimSpace(tools.UserVisibleToolError(result.Name, result.Content, result.Metadata))
 	if errContent == "" {
 		errContent = "tool execution failed"
 	}
 	rawLines := strings.Split(errContent, "\n")
-	rendered := make([]string, 0, len(rawLines)+1)
-	rendered = append(rendered, sty.Tool.ErrorTag.Width(contentWidth).Render("Error"))
+	rendered := make([]string, 0, len(rawLines))
 	for _, rawLine := range rawLines {
 		line := strings.TrimSpace(rawLine)
 		if line == "" {
-			rendered = append(rendered, sty.Tool.ErrorMessage.Width(contentWidth).Render(""))
+			rendered = append(rendered, sty.Tool.ErrorMessage.Render(""))
 			continue
 		}
 		for _, wrapped := range wrapPrefixedText(line, contentWidth, "", "") {
-			rendered = append(rendered, sty.Tool.ErrorMessage.Width(contentWidth).Render(wrapped))
+			rendered = append(rendered, sty.Tool.ErrorMessage.Render(wrapped))
 		}
 	}
-	block := lipgloss.NewStyle().
-		BorderLeft(true).
-		BorderForeground(sty.Error).
-		PaddingLeft(1)
-	return block.Render(strings.Join(rendered, "\n"))
+	return prefixRenderedBlock(sty.Tool.ErrorTag.Render("Error"), strings.Join(rendered, "\n"))
 }
 
 // toolIcon returns the status icon for a tool call.

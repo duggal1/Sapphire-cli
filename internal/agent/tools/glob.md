@@ -37,6 +37,7 @@ Fast file pattern matching tool that finds files by name/pattern, returning path
 <tips>
 - If you need the same glob across multiple roots, batch them into one `glob` call with `paths`
 - Combine with Grep: find files with Glob, search contents with Grep
+- Prefer `rg_files` when the filename/path shape is already known, and prefer `tool_search` when the code location is still unknown
 - For iterative exploration requiring multiple searches, consider Agent tool
 - Check if results truncated and refine pattern if needed
 </tips>

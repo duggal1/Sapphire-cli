@@ -1,6 +1,8 @@
 Locate the exact code file, symbol, or text region needed for the task without reading the whole repository.
+Return only the highest-value ranked navigation candidates.
 
 Use this tool when:
+- the code location is unknown and you need the repo locator first
 - the repo is so large that broad reading would waste context before the task even starts
 - you need the shortest path to the exact file, symbol, or code region first
 - the user names a feature, integration, subsystem, or product term, but not the file path
@@ -11,6 +13,7 @@ How to use it:
 - if needed, refine only 1-2 more times with better nouns, subsystem names, or path hints
 - stop once it returns a small set of strong candidate files or symbols, then switch to `agentic_view` or `single_view`
 - treat it as a locator shortcut, not as a substitute for reading the located code
+- prefer it before older generic browsing loops when the code location is still unknown
 
 Search strategy:
 - prefer durable index matches first when the codebase graph exists

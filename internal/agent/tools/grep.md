@@ -44,7 +44,7 @@ When literal_text=false (supports standard regex):
 
 <tips>
 - If the same search should run across multiple roots, batch them into one `grep` call with `paths`
-- For faster searches: use Glob to find relevant files first, then Grep
+- For repo navigation, prefer `tool_search` when the location is unknown, `rg_files` when the path shape is known, and `rg` when you want real ripgrep behavior
 - For iterative exploration requiring multiple searches, consider Agent tool
 - Check if results truncated and refine search pattern if needed
 - Use literal_text=true for exact text with special characters (dots, parentheses, etc.)

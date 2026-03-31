@@ -4,6 +4,7 @@ Use this tool when:
 - you want explicit ripgrep behavior, not the `grep` fallback path
 - you need exact high-speed text search across a large repo
 - you already know the content pattern and want the matching files and lines
+- `tool_search` has already narrowed the search, or the exact string is already known from context
 
 Do not use this tool for:
 - filename/path discovery only; use `rg_files`

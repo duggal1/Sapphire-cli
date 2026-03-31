@@ -8,6 +8,7 @@ import (
 )
 
 const InterruptNoticeID = "local:interrupt-notice"
+const LocalErrorNoticeID = "local:error-notice"
 
 const interruptNoticeText = "Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue."
 
@@ -17,7 +18,9 @@ type NoticeMessageItem struct {
 	*focusableMessageItem
 
 	id      string
+	label   string
 	text    string
+	details string
 	sty     *styles.Styles
 	isError bool
 }
@@ -28,7 +31,22 @@ func NewInterruptNoticeMessageItem(sty *styles.Styles) MessageItem {
 		cachedMessageItem:        &cachedMessageItem{},
 		focusableMessageItem:     &focusableMessageItem{},
 		id:                       InterruptNoticeID,
+		label:                    "■",
 		text:                     interruptNoticeText,
+		sty:                      sty,
+		isError:                  true,
+	}
+}
+
+func NewErrorNoticeMessageItem(sty *styles.Styles, text, details string) MessageItem {
+	return &NoticeMessageItem{
+		highlightableMessageItem: defaultHighlighter(sty),
+		cachedMessageItem:        &cachedMessageItem{},
+		focusableMessageItem:     &focusableMessageItem{},
+		id:                       LocalErrorNoticeID,
+		label:                    "Error",
+		text:                     strings.TrimSpace(text),
+		details:                  strings.TrimSpace(details),
 		sty:                      sty,
 		isError:                  true,
 	}
@@ -66,16 +84,25 @@ func (n *NoticeMessageItem) Render(width int) string {
 }
 
 func (n *NoticeMessageItem) renderContent(width int) string {
-	return renderInterruptNotice(n.sty, n.text, width)
+	return renderErrorNotice(n.sty, n.label, n.text, n.details, width)
 }
 
 func renderInterruptNotice(sty *styles.Styles, text string, width int) string {
+	return renderErrorNotice(sty, "■", text, "", width)
+}
+
+func renderErrorNotice(sty *styles.Styles, label, text, details string, width int) string {
 	contentWidth := max(0, width-4)
 	lines := wrapPrefixedText(strings.TrimSpace(text), max(1, contentWidth), "", "")
 	body := make([]string, 0, len(lines))
 	for _, line := range lines {
 		body = append(body, sty.Chat.Message.ErrorTitle.Render(line))
 	}
-	prefix := sty.Chat.Message.ErrorTag.Render("■")
+	if strings.TrimSpace(details) != "" {
+		for _, line := range wrapPrefixedText(strings.TrimSpace(details), max(1, contentWidth), "", "") {
+			body = append(body, sty.Chat.Message.ErrorDetails.Render(line))
+		}
+	}
+	prefix := sty.Chat.Message.ErrorTag.Render(label)
 	return prefixRenderedBlock(prefix, strings.Join(body, "\n"))
 }

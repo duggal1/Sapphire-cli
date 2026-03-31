@@ -594,9 +594,11 @@ func DefaultStyles(yellowMode bool) Styles {
 		borderFocus = lipgloss.Color("#9327ffff")
 
 		// Status palette
-		error   = lipgloss.Color("#E48AA7")
-		warning = lipgloss.Color("#D2A46D")
-		info    = tertiary
+		error           = lipgloss.Color("#FF78A8")
+		errorBrightRose = lipgloss.Color("#FF5C98")
+		errorTextRose   = lipgloss.Color("#FF9CC2")
+		warning         = lipgloss.Color("#D2A46D")
+		info            = tertiary
 
 		// Toast backgrounds (status bar)
 		toastSuccessBg     = lipgloss.Color("#22C55E")
@@ -1449,10 +1451,10 @@ func DefaultStyles(yellowMode bool) Styles {
 		BorderForeground(primary).BorderStyle(messageFocussedBorder)
 	s.Chat.Message.Thinking = lipgloss.NewStyle().MaxHeight(10)
 	s.Chat.Message.ErrorTag = lipgloss.NewStyle().
-		Foreground(error).
+		Foreground(errorBrightRose).
 		Bold(true)
 	s.Chat.Message.ErrorTitle = lipgloss.NewStyle().
-		Foreground(fgBase).
+		Foreground(errorTextRose).
 		Bold(true)
 	s.Chat.Message.ErrorDetails = lipgloss.NewStyle().
 		Foreground(fgMuted).

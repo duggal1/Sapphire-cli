@@ -10,7 +10,7 @@ import (
 const InterruptNoticeID = "local:interrupt-notice"
 const LocalErrorNoticeID = "local:error-notice"
 
-const interruptNoticeText = "Conversation interrupted. Tell the agent what to do differently. Use `/feedback` if something went wrong."
+const interruptNoticeText = "Conversation interrupted — tell the agent what to do differently. Did something go wrong? Please hit `/feedback` to report the issue."
 
 type NoticeMessageItem struct {
 	*highlightableMessageItem

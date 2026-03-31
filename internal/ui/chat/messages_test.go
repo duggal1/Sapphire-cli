@@ -69,7 +69,7 @@ func TestAssistantCanceledRenderUsesInlineInterruptNotice(t *testing.T) {
 	})
 
 	rendered := ansi.Strip(item.Render(120))
-	if !strings.Contains(rendered, "Conversation interrupted. Tell the agent what to do differently.") {
+	if !strings.Contains(rendered, "Conversation interrupted — tell the agent what to do differently.") {
 		t.Fatalf("expected inline interrupt notice, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Canceled") {

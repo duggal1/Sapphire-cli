@@ -261,7 +261,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.PlanMode:
 		return `Plan mode runtime contract:
 - If agent.md exists, read it first as a codebase map, then search for the real files that control this task.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Read the relevant implementation files fully, not half, before you finalize the plan.
 - Use broad read-only repository inspection when the task spans more than one file.
 - Inspect the repository deeply before finalizing the plan; do not stop after a shallow search or one list call.
@@ -272,7 +272,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.ArchitectureMode:
 		return `Architect mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for the actual files and seams that govern the task.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Read the relevant implementation files fully before finalizing the design.
 - Use non-mutating tooling, including shell, Python, tests, and builds, when it improves architectural truth.
 - Use read-only inspection and analysis tooling to understand the current structure.
@@ -281,7 +281,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.DebugMode:
 		return `Debug mode runtime contract:
 - If agent.md exists, read it first as a runtime map, then search for the actual failing path and read the relevant files fully.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Use non-mutating tooling aggressively to reproduce and diagnose before concluding.
 - Diagnose from concrete evidence first; do not jump to fixes without tracing the failure.
 - You may inspect and run non-mutating diagnostic tooling, but do not mutate repository files in this mode.
@@ -289,7 +289,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.SecurityMode:
 		return `Security mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for and fully read the real files that define exposure and trust boundaries.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Use non-mutating tooling, including shell, Python, tests, and static analysis, when it materially improves confidence.
 - Use concrete evidence from code, config, and tooling. Avoid generic security commentary.
 - Do not mutate repository files.
@@ -297,7 +297,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.ReviewMode:
 		return `Review mode runtime contract:
 - If agent.md exists, read it first as a codebase map, then fully read the changed files and surrounding implementation before finalizing judgment.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Use non-mutating checks when they materially improve review quality.
 - Inspect the real code and behavior; prioritize bugs, regressions, and missing tests.
 - Do not mutate repository files.
@@ -305,7 +305,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.OrchestratorMode:
 		return `Orchestrator mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for and fully read the files that define dependencies, collision risk, and validation paths.
-- Use single_view for one known file and agentic_view for broader relevant slices.
+- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
 - Use non-mutating tooling, including shell, Python, tests, and builds, when it improves dependency and validation truth.
 - Reason about agent topology, contracts, blockers, and merge-safe execution from real repository/runtime evidence.
 - Do not mutate repository files.
@@ -313,19 +313,21 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	default:
 		if shouldDelegateToSubAgents(prompt) {
 			return `Plan tool protocol for multi-step tasks (Codex update_plan):
-1. Use update_plan only for non-trivial multi-step work
-2. Call update_plan BEFORE technical work when a plan is warranted
-3. Always send the FULL plan on every update; do not omit existing items
-4. Keep exactly one step in_progress at a time
-5. Before the next command, mark the previous completed step as completed
-6. Do not batch-complete items after the fact
-7. Do not abandon the plan - complete every step
-8. Do NOT repeat the full plan after calling update_plan - the harness already displays it
+1. For complex tasks, read enough implementation context first; do not start editing immediately
+2. Then publish a concrete update_plan checklist before mutating files or starting execution-heavy commands
+3. This checklist flow is normal execution mode, not Plan Mode
+4. Use about 6-10 steps for genuinely complex work; use fewer only when the task is actually smaller
+5. Always send the FULL plan on every update; do not omit existing items
+6. Keep exactly one step in_progress at a time
+7. Before the next command, mark the previous completed step as completed
+8. Do not batch-complete items after the fact
+9. Do not abandon the plan - complete every step
+10. Do NOT repeat the full plan after calling update_plan - the harness already displays it
 
 Skip this only for a single non-destructive read requiring exactly one tool call.`
 		}
 
-		return `For multi-step tasks, use update_plan before execution only when the plan is clear and non-trivial. Every plan item must include explicit step text; never send blank or placeholder steps. Keep 5-7 steps max, send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`
+		return `For complex or otherwise non-trivial multi-step tasks, read enough context first, then publish a concrete update_plan checklist before mutating files or starting execution-heavy commands. This is normal execution mode, not Plan Mode. Every plan item must include explicit step text; never send blank or placeholder steps. Use about 6-10 steps for genuinely complex work and fewer only when the task is actually smaller. Send the full plan each time, keep one step in_progress, mark completed steps before the next command, use pending -> in_progress -> completed transitions, and finish with all steps completed. Do NOT repeat the plan - the harness displays it.`
 	}
 }
 
@@ -333,10 +335,11 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 	switch planmode.NormalizeMode(mode) {
 	case planmode.DefaultSessionMode:
 		return `<system_reminder>Complexity mode:
-- Initialize plan with update_plan immediately before technical execution.
-- Keep the plan tracker synchronized after every state change.
+- For any complex task, read enough code, config, tests, docs, and runtime context to understand the real work, then create a concrete update_plan checklist before mutating repository files or starting execution-heavy commands.
+- This checklist flow is normal execution mode, not Plan Mode; once the plan is clear, execute it autonomously without asking permission.
+- Complex-task checklists should usually contain 6-10 short, verifiable steps and must stay synchronized after every state change.
 - For greetings, thanks, and other short social turns, reply directly and use no tools.
-- Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.
+- Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file read, subsystem, architecture trace, initialization, review, or broad repository request, default to "agentic_view". Normal non-trivial investigation should start with about 8-12 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use broader sweeps of about 12-20 relevant files and continue until the major domains are covered. If the repo has fewer meaningful files, read all of them.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
@@ -2098,7 +2101,7 @@ func (a *sessionAgent) preparePrompt(mode planmode.SessionMode, msgs []message.M
 		history = append(history, fantasy.NewUserMessage(
 			`<system_reminder>Sub-agent Directive:
 Execute your assigned chunk of the tasks autonomously and efficiently.
-- Read one known repository file with "single_view". Read any multi-file target set or broad repository slice with "agentic_view". Use "agentic_view" comprehensively: read broad relevant slices in each sweep instead of minimal batches.
+- Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file target set, subsystem, architecture trace, initialization, or broad repository slice, use "agentic_view". Normal non-trivial investigation should start with about 8-12 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use broader sweeps of about 12-20 relevant files and continue until the major domains are covered. If the repo has fewer meaningful files, read all of them. Do not drift into serial single-file exploration loops.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.

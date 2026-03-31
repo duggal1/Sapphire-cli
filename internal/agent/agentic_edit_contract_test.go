@@ -32,7 +32,10 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	}
 
 	joined := strings.Join(reminders, "\n")
-	require.Contains(t, joined, `Read exactly 1 repository file with "single_view". Read 2 or more repository files with "agentic_view". Keep each "agentic_view" batch to 2–30 files and chunk larger reads into multiple batches.`)
+	require.Contains(t, joined, `For any complex task, read enough code, config, tests, docs, and runtime context to understand the real work, then create a concrete update_plan checklist before mutating repository files or starting execution-heavy commands.`)
+	require.Contains(t, joined, `This checklist flow is normal execution mode, not Plan Mode; once the plan is clear, execute it autonomously without asking permission.`)
+	require.Contains(t, joined, `Complex-task checklists should usually contain 6-10 short, verifiable steps and must stay synchronized after every state change.`)
+	require.Contains(t, joined, `Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file read, subsystem, architecture trace, initialization, review, or broad repository request, default to "agentic_view". Normal non-trivial investigation should start with about 8-12 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use broader sweeps of about 12-20 relevant files and continue until the major domains are covered. If the repo has fewer meaningful files, read all of them.`)
 	require.Contains(t, joined, `Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.`)
 	require.Contains(t, joined, `After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.`)
 }

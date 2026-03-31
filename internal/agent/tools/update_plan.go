@@ -37,14 +37,14 @@ const (
 
 // PlanItem represents a single step in the plan (Codex PlanItemArg equivalent)
 type PlanItem struct {
-	Step   string     `json:"step" description:"One-sentence description of the step (max 5-7 words)"`
+	Step   string     `json:"step" description:"One-sentence description of the step (ideally 5-9 words)"`
 	Status StepStatus `json:"status" description:"Step status: pending, in_progress, or completed"`
 }
 
 // UpdatePlanArgs represents the arguments for the update_plan tool (Codex UpdatePlanArgs equivalent)
 type UpdatePlanArgs struct {
 	Explanation *string    `json:"explanation,omitempty" description:"Optional brief explanation for the plan update"`
-	Plan        []PlanItem `json:"plan" description:"List of plan items with steps and statuses"`
+	Plan        []PlanItem `json:"plan" description:"List of plan items with steps and statuses. Complex tasks usually use about 6-10 steps."`
 }
 
 // PlanResponseMetadata contains metadata about the plan update

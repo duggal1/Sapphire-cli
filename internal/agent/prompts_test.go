@@ -247,6 +247,66 @@ func TestPromptsRequireAutonomousCurrentIntegrationDiscovery(t *testing.T) {
 	}
 }
 
+func TestPromptsRequireComplexTaskChecklistPlanning(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("", "complex-plan-prompt-*")
+	if err != nil {
+		t.Fatalf("mktemp: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(dir)
+	}()
+
+	cfg, err := config.Load(dir, "", false)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		build func() (string, error)
+	}{
+		{
+			name: "coder",
+			build: func() (string, error) {
+				p, err := coderPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+		{
+			name: "task",
+			build: func() (string, error) {
+				p, err := taskPrompt()
+				if err != nil {
+					return "", err
+				}
+				return p.Build(context.Background(), "", "", *cfg)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tc.build()
+			if err != nil {
+				t.Fatalf("build %s prompt: %v", tc.name, err)
+			}
+			for _, needle := range []string{
+				"Using `update_plan` does not enter Plan Mode.",
+				"This checklist flow is normal execution mode, not Plan Mode.",
+				"before mutating repository files or starting execution-heavy implementation commands",
+				"usually 6-10 items for complex work",
+			} {
+				if !strings.Contains(out, needle) {
+					t.Fatalf("expected %q in %s prompt", needle, tc.name)
+				}
+			}
+		})
+	}
+}
+
 func TestSubAgentOrchestratorPromptIsComposedFromModules(t *testing.T) {
 	text := string(subAgentOrchestratorPrompt)
 	for _, needle := range []string{

@@ -7,8 +7,8 @@ Create or update `{{.Config.Options.InitializeAs}}` so future agents can underst
 ## Goal
 
 Document everything an agent needs to work in this codebase — commands, patterns,
-conventions, and gotchas. Aim for **completeness over brevity**. Include everything
-an agent would need to know. Use judgment on depth based on what you actually find.
+conventions, and gotchas. Aim for **completeness over brevity**. Initialization is a
+deep repository survey task, not a shallow summary task.
 
 ---
 
@@ -17,11 +17,17 @@ an agent would need to know. Use judgment on depth based on what you actually fi
 - Read first. Write second.
 - Document only what is explicitly observed.
 - Do not invent commands, paths, architecture, conventions, or workflows.
-- Use `agentic_view` aggressively for broad and multi-file repository reads.
-- Use `single_view` for one known file.
+- `agentic_view` is the default read tool for initialization.
+- Use `single_view` only when exactly one verified file is sufficient for a local follow-up.
+- For initialization, use `agentic_view` in broad sweeps of about 12-20 files when available.
+- If the repo has fewer meaningful files, read all of them.
+- Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
+- Do not stop after root files, dependency files, and one or two entry points.
 - Use `ls`, `glob`, and `grep` for discovery.
 - Do not use `bash` for repo discovery or file reading when structured tools exist.
-- Do not force sub-agents. Use them only when repo complexity justifies them.
+- `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.
+- Do not use sub-agents as a substitute for the main agent's primary coverage sweep.
+- Use sub-agents only when repo complexity justifies them after the main agent has already surveyed the repo broadly.
 
 ---
 
@@ -38,7 +44,7 @@ Then stop.
 
 ---
 
-## Step 1 — Assess Complexity
+## Step 1 — Assess Complexity and Coverage Depth
 
 Inspect the repo and classify it into exactly one tier:
 
@@ -55,6 +61,12 @@ Inspect the repo and classify it into exactly one tier:
 - Build tooling (Makefiles, CI configs, scripts, package managers)
 - Major domains present: app, services, infra, tests, docs, config, schemas,
   migrations, SDKs, generated code
+
+### Minimum coverage expectation
+
+- **Small**: if the repo has 12 or fewer meaningful files, read all of them. Otherwise read at least 12 meaningful files across all major areas.
+- **Medium**: read at least 20 meaningful files if available, spanning every major domain.
+- **Large**: read at least 30 meaningful files if available, spanning every major domain, then keep reading until additional sweeps stop changing the architectural picture materially.
 
 ---
 
@@ -104,11 +116,22 @@ Do **not** invent commands. If you cannot confirm a command exists, do not inclu
 
 ### 2.5 — Source Code Patterns
 
-Read representative source files to understand:
+Use `agentic_view` for broad mixed sweeps. Read representative source, test, config,
+build, and schema files to understand:
 - Code organization within files
 - Naming conventions (variables, functions, files, directories)
 - Testing approach and structure
 - Any non-obvious or project-specific patterns
+
+The survey must include all of the following when they exist:
+- Entry points and bootstraps
+- Primary runtime modules/packages/services
+- Representative tests
+- Build, lint, CI, and script files
+- Config, schema, migration, or manifest files
+- Existing rules/context files
+
+After the first broad sweep, run targeted follow-up sweeps for any uncovered major domain.
 
 ### 2.6 — Existing `{{.Config.Options.InitializeAs}}`
 
@@ -126,13 +149,13 @@ Analyze directly. No sub-agents.
 Spawn sub-agents only for major domains where coverage justifies it.
 
 ### Large Repo
-Spawn one sub-agent per major domain.
+Spawn one sub-agent per major domain only after the main agent has already completed the first broad `agentic_view` survey.
 
 ### Sub-Agent Requirements (if used)
 
 Each sub-agent must:
 
-1. Read at least one anchor file with `single_view`
+1. Read at least one anchor file with `single_view` only if exactly one anchor file is useful
 2. Use `agentic_view` for broad coverage of its assigned domain
 3. Return synthesized findings only — no raw file dumps
 4. Report only explicitly observed facts
@@ -158,6 +181,7 @@ Each sub-agent must:
 
 Write `{{.Config.Options.InitializeAs}}` using this exact section structure.
 Adapt depth per section based on what was actually observed. Omit nothing major.
+Cite exact file paths throughout the document.
 
 ```markdown
 # {{.Config.Options.InitializeAs}}
@@ -201,6 +225,10 @@ Adapt depth per section based on what was actually observed. Omit nothing major.
 ## Hard Constraints
 
 - Do **not** write output before broad repo coverage is complete.
+- Do **not** produce a terse summary. For medium/large repos, a roughly 100-line file is presumptively incomplete.
+- Small repos should still usually produce a substantial guide. Medium/large repos should usually land around 300-400 lines of verified material when the evidence supports it.
+- If the repo genuinely cannot support that depth, explain the missing evidence instead of padding or inventing content.
+- Do **not** leave major sections as one-line placeholders.
 - Do **not** use sub-agents unless justified by complexity.
 - Do **not** dump raw file content anywhere in the output.
 - Do **not** omit any major observed domain.

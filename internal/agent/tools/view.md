@@ -1,7 +1,7 @@
 Reads and displays file contents with line numbers for examining code, logs, or text data. Supports reading multiple files in parallel.
 
 <usage>
-- **CRITICAL ROUTING RULE**: Read exactly 1 repository file → use `single_view`. Read 2 or more repository files, or any broad repo slice / subsystem / codebase request, → use `agentic_view`. NEVER use repeated `single_view` calls for multi-file reads.
+- **CRITICAL ROUTING RULE**: Use `single_view` only when exactly 1 verified repository file is truly sufficient. For any non-trivial task, any 2+ file read, any subsystem read, any architecture trace, any initialization pass, or any broad repo slice / codebase request, use `agentic_view`. Normal non-trivial investigation should start with about 8-12 relevant files. Initialization or broad codebase mapping should use broader 12-20 file sweeps and continue until major domains are covered. NEVER use repeated `single_view` calls for multi-file reads.
 - Provide "file_paths" (array of strings) to read multiple files concurrently
 - Provide "file_path" (string) to read a single file (legacy)
 - Optional offset: start reading from specific line (1-based index, defaults to 1)
@@ -42,7 +42,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 - Use `ls` or `tree` to discover file names before reading
 - Use with Glob to find files after a directory listing
 - For code exploration: Grep to find relevant files, then use `agentic_view` to inspect them in parallel
-- For “read the repo” or “inspect this subsystem” requests, default to large `agentic_view` batches instead of serial `single_view`
+- For “read the repo”, “inspect this subsystem”, initialization, or architecture requests, default to large `agentic_view` batches instead of serial `single_view`
 - For large files: read segmented ranges with `offset`/`limit`; issue multiple parallel View calls for different ranges
 - View tool automatically detects and renders image files
 </tips>

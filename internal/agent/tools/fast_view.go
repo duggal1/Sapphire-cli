@@ -48,7 +48,7 @@ func FastViewTool(
 ) fantasy.AgentTool {
 	description := string(viewDescription)
 	if name == AgenticViewToolName {
-		description += "\n\nagentic_view is the primary repo exploration tool. Use it for any multi-file or codebase-scale read. Batch aggressively; it can inspect up to 250 files in parallel."
+		description += "\n\nagentic_view is the default repo exploration tool for any non-trivial task. Use it for any multi-file, subsystem, architecture, initialization, or codebase-scale read. Normal investigation should start with about 8-12 relevant files. Initialization or broad codebase mapping should use broader 12-20 file sweeps and continue until major domains are covered. It can inspect up to 250 files in parallel."
 	}
 	return fantasy.NewParallelAgentTool(
 		name,

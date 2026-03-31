@@ -114,7 +114,7 @@ func NewViewTool(
 ) fantasy.AgentTool {
 	description := string(viewDescription)
 	if name == SingleViewToolName {
-		description += "\n\nUse single_view only for exactly one verified repository file. If the task expands beyond one file, switch immediately to agentic_view."
+		description += "\n\nUse single_view only when exactly one verified repository file is truly sufficient. If the task expands beyond one file, or is non-trivial, switch immediately to agentic_view."
 	}
 	return fantasy.NewParallelAgentTool(
 		name,

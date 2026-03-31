@@ -775,16 +775,18 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix: " ",
-				Color:  stringPtr(primaryHex),
-				Bold:   boolPtr(true),
+				Prefix:    " ",
+				Color:     stringPtr(primaryHex),
+				Bold:      boolPtr(true),
+				Underline: boolPtr(true),
 			},
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix: "## ",
-				Color:  stringPtr(primaryHex),
-				Bold:   boolPtr(true),
+				Prefix:    "## ",
+				Color:     stringPtr(primaryHex),
+				Bold:      boolPtr(true),
+				Underline: boolPtr(true),
 			},
 		},
 		H3: ansi.StyleBlock{
@@ -1018,6 +1020,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				Prefix:          " ",
 				Suffix:          " ",
 				Bold:            boolPtr(true),
+				Underline:       boolPtr(true),
 				Color:           stringPtr(primaryHex),
 				BackgroundColor: plainBg,
 			},
@@ -1025,6 +1028,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          "## ",
+				Underline:       boolPtr(true),
 				Color:           stringPtr(primaryHex),
 				BackgroundColor: plainBg,
 			},

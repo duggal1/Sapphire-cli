@@ -3,7 +3,7 @@ Makes batched edits across one or more files in one operation. Built on Edit too
 **Note**: This tool is only available to the main agent. Sub-agents do not have multi-edit capability to prevent token explosion.
 
 <prerequisites>
-1. **STRONGLY PREFERRED**: Use `agentic_view` or `view` to read the full target files before editing. If you already know the exact edit and the runtime can proceed, do not repeat the same blocked attempt; read once, then continue.
+1. **STRONGLY PREFERRED**: Use `agentic_view` to read the full target files before editing. It is the default repository read path, even for one file when the scope may expand. Use `single_view` only for an explicitly narrow trivial one-file read. If you already know the exact edit and the runtime can proceed, do not repeat the same blocked attempt; read once, then continue.
 2. **TRUNCATION CHECK**: If the view output shows `... lines hidden`, you **MUST** expand the view using `offset` and `limit` to read those sections. NEVER edit a truncated file.
 3. Verify directory paths are correct.
 4. **CRITICAL**: Note exact whitespace, indentation, and formatting from View output.

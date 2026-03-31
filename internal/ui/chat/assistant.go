@@ -423,11 +423,16 @@ func assistantLiveStatusLabel(msg *message.Message) string {
 // renderError renders an error message.
 func (a *AssistantMessageItem) renderError(width int) string {
 	finishPart := a.message.FinishPart()
-	contentWidth := max(1, width-lipgloss.Width(a.sty.Chat.Message.ErrorTag.Render("Error"))-1)
+	contentWidth := max(1, width-lipgloss.Width(a.sty.Chat.Message.ErrorTag.Render("■"))-1)
 	titleLines := wrapPrefixedText(strings.TrimSpace(finishPart.Message), contentWidth, "", "")
-	rendered := make([]string, 0, len(titleLines)+1)
-	for _, line := range titleLines {
-		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render(line))
+	rendered := make([]string, 0, len(titleLines)+2)
+	if len(titleLines) > 0 {
+		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render("Error "+titleLines[0]))
+		for _, line := range titleLines[1:] {
+			rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render(line))
+		}
+	} else {
+		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render("Error"))
 	}
 	if strings.TrimSpace(finishPart.Details) != "" {
 		for _, line := range wrapPrefixedText(finishPart.Details, contentWidth, "", "") {
@@ -435,9 +440,9 @@ func (a *AssistantMessageItem) renderError(width int) string {
 		}
 	}
 	if len(rendered) == 0 {
-		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render("Unknown error"))
+		rendered = append(rendered, a.sty.Chat.Message.ErrorTitle.Render("Error"))
 	}
-	return prefixRenderedBlock(a.sty.Chat.Message.ErrorTag.Render("Error"), strings.Join(rendered, "\n"))
+	return prefixRenderedBlock(a.sty.Chat.Message.ErrorTag.Render("■"), strings.Join(rendered, "\n"))
 }
 
 // isSpinning returns true if the assistant message is still generating.

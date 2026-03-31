@@ -10,7 +10,7 @@ import (
 const InterruptNoticeID = "local:interrupt-notice"
 const LocalErrorNoticeID = "local:error-notice"
 
-const interruptNoticeText = "Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue."
+const interruptNoticeText = "Conversation interrupted. Tell the agent what to do differently. Use `/feedback` if something went wrong."
 
 type NoticeMessageItem struct {
 	*highlightableMessageItem
@@ -44,7 +44,7 @@ func NewErrorNoticeMessageItem(sty *styles.Styles, text, details string) Message
 		cachedMessageItem:        &cachedMessageItem{},
 		focusableMessageItem:     &focusableMessageItem{},
 		id:                       LocalErrorNoticeID,
-		label:                    "Error",
+		label:                    "■",
 		text:                     strings.TrimSpace(text),
 		details:                  strings.TrimSpace(details),
 		sty:                      sty,
@@ -84,19 +84,33 @@ func (n *NoticeMessageItem) Render(width int) string {
 }
 
 func (n *NoticeMessageItem) renderContent(width int) string {
+	if n.id == InterruptNoticeID {
+		return renderInterruptNotice(n.sty, n.text, width)
+	}
 	return renderErrorNotice(n.sty, n.label, n.text, n.details, width)
 }
 
 func renderInterruptNotice(sty *styles.Styles, text string, width int) string {
-	return renderErrorNotice(sty, "■", text, "", width)
-}
-
-func renderErrorNotice(sty *styles.Styles, label, text, details string, width int) string {
 	contentWidth := max(0, width-4)
 	lines := wrapPrefixedText(strings.TrimSpace(text), max(1, contentWidth), "", "")
 	body := make([]string, 0, len(lines))
 	for _, line := range lines {
 		body = append(body, sty.Chat.Message.ErrorTitle.Render(line))
+	}
+	return prefixRenderedBlock(sty.Chat.Message.ErrorTag.Render("■"), strings.Join(body, "\n"))
+}
+
+func renderErrorNotice(sty *styles.Styles, label, text, details string, width int) string {
+	contentWidth := max(0, width-4)
+	lines := wrapPrefixedText(strings.TrimSpace(text), max(1, contentWidth), "", "")
+	body := make([]string, 0, len(lines)+1)
+	if len(lines) > 0 {
+		body = append(body, sty.Chat.Message.ErrorTitle.Render("Error "+lines[0]))
+		for _, line := range lines[1:] {
+			body = append(body, sty.Chat.Message.ErrorTitle.Render(line))
+		}
+	} else {
+		body = append(body, sty.Chat.Message.ErrorTitle.Render("Error"))
 	}
 	if strings.TrimSpace(details) != "" {
 		for _, line := range wrapPrefixedText(strings.TrimSpace(details), max(1, contentWidth), "", "") {

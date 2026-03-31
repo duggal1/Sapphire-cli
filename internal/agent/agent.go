@@ -261,7 +261,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.PlanMode:
 		return `Plan mode runtime contract:
 - If agent.md exists, read it first as a codebase map, then search for the real files that control this task.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Read the relevant implementation files fully, not half, before you finalize the plan.
 - Use broad read-only repository inspection when the task spans more than one file.
 - Inspect the repository deeply before finalizing the plan; do not stop after a shallow search or one list call.
@@ -272,7 +272,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.ArchitectureMode:
 		return `Architect mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for the actual files and seams that govern the task.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Read the relevant implementation files fully before finalizing the design.
 - Use non-mutating tooling, including shell, Python, tests, and builds, when it improves architectural truth.
 - Use read-only inspection and analysis tooling to understand the current structure.
@@ -281,7 +281,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.DebugMode:
 		return `Debug mode runtime contract:
 - If agent.md exists, read it first as a runtime map, then search for the actual failing path and read the relevant files fully.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Use non-mutating tooling aggressively to reproduce and diagnose before concluding.
 - Diagnose from concrete evidence first; do not jump to fixes without tracing the failure.
 - You may inspect and run non-mutating diagnostic tooling, but do not mutate repository files in this mode.
@@ -289,7 +289,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.SecurityMode:
 		return `Security mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for and fully read the real files that define exposure and trust boundaries.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Use non-mutating tooling, including shell, Python, tests, and static analysis, when it materially improves confidence.
 - Use concrete evidence from code, config, and tooling. Avoid generic security commentary.
 - Do not mutate repository files.
@@ -297,7 +297,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.ReviewMode:
 		return `Review mode runtime contract:
 - If agent.md exists, read it first as a codebase map, then fully read the changed files and surrounding implementation before finalizing judgment.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Use non-mutating checks when they materially improve review quality.
 - Inspect the real code and behavior; prioritize bugs, regressions, and missing tests.
 - Do not mutate repository files.
@@ -305,7 +305,7 @@ func buildRuntimeReminder(mode planmode.SessionMode, prompt string) string {
 	case planmode.OrchestratorMode:
 		return `Orchestrator mode runtime contract:
 - If agent.md exists, read it first as a system map, then search for and fully read the files that define dependencies, collision risk, and validation paths.
-- Use single_view only when exactly one verified file is sufficient; otherwise use agentic_view for broader relevant slices.
+- Use agentic_view as the default repository read tool, including one-file reads when you want the default path. Use single_view only for an explicitly narrow trivial one-file read.
 - Use non-mutating tooling, including shell, Python, tests, and builds, when it improves dependency and validation truth.
 - Reason about agent topology, contracts, blockers, and merge-safe execution from real repository/runtime evidence.
 - Do not mutate repository files.
@@ -339,8 +339,9 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 - This checklist flow is normal execution mode, not Plan Mode; once the plan is clear, execute it autonomously without asking permission.
 - Complex-task checklists should usually contain 6-10 short, verifiable steps and must stay synchronized after every state change.
 - For greetings, thanks, and other short social turns, reply directly and use no tools.
-- In very large repos, use "tool_search" as a bounded locator when you need the exact file, symbol, or code region before reading. Start with one focused query, refine at most 1-2 times, stop once you have a small set of strong candidates, then switch to "agentic_view" or "single_view".
-- Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file read, subsystem, architecture trace, initialization, review, or broad repository request, default to "agentic_view". Normal non-trivial investigation should start with about 10-20 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use aggressive sweeps of about 20-30 relevant files and continue until the major domains are covered. For a narrow but complex task, read all main relevant files tied to the task before editing. If the repo has fewer meaningful files, read all of them.
+- In very large repos, use "tool_search" as a bounded locator when you need the exact file, symbol, or code region before reading. Start with one focused query, refine at most 1-2 times, stop once you have a small set of strong candidates, then switch to "agentic_view" by default. Use "single_view" only if the resulting read is explicitly narrow and trivial.
+- These search tools are not interchangeable: unknown location -> "tool_search"; known path shape -> "rg_files"; known exact text or symbol string -> "rg"; line counts -> "wc_l"; size or density -> "wc".
+- "agentic_view" is the default repository read tool, including one-file reads when you want the default path or scope may expand. Use "single_view" only as an extreme fallback for an explicitly user-narrowed or guaranteed-trivial one-file read. Normal general or semi-complex repo investigation should start with an "agentic_view" sweep of about 12-20 relevant files. Initialization, AGENTS generation, broad codebase mapping, or wide subsystem work should use aggressive "agentic_view" sweeps of about 20-30 relevant files and continue with additional sweeps until the major domains are actually covered. For a narrow but complex task, read all main relevant files tied to the task before editing. If the repo has fewer meaningful files, read all of them.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.

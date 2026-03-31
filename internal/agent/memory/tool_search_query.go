@@ -67,13 +67,12 @@ func (c *Compiler) ToolSearch(ctx context.Context, workingDir, query string, lim
 	}
 
 	spec := buildToolSearchQuerySpec(query)
-	rawLimit := min(max(limit*6, 48), 160)
 
-	symbolMatches, err := c.queryToolSearchSymbols(ctx, scope.ID, spec, rawLimit)
+	symbolMatches, err := c.queryToolSearchSymbols(ctx, scope.ID, spec, limit)
 	if err != nil {
 		return status, nil, err
 	}
-	fileMatches, err := c.queryToolSearchFiles(ctx, scope.ID, spec, rawLimit)
+	fileMatches, err := c.queryToolSearchFiles(ctx, scope.ID, spec, limit)
 	if err != nil {
 		return status, nil, err
 	}
@@ -178,7 +177,7 @@ func (c *Compiler) queryToolSearchSymbols(ctx context.Context, scopeID string, s
 	if limit <= 0 {
 		limit = 12
 	}
-	results := make([]ToolSearchMatch, 0, min(limit, 48))
+	results := make([]ToolSearchMatch, 0, min(max(limit*2, 16), 48))
 	seen := make(map[string]struct{}, limit*2)
 	stages := []struct {
 		name   string
@@ -186,9 +185,9 @@ func (c *Compiler) queryToolSearchSymbols(ctx context.Context, scopeID string, s
 		limit  int
 		build  func([]string) (string, []any)
 	}{
-		{name: "exact", values: spec.Exact, limit: min(max(limit, 10), 32), build: buildExactToolSearchSymbolClause},
-		{name: "prefix", values: spec.Prefix, limit: min(max(limit, 14), 40), build: buildPrefixToolSearchSymbolClause},
-		{name: "fuzzy", values: spec.Fuzzy, limit: min(max(limit*2, 24), 80), build: buildFuzzyToolSearchSymbolClause},
+		{name: "exact", values: spec.Exact, limit: min(max(limit*2, 12), 24), build: buildExactToolSearchSymbolClause},
+		{name: "prefix", values: spec.Prefix, limit: min(max(limit*3, 16), 32), build: buildPrefixToolSearchSymbolClause},
+		{name: "fuzzy", values: spec.Fuzzy, limit: min(max(limit*4, 20), 48), build: buildFuzzyToolSearchSymbolClause},
 	}
 	for _, stage := range stages {
 		clause, args := stage.build(stage.values)
@@ -200,7 +199,7 @@ func (c *Compiler) queryToolSearchSymbols(ctx context.Context, scopeID string, s
 			return nil, err
 		}
 		results = appendToolSearchMatches(results, seen, stageMatches, limit)
-		if stage.name != "fuzzy" && len(results) >= max(limit, 8) {
+		if stage.name != "fuzzy" && len(results) >= max(limit, 6) {
 			break
 		}
 	}
@@ -340,7 +339,7 @@ func (c *Compiler) queryToolSearchFiles(ctx context.Context, scopeID string, spe
 	if limit <= 0 {
 		limit = 12
 	}
-	results := make([]ToolSearchMatch, 0, min(limit, 48))
+	results := make([]ToolSearchMatch, 0, min(max(limit*2, 16), 48))
 	seen := make(map[string]struct{}, limit*2)
 	stages := []struct {
 		name   string
@@ -348,9 +347,9 @@ func (c *Compiler) queryToolSearchFiles(ctx context.Context, scopeID string, spe
 		limit  int
 		build  func([]string) (string, []any)
 	}{
-		{name: "exact", values: spec.Exact, limit: min(max(limit, 10), 32), build: buildExactToolSearchFileClause},
-		{name: "prefix", values: spec.Prefix, limit: min(max(limit, 14), 40), build: buildPrefixToolSearchFileClause},
-		{name: "fuzzy", values: spec.Fuzzy, limit: min(max(limit*2, 24), 80), build: buildFuzzyToolSearchFileClause},
+		{name: "exact", values: spec.Exact, limit: min(max(limit*2, 12), 24), build: buildExactToolSearchFileClause},
+		{name: "prefix", values: spec.Prefix, limit: min(max(limit*3, 16), 32), build: buildPrefixToolSearchFileClause},
+		{name: "fuzzy", values: spec.Fuzzy, limit: min(max(limit*4, 20), 48), build: buildFuzzyToolSearchFileClause},
 	}
 	for _, stage := range stages {
 		clause, args := stage.build(stage.values)
@@ -362,7 +361,7 @@ func (c *Compiler) queryToolSearchFiles(ctx context.Context, scopeID string, spe
 			return nil, err
 		}
 		results = appendToolSearchMatches(results, seen, stageMatches, limit)
-		if stage.name != "fuzzy" && len(results) >= max(limit, 8) {
+		if stage.name != "fuzzy" && len(results) >= max(limit, 6) {
 			break
 		}
 	}

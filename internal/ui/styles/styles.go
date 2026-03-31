@@ -759,10 +759,10 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Color: stringPtr(tertiaryHex),
+				Color: stringPtr(colorHex(fgMuted)),
 			},
 			Indent:      uintPtr(1),
-			IndentToken: stringPtr("  "),
+			IndentToken: stringPtr("│ "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -777,7 +777,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:    " ",
+				Prefix:    "",
 				Color:     stringPtr(primaryHex),
 				Bold:      boolPtr(true),
 				Underline: boolPtr(true),
@@ -785,23 +785,23 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:    "## ",
-				Color:     stringPtr(primaryHex),
+				Prefix:    "▸ ",
+				Color:     stringPtr(markdownSecondaryHex),
 				Bold:      boolPtr(true),
 				Underline: boolPtr(true),
 			},
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix: "### ",
-				Color:  stringPtr(markdownSecondaryHex),
+				Prefix: "◆ ",
+				Color:  stringPtr(markdownTertiaryHex),
 				Bold:   boolPtr(true),
 			},
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix: "#### ",
-				Color:  stringPtr(primaryHex),
+				Prefix: "• ",
+				Color:  stringPtr(colorHex(fgHalfMuted)),
 				Bold:   boolPtr(true),
 			},
 		},
@@ -831,16 +831,16 @@ func DefaultStyles(yellowMode bool) Styles {
 			Color: stringPtr(primaryHex),
 		},
 		HorizontalRule: ansi.StylePrimitive{
-			Color:  stringPtr(primaryHex),
-			Format: "\n---\n",
+			Color:  stringPtr(colorHex(border)),
+			Format: "\n────────────────────\n",
 		},
 		Item: ansi.StylePrimitive{
 			BlockPrefix: "• ",
-			Color:       stringPtr(primaryHex),
+			Color:       stringPtr(markdownSecondaryHex),
 		},
 		Enumeration: ansi.StylePrimitive{
 			BlockPrefix: ". ",
-			Color:       stringPtr(primaryHex),
+			Color:       stringPtr(markdownSecondaryHex),
 		},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{},
@@ -848,12 +848,12 @@ func DefaultStyles(yellowMode bool) Styles {
 			Unticked:       "[ ] ",
 		},
 		Link: ansi.StylePrimitive{
-			Color:     stringPtr(primaryHex),
+			Color:     stringPtr(colorHex(errorTextRose)),
 			Underline: boolPtr(true),
 		},
 		LinkText: ansi.StylePrimitive{
-			Color: stringPtr(markdownSecondaryHex),
-			Bold:  boolPtr(false),
+			Color: stringPtr(colorHex(errorTextRose)),
+			Bold:  boolPtr(true),
 		},
 		Image: ansi.StylePrimitive{
 			Color:     stringPtr(colorHex(fgHalfMuted)),
@@ -868,14 +868,14 @@ func DefaultStyles(yellowMode bool) Styles {
 				Prefix:          " ",
 				Suffix:          " ",
 				Color:           stringPtr(syntaxOffWhite),
-				BackgroundColor: stringPtr("#1A1624"),
+				BackgroundColor: stringPtr("#211A2E"),
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
 					Color:           stringPtr(syntaxOffWhite),
-					BackgroundColor: stringPtr("#1A1624"),
+					BackgroundColor: stringPtr("#211A2E"),
 				},
 				Margin: uintPtr(1),
 			},
@@ -885,7 +885,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				},
 				Error: ansi.StylePrimitive{
 					Color:           stringPtr(syntaxLightRose),
-					BackgroundColor: stringPtr("#1A1624"),
+					BackgroundColor: stringPtr("#211A2E"),
 				},
 				Comment: ansi.StylePrimitive{
 					Color: stringPtr(syntaxGray),
@@ -972,7 +972,7 @@ func DefaultStyles(yellowMode bool) Styles {
 					Color: stringPtr(markdownSecondaryHex),
 				},
 				Background: ansi.StylePrimitive{
-					BackgroundColor: stringPtr("#1A1624"),
+					BackgroundColor: stringPtr("#211A2E"),
 				},
 			},
 		},
@@ -1003,7 +1003,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				BackgroundColor: plainBg,
 			},
 			Indent:      uintPtr(1),
-			IndentToken: stringPtr("  "),
+			IndentToken: stringPtr("│ "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -1019,8 +1019,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          " ",
-				Suffix:          " ",
+				Prefix:          "",
 				Bold:            boolPtr(true),
 				Underline:       boolPtr(true),
 				Color:           stringPtr(primaryHex),
@@ -1029,23 +1028,25 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		H2: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "## ",
+				Prefix:          "▸ ",
 				Underline:       boolPtr(true),
-				Color:           stringPtr(primaryHex),
+				Color:           stringPtr(markdownSecondaryHex),
 				BackgroundColor: plainBg,
 			},
 		},
 		H3: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "### ",
+				Prefix:          "◆ ",
 				Color:           stringPtr(tertiaryHex),
+				Bold:            boolPtr(true),
 				BackgroundColor: plainBg,
 			},
 		},
 		H4: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          "#### ",
+				Prefix:          "• ",
 				Color:           plainFg,
+				Bold:            boolPtr(true),
 				BackgroundColor: plainBg,
 			},
 		},
@@ -1079,18 +1080,18 @@ func DefaultStyles(yellowMode bool) Styles {
 			BackgroundColor: plainBg,
 		},
 		HorizontalRule: ansi.StylePrimitive{
-			Format:          "\n--------\n",
+			Format:          "\n────────────────────\n",
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
 		Item: ansi.StylePrimitive{
 			BlockPrefix:     "• ",
-			Color:           plainFg,
+			Color:           stringPtr(markdownSecondaryHex),
 			BackgroundColor: plainBg,
 		},
 		Enumeration: ansi.StylePrimitive{
 			BlockPrefix:     ". ",
-			Color:           plainFg,
+			Color:           stringPtr(markdownSecondaryHex),
 			BackgroundColor: plainBg,
 		},
 		Task: ansi.StyleTask{
@@ -1103,12 +1104,12 @@ func DefaultStyles(yellowMode bool) Styles {
 		},
 		Link: ansi.StylePrimitive{
 			Underline:       boolPtr(true),
-			Color:           plainFg,
+			Color:           stringPtr(colorHex(errorTextRose)),
 			BackgroundColor: plainBg,
 		},
 		LinkText: ansi.StylePrimitive{
 			Bold:            boolPtr(true),
-			Color:           plainFg,
+			Color:           stringPtr(colorHex(errorTextRose)),
 			BackgroundColor: plainBg,
 		},
 		Image: ansi.StylePrimitive{
@@ -1126,7 +1127,7 @@ func DefaultStyles(yellowMode bool) Styles {
 				Prefix:          " ",
 				Suffix:          " ",
 				Color:           plainFg,
-				BackgroundColor: plainBg,
+				BackgroundColor: stringPtr(bgBaseLighterHex),
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
@@ -1311,8 +1312,8 @@ func DefaultStyles(yellowMode bool) Styles {
 	s.Tool.StateWaiting = base.Foreground(fgSubtle)
 	s.Tool.StateCancelled = base.Foreground(fgSubtle)
 
-	s.Tool.ErrorTag = base.Foreground(error).Bold(true)
-	s.Tool.ErrorMessage = base.Foreground(fgBase)
+	s.Tool.ErrorTag = base.Foreground(errorBrightRose).Bold(true)
+	s.Tool.ErrorMessage = base.Foreground(errorTextRose)
 
 	// Diff and multi-edit styles
 	s.Tool.DiffTruncation = s.Muted.Background(bgBaseLighter).PaddingLeft(2)
@@ -1457,8 +1458,7 @@ func DefaultStyles(yellowMode bool) Styles {
 		Foreground(errorTextRose).
 		Bold(true)
 	s.Chat.Message.ErrorDetails = lipgloss.NewStyle().
-		Foreground(fgMuted).
-		PaddingLeft(2)
+		Foreground(errorTextRose)
 
 	// Message item styles
 	s.Chat.Message.ToolCallFocused = s.Muted.PaddingLeft(1).

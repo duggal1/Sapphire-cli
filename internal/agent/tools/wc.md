@@ -8,7 +8,7 @@ Use this tool when:
 
 Do not use this tool for:
 - line counts only; use `wc_l`
-- reading file contents; use `single_view` or `agentic_view`
+- reading file contents; use `agentic_view` by default, or `single_view` only for an explicitly narrow trivial one-file read
 
 Parameters:
 - `path` / `paths`: one or more files to inspect

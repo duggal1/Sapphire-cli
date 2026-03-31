@@ -69,11 +69,51 @@ func TestAssistantCanceledRenderUsesInlineInterruptNotice(t *testing.T) {
 	})
 
 	rendered := ansi.Strip(item.Render(120))
-	if !strings.Contains(rendered, "Conversation interrupted - tell the model what to do differently.") {
+	if !strings.Contains(rendered, "Conversation interrupted. Tell the agent what to do differently.") {
 		t.Fatalf("expected inline interrupt notice, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Canceled") {
 		t.Fatalf("did not expect canceled label, got %q", rendered)
+	}
+}
+
+func TestAssistantErrorRenderUsesRosePrefixBadge(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:   "assistant-error",
+		Role: message.Assistant,
+		Parts: []message.ContentPart{
+			message.Finish{
+				Reason:  message.FinishReasonError,
+				Message: "Too Many Requests",
+				Details: "Rate limit exceeded",
+			},
+		},
+	})
+
+	rendered := ansi.Strip(item.Render(120))
+	if !strings.Contains(rendered, "Error") || !strings.Contains(rendered, "Too Many Requests") {
+		t.Fatalf("expected inline error badge and title, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Rate limit exceeded") {
+		t.Fatalf("expected inline error details, got %q", rendered)
+	}
+}
+
+func TestErrorNoticeRenderUsesRosePrefixBadge(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewErrorNoticeMessageItem(&sty, "Too Many Requests", "Rate limit exceeded")
+
+	rendered := ansi.Strip(item.Render(120))
+	if !strings.Contains(rendered, "Error") || !strings.Contains(rendered, "Too Many Requests") {
+		t.Fatalf("expected local error notice badge and title, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Rate limit exceeded") {
+		t.Fatalf("expected local error notice details, got %q", rendered)
 	}
 }
 

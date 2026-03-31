@@ -552,11 +552,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pendingAssistantErrorMsg:
 		m.clearPendingAssistantPlaceholder()
-		m.status.SetInfoMsg(util.InfoMsg{
-			Type: util.InfoTypeError,
-			Msg:  msg.err,
-		})
-		cmds = append(cmds, clearInfoMsgCmd(DefaultStatusTTL))
+		m.chat.RemoveMessage(chat.LocalErrorNoticeID)
+		title, details := splitPendingAssistantError(msg.err)
+		m.chat.AppendMessages(chat.NewErrorNoticeMessageItem(m.com.Styles, title, details))
+		m.chat.SelectLast()
+		m.chat.ScrollToBottom()
+		m.updateLayoutAndSize()
 
 	case pubsub.Event[session.Session]:
 		if msg.Type == pubsub.DeletedEvent {
@@ -3975,6 +3976,23 @@ func buildPlanModeContext(attachments []message.Attachment) string {
 		return ""
 	}
 	return strings.Join(lines, "\n")
+}
+
+func splitPendingAssistantError(errText string) (string, string) {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		return "Request failed", ""
+	}
+	lines := strings.Split(errText, "\n")
+	title := strings.TrimSpace(lines[0])
+	if title == "" {
+		title = "Request failed"
+	}
+	if len(lines) == 1 {
+		return title, ""
+	}
+	details := strings.TrimSpace(strings.Join(lines[1:], "\n"))
+	return title, details
 }
 
 // openDialog opens a dialog by its ID.

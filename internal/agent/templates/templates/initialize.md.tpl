@@ -2,7 +2,7 @@ Analyze this codebase and create/update **{{.Config.Options.InitializeAs}}** to 
 
 Capabilities:
 - Tool discovery: `list_tools` → `search_tools` → `tool_suggest` → `connect_mcp`.
-- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `single_view` for one known file, `agentic_view` for any multi-file or broad repository read. Use `agentic_view` comprehensively.
+- Structured repo reads: `ls` for paths, `glob` for filename search, `grep` for content search, `agentic_view` as the default repository read tool for one file or many, and `single_view` only for an explicitly narrow trivial one-file read. Use `agentic_view` comprehensively.
 - `bash` is not a repository discovery or file-reading tool. Do not use `bash` for `find`, `ls`, `cat`, `head`, `tail`, `grep`, `rg`, `tree`, or prompt/CSV setup when structured tools exist.
 - Never create temporary `.txt` or `.csv` payload files just to call `spawn_agent` or related tools. Pass prompts directly as tool parameters.
 - `view_memory` is the long-horizon recovery tool. Use it to recover exact earlier decisions, older tool/result trails, and prior-session context when current context is no longer enough.
@@ -20,7 +20,7 @@ Capabilities:
 **Discovery process**:
 
 1. Check directory contents with `ls`
-2. Read one known file with `single_view`. Read any multi-file target set or broad read with `agentic_view`. Use `agentic_view` comprehensively.
+2. Read with `agentic_view` by default, including one-file anchor reads. Use `single_view` only for an explicitly narrow trivial one-file read. Use `agentic_view` comprehensively.
 3. For very large files, split into line ranges and read multiple ranges in parallel using separate `agentic_view` calls.
 4. Look for existing rule files (`.cursor/rules/*.md`, `.cursorrules`, `.github/copilot-instructions.md`, `claude.md`, `agents.md`) - only read if they exist
 5. Identify project type from config files and directory structure

@@ -50,8 +50,8 @@ deep repository survey task, not a shallow summary task.
 - Read first. Write second.
 - Document only what is explicitly observed.
 - Do not invent commands, paths, architecture, conventions, or workflows.
-- `agentic_view` is the default read tool for initialization.
-- Use `single_view` only when exactly one verified file is sufficient for a local follow-up.
+- `agentic_view` is the default read tool for initialization, including one-file anchor reads when you want the default path.
+- Use `single_view` only for an explicitly local, trivial one-file follow-up.
 - For initialization, use `agentic_view` in aggressive broad sweeps of about 20-30 files when available.
 - If the repo has fewer meaningful files, read all of them.
 - Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
@@ -59,6 +59,7 @@ deep repository survey task, not a shallow summary task.
 - Do not stop after root files, dependency files, and one or two entry points.
 - Use `tool_search` first when the right file, symbol, subsystem anchor, or product term is still unknown.
 - Use `rg_files` when the filename/path shape is already known, `rg` when the exact text pattern is already known, and `wc_l` / `wc` before large reads when file size matters.
+- These tools are not interchangeable: unknown location -> `tool_search`; known path shape -> `rg_files`; known exact text -> `rg`; line counts -> `wc_l`; size or density -> `wc`.
 - Use `ls`, `glob`, and `grep` for layout inspection, glob expansion, or fallback discovery when the narrower tool is insufficient.
 - Do not use `bash` for repo discovery or file reading when structured tools exist.
 - `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.
@@ -153,7 +154,7 @@ Do **not** invent commands. If you cannot confirm a command exists, do not inclu
 
 ### 2.5 — Source Code Patterns
 
-Use `agentic_view` for aggressive broad mixed sweeps, typically about 20-30 files at a time when available. Read source, test, config,
+Use `agentic_view` for aggressive broad mixed sweeps, typically about 20-30 files at a time when available. It can also read one file when you want to stay on the default path. Read source, test, config,
 build, and schema files deeply enough to understand:
 - Code organization within files
 - Naming conventions (variables, functions, files, directories)
@@ -194,7 +195,7 @@ Spawn one sub-agent per major domain only after the main agent has already compl
 
 Each sub-agent must:
 
-1. Read at least one anchor file with `single_view` only if exactly one anchor file is useful
+1. Read at least one anchor file with `agentic_view` by default; use `single_view` only if the anchor read is explicitly one-file and trivial
 2. Use `agentic_view` for broad coverage of its assigned domain
 3. Return synthesized findings only — no raw file dumps
 4. Report only explicitly observed facts

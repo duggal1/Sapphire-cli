@@ -411,9 +411,10 @@ func TestPromptsPreferAggressiveAgenticViewCoverage(t *testing.T) {
 				t.Fatalf("build %s prompt: %v", tc.name, err)
 			}
 			for _, needle := range []string{
-				"about 10-20 relevant files",
+				"about 12-20 relevant files",
 				"about 20-30 relevant files",
 				"read all main relevant files tied to the task before editing",
+				"can read one file or many",
 			} {
 				if !strings.Contains(out, needle) {
 					t.Fatalf("expected %q in %s prompt", needle, tc.name)
@@ -477,6 +478,7 @@ func TestPromptsDefineBoundedToolSearchUsage(t *testing.T) {
 				"code location is unknown",
 				"`rg_files` when you already know the filename/path shape",
 				"`rg` when you already know the exact text or symbol string",
+				"These tools are not interchangeable",
 			} {
 				if !strings.Contains(out, needle) {
 					t.Fatalf("expected %q in %s prompt", needle, tc.name)

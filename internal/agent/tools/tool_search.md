@@ -11,7 +11,8 @@ Use this tool when:
 How to use it:
 - give one focused query first, such as `zapier`, `zapier webhook`, `billing portal`, or `OAuth callback`
 - if needed, refine only 1-2 more times with better nouns, subsystem names, or path hints
-- stop once it returns a small set of strong candidate files or symbols, then switch to `agentic_view` or `single_view`
+- stop once it returns a small set of strong candidate files or symbols, then switch to `agentic_view` by default
+- use `single_view` only if the resulting read is explicitly narrow and trivial
 - treat it as a locator shortcut, not as a substitute for reading the located code
 - prefer it before older generic browsing loops when the code location is still unknown
 

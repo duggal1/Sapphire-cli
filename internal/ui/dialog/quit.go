@@ -4,8 +4,8 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/duggal1/Sapphire-cli/internal/ui/common"
 )
 
 // QuitID is the identifier for the quit dialog.
@@ -96,7 +96,7 @@ func (q *Quit) HandleMsg(msg tea.Msg) Action {
 // Draw implements [Dialog].
 func (q *Quit) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	const question = "Are you sure you want to quit?"
-	baseStyle := q.com.Styles.Base.Background(q.com.Styles.BgBaseLighter)
+	baseStyle := q.com.Styles.Base.Background(q.com.Styles.BgBase)
 	buttonOpts := []common.ButtonOpts{
 		{Text: "Yep!", Selected: !q.selectedNo, Padding: 3},
 		{Text: "Nope", Selected: q.selectedNo, Padding: 3},

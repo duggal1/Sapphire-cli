@@ -33,6 +33,29 @@ func TestAssistantThinkingRenderUsesThinkingBoxPresentation(t *testing.T) {
 	}
 }
 
+func TestAssistantThinkingRenderUsesAnimatedThinkingLabel(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:   "assistant-thinking-live",
+		Role: message.Assistant,
+		Parts: []message.ContentPart{
+			message.ReasoningContent{Thinking: "Tracing the UI render path"},
+		},
+	})
+
+	raw := item.Render(100)
+	if !strings.Contains(raw, "\033[") {
+		t.Fatalf("expected ANSI shimmer escapes in live thinking label, got %q", raw)
+	}
+
+	rendered := ansi.Strip(raw)
+	if !strings.Contains(rendered, "Thinking...") {
+		t.Fatalf("expected live thinking label, got %q", rendered)
+	}
+}
+
 func TestUserMessageUsesChevronPrefix(t *testing.T) {
 	t.Parallel()
 

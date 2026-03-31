@@ -75,3 +75,17 @@ func TestShimmerSpansAtDecoratedMovesText(t *testing.T) {
 		t.Fatal("expected decorated shimmer frames to differ")
 	}
 }
+
+func TestThinkingTextUsesDistinctHighContrastPalette(t *testing.T) {
+	t.Parallel()
+
+	start := strings.Join(thinkingShimmerSpansAt("Thinking...", 0, renderDecorated), "")
+	lit := strings.Join(thinkingShimmerSpansAt("Thinking...", 700*time.Millisecond, renderDecorated), "")
+
+	if start == lit {
+		t.Fatal("expected thinking shimmer frames to differ")
+	}
+	if !strings.Contains(lit, "\033[1m") {
+		t.Fatal("expected thinking shimmer to use bright emphasized frames")
+	}
+}

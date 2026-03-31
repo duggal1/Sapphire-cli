@@ -285,7 +285,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	body := a.renderThinkingMarkdown(strings.Join(lines, "\n"), width)
 	boxParts := []string{}
 	if a.message.IsThinking() {
-		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingFooterTitle.Render("Thinking ..."))
+		boxParts = append(boxParts, shimmer.ThinkingText("Thinking..."))
 	}
 	if isTruncated {
 		boxParts = append(boxParts, a.sty.Chat.Message.ThinkingTruncationHint.Render(

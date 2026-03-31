@@ -288,6 +288,49 @@ func renderRune(mode renderMode, intensity float32, ch string) string {
 	}
 }
 
+func renderThinkingRune(mode renderMode, intensity float32, ch string) string {
+	switch mode {
+	case renderTrueColor:
+		baseColor := [3]uint8{155, 125, 214}
+		midColor := [3]uint8{211, 154, 255}
+		highlightColor := [3]uint8{255, 244, 255}
+		intensity = clamp01(intensity)
+		var r, g, b uint8
+		if intensity < 0.55 {
+			t := intensity / 0.55
+			r, g, b = blend(midColor, baseColor, t)
+		} else {
+			t := (intensity - 0.55) / 0.45
+			r, g, b = blend(highlightColor, midColor, t)
+		}
+		return renderRGB(r, g, b, ch)
+	case renderANSI256:
+		switch {
+		case intensity < 0.16:
+			return renderIndexedColor(141, false, ch)
+		case intensity < 0.42:
+			return renderIndexedColor(177, true, ch)
+		case intensity < 0.72:
+			return renderIndexedColor(219, true, ch)
+		default:
+			return renderIndexedColor(231, true, ch)
+		}
+	case renderDecorated:
+		switch {
+		case intensity < 0.16:
+			return "\033[38;5;141m" + ch + "\033[0m"
+		case intensity < 0.42:
+			return "\033[1m\033[38;5;177m" + ch + "\033[0m"
+		case intensity < 0.72:
+			return "\033[1m\033[38;5;219m" + ch + "\033[0m"
+		default:
+			return "\033[1m\033[38;5;231m" + ch + "\033[0m"
+		}
+	default:
+		return renderBold(ch)
+	}
+}
+
 func renderSpinnerFrame(mode renderMode, frame string, intensity float32) string {
 	intensity = clamp01(intensity)
 	switch mode {
@@ -348,12 +391,30 @@ func shimmerSpansAt(text string, elapsed time.Duration, mode renderMode) []strin
 	return spans
 }
 
+func thinkingShimmerSpansAt(text string, elapsed time.Duration, mode renderMode) []string {
+	chars := []rune(text)
+	if len(chars) == 0 {
+		return nil
+	}
+
+	position := shimmerPosition(len(chars), elapsed)
+	spans := make([]string, 0, len(chars))
+	for i, ch := range chars {
+		spans = append(spans, renderThinkingRune(mode, intensityAt(i, position), string(ch)))
+	}
+	return spans
+}
+
 func ShimmerSpans(text string) []string {
 	return shimmerSpansAt(text, elapsedSinceStart(), currentRenderMode())
 }
 
 func ShimmerText(text string) string {
 	return strings.Join(ShimmerSpans(text), "")
+}
+
+func ThinkingText(text string) string {
+	return strings.Join(thinkingShimmerSpansAt(text, elapsedSinceStart(), currentRenderMode()), "")
 }
 
 func Spinner(startTime *time.Time, animationsEnabled bool) string {

@@ -24,6 +24,11 @@ jobs:
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+      - name: Install test dependencies
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
       - name: Resolve CI package set
         run: |
           ./scripts/ci-go-packages.sh > "$RUNNER_TEMP/ci-go-packages.txt"

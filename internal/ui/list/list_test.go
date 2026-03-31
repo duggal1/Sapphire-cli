@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func isBlankViewportLine(line string) bool {
+	return strings.TrimSpace(line) == ""
+}
+
 type fixedItem struct {
 	lines int
 }
@@ -161,5 +165,53 @@ func TestScrollToBottomUsesTailTraversal(t *testing.T) {
 	}
 	if calls > 12 {
 		t.Fatalf("expected ScrollToBottom to render only tail items, got %d renders", calls)
+	}
+}
+
+func TestRenderPadsViewportHeightWhenContentIsShort(t *testing.T) {
+	l := NewList(fixedItem{lines: 1})
+	l.SetSize(80, 4)
+
+	rendered := l.Render()
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected render to fill viewport height, got %d lines: %q", len(lines), rendered)
+	}
+	if strings.TrimSpace(lines[0]) != "x" {
+		t.Fatalf("expected first rendered line to contain item content, got %q", lines[0])
+	}
+	for i := 1; i < len(lines); i++ {
+		if !isBlankViewportLine(lines[i]) {
+			t.Fatalf("expected padded blank line at %d, got %q", i, lines[i])
+		}
+	}
+}
+
+func TestRenderPadsViewportHeightAtBottomGapOffset(t *testing.T) {
+	l := NewList(fixedItem{lines: 2}, fixedItem{lines: 1})
+	l.SetGap(1)
+	l.SetSize(80, 4)
+	l.ScrollToBottom()
+
+	rendered := l.Render()
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected render to fill viewport height at bottom, got %d lines: %q", len(lines), rendered)
+	}
+	if strings.TrimSpace(lines[0]) != "x" || strings.TrimSpace(lines[1]) != "x" || !isBlankViewportLine(lines[2]) || strings.TrimSpace(lines[3]) != "x" {
+		t.Fatalf("unexpected bottom render layout: %#v", lines)
+	}
+}
+
+func TestRenderClampsAndPadsViewportWidth(t *testing.T) {
+	l := NewList(countingItem{calls: new(int), text: "abcdefghij"})
+	l.SetSize(4, 1)
+
+	rendered := l.Render()
+	if len(strings.Split(rendered, "\n")) != 1 {
+		t.Fatalf("expected single rendered row, got %q", rendered)
+	}
+	if strings.TrimSpace(rendered) != "abcd" {
+		t.Fatalf("expected viewport-clamped line, got %q", rendered)
 	}
 }

@@ -3,6 +3,8 @@ package list
 import (
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // List represents a list of items that can be lazily rendered. A list is
@@ -50,6 +52,32 @@ type renderedItem struct {
 	content string
 	height  int
 	lines   []string
+}
+
+func blankLines(count int, width int) []string {
+	if count <= 0 {
+		return nil
+	}
+	lines := make([]string, count)
+	if width <= 0 {
+		return lines
+	}
+	blank := strings.Repeat(" ", width)
+	for i := range lines {
+		lines[i] = blank
+	}
+	return lines
+}
+
+func normalizeViewportLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line = ansi.Truncate(line, width, "")
+	if pad := width - ansi.StringWidth(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return line
 }
 
 func (l *List) blockHeight(idx int) int {
@@ -569,8 +597,12 @@ func (l *List) VisibleItemIndices() (startIdx, endIdx int) {
 
 // Render renders the list and returns the visible lines.
 func (l *List) Render() string {
-	if len(l.items) == 0 {
+	l.height = max(l.height, 0)
+	if l.height == 0 {
 		return ""
+	}
+	if len(l.items) == 0 {
+		return strings.Join(blankLines(l.height, l.width), "\n")
 	}
 
 	lines := make([]string, 0, max(l.height, 0))
@@ -617,8 +649,6 @@ func (l *List) Render() string {
 		currentOffset = 0 // Reset offset for subsequent items
 	}
 
-	l.height = max(l.height, 0)
-
 	if len(lines) > l.height {
 		lines = lines[:l.height]
 	}
@@ -627,6 +657,21 @@ func (l *List) Render() string {
 		// Reverse the lines so the list renders bottom-to-top.
 		for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 			lines[i], lines[j] = lines[j], lines[i]
+		}
+	}
+
+	if len(lines) < l.height {
+		padding := blankLines(l.height-len(lines), l.width)
+		if l.reverse {
+			lines = append(padding, lines...)
+		} else {
+			lines = append(lines, padding...)
+		}
+	}
+
+	if l.width > 0 {
+		for i, line := range lines {
+			lines[i] = normalizeViewportLine(line, l.width)
 		}
 	}
 

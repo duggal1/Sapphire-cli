@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Prepare brew metadata
         id: meta
@@ -64,7 +64,7 @@ jobs:
             depends_on "go" => :build
 
             def install
-              ldflags = "-s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version=${version}"
+              ldflags = "-s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version=#{version}"
               system "go", "build", *std_go_args(ldflags: ldflags), "."
 
               generate_completions_from_executable(bin/"sapphire", "completion")
@@ -91,7 +91,7 @@ jobs:
             depends_on "go" => :build
 
             def install
-              ldflags = "-s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version=${version}"
+              ldflags = "-s -w -X github.com/duggal1/Sapphire-cli/internal/version.Version=#{version}"
               system "go", "build", *std_go_args(ldflags: ldflags), "."
 
               generate_completions_from_executable(bin/"sapphire", "completion")

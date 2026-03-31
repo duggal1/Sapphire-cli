@@ -19,7 +19,7 @@ func TestValidateEditInputMapAllowsCreateAndDeleteShapes(t *testing.T) {
 	}))
 	require.ErrorContains(t, validateEditInputMap(map[string]any{
 		"file_path": "notes.txt",
-	}), "at least one of old_string or new_string is required")
+	}), "edit requires old_string or new_string")
 }
 
 func TestValidateAgenticEditInputMapAllowsCreateOperation(t *testing.T) {

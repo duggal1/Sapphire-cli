@@ -209,9 +209,14 @@ func TestSpawnedSubAgentsUseIsolatedSessions(t *testing.T) {
 	require.False(t, timedOut)
 	require.Len(t, statuses, 2)
 
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(sessions) == 2
+	}, 3*time.Second, 20*time.Millisecond)
+
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, sessions, 2)
 	require.NotEqual(t, sessions[0], sessions[1])
 	require.NotEqual(t, parentSession.ID, sessions[0])
 	require.NotEqual(t, parentSession.ID, sessions[1])

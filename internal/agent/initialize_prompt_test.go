@@ -24,7 +24,7 @@ func TestInitializePromptEnforcesDeepCoverageAndSubstantialOutput(t *testing.T) 
 
 	built, err := InitializePrompt(*cfg)
 	require.NoError(t, err)
-	require.Contains(t, built, "`agentic_view` is the default read tool for initialization.")
+	require.Contains(t, built, "`agentic_view` is the default read tool for initialization")
 	require.Contains(t, built, "aggressive broad sweeps of about 20-30 files")
 	require.Contains(t, built, "at least 30 meaningful files if available")
 	require.Contains(t, built, "under roughly 100 lines for a real repository is presumptively incomplete")

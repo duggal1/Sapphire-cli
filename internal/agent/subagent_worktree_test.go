@@ -16,7 +16,7 @@ func TestPrepareSubAgentWorktreeRecoversLockedMissingWorktree(t *testing.T) {
 	t.Parallel()
 
 	root := initGitRepo(t)
-	worktreeDir := filepath.Join(root, "worktrees", "agent", "test", "analysis")
+	worktreeDir := filepath.Join(root, ".sapphire", "worktrees", "agent", "test", "analysis")
 
 	runGitTest(t, root, "worktree", "add", "-b", "agent/test/analysis", worktreeDir, "HEAD")
 	runGitTest(t, root, "worktree", "lock", "--reason", "initializing", worktreeDir)
@@ -66,7 +66,7 @@ func TestPrepareSubAgentWorktreeRejectsActivePathCollision(t *testing.T) {
 		subAgentRegistry: newSubAgentRegistry(),
 		worktreeOps:      make(map[string]*sync.Mutex),
 	}
-	worktreeDir := filepath.Join(root, "worktrees", "agent", "test", "shared")
+	worktreeDir := filepath.Join(root, ".sapphire", "worktrees", "agent", "test", "shared")
 	coord.subAgentRegistry.upsert("agent-existing", &subAgentRunner{
 		id:      "agent-existing",
 		workDir: worktreeDir,

@@ -26,7 +26,12 @@ type subAgentWorktreeSpec struct {
 }
 
 func (c *coordinator) prepareSubAgentWorktree(ctx context.Context, sessionID, agentID string, spec subAgentWorktreeSpec) (string, string, func(), error) {
-	handle, cleanup, err := c.worktreeManager.PrepareSubAgent(ctx, sessionID, agentID, mainAgentMailboxID(sessionID), spec, spec.TaskKey, worktreepolicy.Isolated)
+	manager := c.worktreeManager
+	if manager == nil {
+		manager = newWorktreeManager(c)
+		c.worktreeManager = manager
+	}
+	handle, cleanup, err := manager.PrepareSubAgent(ctx, sessionID, agentID, mainAgentMailboxID(sessionID), spec, spec.TaskKey, worktreepolicy.Isolated)
 	if err != nil {
 		return "", "", func() {}, err
 	}

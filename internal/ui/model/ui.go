@@ -390,6 +390,7 @@ func New(com *common.Common) *UI {
 		desiredState = uiOnboarding
 	} else if n, _ := config.ProjectNeedsInitialization(com.Config()); n {
 		desiredState = uiInitialize
+		desiredFocus = uiFocusMain
 	}
 
 	// set initial state
@@ -423,6 +424,9 @@ func (m *UI) setState(state uiState, focus uiFocusState) {
 	if state == uiLanding {
 		// Always turn off compact mode when going to landing
 		m.isCompact = false
+	}
+	if state == uiInitialize {
+		focus = uiFocusMain
 	}
 	m.state = state
 	m.focus = focus

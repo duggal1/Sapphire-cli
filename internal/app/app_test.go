@@ -163,6 +163,14 @@ func TestSetupSubscriber_CriticalDoesNotDropMessages(t *testing.T) {
 	})
 }
 
+func TestIsNonInteractiveRuntime(t *testing.T) {
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "")
+	require.False(t, isNonInteractiveRuntime())
+
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "1")
+	require.True(t, isNonInteractiveRuntime())
+}
+
 type subscriberFixture struct {
 	broker   *pubsub.Broker[string]
 	wg       sync.WaitGroup

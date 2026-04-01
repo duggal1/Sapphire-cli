@@ -92,6 +92,10 @@ const (
 	maxStructuredBlockRepairAttempts = 1
 )
 
+func shouldGenerateSessionTitle() bool {
+	return strings.TrimSpace(os.Getenv("SAPPHIRE_NON_INTERACTIVE")) != "1"
+}
+
 //go:embed templates/title.md
 var titlePrompt []byte
 
@@ -839,7 +843,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	var wg sync.WaitGroup
 	// Generate title if first message.
-	if len(msgs) == 0 {
+	if len(msgs) == 0 && shouldGenerateSessionTitle() {
 		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
 		wg.Go(func() {
 			a.generateTitle(titleCtx, call.SessionID, call.Prompt)
@@ -871,7 +875,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), longHorizonActive, postCompactionPending)
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
 	structuredTurn := call.LearnedToolPolicy.RequireExplicitPlan || call.LearnedToolPolicy.RequirePostWriteVerification || (call.HarnessOverride != nil && call.HarnessOverride.Required)
-	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn)
+	broadInitializationTurn := strings.TrimSpace(call.LearnedToolPolicy.TaskFamily) == "initialize/broad/codebase"
+	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn, broadInitializationTurn)
 
 	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
 	toolUsageState := tools.ResetSharedToolUsageState(call.SessionID)
@@ -1464,7 +1469,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	if err == nil {
 		if verificationErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); verificationErr != nil {
-			err = verificationErr
+			if autoVerifyErr := a.autoVerifyPendingArtifacts(genCtx, call.SessionID, agentTools); autoVerifyErr == nil {
+				if retryErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); retryErr != nil {
+					err = retryErr
+				}
+			} else {
+				err = verificationErr
+			}
 		} else if loopBreak != nil {
 			err = &repeatedToolLoopError{loop: *loopBreak}
 		} else if stepLimitReached {
@@ -2883,6 +2894,88 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	}
 
 	return baseResult
+}
+
+func (a *sessionAgent) autoVerifyPendingArtifacts(ctx context.Context, sessionID string, agentTools []fantasy.AgentTool) error {
+	state := tools.GetToolUsageStateFromContext(ctx)
+	if state == nil {
+		return errors.New("tool usage state missing")
+	}
+	pending := state.PendingArtifactVerificationPaths()
+	if len(pending) == 0 {
+		return nil
+	}
+
+	verificationTool, verificationCall, ok := selectArtifactVerificationTool(agentTools, pending)
+	if !ok {
+		return errors.New("no artifact verification tool available")
+	}
+
+	if a.toolObserver != nil {
+		a.toolObserver.OnToolInputStart(sessionID, verificationCall.Name)
+		a.toolObserver.OnToolCall(sessionID, verificationCall.Name, verificationCall.Input)
+	}
+
+	resp, err := verificationTool.Run(ctx, verificationCall)
+	if err != nil {
+		if a.toolObserver != nil {
+			a.toolObserver.OnToolResult(sessionID, verificationCall.Name, err.Error(), "", true)
+		}
+		return err
+	}
+
+	if a.toolObserver != nil {
+		a.toolObserver.OnToolResult(sessionID, verificationCall.Name, resp.Content, "", false)
+	}
+	tools.ObserveSuccessfulTurnGuardrailResult(ctx, verificationCall.Name, verificationCall.Input, false)
+	return nil
+}
+
+func selectArtifactVerificationTool(agentTools []fantasy.AgentTool, pending []string) (fantasy.AgentTool, fantasy.ToolCall, bool) {
+	index := make(map[string]fantasy.AgentTool, len(agentTools))
+	for _, tool := range agentTools {
+		if tool == nil {
+			continue
+		}
+		name := strings.TrimSpace(tool.Info().Name)
+		if name == "" {
+			continue
+		}
+		index[name] = tool
+	}
+
+	if len(pending) == 1 {
+		input, err := json.Marshal(map[string]any{"file_path": pending[0]})
+		if err == nil {
+			if tool, ok := index[tools.SingleViewToolName]; ok {
+				return tool, fantasy.ToolCall{
+					ID:    "auto-verify-artifact-1",
+					Name:  tools.SingleViewToolName,
+					Input: string(input),
+				}, true
+			}
+			if tool, ok := index[tools.ViewToolName]; ok {
+				return tool, fantasy.ToolCall{
+					ID:    "auto-verify-artifact-1",
+					Name:  tools.ViewToolName,
+					Input: string(input),
+				}, true
+			}
+		}
+	}
+
+	if tool, ok := index[tools.AgenticViewToolName]; ok {
+		input, err := json.Marshal(map[string]any{"file_paths": pending})
+		if err == nil {
+			return tool, fantasy.ToolCall{
+				ID:    "auto-verify-artifact-batch-1",
+				Name:  tools.AgenticViewToolName,
+				Input: string(input),
+			}, true
+		}
+	}
+
+	return nil, fantasy.ToolCall{}, false
 }
 
 const compactPersistedToolResultLimit = 4000

@@ -103,6 +103,10 @@ func ensureGoBinOnPath() {
 	_ = os.Setenv("PATH", gobin+string(os.PathListSeparator)+pathEnv)
 }
 
+func isNonInteractiveRuntime() bool {
+	return strings.TrimSpace(os.Getenv("SAPPHIRE_NON_INTERACTIVE")) == "1"
+}
+
 // New initializes and returns a new application instance with the provided context,
 // database connection, and configuration. It sets up all internal services and background tasks.
 func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
@@ -146,8 +150,11 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	app.setupEvents()
 	app.startRuntimeControlLoop()
 
-	// Check for updates in the background.
-	go app.checkForUpdates(ctx)
+	// Skip update checks on headless runs to keep the cold-start path focused on
+	// task execution rather than background network work.
+	if !isNonInteractiveRuntime() {
+		go app.checkForUpdates(ctx)
+	}
 
 	// MCP clients initialize lazily on first use to avoid startup stalls.
 
@@ -242,17 +249,6 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 			spinner = nil
 		}
 	}
-
-	// Non-interactive runs should not block on MCP startup. We wait briefly to
-	// allow fast initializations, but proceed even if MCPs are still starting.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 1*time.Second)
-	defer waitCancel()
-	if err := mcp.WaitForInit(waitCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		slog.Warn("MCP init wait failed", "error", err)
-	}
-
-	// force update of agent models before running so mcp tools are loaded
-	app.AgentCoordinator.UpdateModels(ctx)
 
 	defer stopSpinner()
 

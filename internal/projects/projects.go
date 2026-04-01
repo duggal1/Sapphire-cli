@@ -2,6 +2,7 @@ package projects
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,7 +49,8 @@ func Load() (*ProjectList, error) {
 
 	var list ProjectList
 	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, err
+		slog.Warn("Projects registry is invalid; rebuilding it from scratch", "path", path, "error", err)
+		return &ProjectList{Projects: []Project{}}, nil
 	}
 
 	return &list, nil

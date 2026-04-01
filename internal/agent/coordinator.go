@@ -1658,7 +1658,7 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		return nil
 	}
 
-	if isSubAgent || c.readyDone != nil {
+	if isSubAgent || c.readyDone != nil || isNonInteractiveMode() {
 		if err := initAgent(); err != nil {
 			return nil, err
 		}

@@ -35,6 +35,16 @@ var (
 
 const providerBackgroundTimeout = 3 * time.Second
 
+func shouldAutoUpdateProviders(cfg *Config) bool {
+	if cfg == nil || cfg.Options == nil {
+		return strings.TrimSpace(os.Getenv("SAPPHIRE_NON_INTERACTIVE")) != "1"
+	}
+	if cfg.Options.DisableProviderAutoUpdate {
+		return false
+	}
+	return strings.TrimSpace(os.Getenv("SAPPHIRE_NON_INTERACTIVE")) != "1"
+}
+
 // file to cache provider data
 func cachePathFor(name string) string {
 	xdgDataHome := os.Getenv("XDG_DATA_HOME")
@@ -145,7 +155,7 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 	providerOnce.Do(func() {
 		var errs []error
 		providers := csync.NewSlice[catwalk.Provider]()
-		autoupdate := !cfg.Options.DisableProviderAutoUpdate
+		autoupdate := shouldAutoUpdateProviders(cfg)
 		customProvidersOnly := cfg.Options.DisableDefaultProviders
 
 		// Fast path: load cached providers (or embedded) without network calls.

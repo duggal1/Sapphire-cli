@@ -831,6 +831,205 @@ func TestPrepareToolCallBlocksNonAgentsWritesDuringBroadInitialization(t *testin
 	require.Contains(t, err.Error(), "docs/overview.md")
 }
 
+func TestPrepareToolCallRewritesNonAgentsWriteDuringBroadInitializationToUpdatePlan(t *testing.T) {
+	t.Parallel()
+
+	writeTool := fantasy.NewAgentTool(
+		WriteToolName,
+		"",
+		func(ctx context.Context, params WriteParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequireContextRead:           true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-write-readme-1",
+		Name:  WriteToolName,
+		Input: `{"file_path":"README.md","content":"# wrong artifact"}`,
+	}, map[string]fantasy.AgentTool{WriteToolName: writeTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, "AGENTS.md only")
+	require.Contains(t, prepared.Input, "README.md")
+}
+
+func TestPrepareToolCallRewritesInitializationMemoryArtifactReadToToolSearch(t *testing.T) {
+	t.Parallel()
+
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-memory-reroute-1",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":"memory_summary.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: singleViewTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"query":"Initialize this codebase thoroughly."`)
+}
+
+func TestPrepareToolCallRewritesRedundantBroadInitializationLSAfterReadPhaseToUpdatePlan(t *testing.T) {
+	t.Parallel()
+
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-discovery-cap-ls-1",
+		Name:  LSToolName,
+		Input: `{"path":"."}`,
+	}, map[string]fantasy.AgentTool{LSToolName: lsTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Write or refine AGENTS.md only"`)
+	require.Contains(t, prepared.Input, `"Verify AGENTS.md after writing"`)
+}
+
+func TestPrepareToolCallRewritesRedundantBroadInitializationDiscoveryToVerificationRead(t *testing.T) {
+	t.Parallel()
+
+	rgFilesTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params RGFilesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+	usage.MarkArtifactWrite("/repo/AGENTS.md")
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-discovery-cap-verify-1",
+		Name:  RGFilesToolName,
+		Input: `{"query":"*.go"}`,
+	}, map[string]fantasy.AgentTool{RGFilesToolName: rgFilesTool, SingleViewToolName: singleViewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"/repo/AGENTS.md"`)
+}
+
+func TestPrepareToolCallRewritesForbiddenBroadInitializationDiscoveryBashToToolSearch(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		ForbidBashDiscovery:          true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-bash-reroute-1",
+		Name:  BashToolName,
+		Input: `{"command":"find . -maxdepth 3 -not -path '*/.*'","description":"discover repo files"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"query":"Initialize this codebase thoroughly."`)
+}
+
 func TestPrepareToolCallAllowsAgentsWriteDuringBroadInitialization(t *testing.T) {
 	t.Parallel()
 
@@ -902,6 +1101,38 @@ func TestPrepareToolCallRequiresExplicitPlanAfterBroadDesignSeedContext(t *testi
 	require.Equal(t, UpdatePlanToolName, prepared.Name)
 	require.Contains(t, prepared.Input, `"Collect initial repository evidence"`)
 	require.Contains(t, prepared.Input, `"in_progress"`)
+}
+
+func TestPrepareToolCallRepairsEmptyUpdatePlanForBroadInitialization(t *testing.T) {
+	t.Parallel()
+
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-empty-plan-init-1",
+		Name:  UpdatePlanToolName,
+		Input: `{"plan":[{"step":"","status":"in_progress"}]}`,
+	}, map[string]fantasy.AgentTool{UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Collect repository evidence for AGENTS.md"`)
+	require.Contains(t, prepared.Input, `"Identify core entrypoints, domains, and constraints"`)
 }
 
 func TestPrepareToolCallAllowsBroadDesignContinuationAfterPlanPublished(t *testing.T) {

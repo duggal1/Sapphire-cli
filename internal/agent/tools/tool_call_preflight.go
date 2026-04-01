@@ -90,7 +90,12 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	call, tool, input = rewriteToStructuredDiscoveryWhenPreferred(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationSkillDetourToDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteRepeatedInitializationSkillDetour(ctx, call, tool, input, tools)
+	call, tool, input = rewriteInitializationArtifactWriteDetour(ctx, call, tool, input, tools)
+	call, tool, input = rewriteInitializationMemoryArtifactDetour(ctx, call, tool, input, tools)
+	call, tool, input = rewriteRedundantInitializationDiscovery(ctx, call, tool, input, tools)
+	call, tool, input = rewriteForbiddenDiscoveryBash(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToExplicitPlanWhenRequired(ctx, call, tool, input, tools)
+	input = repairEmptyGuardrailedUpdatePlan(ctx, call.Name, input)
 
 	if err := enforceTurnPolicy(ctx, call.Name, input); err != nil {
 		return call, tool, err
@@ -806,6 +811,169 @@ func rewriteRepeatedInitializationSkillDetour(
 	return call, tool, input
 }
 
+func rewriteInitializationArtifactWriteDetour(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !shouldRestrictInitializationArtifactWrite(policy, canonical) {
+		return call, tool, input
+	}
+	blockedPath := firstNonInitializationArtifactWritePath(ctx, canonical, input)
+	if blockedPath == "" {
+		return call, tool, input
+	}
+	next, ok := tools[UpdatePlanToolName]
+	if !ok {
+		return call, tool, input
+	}
+	call.Name = UpdatePlanToolName
+	tool = next
+	input = buildInitializationArtifactCorrectionPlanInput(ctx, blockedPath)
+	return call, tool, input
+}
+
+func rewriteInitializationMemoryArtifactDetour(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if strings.TrimSpace(policy.TaskFamily) != "initialize/broad/codebase" {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	paths := extractPotentialMemoryPaths(canonical, input)
+	if len(paths) == 0 {
+		return call, tool, input
+	}
+	for _, rawPath := range paths {
+		if _, isMemoryPath, _ := classifyMemoryArtifactPath(ctx, rawPath); !isMemoryPath {
+			continue
+		}
+		if next, ok := tools[ToolSearchToolName]; ok {
+			call.Name = ToolSearchToolName
+			tool = next
+			input = map[string]any{
+				"query": preferredStructuredDiscoveryQuery(ctx, policy),
+			}
+			return call, tool, input
+		}
+		if next, ok := tools[RGFilesToolName]; ok {
+			call.Name = RGFilesToolName
+			tool = next
+			input = map[string]any{
+				"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+				"limit": 40,
+			}
+			return call, tool, input
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
+func rewriteRedundantInitializationDiscovery(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if strings.TrimSpace(policy.TaskFamily) != "initialize/broad/codebase" {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isInitializationDiscoveryTool(canonical) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if !shouldRewriteRedundantInitializationDiscovery(canonical, usage) {
+		return call, tool, input
+	}
+	if verificationTool, verificationInput, ok := buildInitializationVerificationRewrite(tools, usage); ok {
+		call.Name = verificationTool.Info().Name
+		tool = verificationTool
+		input = verificationInput
+		return call, tool, input
+	}
+	next, ok := tools[UpdatePlanToolName]
+	if !ok {
+		return call, tool, input
+	}
+	call.Name = UpdatePlanToolName
+	tool = next
+	input = buildInitializationExecutionFocusPlanInput(canonical, usage)
+	return call, tool, input
+}
+
+func rewriteForbiddenDiscoveryBash(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !policy.ForbidBashDiscovery {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if canonical != BashToolName {
+		return call, tool, input
+	}
+	command, _ := input["command"].(string)
+	command = strings.TrimSpace(command)
+	if !looksLikeDiscoveryShellCommand(command) {
+		return call, tool, input
+	}
+	if nextName, nextInput, ok := simpleBashToTool(command); ok {
+		if next, exists := tools[nextName]; exists {
+			call.Name = nextName
+			tool = next
+			input = nextInput
+			return call, tool, input
+		}
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
 func preferredStructuredDiscoveryQuery(ctx context.Context, policy LearnedToolPolicy) string {
 	if requirement := GetHarnessRequirementFromContext(ctx); strings.TrimSpace(requirement.Task) != "" {
 		return strings.TrimSpace(requirement.Task)
@@ -843,6 +1011,162 @@ func buildRepeatedInitializationRouteCorrectionInput(ctx context.Context, policy
 	return map[string]any{
 		"query": query,
 		"limit": limit,
+	}
+}
+
+func buildInitializationVerificationRewrite(tools map[string]fantasy.AgentTool, usage *ToolUsageState) (fantasy.AgentTool, map[string]any, bool) {
+	if usage == nil {
+		return nil, nil, false
+	}
+	pending := usage.PendingArtifactVerificationPaths()
+	if len(pending) == 0 {
+		return nil, nil, false
+	}
+	if len(pending) == 1 {
+		if next, ok := tools[SingleViewToolName]; ok {
+			return next, map[string]any{"file_path": pending[0]}, true
+		}
+		if next, ok := tools[ViewToolName]; ok {
+			return next, map[string]any{"file_path": pending[0]}, true
+		}
+	}
+	if next, ok := tools[AgenticViewToolName]; ok {
+		paths := make([]any, 0, len(pending))
+		for _, path := range pending {
+			paths = append(paths, path)
+		}
+		return next, map[string]any{"file_paths": paths}, true
+	}
+	return nil, nil, false
+}
+
+func buildInitializationExecutionFocusPlanInput(blockedToolName string, usage *ToolUsageState) map[string]any {
+	explanation := fmt.Sprintf(
+		"Broad initialization already has enough repository evidence. Stop another %s sweep and move directly toward the AGENTS.md artifact.",
+		blockedToolName,
+	)
+	writeStatus := StepStatusInProgress
+	verifyStatus := StepStatusPending
+	if usage != nil && len(usage.PendingArtifactVerificationPaths()) > 0 {
+		writeStatus = StepStatusCompleted
+		verifyStatus = StepStatusInProgress
+	}
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Collect repository evidence for AGENTS.md", Status: StepStatusCompleted},
+			{Step: "Write or refine AGENTS.md only", Status: writeStatus},
+			{Step: "Verify AGENTS.md after writing", Status: verifyStatus},
+			{Step: "Deliver final initialization summary", Status: StepStatusPending},
+		},
+	})
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
+	}
+}
+
+func buildInitializationCheckpointPlanInput(ctx context.Context) map[string]any {
+	explanation := "Lock the broad initialization plan before continuing. Stay scoped to AGENTS.md, then verify that artifact before concluding."
+	firstStepStatus := StepStatusInProgress
+	if usage := GetToolUsageStateFromContext(ctx); hasStructuredDiscoveryOrReadContext(usage) {
+		firstStepStatus = StepStatusCompleted
+	}
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Collect repository evidence for AGENTS.md", Status: firstStepStatus},
+			{Step: "Identify core entrypoints, domains, and constraints", Status: StepStatusInProgress},
+			{Step: "Write or refine AGENTS.md only", Status: StepStatusPending},
+			{Step: "Verify AGENTS.md after writing", Status: StepStatusPending},
+		},
+	})
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
+	}
+}
+
+func isInitializationDiscoveryTool(toolName string) bool {
+	switch toolName {
+	case ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRewriteRedundantInitializationDiscovery(toolName string, usage *ToolUsageState) bool {
+	if usage == nil || !hasBroadInitializationContext(usage) {
+		return false
+	}
+	if len(usage.PendingArtifactVerificationPaths()) > 0 {
+		return true
+	}
+	if !usage.HasPublishedPlan() {
+		return true
+	}
+	switch toolName {
+	case LSToolName:
+		return usage.Count(LSToolName) >= 1
+	case ToolSearchToolName:
+		return usage.Count(ToolSearchToolName) >= 1 && totalInitializationDiscoveryCalls(usage) >= 4
+	case RGFilesToolName, RGToolName, GlobToolName, GrepToolName:
+		return totalInitializationDiscoveryCalls(usage) >= 4
+	default:
+		return false
+	}
+}
+
+func totalInitializationDiscoveryCalls(usage *ToolUsageState) int {
+	if usage == nil {
+		return 0
+	}
+	return usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName)
+}
+
+func buildInitializationArtifactCorrectionPlanInput(ctx context.Context, blockedPath string) map[string]any {
+	explanation := fmt.Sprintf(
+		"Initialization is scoped to AGENTS.md only. Do not write %s. Refresh AGENTS.md instead, then verify that artifact before concluding.",
+		blockedPath,
+	)
+	firstStepStatus := StepStatusInProgress
+	if hasBroadInitializationContext(GetToolUsageStateFromContext(ctx)) {
+		firstStepStatus = StepStatusCompleted
+	}
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Collect repository evidence for AGENTS.md", Status: firstStepStatus},
+			{Step: "Write or refine AGENTS.md only", Status: StepStatusInProgress},
+			{Step: "Verify AGENTS.md after writing", Status: StepStatusPending},
+			{Step: "Deliver final initialization summary", Status: StepStatusPending},
+		},
+	})
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
 	}
 }
 
@@ -906,6 +1230,46 @@ func repairUpdatePlanInput(input map[string]any) map[string]any {
 	}
 	input["plan"] = normalized
 	return input
+}
+
+func repairEmptyGuardrailedUpdatePlan(ctx context.Context, toolName string, input map[string]any) map[string]any {
+	if canonicalToolNameForModePolicy(toolName) != UpdatePlanToolName {
+		return input
+	}
+	if !updatePlanInputHasNoSteps(input) {
+		return input
+	}
+
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	switch {
+	case strings.TrimSpace(policy.TaskFamily) == "initialize/broad/codebase":
+		return buildInitializationCheckpointPlanInput(ctx)
+	case policy.RequireExplicitPlan:
+		return buildExplicitPlanCheckpointInput(ctx, policy, "analysis")
+	default:
+		return input
+	}
+}
+
+func updatePlanInputHasNoSteps(input map[string]any) bool {
+	if input == nil {
+		return true
+	}
+	rawPlan, ok := input["plan"]
+	if !ok {
+		return true
+	}
+	items, err := coerceObjectSlice(rawPlan)
+	if err != nil {
+		return true
+	}
+	plan := make([]PlanItem, 0, len(items))
+	for _, item := range items {
+		step, _ := item["step"].(string)
+		status, _ := item["status"].(string)
+		plan = append(plan, PlanItem{Step: step, Status: StepStatus(status)})
+	}
+	return len(NormalizePlanItems(plan)) == 0
 }
 
 func repairViewCall(

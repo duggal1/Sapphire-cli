@@ -10,17 +10,21 @@ const (
 	defaultMaxStepsPerTurn        = 12
 	postCompactionMaxStepsPerTurn = 14
 	structuredTurnMaxStepsPerTurn = 16
+	broadInitMaxStepsPerTurn      = 22
 	longHorizonMaxStepsPerTurn    = 18
 	maxStreamRetryBackoff         = 2 * time.Second
 )
 
-func maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn bool) int {
+func maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn, broadInitializationTurn bool) int {
 	limit := defaultMaxStepsPerTurn
 	if postCompactionPending && limit < postCompactionMaxStepsPerTurn {
 		limit = postCompactionMaxStepsPerTurn
 	}
 	if structuredTurn && limit < structuredTurnMaxStepsPerTurn {
 		limit = structuredTurnMaxStepsPerTurn
+	}
+	if broadInitializationTurn && limit < broadInitMaxStepsPerTurn {
+		limit = broadInitMaxStepsPerTurn
 	}
 	if longHorizonActive && limit < longHorizonMaxStepsPerTurn {
 		limit = longHorizonMaxStepsPerTurn

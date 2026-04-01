@@ -45,6 +45,14 @@ func setupAgent(t *testing.T, pair modelPair) (SessionAgent, fakeEnv) {
 	return agent, env
 }
 
+func TestShouldGenerateSessionTitle(t *testing.T) {
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "")
+	require.True(t, shouldGenerateSessionTitle())
+
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "1")
+	require.False(t, shouldGenerateSessionTitle())
+}
+
 func TestCoderAgent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows for now")

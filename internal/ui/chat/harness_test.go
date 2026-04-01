@@ -26,17 +26,23 @@ func TestHarnessToolRenderUsesConcisePlanView(t *testing.T) {
 	}, false)
 
 	rendered := ansi.Strip(item.Render(120))
-	if !strings.Contains(rendered, "Plan") || !strings.Contains(rendered, "Execution") {
+	if !strings.Contains(rendered, "Planned") {
 		t.Fatalf("expected clean plan presentation, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Route: Single agent") {
+	if !strings.Contains(rendered, "Task") || !strings.Contains(rendered, "demo of harness tool") {
+		t.Fatalf("expected task section, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Route") || !strings.Contains(rendered, "Single agent") {
 		t.Fatalf("expected route summary, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Flow: classify -> load skills -> execute -> verify") {
+	if !strings.Contains(rendered, "Flow") || !strings.Contains(rendered, "classify -> load skills -> execute -> verify") {
 		t.Fatalf("expected concise flow summary, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "Next: Load skills, then execute") {
+	if !strings.Contains(rendered, "Next") || !strings.Contains(rendered, "Load skills, then execute") {
 		t.Fatalf("expected next action summary, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Execution") || strings.Contains(rendered, "├") || strings.Contains(rendered, "└") {
+		t.Fatalf("expected tree structure to be removed, got %q", rendered)
 	}
 	if strings.Contains(rendered, "run_harness") ||
 		strings.Contains(rendered, "goal_type") ||
@@ -58,7 +64,7 @@ func TestHarnessToolPendingUsesPlanningLabel(t *testing.T) {
 	}, nil, false)
 
 	rendered := ansi.Strip(item.Render(100))
-	if !strings.Contains(rendered, "Planning") {
+	if !strings.Contains(rendered, "Planing..") {
 		t.Fatalf("expected planning label, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Run Harness") {

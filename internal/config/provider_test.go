@@ -100,6 +100,22 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	require.Equal(t, "deny", providerOpt["data_collection"])
 }
 
+func TestShouldAutoUpdateProviders_DisablesHeadlessRefresh(t *testing.T) {
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "1")
+	cfg := &Config{
+		Options: &Options{},
+	}
+	require.False(t, shouldAutoUpdateProviders(cfg))
+}
+
+func TestShouldAutoUpdateProviders_AllowsInteractiveRefreshWhenEnabled(t *testing.T) {
+	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "")
+	cfg := &Config{
+		Options: &Options{},
+	}
+	require.True(t, shouldAutoUpdateProviders(cfg))
+}
+
 func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t *testing.T) {
 	providers := []catwalk.Provider{
 		{

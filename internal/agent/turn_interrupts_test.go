@@ -33,19 +33,25 @@ func TestRepeatedToolLoopErrorMatchesSentinel(t *testing.T) {
 func TestMaxStepsPerTurn(t *testing.T) {
 	t.Parallel()
 
-	if got := maxStepsPerTurn(false, false, false); got != defaultMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, false, false); got != defaultMaxStepsPerTurn {
 		t.Fatalf("unexpected default max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(false, true, false); got != postCompactionMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, true, false, false); got != postCompactionMaxStepsPerTurn {
 		t.Fatalf("unexpected post-compaction max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(false, false, true); got != structuredTurnMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, true, false); got != structuredTurnMaxStepsPerTurn {
 		t.Fatalf("unexpected structured-turn max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(true, false, false); got != longHorizonMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, true, true); got != broadInitMaxStepsPerTurn {
+		t.Fatalf("unexpected broad-init max steps: %d", got)
+	}
+	if got := maxStepsPerTurn(true, false, false, false); got != longHorizonMaxStepsPerTurn {
 		t.Fatalf("unexpected long-horizon max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(true, false, true); got != longHorizonMaxStepsPerTurn {
+	if got := maxStepsPerTurn(true, false, true, true); got != broadInitMaxStepsPerTurn {
+		t.Fatalf("expected broad-init budget to outrank long-horizon, got %d", got)
+	}
+	if got := maxStepsPerTurn(true, false, true, false); got != longHorizonMaxStepsPerTurn {
 		t.Fatalf("unexpected long-horizon structured max steps: %d", got)
 	}
 }

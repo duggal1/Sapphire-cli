@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent"
@@ -32,13 +33,17 @@ type HarnessToolRenderContext struct{}
 // RenderTool implements the ToolRenderer interface.
 func (h *HarnessToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *ToolRenderOpts) string {
 	cappedWidth := cappedMessageWidth(width)
-	header := toolHeader(sty, opts.Status, "Plan", cappedWidth, opts.Compact)
+	title := "Planned"
+	if opts.Status != ToolStatusSuccess {
+		title = "Plan"
+	}
+	header := toolHeader(sty, opts.Status, title, cappedWidth, opts.Compact)
 	if opts.Compact {
 		return header
 	}
 
 	if opts.IsPending() {
-		return pendingTool(sty, "Planning")
+		return pendingTool(sty, "Planing..")
 	}
 	if earlyState, ok := toolEarlyStateContent(sty, opts, cappedWidth); ok {
 		return joinToolParts(header, earlyState)
@@ -65,44 +70,43 @@ func (h *HarnessToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 }
 
 func renderHarnessBody(sty *styles.Styles, params agent.RunHarnessParams, contract agent.HarnessExecutionContract, width int) string {
-	root := &TreeNode{Label: sty.Tool.ListRoot.Render("Execution")}
-
+	sections := make([]string, 0, 8)
 	task := oneLine(firstNonEmptyOrchestrationValue(params.Task, contract.Reason))
 	if task != "" {
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Task", task)})
+		sections = append(sections, renderHarnessSection(sty, "Task", task, width))
 	}
 
-	root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Route", presentHarnessRoute(contract))})
+	sections = append(sections, renderHarnessSection(sty, "Route", presentHarnessRoute(contract), width))
 
 	if goal := presentHarnessGoal(contract.GoalType); goal != "" {
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Goal", goal)})
+		sections = append(sections, renderHarnessSection(sty, "Goal", goal, width))
 	}
 
 	if mode := presentHarnessMode(contract.Mode); mode != "" {
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Mode", mode)})
+		sections = append(sections, renderHarnessSection(sty, "Mode", mode, width))
 	}
 
-	if team := presentHarnessTeam(sty, contract.Agents); team != nil {
-		root.Children = append(root.Children, team)
+	if team := presentHarnessTeam(contract.Agents); team != "" {
+		sections = append(sections, renderHarnessSection(sty, "Team", team, width))
 	}
 
-	if skills := presentHarnessSkills(sty, contract.RequiredSkills); skills != nil {
-		root.Children = append(root.Children, skills)
+	if skills := presentHarnessSkills(contract.RequiredSkills); skills != "" {
+		sections = append(sections, renderHarnessSection(sty, "Skills", skills, width))
 	}
 
 	if flow := presentHarnessFlow(contract.Phases); flow != "" {
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Flow", flow)})
+		sections = append(sections, renderHarnessSection(sty, "Flow", flow, width))
 	}
 
-	if verify := presentHarnessVerify(sty, contract.VerificationPlan); verify != nil {
-		root.Children = append(root.Children, verify)
+	if verify := presentHarnessVerify(contract.VerificationPlan); verify != "" {
+		sections = append(sections, renderHarnessSection(sty, "Verify", verify, width))
 	}
 
 	if next := presentHarnessNextAction(contract.NextAction); next != "" {
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel("Next", next)})
+		sections = append(sections, renderHarnessSection(sty, "Next", next, width))
 	}
 
-	return strings.Join(renderTreeWithRoot(root, width), "\n")
+	return strings.Join(sections, "\n\n")
 }
 
 func presentHarnessRoute(contract agent.HarnessExecutionContract) string {
@@ -134,39 +138,33 @@ func presentHarnessMode(mode string) string {
 	}
 }
 
-func presentHarnessTeam(sty *styles.Styles, agents []agent.HarnessAgentRole) *TreeNode {
+func presentHarnessTeam(agents []agent.HarnessAgentRole) string {
 	if len(agents) == 0 {
-		return nil
+		return ""
 	}
-	root := &TreeNode{Label: "Team"}
+	parts := make([]string, 0, len(agents))
 	for _, entry := range agents {
 		name := genericPrettyName(entry.Name)
-		role := strings.TrimSpace(entry.Role)
-		if role == "" {
-			root.Children = append(root.Children, &TreeNode{Label: sty.Tool.ListFile.Render(name)})
+		if name == "" {
 			continue
 		}
-		root.Children = append(root.Children, &TreeNode{Label: subAgentKVLabel(name, oneLine(role))})
+		parts = append(parts, name)
 	}
-	return root
+	return strings.Join(parts, ", ")
 }
 
-func presentHarnessSkills(sty *styles.Styles, skills []string) *TreeNode {
+func presentHarnessSkills(skills []string) string {
 	if len(skills) == 0 {
-		return nil
+		return ""
 	}
-	root := &TreeNode{Label: "Skills"}
+	parts := make([]string, 0, len(skills))
 	for _, skill := range skills {
 		skill = strings.TrimSpace(skill)
-		if skill == "" {
-			continue
+		if skill != "" {
+			parts = append(parts, skill)
 		}
-		root.Children = append(root.Children, &TreeNode{Label: sty.Tool.ListFile.Render(skill)})
 	}
-	if len(root.Children) == 0 {
-		return nil
-	}
-	return root
+	return strings.Join(parts, ", ")
 }
 
 func presentHarnessFlow(phases []string) string {
@@ -184,22 +182,21 @@ func presentHarnessFlow(phases []string) string {
 	return strings.Join(parts, " -> ")
 }
 
-func presentHarnessVerify(sty *styles.Styles, steps []string) *TreeNode {
+func presentHarnessVerify(steps []string) string {
 	if len(steps) == 0 {
-		return nil
+		return ""
 	}
-	root := &TreeNode{Label: "Verify"}
+	parts := make([]string, 0, min(2, len(steps)))
 	for _, step := range steps {
 		step = oneLine(step)
-		if step == "" {
-			continue
+		if step != "" {
+			parts = append(parts, step)
 		}
-		root.Children = append(root.Children, &TreeNode{Label: sty.Tool.ListFile.Render(step)})
+		if len(parts) == 2 {
+			break
+		}
 	}
-	if len(root.Children) == 0 {
-		return nil
-	}
-	return root
+	return strings.Join(parts, "; ")
 }
 
 func presentHarnessNextAction(action string) string {
@@ -219,4 +216,19 @@ func presentHarnessNextAction(action string) string {
 	default:
 		return genericPrettyName(action)
 	}
+}
+
+func renderHarnessSection(sty *styles.Styles, label, value string, width int) string {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	if label == "" || value == "" {
+		return ""
+	}
+
+	lines := wrapPrefixedText(value, max(1, width), "", "")
+	for i := range lines {
+		lines[i] = sty.Base.Render(lines[i])
+	}
+
+	return fmt.Sprintf("%s\n%s", sty.Subtle.Render(label), strings.Join(lines, "\n"))
 }

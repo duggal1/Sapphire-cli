@@ -210,14 +210,15 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 			}
 		}
 
-		augmentProviderCatalog(providerList)
+		providerList = augmentProviderCatalog(providerList)
 
 		providerErr = errors.Join(errs...)
 	})
 	return providerList, providerErr
 }
 
-func augmentProviderCatalog(providers []catwalk.Provider) {
+func augmentProviderCatalog(providers []catwalk.Provider) []catwalk.Provider {
+	providers = ensureProviders(providers, providerCatalogAugments)
 	for i := range providers {
 		switch providers[i].ID {
 		case "openrouter":
@@ -236,6 +237,27 @@ func augmentProviderCatalog(providers []catwalk.Provider) {
 			}
 		}
 	}
+	return providers
+}
+
+func ensureProviders(providers []catwalk.Provider, expected []catwalk.Provider) []catwalk.Provider {
+	if len(expected) == 0 {
+		return providers
+	}
+
+	existing := make(map[catwalk.InferenceProvider]struct{}, len(providers))
+	for _, provider := range providers {
+		existing[provider.ID] = struct{}{}
+	}
+
+	for _, provider := range expected {
+		if _, ok := existing[provider.ID]; ok {
+			continue
+		}
+		providers = append(providers, provider)
+		existing[provider.ID] = struct{}{}
+	}
+	return providers
 }
 
 func ensureModels(provider *catwalk.Provider, expected []catwalk.Model) {
@@ -257,6 +279,109 @@ func ensureModels(provider *catwalk.Provider, expected []catwalk.Model) {
 	}
 }
 
+var providerCatalogAugments = []catwalk.Provider{
+	{
+		Name:                "Z.AI",
+		ID:                  "zai",
+		Type:                catwalk.TypeOpenAICompat,
+		APIKey:              "$ZAI_API_KEY",
+		APIEndpoint:         "https://api.z.ai/api/coding/paas/v4",
+		DefaultLargeModelID: "glm-5",
+		DefaultSmallModelID: "glm-5-turbo",
+		Models: []catwalk.Model{
+			{
+				ID:                     "glm-5.1",
+				Name:                   "GLM-5.1",
+				CostPer1MIn:            1.0,
+				CostPer1MOut:           3.2,
+				CostPer1MInCached:      0.2,
+				ContextWindow:          204800,
+				DefaultMaxTokens:       65536,
+				CanReason:              true,
+				ReasoningLevels:        []string{"low", "medium", "high"},
+				DefaultReasoningEffort: "medium",
+				SupportsImages:         false,
+			},
+			{
+				ID:                     "glm-5-turbo",
+				Name:                   "GLM-5-Turbo",
+				CostPer1MIn:            1.2,
+				CostPer1MOut:           4.0,
+				CostPer1MInCached:      0.24,
+				ContextWindow:          200000,
+				DefaultMaxTokens:       128000,
+				CanReason:              true,
+				ReasoningLevels:        []string{"low", "medium", "high"},
+				DefaultReasoningEffort: "medium",
+				SupportsImages:         false,
+			},
+			{
+				ID:                     "glm-5",
+				Name:                   "GLM-5",
+				CostPer1MIn:            1.0,
+				CostPer1MOut:           3.2,
+				CostPer1MInCached:      0.2,
+				ContextWindow:          204800,
+				DefaultMaxTokens:       65536,
+				CanReason:              true,
+				ReasoningLevels:        []string{"low", "medium", "high"},
+				DefaultReasoningEffort: "medium",
+				SupportsImages:         false,
+			},
+		},
+	},
+	{
+		Name:                "Cerebras",
+		ID:                  "cerebras",
+		Type:                catwalk.TypeOpenAICompat,
+		APIKey:              "$CEREBRAS_API_KEY",
+		APIEndpoint:         "https://api.cerebras.ai/v1",
+		DefaultLargeModelID: "gpt-oss-120b",
+		DefaultSmallModelID: "qwen-3-235b-a22b-instruct-2507",
+		DefaultHeaders: map[string]string{
+			"X-Cerebras-3rd-Party-Integration": "crush",
+		},
+		Models: []catwalk.Model{
+			{
+				ID:                     "gpt-oss-120b",
+				Name:                   "OpenAI GPT OSS",
+				CostPer1MIn:            0.35,
+				CostPer1MOut:           0.75,
+				ContextWindow:          131072,
+				DefaultMaxTokens:       25000,
+				CanReason:              true,
+				ReasoningLevels:        []string{"low", "medium", "high"},
+				DefaultReasoningEffort: "medium",
+				SupportsImages:         false,
+			},
+			{
+				ID:               "qwen-3-235b-a22b-instruct-2507",
+				Name:             "Qwen 3 235B Instruct",
+				CostPer1MIn:      0.6,
+				CostPer1MOut:     1.2,
+				ContextWindow:    131072,
+				DefaultMaxTokens: 25000,
+				CanReason:        false,
+				SupportsImages:   false,
+			},
+			{
+				ID:               "zai-glm-4.7",
+				Name:             "Z.ai GLM 4.7",
+				CostPer1MIn:      2.25,
+				CostPer1MOut:     2.75,
+				ContextWindow:    131072,
+				DefaultMaxTokens: 25000,
+				CanReason:        false,
+				SupportsImages:   false,
+				Options: catwalk.ModelOptions{
+					Temperature: floatPtr(1),
+					TopP:        floatPtr(0.95),
+				},
+			},
+		},
+	},
+}
+
 var openRouterModelAugments = []catwalk.Model{
 	{
 		ID:                     "qwen/qwen3.6-plus-preview:free",
@@ -267,6 +392,36 @@ var openRouterModelAugments = []catwalk.Model{
 		CostPer1MOut:           0,
 		CostPer1MInCached:      0,
 		CostPer1MOutCached:     0,
+		CanReason:              true,
+		ReasoningLevels:        []string{"low", "medium", "high"},
+		DefaultReasoningEffort: "medium",
+		SupportsImages:         false,
+		Options:                catwalk.ModelOptions{},
+	},
+	{
+		ID:                     "z-ai/glm-5",
+		Name:                   "Z.ai: GLM 5",
+		CostPer1MIn:            1,
+		CostPer1MOut:           3.2,
+		CostPer1MInCached:      0,
+		CostPer1MOutCached:     0.2,
+		ContextWindow:          202800,
+		DefaultMaxTokens:       65536,
+		CanReason:              true,
+		ReasoningLevels:        []string{"low", "medium", "high"},
+		DefaultReasoningEffort: "medium",
+		SupportsImages:         false,
+		Options:                catwalk.ModelOptions{},
+	},
+	{
+		ID:                     "z-ai/glm-5-turbo",
+		Name:                   "Z.ai: GLM 5 Turbo",
+		CostPer1MIn:            1.2,
+		CostPer1MOut:           4,
+		CostPer1MInCached:      0,
+		CostPer1MOutCached:     0.24,
+		ContextWindow:          262144,
+		DefaultMaxTokens:       65536,
 		CanReason:              true,
 		ReasoningLevels:        []string{"low", "medium", "high"},
 		DefaultReasoningEffort: "medium",
@@ -428,6 +583,10 @@ var openRouterModelAugments = []catwalk.Model{
 func loadCachedCatwalkProviders() ([]catwalk.Provider, error) {
 	cached, _, err := newCache[[]catwalk.Provider](cachePathFor("providers")).Get()
 	return cached, err
+}
+
+func floatPtr(v float64) *float64 {
+	return &v
 }
 
 func loadCachedHyperProvider() (catwalk.Provider, error) {

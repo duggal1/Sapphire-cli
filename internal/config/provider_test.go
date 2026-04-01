@@ -76,6 +76,15 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	require.Contains(t, modelIDs, "arcee-ai/trinity-large-preview:free")
 	require.Contains(t, modelIDs, "openai/gpt-oss-120b:free")
 	require.Contains(t, modelIDs, "qwen/qwen3.6-plus-preview:free")
+	require.Contains(t, modelIDs, "z-ai/glm-5")
+	require.Contains(t, modelIDs, "z-ai/glm-5-turbo")
+
+	providerIDs := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		providerIDs = append(providerIDs, string(provider.ID))
+	}
+	require.Contains(t, providerIDs, "zai")
+	require.Contains(t, providerIDs, "cerebras")
 
 	var miniMaxFree *catwalk.Model
 	for i := range openRouter.Models {
@@ -99,19 +108,21 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 				{ID: "arcee-ai/trinity-large-preview:free", Name: "Arcee AI: Trinity Large Preview (free)"},
 				{ID: "qwen/qwen3-coder:free", Name: "Qwen: Qwen3 Coder 480B A35B (free)"},
 				{ID: "qwen/qwen3.6-plus-preview:free", Name: "Qwen: Qwen3.6 Plus Preview (free)"},
+				{ID: "z-ai/glm-5", Name: "Z.ai: GLM 5"},
+				{ID: "z-ai/glm-5-turbo", Name: "Z.ai: GLM 5 Turbo"},
 				{ID: "nousresearch/hermes-3-llama-3.1-405b:free", Name: "Nous: Hermes 3 405B Instruct (free)"},
 			},
 		},
 	}
 
-	augmentProviderCatalog(providers)
+	providers = augmentProviderCatalog(providers)
 
 	modelIDs := make([]string, 0, len(providers[0].Models))
 	for _, model := range providers[0].Models {
 		modelIDs = append(modelIDs, model.ID)
 	}
 
-	require.Len(t, providers[0].Models, 12)
+	require.Len(t, providers[0].Models, 14)
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5")
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5:nitro")
 	require.Contains(t, modelIDs, "nvidia/nemotron-3-nano-30b-a3b:free")
@@ -120,10 +131,14 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5:free")
 	require.Contains(t, modelIDs, "arcee-ai/trinity-mini:free")
 	require.Contains(t, modelIDs, "openai/gpt-oss-120b:free")
+	require.Contains(t, modelIDs, "z-ai/glm-5")
+	require.Contains(t, modelIDs, "z-ai/glm-5-turbo")
 
 	trinityLargeCount := 0
 	qwenCoderCount := 0
 	qwen36Count := 0
+	glm5Count := 0
+	glm5TurboCount := 0
 	hermesCount := 0
 	for _, modelID := range modelIDs {
 		if modelID == "arcee-ai/trinity-large-preview:free" {
@@ -135,6 +150,12 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 		if modelID == "qwen/qwen3.6-plus-preview:free" {
 			qwen36Count++
 		}
+		if modelID == "z-ai/glm-5" {
+			glm5Count++
+		}
+		if modelID == "z-ai/glm-5-turbo" {
+			glm5TurboCount++
+		}
 		if modelID == "nousresearch/hermes-3-llama-3.1-405b:free" {
 			hermesCount++
 		}
@@ -142,7 +163,39 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 	require.Equal(t, 1, trinityLargeCount)
 	require.Equal(t, 1, qwenCoderCount)
 	require.Equal(t, 1, qwen36Count)
+	require.Equal(t, 1, glm5Count)
+	require.Equal(t, 1, glm5TurboCount)
 	require.Equal(t, 1, hermesCount)
+}
+
+func TestAugmentProviderCatalog_AddsMissingProviders(t *testing.T) {
+	providers := []catwalk.Provider{
+		{ID: "openrouter", Name: "OpenRouter"},
+	}
+
+	providers = augmentProviderCatalog(providers)
+
+	byID := make(map[string]catwalk.Provider, len(providers))
+	for _, provider := range providers {
+		byID[string(provider.ID)] = provider
+	}
+
+	zaiProvider, ok := byID["zai"]
+	require.True(t, ok)
+	require.Equal(t, "https://api.z.ai/api/coding/paas/v4", zaiProvider.APIEndpoint)
+	require.Equal(t, "$ZAI_API_KEY", zaiProvider.APIKey)
+	require.Equal(t, "glm-5", zaiProvider.DefaultLargeModelID)
+	require.Equal(t, "glm-5-turbo", zaiProvider.DefaultSmallModelID)
+	require.Len(t, zaiProvider.Models, 3)
+
+	cerebrasProvider, ok := byID["cerebras"]
+	require.True(t, ok)
+	require.Equal(t, "https://api.cerebras.ai/v1", cerebrasProvider.APIEndpoint)
+	require.Equal(t, "$CEREBRAS_API_KEY", cerebrasProvider.APIKey)
+	require.Equal(t, "gpt-oss-120b", cerebrasProvider.DefaultLargeModelID)
+	require.Equal(t, "qwen-3-235b-a22b-instruct-2507", cerebrasProvider.DefaultSmallModelID)
+	require.Equal(t, "crush", cerebrasProvider.DefaultHeaders["X-Cerebras-3rd-Party-Integration"])
+	require.Len(t, cerebrasProvider.Models, 3)
 }
 
 func TestProviders_Integration_WithMockClients(t *testing.T) {

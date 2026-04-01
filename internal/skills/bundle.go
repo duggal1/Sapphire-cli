@@ -138,7 +138,6 @@ func parseBundledSkillContent(sourcePath, content string) (*Skill, error) {
 	}
 
 	frontmatter, body, hasFrontmatter := bundledFrontmatterAndBody(content)
-	dirName := pathpkg.Base(pathpkg.Dir(sourcePath))
 	meta := bundledSkillFrontmatter{}
 	if hasFrontmatter {
 		if unmarshalErr := yaml.Unmarshal([]byte(frontmatter), &meta); unmarshalErr != nil {

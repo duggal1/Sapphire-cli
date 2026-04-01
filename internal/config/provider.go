@@ -17,10 +17,10 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/catwalk/pkg/embedded"
+	"github.com/charmbracelet/x/etag"
 	"github.com/duggal1/Sapphire-cli/internal/agent/hyper"
 	"github.com/duggal1/Sapphire-cli/internal/csync"
 	"github.com/duggal1/Sapphire-cli/internal/home"
-	"github.com/charmbracelet/x/etag"
 )
 
 type syncer[T any] interface {
@@ -258,6 +258,21 @@ func ensureModels(provider *catwalk.Provider, expected []catwalk.Model) {
 }
 
 var openRouterModelAugments = []catwalk.Model{
+	{
+		ID:                     "qwen/qwen3.6-plus-preview:free",
+		Name:                   "Qwen: Qwen3.6 Plus Preview (free)",
+		ContextWindow:          1000000,
+		DefaultMaxTokens:       32768,
+		CostPer1MIn:            0,
+		CostPer1MOut:           0,
+		CostPer1MInCached:      0,
+		CostPer1MOutCached:     0,
+		CanReason:              true,
+		ReasoningLevels:        []string{"low", "medium", "high"},
+		DefaultReasoningEffort: "medium",
+		SupportsImages:         false,
+		Options:                catwalk.ModelOptions{},
+	},
 	{
 		ID:                 "nvidia/nemotron-3-nano-30b-a3b:free",
 		Name:               "Nemotron 3 Nano 30B A3B (free)",

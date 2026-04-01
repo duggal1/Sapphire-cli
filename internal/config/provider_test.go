@@ -75,6 +75,7 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	require.Contains(t, modelIDs, "arcee-ai/trinity-mini:free")
 	require.Contains(t, modelIDs, "arcee-ai/trinity-large-preview:free")
 	require.Contains(t, modelIDs, "openai/gpt-oss-120b:free")
+	require.Contains(t, modelIDs, "qwen/qwen3.6-plus-preview:free")
 
 	var miniMaxFree *catwalk.Model
 	for i := range openRouter.Models {
@@ -97,6 +98,7 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 			Models: []catwalk.Model{
 				{ID: "arcee-ai/trinity-large-preview:free", Name: "Arcee AI: Trinity Large Preview (free)"},
 				{ID: "qwen/qwen3-coder:free", Name: "Qwen: Qwen3 Coder 480B A35B (free)"},
+				{ID: "qwen/qwen3.6-plus-preview:free", Name: "Qwen: Qwen3.6 Plus Preview (free)"},
 				{ID: "nousresearch/hermes-3-llama-3.1-405b:free", Name: "Nous: Hermes 3 405B Instruct (free)"},
 			},
 		},
@@ -109,7 +111,7 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 		modelIDs = append(modelIDs, model.ID)
 	}
 
-	require.Len(t, providers[0].Models, 11)
+	require.Len(t, providers[0].Models, 12)
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5")
 	require.Contains(t, modelIDs, "minimax/minimax-m2.5:nitro")
 	require.Contains(t, modelIDs, "nvidia/nemotron-3-nano-30b-a3b:free")
@@ -121,6 +123,7 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 
 	trinityLargeCount := 0
 	qwenCoderCount := 0
+	qwen36Count := 0
 	hermesCount := 0
 	for _, modelID := range modelIDs {
 		if modelID == "arcee-ai/trinity-large-preview:free" {
@@ -129,12 +132,16 @@ func TestAugmentProviderCatalog_AddsMissingOpenRouterModelsWithoutDuplication(t 
 		if modelID == "qwen/qwen3-coder:free" {
 			qwenCoderCount++
 		}
+		if modelID == "qwen/qwen3.6-plus-preview:free" {
+			qwen36Count++
+		}
 		if modelID == "nousresearch/hermes-3-llama-3.1-405b:free" {
 			hermesCount++
 		}
 	}
 	require.Equal(t, 1, trinityLargeCount)
 	require.Equal(t, 1, qwenCoderCount)
+	require.Equal(t, 1, qwen36Count)
 	require.Equal(t, 1, hermesCount)
 }
 

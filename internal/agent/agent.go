@@ -90,6 +90,9 @@ const (
 
 	// Structured-mode repair tuning.
 	maxStructuredBlockRepairAttempts = 1
+
+	// Completion-guardrail recovery tuning.
+	maxCompletionGuardrailRecoveryAttempts = 1
 )
 
 func shouldGenerateSessionTitle() bool {
@@ -113,27 +116,28 @@ var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 var policyPromptSeparatorRegex = regexp.MustCompile(`[^a-z0-9./_]+`)
 
 type SessionAgentCall struct {
-	SessionID          string
-	Prompt             string
-	ResumePointID      string
-	TodoReconcileTry   int
-	StructuredTry      int
-	MistakeSelfHealTry int
-	SkillContext       string
-	ActiveSkills       []string
-	ActiveTools        []string
-	LearnedToolPolicy  tools.LearnedToolPolicy
-	HarnessOverride    *tools.HarnessRequirement
-	ProviderOptions    fantasy.ProviderOptions
-	Attachments        []message.Attachment
-	PrecreatedUser     *message.Message
-	SkipUserMessage    bool
-	MaxOutputTokens    int64
-	Temperature        *float64
-	TopP               *float64
-	TopK               *int64
-	FrequencyPenalty   *float64
-	PresencePenalty    *float64
+	SessionID              string
+	Prompt                 string
+	ResumePointID          string
+	TodoReconcileTry       int
+	StructuredTry          int
+	MistakeSelfHealTry     int
+	CompletionGuardrailTry int
+	SkillContext           string
+	ActiveSkills           []string
+	ActiveTools            []string
+	LearnedToolPolicy      tools.LearnedToolPolicy
+	HarnessOverride        *tools.HarnessRequirement
+	ProviderOptions        fantasy.ProviderOptions
+	Attachments            []message.Attachment
+	PrecreatedUser         *message.Message
+	SkipUserMessage        bool
+	MaxOutputTokens        int64
+	Temperature            *float64
+	TopP                   *float64
+	TopK                   *int64
+	FrequencyPenalty       *float64
+	PresencePenalty        *float64
 }
 
 func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message, resumePointID string) SessionAgentCall {
@@ -216,6 +220,98 @@ Rules:
 Return the corrected final deliverable now.`, mode.Title(), openTag, closeTag, openTag))
 
 	return followUp
+}
+
+func buildCompletionGuardrailRecoveryCall(mode planmode.SessionMode, call SessionAgentCall, err error, partialAssistant *message.Message) (SessionAgentCall, bool) {
+	if mode != planmode.DefaultSessionMode || call.CompletionGuardrailTry >= maxCompletionGuardrailRecoveryAttempts {
+		return SessionAgentCall{}, false
+	}
+	var guardrailErr *tools.TurnGuardrailError
+	if !errors.As(err, &guardrailErr) || guardrailErr == nil {
+		return SessionAgentCall{}, false
+	}
+	if !supportsCompletionGuardrailRecovery(call.LearnedToolPolicy) {
+		return SessionAgentCall{}, false
+	}
+
+	lowerMessage := strings.ToLower(strings.TrimSpace(guardrailErr.Message))
+	followUp := call
+	followUp.SkipUserMessage = true
+	followUp.CompletionGuardrailTry++
+
+	partialTail := ""
+	if partialAssistant != nil {
+		partialTail = strings.TrimSpace(partialAssistant.Content().Text)
+		if len(partialTail) > 1200 {
+			partialTail = partialTail[len(partialTail)-1200:]
+		}
+	}
+
+	base := fmt.Sprintf(`Continue the same turn from the existing repository context. Do not restart from scratch, do not ask for permission, and do not repeat the previous answer verbatim.
+
+Original user request:
+%s`, strings.TrimSpace(call.Prompt))
+	if partialTail != "" {
+		base += fmt.Sprintf("\n\nPrevious draft tail:\n%s", partialTail)
+	}
+
+	switch {
+	case strings.Contains(lowerMessage, "without enough repository evidence"):
+		followUp.Prompt = strings.TrimSpace(base + `
+
+Sapphire blocked the previous draft because it concluded before enough repository evidence existed.
+
+Required now:
+- Run structured discovery first with tool_search, rg_files, or rg to identify the exact files and symbols that matter.
+- Then read the most relevant implementation files with agentic_view, view, or single_view.
+- If this broad turn still requires a locked plan, call update_plan after the evidence pass.
+- Only then deliver the corrected final answer grounded in the files you actually read.
+
+Do not invent symbols, constructors, or package APIs.`)
+		return followUp, true
+	case strings.Contains(lowerMessage, "without publishing `update_plan`"):
+		followUp.Prompt = strings.TrimSpace(base + `
+
+Sapphire blocked the previous draft because the broad working plan was never published.
+
+Required now:
+- Keep the gathered repository evidence.
+- Call update_plan with the concrete phases, trade-offs, and remaining work.
+- Then finish the answer without restarting the analysis.`)
+		return followUp, true
+	case strings.Contains(lowerMessage, "repository-grounding claims"):
+		followUp.Prompt = strings.TrimSpace(base + `
+
+Sapphire blocked the previous draft because it cited repository symbols or APIs that do not exist in the codebase.
+
+Required now:
+- Re-read the cited files.
+- Remove or correct every nonexistent symbol/function claim.
+- If evidence is still thin, gather more structured discovery before finishing.
+- Return only a corrected answer grounded in real code.`)
+		return followUp, true
+	default:
+		return SessionAgentCall{}, false
+	}
+}
+
+func supportsCompletionGuardrailRecovery(policy tools.LearnedToolPolicy) bool {
+	taskFamily := strings.ToLower(strings.TrimSpace(policy.TaskFamily))
+	if taskFamily == "" || strings.HasPrefix(taskFamily, "initialize/") {
+		return false
+	}
+	return strings.HasPrefix(taskFamily, "design/") ||
+		strings.HasPrefix(taskFamily, "research/") ||
+		strings.HasPrefix(taskFamily, "review/") ||
+		strings.HasPrefix(taskFamily, "implementation/") ||
+		strings.HasPrefix(taskFamily, "migration/")
+}
+
+func prepareTurnToolUsageState(call SessionAgentCall) *tools.ToolUsageState {
+	if call.CompletionGuardrailTry > 0 {
+		return tools.SharedToolUsageState(call.SessionID)
+	}
+	return tools.ResetSharedToolUsageState(call.SessionID)
 }
 
 func countIncompleteRenderableTodos(todos []session.Todo) int {
@@ -879,7 +975,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn, broadInitializationTurn)
 
 	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
-	toolUsageState := tools.ResetSharedToolUsageState(call.SessionID)
+	toolUsageState := prepareTurnToolUsageState(call)
 	defer tools.ClearSharedToolUsageState(call.SessionID)
 
 	genCtx, cancel := context.WithCancel(ctx)
@@ -1487,6 +1583,22 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		} else if stepLimitReached {
 			err = &turnStepLimitError{limit: maxStepsThisTurn}
 		}
+	}
+
+	if followUp, ok := buildCompletionGuardrailRecoveryCall(mode, call, err, currentAssistant); ok {
+		if currentAssistant != nil {
+			currentAssistant.FinishThinking()
+			currentAssistant.AddFinish(message.FinishReasonEndTurn, "Completion guardrail recovery", "Sapphire is continuing automatically to gather missing evidence or correct grounded claims.")
+			if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
+				return nil, updateErr
+			}
+		}
+		a.activeRequests.Del(call.SessionID)
+		cancel()
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
+		}
+		return a.Run(ctx, followUp)
 	}
 
 	if err != nil {

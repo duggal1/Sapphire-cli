@@ -1441,12 +1441,13 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 
 	switch providerType {
 	case openai.Name, azure.Name:
+		defaultParallelToolCalls := true
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
 		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
 		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
-			mergedOptions["parallel_tool_calls"] = true
+			mergedOptions["parallel_tool_calls"] = defaultParallelToolCalls
 		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
 			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
@@ -1455,11 +1456,13 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 			}
 			parsed, err := openai.ParseResponsesOptions(mergedOptions)
 			if err == nil {
+				parsed.ParallelToolCalls = fantasy.Opt(defaultParallelToolCalls)
 				options[openai.Name] = parsed
 			}
 		} else {
 			parsed, err := openai.ParseOptions(mergedOptions)
 			if err == nil {
+				parsed.ParallelToolCalls = fantasy.Opt(defaultParallelToolCalls)
 				options[openai.Name] = parsed
 			}
 		}
@@ -1480,6 +1483,7 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 		}
 
 	case openrouter.Name:
+		defaultParallelToolCalls := true
 		_, hasReasoning := mergedOptions["reasoning"]
 		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning"] = map[string]any{
@@ -1488,13 +1492,15 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 			}
 		}
 		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
-			mergedOptions["parallel_tool_calls"] = true
+			mergedOptions["parallel_tool_calls"] = defaultParallelToolCalls
 		}
 		parsed, err := openrouter.ParseOptions(mergedOptions)
 		if err == nil {
+			parsed.ParallelToolCalls = fantasy.Opt(defaultParallelToolCalls)
 			options[openrouter.Name] = parsed
 		}
 	case vercel.Name:
+		defaultParallelToolCalls := true
 		_, hasReasoning := mergedOptions["reasoning"]
 		if !hasReasoning && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning"] = map[string]any{
@@ -1503,10 +1509,11 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 			}
 		}
 		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
-			mergedOptions["parallel_tool_calls"] = true
+			mergedOptions["parallel_tool_calls"] = defaultParallelToolCalls
 		}
 		parsed, err := vercel.ParseOptions(mergedOptions)
 		if err == nil {
+			parsed.ParallelToolCalls = fantasy.Opt(defaultParallelToolCalls)
 			options[vercel.Name] = parsed
 		}
 	case google.Name:

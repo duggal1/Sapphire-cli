@@ -182,8 +182,9 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				Sessions:             c.sessions,
 				Messages:             c.messages,
 				Tools:                fetchTools,
-				Memory:               c.memory,  // Pass memory service
-				Pmem:                 c.pmem,    // Pass persistent memory
+				Memory:               c.memory,
+				Pmem:                 c.pmem,
+				FileTracker:          c.filetracker,
 			})
 
 			return c.runSubAgent(ctx, subAgentParams{

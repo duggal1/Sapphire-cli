@@ -23,6 +23,10 @@ var (
 	validationTracker   filetracker.Service
 )
 
+type skipPreparedToolUsageKey string
+
+const SkipPreparedToolUsageContextKey skipPreparedToolUsageKey = "skip_prepared_tool_usage"
+
 func SetValidationFileTracker(tracker filetracker.Service) {
 	validationTrackerMu.Lock()
 	defer validationTrackerMu.Unlock()
@@ -49,7 +53,7 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 				"tool_not_found",
 				"Unknown tool call.",
 				fmt.Sprintf(
-					"tool not found: %s. Stop inventing tool names. Use one exact tool name from the current registry only. Suggested matches: %s. If you need file reads use single_view or agentic_view; edits use edit or agentic_edit; search use ls/glob/grep/web_search/google_search; delegation use spawn_agent/send_input/wait.",
+					"tool not found: %s. Stop inventing tool names. Use one exact tool name from the current registry only. Suggested matches: %s. If you need repo search use tool_search/rg_files/rg/ls; file reads use single_view or agentic_view; edits use edit or agentic_edit; delegation use spawn_agent/send_input/wait.",
 					call.Name,
 					strings.Join(suggestions, ", "),
 				),
@@ -82,6 +86,9 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	if err != nil {
 		return call, tool, err
 	}
+	call, tool, input = rewriteToHarnessWhenRequired(ctx, call, tool, input, tools)
+	call, tool, input = rewriteToStructuredDiscoveryWhenPreferred(ctx, call, tool, input, tools)
+	call, tool, input = rewriteToExplicitPlanWhenRequired(ctx, call, tool, input, tools)
 
 	if err := enforceTurnPolicy(ctx, call.Name, input); err != nil {
 		return call, tool, err
@@ -100,6 +107,8 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	if err := validateToolCallInput(ctx, tool, call, input); err != nil {
 		return call, tool, err
 	}
+
+	recordPreparedToolUsage(ctx, call.Name, input)
 
 	return call, tool, nil
 }
@@ -128,21 +137,224 @@ func parseToolInput(raw string, toolName string) (map[string]any, error) {
 	if raw == "" || raw == "null" {
 		return map[string]any{}, nil
 	}
-	obj, state, err := schema.ParsePartialJSON(raw)
-	if state == schema.ParseStateFailed {
+	obj, err := parseFlexibleToolInputValue(raw)
+	if err != nil {
+		if coerced, ok := coerceInputFromString(toolName, stripToolInputCodeFence(raw)); ok {
+			return coerced, nil
+		}
 		return nil, fmt.Errorf("tool input must be valid JSON: %w", err)
 	}
-	m, ok := obj.(map[string]any)
-	if !ok {
-		if s, ok := obj.(string); ok {
-			coerced, ok := coerceInputFromString(toolName, s)
-			if ok {
+	return normalizeParsedToolInput(toolName, obj)
+}
+
+func parseFlexibleToolInputValue(raw string) (any, error) {
+	candidates := []string{
+		strings.TrimSpace(raw),
+		strings.TrimSpace(stripToolInputCodeFence(raw)),
+	}
+	if extracted, ok := extractBalancedJSON(raw); ok {
+		candidates = append(candidates, strings.TrimSpace(extracted))
+	}
+
+	var lastErr error
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		obj, state, err := schema.ParsePartialJSON(candidate)
+		if state != schema.ParseStateFailed {
+			return obj, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("unable to parse tool input")
+	}
+	return nil, lastErr
+}
+
+func normalizeParsedToolInput(toolName string, obj any) (map[string]any, error) {
+	for depth := 0; depth < 6; depth++ {
+		switch value := obj.(type) {
+		case map[string]any:
+			if next, ok := unwrapToolInputMap(toolName, value); ok {
+				obj = next
+				continue
+			}
+			return value, nil
+		case string:
+			if parsed, err := parseFlexibleToolInputValue(value); err == nil {
+				obj = parsed
+				continue
+			}
+			if coerced, ok := coerceInputFromString(toolName, value); ok {
 				return coerced, nil
 			}
+			return nil, errors.New("tool input must be a JSON object")
+		case []any:
+			if len(value) == 1 {
+				obj = value[0]
+				continue
+			}
+			return nil, errors.New("tool input must be a JSON object")
+		default:
+			return nil, errors.New("tool input must be a JSON object")
 		}
-		return nil, errors.New("tool input must be a JSON object")
 	}
-	return m, nil
+	return nil, errors.New("tool input nesting is too deep")
+}
+
+func unwrapToolInputMap(toolName string, input map[string]any) (any, bool) {
+	if len(input) == 0 {
+		return nil, false
+	}
+	for _, key := range []string{"arguments", "args", "input", "params", "parameters", "payload", "data"} {
+		raw, ok := input[key]
+		if !ok {
+			continue
+		}
+		if len(outerInputExtras(input, key)) > 0 {
+			continue
+		}
+		if next, ok := normalizeWrappedToolInputValue(toolName, raw); ok {
+			return next, true
+		}
+	}
+	if len(input) == 1 {
+		for key, raw := range input {
+			if !toolEnvelopeMatches(toolName, key) {
+				continue
+			}
+			if next, ok := normalizeWrappedToolInputValue(toolName, raw); ok {
+				return next, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func normalizeWrappedToolInputValue(toolName string, raw any) (any, bool) {
+	switch value := raw.(type) {
+	case map[string]any:
+		return value, true
+	case string:
+		if parsed, err := parseFlexibleToolInputValue(value); err == nil {
+			return parsed, true
+		}
+		if coerced, ok := coerceInputFromString(toolName, value); ok {
+			return coerced, true
+		}
+	case []any:
+		if len(value) == 1 {
+			return normalizeWrappedToolInputValue(toolName, value[0])
+		}
+	}
+	return nil, false
+}
+
+func outerInputExtras(input map[string]any, wrappedKey string) map[string]any {
+	hasExplicitEnvelopeName := false
+	for _, key := range []string{"name", "tool", "tool_name", "toolName"} {
+		if _, ok := input[key]; ok {
+			hasExplicitEnvelopeName = true
+			break
+		}
+	}
+
+	extras := make(map[string]any)
+	for key, value := range input {
+		if key == wrappedKey {
+			continue
+		}
+		switch key {
+		case "name", "tool", "tool_name", "toolName":
+			continue
+		case "id", "call_id", "type":
+			if hasExplicitEnvelopeName {
+				continue
+			}
+			extras[key] = value
+		default:
+			extras[key] = value
+		}
+	}
+	if len(extras) == 0 {
+		return nil
+	}
+	return extras
+}
+
+func toolEnvelopeMatches(toolName, key string) bool {
+	if normalizeToolName(key) == normalizeToolName(toolName) {
+		return true
+	}
+	if alias := toolNameAlias(key); alias != "" && normalizeToolName(alias) == normalizeToolName(toolName) {
+		return true
+	}
+	return false
+}
+
+func stripToolInputCodeFence(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) == 0 {
+		return trimmed
+	}
+	lines = lines[1:]
+	if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func extractBalancedJSON(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	start := strings.IndexAny(trimmed, "{[")
+	if start == -1 {
+		return "", false
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	var opener rune
+	for idx, r := range trimmed[start:] {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && inString:
+			escaped = true
+		case r == '"':
+			inString = !inString
+		case inString:
+		case r == '{' || r == '[':
+			if depth == 0 {
+				opener = r
+			}
+			depth++
+		case r == '}' || r == ']':
+			if depth == 0 {
+				continue
+			}
+			if (opener == '{' && r != '}') || (opener == '[' && r != ']') {
+				continue
+			}
+			depth--
+			if depth == 0 {
+				return trimmed[start : start+idx+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 func repairToolCall(
@@ -399,6 +611,128 @@ func repairToolCall(
 		repairFromSchema(tool, input)
 	}
 	return call, tool, input, nil
+}
+
+func rewriteToHarnessWhenRequired(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	requirement := GetHarnessRequirementFromContext(ctx)
+	if !requirement.Required || !requirement.RequireBeforeDiscovery {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if canonical == "" || !isHarnessDiscoveryTool(canonical) {
+		return call, tool, input
+	}
+	if _, ok := GetHarnessDecision(ctx); ok {
+		return call, tool, input
+	}
+	runHarnessTool, ok := tools[RunHarnessToolName]
+	if !ok {
+		return call, tool, input
+	}
+	call.Name = RunHarnessToolName
+	tool = runHarnessTool
+	input = map[string]any{
+		"task": requirement.Task,
+	}
+	if workingDir := strings.TrimSpace(GetWorkingDirFromContext(ctx)); workingDir != "" {
+		input["working_dir"] = workingDir
+	}
+	return call, tool, input
+}
+
+func rewriteToStructuredDiscoveryWhenPreferred(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !policy.PreferStructuredDiscovery {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if canonical != LSToolName {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage != nil && usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0 {
+		return call, tool, input
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"pattern": "*",
+		}
+		if path, ok := input["path"].(string); ok && strings.TrimSpace(path) != "" {
+			input["path"] = strings.TrimSpace(path)
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
+func rewriteToExplicitPlanWhenRequired(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !policy.RequireExplicitPlan {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !shouldBlockForExplicitPlan(canonical, usage) {
+		return call, tool, input
+	}
+	next, ok := tools[UpdatePlanToolName]
+	if !ok {
+		return call, tool, input
+	}
+	call.Name = UpdatePlanToolName
+	tool = next
+	input = buildExplicitPlanCheckpointInput(ctx, policy, canonical)
+	return call, tool, input
+}
+
+func preferredStructuredDiscoveryQuery(ctx context.Context, policy LearnedToolPolicy) string {
+	if requirement := GetHarnessRequirementFromContext(ctx); strings.TrimSpace(requirement.Task) != "" {
+		return strings.TrimSpace(requirement.Task)
+	}
+	if taskFamily := strings.TrimSpace(policy.TaskFamily); taskFamily != "" {
+		return taskFamily
+	}
+	if reason := strings.TrimSpace(policy.Reason); reason != "" {
+		return reason
+	}
+	return "repo architecture and initialization"
 }
 
 func repairUpdatePlanInput(input map[string]any) map[string]any {
@@ -660,6 +994,9 @@ func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]an
 	if err := enforceHarnessRequirement(ctx, toolName); err != nil {
 		return err
 	}
+	if err := enforceLearnedRoutePolicy(ctx, toolName, input); err != nil {
+		return err
+	}
 	return enforceMemoryAccessPolicy(ctx, policy, toolName, input)
 }
 
@@ -671,6 +1008,26 @@ func enforceHarnessRequirement(ctx context.Context, toolName string) error {
 	canonical := canonicalToolNameForModePolicy(toolName)
 	if canonical == "" {
 		canonical = normalizeToolName(toolName)
+	}
+	if canonical == "" || canonical == RunHarnessToolName || !isHarnessProtectedTool(canonical) {
+		if !(requirement.RequireBeforeDiscovery && isHarnessDiscoveryTool(canonical)) {
+			return nil
+		}
+	}
+	if requirement.RequireBeforeDiscovery && isHarnessDiscoveryTool(canonical) {
+		if _, ok := GetHarnessDecision(ctx); ok {
+			return nil
+		}
+		reason := strings.TrimSpace(requirement.Reason)
+		if reason == "" {
+			reason = "broad discovery turn"
+		}
+		return NewToolGuidanceError(
+			toolName,
+			"harness_required",
+			"Run harness first.",
+			fmt.Sprintf("This turn is classified as complex (%s). Start with `run_harness` before repo-wide discovery so the route, skills, and validation plan are locked first. Discovery tool blocked: %s.", reason, canonical),
+		)
 	}
 	if canonical == "" || canonical == RunHarnessToolName || !isHarnessProtectedTool(canonical) {
 		return nil
@@ -699,6 +1056,218 @@ func isHarnessProtectedTool(toolName string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func isHarnessDiscoveryTool(toolName string) bool {
+	switch toolName {
+	case ToolSearchToolName, RGFilesToolName, RGToolName, AgenticViewToolName, LSToolName, GlobToolName, GrepToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[string]any) error {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !policy.HasGuardrails() {
+		return nil
+	}
+	canonical := canonicalToolNameForModePolicy(toolName)
+	if canonical == "" {
+		canonical = normalizeToolName(toolName)
+	}
+	if canonical != BashToolName || !policy.ForbidBashDiscovery {
+		if canonical == LSToolName && policy.PreferStructuredDiscovery {
+			usage := GetToolUsageStateFromContext(ctx)
+			if usage != nil && usage.Count(LSToolName) >= 1 && usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, AgenticViewToolName) == 0 {
+				return NewToolGuidanceError(
+					toolName,
+					"learned_route_policy",
+					"Use structured discovery tools.",
+					fmt.Sprintf(
+						"%s: repeated `ls` browsing is blocked before structured discovery. After one quick layout check, switch to `tool_search`, `rg_files`, `rg`, or `agentic_view` instead of another `ls` sweep.",
+						policy.GuidanceReason(),
+					),
+				)
+			}
+		}
+		if policy.RequireExplicitPlan {
+			usage := GetToolUsageStateFromContext(ctx)
+			if shouldBlockForExplicitPlan(canonical, usage) {
+				return NewToolGuidanceError(
+					toolName,
+					"learned_route_policy",
+					"Publish update_plan before continuing.",
+					fmt.Sprintf(
+						"%s: broad design/research turns must lock the analysis plan after the first real evidence pass. After `run_harness` and the initial structured read/search context, call `update_plan` before continuing with more discovery, delegation, or execution. Blocked tool: %s.",
+						policy.GuidanceReason(),
+						canonical,
+					),
+				)
+			}
+		}
+		if policy.RequireContextRead && isLearnedContextProtectedTool(canonical) && !hasBroadInitializationContext(GetToolUsageStateFromContext(ctx)) {
+			return NewToolGuidanceError(
+				toolName,
+				"learned_route_policy",
+				"Read more code before mutating or executing.",
+				fmt.Sprintf(
+					"%s: broad initialization turns must gather evidence before writing or executing. Complete structured discovery with `tool_search`, `rg_files`, or `rg`, then inspect real code with `agentic_view`, `view`, or `single_view` before using %s.",
+					policy.GuidanceReason(),
+					canonical,
+				),
+			)
+		}
+		return nil
+	}
+	command, _ := input["command"].(string)
+	command = strings.TrimSpace(command)
+	if !looksLikeDiscoveryShellCommand(command) {
+		return nil
+	}
+	return NewToolGuidanceError(
+		toolName,
+		"learned_route_policy",
+		"Use structured discovery tools.",
+		fmt.Sprintf(
+			"%s: discovery-oriented bash is blocked. Use `tool_search` when the file or symbol is unknown, `rg_files` for path-shape search, `rg` for exact content search, `agentic_view` for broad reads, and `ls` only for layout checks. Blocked command: %s",
+			policy.GuidanceReason(),
+			command,
+		),
+	)
+}
+
+func isLearnedContextProtectedTool(toolName string) bool {
+	switch toolName {
+	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasBroadInitializationContext(usage *ToolUsageState) bool {
+	if usage == nil {
+		return false
+	}
+	hasStructuredDiscovery := usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0
+	hasCodeRead := usage.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
+	return hasStructuredDiscovery && hasCodeRead
+}
+
+func shouldBlockForExplicitPlan(toolName string, usage *ToolUsageState) bool {
+	if usage == nil || usage.HasPublishedPlan() || !hasPlanningSeedContext(usage) {
+		return false
+	}
+	return isLearnedPlanProtectedTool(toolName)
+}
+
+func hasPlanningSeedContext(usage *ToolUsageState) bool {
+	if usage == nil {
+		return false
+	}
+	hasStructuredDiscovery := usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0
+	hasCodeRead := usage.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
+	return hasStructuredDiscovery && hasCodeRead
+}
+
+func isLearnedPlanProtectedTool(toolName string) bool {
+	switch toolName {
+	case ToolSearchToolName, RGFilesToolName, RGToolName, AgenticViewToolName, ViewToolName, SingleViewToolName, LSToolName, GlobToolName, GrepToolName,
+		"agent", "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "spawn_agents_on_csv",
+		BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func recordPreparedToolUsage(ctx context.Context, toolName string, input map[string]any) {
+	if skip, ok := ctx.Value(SkipPreparedToolUsageContextKey).(bool); ok && skip {
+		return
+	}
+	_ = input
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage == nil {
+		return
+	}
+	canonical := canonicalToolNameForModePolicy(toolName)
+	if canonical == "" {
+		canonical = normalizeToolName(toolName)
+	}
+	usage.Increment(canonical)
+	if canonical == UpdatePlanToolName {
+		usage.MarkPlanPublished()
+	}
+}
+
+func looksLikeDiscoveryShellCommand(command string) bool {
+	command = strings.ToLower(strings.TrimSpace(command))
+	if command == "" {
+		return false
+	}
+	prefixes := []string{
+		"ls",
+		"find ",
+		"fd ",
+		"rg ",
+		"grep ",
+		"cat ",
+		"bat ",
+		"sed -n ",
+		"tree",
+		"ack ",
+		"ag ",
+		"wc ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(command, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildExplicitPlanCheckpointInput(ctx context.Context, policy LearnedToolPolicy, blockedToolName string) map[string]any {
+	task := strings.TrimSpace(GetHarnessRequirementFromContext(ctx).Task)
+	if task == "" {
+		task = strings.TrimSpace(policy.TaskFamily)
+	}
+	explanation := "Lock the broad analysis plan after the first real repository evidence pass before continuing with " + blockedToolName + "."
+
+	focusStep := "Compare candidate designs and trade-offs"
+	validateStep := "Validate recommendation against repo constraints"
+	deliverStep := "Deliver final repo-grounded recommendation"
+	if strings.Contains(strings.ToLower(policy.TaskFamily), "research/") || strings.HasPrefix(strings.ToLower(policy.TaskFamily), "research") {
+		focusStep = "Compare research directions and trade-offs"
+		validateStep = "Validate conclusions against repo evidence"
+		deliverStep = "Deliver final research recommendation"
+	}
+
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Collect initial repository evidence", Status: StepStatusCompleted},
+			{Step: focusStep, Status: StepStatusInProgress},
+			{Step: validateStep, Status: StepStatusPending},
+			{Step: deliverStep, Status: StepStatusPending},
+		},
+	})
+	if trimmed := strings.TrimSpace(task); trimmed != "" {
+		args.Plan[1].Step = focusStep + " for " + trimmed
+	}
+
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
 	}
 }
 
@@ -1102,11 +1671,10 @@ func simpleBashToTool(command string) (string, map[string]any, bool) {
 		return rewriteSimpleLSCommand(parts)
 	case "tree":
 		return rewriteSimpleTreeCommand(parts)
-	case "cat":
-		if len(parts) != 2 || strings.HasPrefix(parts[1], "-") {
-			return "", nil, false
-		}
-		return SingleViewToolName, map[string]any{"file_path": parts[1]}, true
+	case "cat", "bat":
+		return rewriteSimpleCatCommand(parts)
+	case "eza":
+		return rewriteSimpleLSCommand(append([]string{"ls"}, parts[1:]...))
 	case "grep", "rg":
 		return rewriteSimpleSearchCommand(parts)
 	case "sed":
@@ -1155,16 +1723,13 @@ func rewriteSimpleBashReadCommand(command string) (string, map[string]any, bool)
 
 	if matches := findNameCommandPattern.FindStringSubmatch(cmd); len(matches) == 3 {
 		searchPath := strings.TrimSpace(trimShellQuotes(matches[1]))
-		pattern := strings.TrimSpace(matches[2])
-		if searchPath == "" || pattern == "" {
+		query := strings.TrimSpace(matches[2])
+		if searchPath == "" || query == "" {
 			return "", nil, false
 		}
-		if !strings.Contains(pattern, "/") {
-			pattern = "**/" + pattern
-		}
-		return GlobToolName, map[string]any{
-			"path":    searchPath,
-			"pattern": pattern,
+		return RGFilesToolName, map[string]any{
+			"path":  searchPath,
+			"query": query,
 		}, true
 	}
 
@@ -1181,6 +1746,31 @@ func rewriteSimpleBashReadCommand(command string) (string, map[string]any, bool)
 	}
 
 	return "", nil, false
+}
+
+func rewriteSimpleCatCommand(parts []string) (string, map[string]any, bool) {
+	if len(parts) < 2 {
+		return "", nil, false
+	}
+	files := make([]string, 0, len(parts)-1)
+	for _, part := range parts[1:] {
+		if part == "--" {
+			continue
+		}
+		if strings.HasPrefix(part, "-") {
+			return "", nil, false
+		}
+		files = append(files, trimShellQuotes(part))
+	}
+	files = uniqueStrings(files)
+	switch len(files) {
+	case 0:
+		return "", nil, false
+	case 1:
+		return SingleViewToolName, map[string]any{"file_path": files[0]}, true
+	default:
+		return AgenticViewToolName, map[string]any{"file_paths": files}, true
+	}
 }
 
 func rewriteSimpleLSCommand(parts []string) (string, map[string]any, bool) {
@@ -1271,6 +1861,7 @@ func rewriteSimpleSearchCommand(parts []string) (string, map[string]any, bool) {
 	if len(parts) == 0 || (parts[0] != "grep" && parts[0] != "rg") {
 		return "", nil, false
 	}
+	commandName := parts[0]
 
 	var (
 		pattern         string
@@ -1285,7 +1876,7 @@ func rewriteSimpleSearchCommand(parts []string) (string, map[string]any, bool) {
 		switch {
 		case part == "--":
 			continue
-		case part == "-n" || part == "-l" || part == "-H" || part == "-S" || part == "-s" || part == "--line-number" || part == "--files-with-matches" || part == "--with-filename":
+		case part == "-n" || part == "-l" || part == "-H" || part == "-S" || part == "-s" || part == "-R" || part == "-r" || part == "--recursive" || part == "--line-number" || part == "--files-with-matches" || part == "--with-filename":
 			continue
 		case part == "-F" || part == "--fixed-strings":
 			literalText = true
@@ -1355,18 +1946,6 @@ func rewriteSimpleSearchCommand(parts []string) (string, map[string]any, bool) {
 	}
 
 	input := map[string]any{}
-	if caseInsensitive {
-		if literalText || !patternLooksRegex(pattern) {
-			input["pattern"] = "(?i)" + regexp.QuoteMeta(pattern)
-		} else {
-			input["pattern"] = "(?i)" + pattern
-		}
-	} else {
-		input["pattern"] = pattern
-		if literalText {
-			input["literal_text"] = true
-		}
-	}
 	if include != "" {
 		input["include"] = include
 	}
@@ -1387,6 +1966,28 @@ func rewriteSimpleSearchCommand(parts []string) (string, map[string]any, bool) {
 		input["path"] = searchRoots[0]
 	default:
 		input["paths"] = searchRoots
+	}
+
+	if commandName == "rg" {
+		input["pattern"] = pattern
+		input["case_sensitive"] = !caseInsensitive
+		if literalText {
+			input["literal_text"] = true
+		}
+		return RGToolName, input, true
+	}
+
+	if caseInsensitive {
+		if literalText || !patternLooksRegex(pattern) {
+			input["pattern"] = "(?i)" + regexp.QuoteMeta(pattern)
+		} else {
+			input["pattern"] = "(?i)" + pattern
+		}
+	} else {
+		input["pattern"] = pattern
+		if literalText {
+			input["literal_text"] = true
+		}
 	}
 
 	return GrepToolName, input, true
@@ -1527,6 +2128,8 @@ func coerceInputFromString(toolName, value string) (map[string]any, bool) {
 		return nil, false
 	}
 	switch toolName {
+	case RunHarnessToolName:
+		return map[string]any{"task": value}, true
 	case BashToolName:
 		return map[string]any{
 			"command":     value,
@@ -1540,9 +2143,23 @@ func coerceInputFromString(toolName, value string) (map[string]any, bool) {
 		return map[string]any{"pattern": value}, true
 	case GrepToolName:
 		return map[string]any{"pattern": value}, true
+	case WebSearchToolName, GoogleSearchToolName:
+		return map[string]any{"query": value}, true
+	case FetchToolName, WebFetchToolName:
+		return map[string]any{"url": value}, true
+	case AgenticFetchToolName:
+		if looksLikeURL(value) {
+			return map[string]any{"url": value}, true
+		}
+		return map[string]any{"prompt": value}, true
 	default:
 		return nil, false
 	}
+}
+
+func looksLikeURL(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
 }
 
 func looksLikeShellCommand(input string) bool {

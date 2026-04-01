@@ -8,6 +8,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/skills"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,6 +111,29 @@ Use Supabase auth procedures.`), 0o644))
 	loadResp := runAgentTool(t, loadTool, "load_skill", LoadSkillParams{Name: query})
 	require.Contains(t, loadResp.Content, "Successfully loaded local skill")
 	require.Contains(t, loadResp.Content, "Use Supabase auth procedures.")
+}
+
+func TestLoadSkillCanUseBundledCatalogWithoutProjectCopy(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	cfg, err := config.Init(workingDir, "", false)
+	require.NoError(t, err)
+
+	projectSkillsRoot := skills.ProjectSkillsDir(cfg.Options.DataDirectory)
+	entries, err := os.ReadDir(projectSkillsRoot)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	cfg.Options.SkillsPaths = []string{projectSkillsRoot}
+
+	coord := &coordinator{cfg: cfg}
+	loadTool, err := coord.loadSkillTool(t.Context())
+	require.NoError(t, err)
+
+	loadResp := runAgentTool(t, loadTool, "load_skill", LoadSkillParams{Name: "slack"})
+	require.Contains(t, loadResp.Content, "Successfully activated internal [System] skill: slack")
+	require.Contains(t, loadResp.Content, "Slack Actions")
 }
 
 func runAgentTool[T any](t *testing.T, tool fantasy.AgentTool, name string, params T) fantasy.ToolResponse {

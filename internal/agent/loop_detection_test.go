@@ -142,6 +142,35 @@ func TestHasRepeatedToolCalls(t *testing.T) {
 	})
 }
 
+func TestDetectRepeatedToolCallsReturnsLoopDetails(t *testing.T) {
+	t.Parallel()
+
+	steps := make([]fantasy.StepResult, 10)
+	for i := 0; i < 6; i++ {
+		steps[i] = makeToolStep("read", `{"file":"a.go"}`, "content")
+	}
+	for i := 6; i < 10; i++ {
+		steps[i] = makeToolStep("tool", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+	}
+
+	loop, ok := detectRepeatedToolCalls(steps, 10, 5)
+	if !ok {
+		t.Fatal("expected loop details")
+	}
+	if loop.RepeatCount != 6 {
+		t.Fatalf("unexpected repeat count: %d", loop.RepeatCount)
+	}
+	if loop.WindowSize != 10 {
+		t.Fatalf("unexpected window size: %d", loop.WindowSize)
+	}
+	if len(loop.ToolNames) != 1 || loop.ToolNames[0] != "read" {
+		t.Fatalf("unexpected tool names: %#v", loop.ToolNames)
+	}
+	if loop.Signature == "" {
+		t.Fatal("expected loop signature to be populated")
+	}
+}
+
 func TestGetToolInteractionSignature(t *testing.T) {
 	t.Run("empty content returns empty string", func(t *testing.T) {
 		sig := getToolInteractionSignature(fantasy.ResponseContent{})

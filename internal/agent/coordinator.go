@@ -285,6 +285,8 @@ type coordinator struct {
 	// Embedding-based skill retrieval.
 	embeddingService *skills.EmbeddingService
 	discoveredSkills []*skills.Skill
+	skillsMu         sync.Mutex
+	skillsSignature  string
 
 	// Google search failure tracking - fallback to DDG after 2 failures
 	googleSearchFailures      sync.Map // map[string]int (sessionID -> failureCount)
@@ -324,6 +326,7 @@ type coordinator struct {
 	toolCacheMu               sync.RWMutex
 	memoryPipe                *memoryPipeline
 	checkpointService         *memory.CheckpointService
+	singularity               *singularityManager
 	cachedTools               []fantasy.AgentTool
 	cachedToolNames           []string
 	subAgentLaunchMemoryMu    sync.Mutex
@@ -417,6 +420,7 @@ func NewCoordinator(
 		lspManager:                lspManager,
 		memory:                    memory.NewMemoryService(db.New(conn), conn),
 		memoryCompiler:            memory.NewCompiler(conn, nil),
+		singularity:               newSingularityManager(cfg),
 		agents:                    make(map[string]SessionAgent),
 		mainAgents:                make(map[string]SessionAgent),
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
@@ -742,7 +746,39 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 
 	var skillContext string
 	var activeSkillNames []string
+	var learnedRoute learnedRoutePolicy
+	var learnedToolPolicy tools.LearnedToolPolicy
+	var learnedHarness *tools.HarnessRequirement
+	var learnedFamily learnedTaskFamily
 	selectedMCP := map[string]struct{}(nil)
+
+	if c.singularity != nil {
+		if policy, family, ok := c.singularity.LookupPolicy(env.userPrompt); ok {
+			learnedRoute = policy
+			learnedFamily = family
+			if learnedHints, skillNames := c.singularity.RenderPromptHints(policy); strings.TrimSpace(learnedHints) != "" {
+				skillContext = appendSkillContext(skillContext, learnedHints)
+				activeSkillNames = append(activeSkillNames, skillNames...)
+			}
+			learnedToolPolicy = c.singularity.LearnedToolPolicy(policy)
+			learnedHarness = c.singularity.LearnedHarnessRequirement(env.userPrompt, policy)
+		} else if policy, family, ok := coldStartRoutePolicy(env.userPrompt); ok {
+			learnedRoute = policy
+			learnedFamily = family
+			if learnedHints, skillNames := c.singularity.RenderPromptHints(policy); strings.TrimSpace(learnedHints) != "" {
+				skillContext = appendSkillContext(skillContext, learnedHints)
+				activeSkillNames = append(activeSkillNames, skillNames...)
+			}
+			learnedToolPolicy = c.singularity.LearnedToolPolicy(policy)
+			learnedHarness = c.singularity.LearnedHarnessRequirement(env.userPrompt, policy)
+		}
+	}
+	if learnedFamily.ID == "" {
+		learnedFamily = classifyLearnedTaskFamily(env.userPrompt)
+	}
+	if shouldInjectSingularityCognitiveContract(env.userPrompt, learnedFamily) {
+		skillContext = appendSkillContext(skillContext, renderSingularityCognitiveContract(buildSingularityCognitiveProfile(env.userPrompt, learnedFamily)))
+	}
 
 	if env.deferPreflight {
 		c.refreshMCPPreflightAsync(env.sessionID, env.userPrompt)
@@ -753,7 +789,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		if err != nil {
 			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
 		} else if strings.TrimSpace(subAgentContext) != "" {
-			skillContext = subAgentContext
+			skillContext = appendSkillContext(skillContext, subAgentContext)
 		}
 	}
 
@@ -833,19 +869,21 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		skillContext += orchestrationContext
 	}
 	call := SessionAgentCall{
-		SessionID:        env.sessionID,
-		Prompt:           env.userPrompt,
-		SkillContext:     skillContext,
-		ActiveSkills:     activeSkillNames,
-		ActiveTools:      activeTools,
-		Attachments:      env.attachments,
-		MaxOutputTokens:  env.maxTokens,
-		ProviderOptions:  env.mergedOptions,
-		Temperature:      env.temp,
-		TopP:             env.topP,
-		TopK:             env.topK,
-		FrequencyPenalty: env.freqPenalty,
-		PresencePenalty:  env.presPenalty,
+		SessionID:         env.sessionID,
+		Prompt:            env.userPrompt,
+		SkillContext:      skillContext,
+		ActiveSkills:      activeSkillNames,
+		ActiveTools:       activeTools,
+		LearnedToolPolicy: learnedToolPolicy,
+		HarnessOverride:   learnedHarness,
+		Attachments:       env.attachments,
+		MaxOutputTokens:   env.maxTokens,
+		ProviderOptions:   env.mergedOptions,
+		Temperature:       env.temp,
+		TopP:              env.topP,
+		TopK:              env.topK,
+		FrequencyPenalty:  env.freqPenalty,
+		PresencePenalty:   env.presPenalty,
 	}
 	if env.userMessage.ID != "" {
 		call.PrecreatedUser = &env.userMessage
@@ -862,6 +900,9 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
 		"message_id": env.userMessage.ID,
 	}))
+	if c.singularity != nil {
+		c.singularity.StartTurn(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute)
+	}
 	result, err := agent.Run(ctx, call)
 	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
 		if err != nil {
@@ -871,6 +912,11 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		}
 	}
 	if err != nil {
+		if c.singularity != nil {
+			if trace := c.singularity.FinishTurn(env.sessionID, "error", err.Error()); trace != nil {
+				go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
+			}
+		}
 		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
 			"session_id": env.sessionID,
 			"error":      err.Error(),
@@ -884,6 +930,11 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	})
 	if c.pmem != nil {
 		c.pmem.RecordAssistantTurn(ctx, env.sessionID, extractAgentResultText(result))
+	}
+	if c.singularity != nil {
+		if trace := c.singularity.FinishTurn(env.sessionID, "completed", extractAgentResultText(result)); trace != nil {
+			go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
+		}
 	}
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, extractAgentResultText(result), "completed", nil))
 	return result, nil
@@ -1129,6 +1180,7 @@ func (c *coordinator) matchSkillsByKeyword(userPrompt string) []*skills.Skill {
 	}
 
 	if len(matched) > 0 {
+		categories := slices.Collect(maps.Keys(triggeredCategories))
 		names := make([]string, len(matched))
 		for i, s := range matched {
 			// Use folder name as display name if YAML name is a placeholder
@@ -1138,7 +1190,7 @@ func (c *coordinator) matchSkillsByKeyword(userPrompt string) []*skills.Skill {
 			}
 			names[i] = displayName
 		}
-		slog.Info("Hardwired skill keyword match", "categories", maps.Keys(triggeredCategories), "matched", names)
+		slog.Info("Hardwired skill keyword match", "categories", categories, "matched", names)
 	}
 
 	return matched
@@ -1170,10 +1222,38 @@ func (c *coordinator) ensureSkillsDiscovered() {
 	for _, pth := range c.cfg.Options.SkillsPaths {
 		expandedPaths = append(expandedPaths, promptpkg.ExpandPath(pth, *c.cfg))
 	}
-	c.discoveredSkills = skills.Discover(expandedPaths)
+
+	signature := skillDiscoverySignature(expandedPaths)
+
+	c.skillsMu.Lock()
+	defer c.skillsMu.Unlock()
+
+	if c.discoveredSkills != nil && c.skillsSignature == signature {
+		return
+	}
+
+	localSkills := skills.Discover(expandedPaths)
+	c.discoveredSkills = mergeSkills(localSkills, skills.DiscoverBundledSkills())
+	c.skillsSignature = signature
 	if len(c.discoveredSkills) > 0 {
 		slog.Debug("Discovered skills for embedding", "count", len(c.discoveredSkills))
 	}
+}
+
+func skillDiscoverySignature(paths []string) string {
+	var b strings.Builder
+	for _, pth := range paths {
+		cleaned := filepath.Clean(pth)
+		b.WriteString(cleaned)
+		if info, err := os.Stat(cleaned); err == nil {
+			b.WriteString("#")
+			b.WriteString(info.ModTime().UTC().Format(time.RFC3339Nano))
+		} else {
+			b.WriteString("#missing")
+		}
+		b.WriteString(";")
+	}
+	return b.String()
 }
 
 func shouldPrimeAutonomousSubAgents(userPrompt string) bool {
@@ -1217,19 +1297,34 @@ func isInitializationStylePrompt(userPrompt string) bool {
 	if prompt == "" {
 		return false
 	}
-	signals := []string{
+	if hasAnySignal(prompt, []string{
 		"initialize the codebase",
+		"initialize this codebase",
 		"initialize codebase",
+		"initialize the repo",
+		"initialize this repo",
+		"initialize repository",
 		"initialize the project",
 		"initialize project",
-		"generate agents.md",
-		"create agents.md",
-		"update agents.md",
-		"read the codebase",
-		"read codebase",
+		"repo initialization",
+		"codebase initialization",
+		"project initialization",
 		"launch submission",
+	}) {
+		return true
 	}
-	return hasAnySignal(prompt, signals)
+	if hasAnySignal(prompt, []string{"generate agents.md", "create agents.md", "write agents.md", "draft agents.md", "update agents.md"}) {
+		return true
+	}
+	if hasAnySignal(prompt, []string{"initialize", "initialise", "bootstrap", "onboard", "orient"}) &&
+		hasAnySignal(prompt, []string{"codebase", "repo", "repository", "project"}) {
+		return true
+	}
+	if strings.Contains(prompt, "agents.md") &&
+		hasAnySignal(prompt, []string{"future agents", "repo-wide", "across auth", "across billing", "across the repo", "across the codebase"}) {
+		return true
+	}
+	return false
 }
 
 func buildAutonomousSubAgentTasks(userPrompt string) []autonomousSubAgentTask {
@@ -1517,13 +1612,9 @@ func (c *coordinator) buildAgentWithWorkingDirInternal(ctx context.Context, prom
 		MemoryConsolidator:   c.ConsolidateMemory,
 		WaitBackground:       c.waitForBackgroundWork,
 		CheckpointTurn:       c.checkpointTurn,
-		ToolObserver: func() SessionToolObserver {
-			if isSubAgent {
-				return c
-			}
-			return nil
-		}(),
-		WriteScope: writeScope,
+		ToolObserver:         c,
+		FileTracker:          c.filetracker,
+		WriteScope:           writeScope,
 	})
 
 	initAgent := func() (err error) {
@@ -1959,7 +2050,7 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 
-	return filteredTools, nil
+	return tools.WrapRuntimePreflightTools(filteredTools), nil
 }
 
 func (c *coordinator) buildPythonTool(ctx context.Context, agent config.Agent) (fantasy.AgentTool, error) {

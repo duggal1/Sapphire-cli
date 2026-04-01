@@ -91,7 +91,7 @@ func validateBashInputMap(input map[string]any) error {
 			BashToolName,
 			"use_structured_tools",
 			"Use structured tools instead of bash.",
-			"do not use bash for repository discovery, code search, or file reads when structured tools exist. Shell commands like ls/find/tree/fd/eza belong to ls/glob, grep/rg belong to grep, and cat/head/tail/sed slices belong to single_view or agentic_view. Use web_search/google_search for web lookup, and pass spawn_agent/send_input messages directly instead of writing temporary payload files.",
+			"do not use bash for repository discovery, code search, or file reads when structured tools exist. Route strictly: unknown location -> tool_search; filename/path discovery -> rg_files; exact text or symbol search -> rg; layout inspection -> ls; broad file reads -> agentic_view; trivial one-file reads -> single_view. Use web_search/google_search for web lookup, and pass spawn_agent/send_input messages directly instead of writing temporary payload files.",
 		)
 	}
 	return nil

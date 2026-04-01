@@ -166,6 +166,11 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 			if err := ValidatePlanItems(args.Plan); err != nil {
 				return fantasy.ToolResponse{}, err
 			}
+			if allPlanItemsCompleted(args.Plan) {
+				if err := RequirePostWriteVerificationCompletion(ctx, GetLearnedToolPolicyFromContext(ctx)); err != nil {
+					return fantasy.ToolResponse{}, err
+				}
+			}
 
 			inProgressCount := 0
 			for _, item := range args.Plan {
@@ -223,4 +228,16 @@ func NewUpdatePlanTool(sessions session.Service) fantasy.AgentTool {
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)
+}
+
+func allPlanItemsCompleted(plan []PlanItem) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	for _, item := range plan {
+		if normalizeStepStatus(string(item.Status)) != StepStatusCompleted {
+			return false
+		}
+	}
+	return true
 }

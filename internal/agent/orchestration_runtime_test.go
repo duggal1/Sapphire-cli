@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/fantasy"
 	agentactivity "github.com/duggal1/Sapphire-cli/internal/agent/activity"
 	agentmailbox "github.com/duggal1/Sapphire-cli/internal/agent/mailbox"
 	agentmemory "github.com/duggal1/Sapphire-cli/internal/agent/memory"
 	agentstate "github.com/duggal1/Sapphire-cli/internal/agent/state"
+	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/db"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
@@ -363,14 +365,46 @@ func TestCoordinatorSubAgentToolObserverUpdatesTelemetry(t *testing.T) {
 	coord.subAgentRegistry.upsert(runner.id, runner)
 
 	coord.OnToolInputStart("sub-session", "agentic_view")
-	coord.OnToolCall("sub-session", "agentic_view")
+	coord.OnToolCall("sub-session", "agentic_view", "")
 	snap := runner.snapshot()
 	require.Equal(t, "agentic_view", snap.CurrentTool)
 	require.Equal(t, 1, snap.ToolCallCount)
 
-	coord.OnToolResult("sub-session", "agentic_view")
+	coord.OnToolResult("sub-session", "agentic_view", "", "", false)
 	snap = runner.snapshot()
 	require.Empty(t, snap.CurrentTool)
 	require.Equal(t, "agentic_view", snap.LastTool)
 	require.Equal(t, 1, snap.ToolCallCount)
+}
+
+func TestCoordinatorOnToolResultReconcilesRuntimeRewriteForSingularity(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	prompt := "Initialize the codebase broadly and refresh AGENTS.md."
+	manager.StartTurn("sub-session", prompt, manager.repoRoot, nil, learnedRoutePolicy{})
+
+	coord := &coordinator{
+		singularity:      manager,
+		subAgentRegistry: newSubAgentRegistry(),
+	}
+
+	coord.OnToolCall("sub-session", agenttools.LSToolName, `{"path":"."}`)
+	metadata := agenttools.AnnotateRuntimeExecutionMetadata("", fantasy.ToolCall{
+		ID:    "call-1",
+		Name:  agenttools.LSToolName,
+		Input: `{"path":"."}`,
+	}, fantasy.ToolCall{
+		ID:    "call-1",
+		Name:  agenttools.ToolSearchToolName,
+		Input: `{"query":"Initialize the codebase broadly and refresh AGENTS.md."}`,
+	})
+	coord.OnToolResult("sub-session", agenttools.ToolSearchToolName, "search ok", metadata, false)
+
+	trace := manager.FinishTurn("sub-session", "completed", "structured discovery executed")
+	require.NotNil(t, trace)
+	require.Equal(t, []string{agenttools.ToolSearchToolName}, trace.OrderedTools)
+	require.Equal(t, 1, trace.ToolCalls[agenttools.ToolSearchToolName])
+	require.Zero(t, trace.ToolCalls[agenttools.LSToolName])
+	require.Equal(t, 1, trace.ToolResults[agenttools.ToolSearchToolName])
 }

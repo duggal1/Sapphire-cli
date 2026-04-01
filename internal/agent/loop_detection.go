@@ -13,29 +13,43 @@ const (
 	loopDetectionMaxRepeats = 5
 )
 
+type repeatedToolLoop struct {
+	Signature   string
+	RepeatCount int
+	WindowSize  int
+	ToolNames   []string
+}
+
 // hasRepeatedToolCalls checks whether the agent is stuck in a loop by looking
 // at recent steps. It examines the last windowSize steps and returns true if
 // any tool-call signature appears more than maxRepeats times.
 func hasRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats int) bool {
+	_, detected := detectRepeatedToolCalls(steps, windowSize, maxRepeats)
+	return detected
+}
+
+func detectRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats int) (repeatedToolLoop, bool) {
 	if len(steps) < windowSize {
-		return false
+		return repeatedToolLoop{}, false
 	}
 
 	window := steps[len(steps)-windowSize:]
 	counts := make(map[string]int)
 
 	for _, step := range window {
-		sig := getToolInteractionSignature(step.Content)
-		if sig == "" {
+		loop, ok := summarizeToolInteraction(step.Content)
+		if !ok || loop.Signature == "" {
 			continue
 		}
-		counts[sig]++
-		if counts[sig] > maxRepeats {
-			return true
+		counts[loop.Signature]++
+		if counts[loop.Signature] > maxRepeats {
+			loop.RepeatCount = counts[loop.Signature]
+			loop.WindowSize = len(window)
+			return loop, true
 		}
 	}
 
-	return false
+	return repeatedToolLoop{}, false
 }
 
 // getToolInteractionSignature computes a hash signature for the tool
@@ -89,4 +103,20 @@ func toolResultOutputString(result fantasy.ToolResultOutputContent) string {
 		return media.Data
 	}
 	return ""
+}
+
+func summarizeToolInteraction(content fantasy.ResponseContent) (repeatedToolLoop, bool) {
+	toolCalls := content.ToolCalls()
+	if len(toolCalls) == 0 {
+		return repeatedToolLoop{}, false
+	}
+
+	toolNames := make([]string, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		toolNames = append(toolNames, tc.ToolName)
+	}
+	return repeatedToolLoop{
+		Signature: getToolInteractionSignature(content),
+		ToolNames: uniqueNonEmptyStrings(toolNames),
+	}, true
 }

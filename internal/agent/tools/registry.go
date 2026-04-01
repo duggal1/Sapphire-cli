@@ -101,13 +101,14 @@ func (r *Registry) AgentTools(names ...string) []fantasy.AgentTool {
 			}
 		}
 		spec := r.specs[name]
-		tools = append(tools, registryAgentTool{spec: spec})
+		tools = append(tools, registryAgentTool{spec: spec, registry: r})
 	}
 	return tools
 }
 
 type registryAgentTool struct {
-	spec ToolSpec
+	spec     ToolSpec
+	registry *Registry
 }
 
 func (t registryAgentTool) Info() fantasy.ToolInfo {
@@ -122,6 +123,13 @@ func (t registryAgentTool) Info() fantasy.ToolInfo {
 }
 
 func (t registryAgentTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if t.registry != nil {
+		prepared, _, err := PrepareToolCall(ctx, call, t.registry.toolMap())
+		if err != nil {
+			return fantasy.ToolResponse{}, err
+		}
+		call = prepared
+	}
 	return t.spec.Handler(ctx, json.RawMessage(call.Input), call)
 }
 
@@ -130,6 +138,17 @@ func (t registryAgentTool) ProviderOptions() fantasy.ProviderOptions {
 }
 
 func (t registryAgentTool) SetProviderOptions(opts fantasy.ProviderOptions) {}
+
+func (r *Registry) toolMap() map[string]fantasy.AgentTool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make(map[string]fantasy.AgentTool, len(r.specs))
+	for name, spec := range r.specs {
+		out[name] = registryAgentTool{spec: spec, registry: r}
+	}
+	return out
+}
 
 func normalizeToolInfoSchema(parameters map[string]any, required []string) (map[string]any, []string) {
 	if len(parameters) == 0 {

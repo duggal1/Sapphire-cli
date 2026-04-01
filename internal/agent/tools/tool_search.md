@@ -15,6 +15,7 @@ How to use it:
 - use `single_view` only if the resulting read is explicitly narrow and trivial
 - treat it as a locator shortcut, not as a substitute for reading the located code
 - prefer it before older generic browsing loops when the code location is still unknown
+- if you have multiple independent unknowns, issue multiple `tool_search` calls in parallel rather than serializing unrelated locator work
 
 Search strategy:
 - prefer durable index matches first when the codebase graph exists

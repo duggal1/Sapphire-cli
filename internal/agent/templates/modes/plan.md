@@ -54,6 +54,19 @@ Before asking any question, perform at least one **targeted non-mutating explora
 
 If `agent.md` exists in the repository, read it first as a quick map of the codebase. Treat it as orientation only, not as sufficient evidence. After that, search the codebase for the files and symbols that actually control the task, then read those relevant code files fully.
 
+Use structured read-only routing with zero ambiguity:
+
+* unknown location, symbol, subsystem, or product term -> `tool_search`
+* known filename or path shape -> `rg_files`
+* known exact text or symbol string -> `rg`
+* exact line counts before long reads -> `wc_l`
+* file size or density checks -> `wc`
+* layout inspection -> `ls`
+* broad file reads -> `agentic_view`
+* trivial one-file read only -> `single_view`
+
+For non-trivial plan work, parallelize independent read-only discovery calls by default. Do not walk the repo through one serial locator/search/read at a time when the operations are independent.
+
 Exploration must be **deep**, not superficial. When a codebase is available, build an accurate mental model before planning:
 
 * Identify entrypoints, core modules, and architectural boundaries

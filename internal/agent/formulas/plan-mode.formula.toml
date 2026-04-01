@@ -32,7 +32,9 @@ title = "Analyze"
 needs = ["understand"]
 description = """
 Inspect the repo and identify the files, packages, and runtime seams involved in `{{ .task }}`.
-Use the available read-only tools before making assumptions.
+Use structured read-only tools before making assumptions.
+Route exploration strictly: unknown location -> tool_search, known path shape -> rg_files, known exact text -> rg, layout -> ls, broad reads -> agentic_view.
+Parallelize independent discovery calls instead of serializing unrelated searches.
 """
 acceptance = "Relevant files and seams are identified."
 
@@ -53,6 +55,8 @@ Each check must return a short structured report with:
 - `<must_fix>...</must_fix>`
 - `<should_fix>...</should_fix>`
 - `<observations>...</observations>`
+
+Use structured read-only tools only. Do not use bash. Batch and parallelize independent search/read operations inside each check.
 """
 acceptance = "Five specialized exploration checks have been launched."
 

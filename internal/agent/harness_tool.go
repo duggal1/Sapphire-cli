@@ -62,8 +62,32 @@ func buildHarnessRequirement(task string) tools.HarnessRequirement {
 	if normalized == "" {
 		return tools.HarnessRequirement{}
 	}
-
+	goalType := inferHarnessGoalType(normalized, "")
 	decision := evaluateSubAgentLaunch(normalized)
+
+	if isInitializationStylePrompt(normalized) {
+		return tools.HarnessRequirement{
+			Required:               true,
+			Reason:                 "broad codebase initialization",
+			ComplexityScore:        max(decision.Complexity, 3),
+			Task:                   normalized,
+			RequireBeforeDiscovery: true,
+		}
+	}
+	if isBroadHarnessAnalysisTask(normalized, goalType, decision) {
+		reason := "broad design analysis"
+		if goalType == "research" {
+			reason = "broad research task"
+		}
+		return tools.HarnessRequirement{
+			Required:               true,
+			Reason:                 reason,
+			ComplexityScore:        max(decision.Complexity, 3),
+			Task:                   normalized,
+			RequireBeforeDiscovery: true,
+		}
+	}
+
 	required := false
 	reason := "simple task"
 	switch {
@@ -100,7 +124,7 @@ func hasHarnessOperationalSignal(task string) bool {
 		hasAnySignal(normalized, []string{
 			"frontend", "backend", "integration", "integrate", "auth", "database", "migration",
 			"refactor", "architecture", "deploy", "deployment", "performance", "security",
-			"debug", "observability", "multi-file", "across the codebase", "end-to-end", "e2e",
+			"debug", "research", "investigate", "analysis", "observability", "multi-file", "across the codebase", "end-to-end", "e2e",
 		})
 }
 
@@ -110,17 +134,35 @@ func inferHarnessGoalType(task string, explicit string) string {
 	}
 	normalized := strings.ToLower(task)
 	switch {
+	case isInitializationStylePrompt(normalized):
+		return "initialize"
 	case hasAnySignal(normalized, []string{"debug", "fix", "bug", "regression", "incident"}):
 		return "debug"
+	case hasAnySignal(normalized, []string{"research", "investigate", "survey", "deep dive", "explore the repo", "analyze the repo"}):
+		return "research"
 	case hasAnySignal(normalized, []string{"review", "audit", "inspect"}):
 		return "review"
-	case hasAnySignal(normalized, []string{"design", "ui", "ux", "copy", "content"}):
+	case hasAnySignal(normalized, []string{"architecture", "architect", "design", "ui", "ux", "copy", "content"}):
 		return "design"
 	case hasAnySignal(normalized, []string{"migrate", "migration", "upgrade", "refactor"}):
 		return "migration"
 	default:
 		return "implementation"
 	}
+}
+
+func isBroadHarnessAnalysisTask(task, goalType string, decision subAgentLaunchDecision) bool {
+	if goalType != "design" && goalType != "research" {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	if decision.Complexity >= 4 {
+		return true
+	}
+	if hasAnySignal(normalized, subAgentCodebaseSignals) || hasAnySignal(normalized, subAgentDependencySignals) || hasAnySignal(normalized, subAgentRiskSignals) {
+		return true
+	}
+	return hasAnySignal(normalized, []string{"repository", "repo", "codebase", "across", "compare", "trade-off", "tradeoff", "architecture", "design", "research"})
 }
 
 func normalizeHarnessMode(mode string) string {
@@ -297,7 +339,7 @@ func selectHarnessPattern(requirement tools.HarnessRequirement, decision subAgen
 	if requirement.Required && goalType == "migration" {
 		return "planner_executor_reviewer", "agent_team"
 	}
-	if requirement.Required && hasAnySignal(strings.ToLower(goalType), []string{"design", "review", "debug"}) {
+	if requirement.Required && hasAnySignal(strings.ToLower(goalType), []string{"design", "review", "debug", "research"}) {
 		return "producer_reviewer", "agent_team"
 	}
 	if requirement.Required {
@@ -383,6 +425,13 @@ func selectHarnessVerificationPlan(goalType, mode string) []string {
 			"run the narrowest fix validation first",
 			"check diagnostics after edits",
 			"confirm the regression is removed",
+		}
+	case "research":
+		return []string{
+			"lock the research question and acceptance criteria first",
+			"verify findings against repository evidence before concluding",
+			"compare viable options with explicit trade-offs",
+			"state uncertainty and missing evidence before final recommendations",
 		}
 	default:
 		return []string{

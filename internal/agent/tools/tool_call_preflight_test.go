@@ -43,6 +43,124 @@ func TestPrepareToolCallNormalizesEditAliases(t *testing.T) {
 	require.Equal(t, "beta", input["new_string"])
 }
 
+func TestPrepareToolCallUnwrapsArgumentsEnvelope(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		EditToolName: editTool,
+	}
+
+	call := fantasy.ToolCall{
+		ID:   "edit-envelope-1",
+		Name: EditToolName,
+		Input: `{
+			"name":"edit",
+			"arguments":"{\"path\":\"README.md\",\"old\":\"alpha\",\"replacement\":\"beta\"}"
+		}`,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), call, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "README.md", input["file_path"])
+	require.Equal(t, "alpha", input["old_string"])
+	require.Equal(t, "beta", input["new_string"])
+}
+
+func TestPrepareToolCallStripsFencedJSONEnvelope(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		SingleViewToolName: viewTool,
+	}
+
+	call := fantasy.ToolCall{
+		ID:   "view-envelope-1",
+		Name: SingleViewToolName,
+		Input: "```json\n" +
+			"{\"arguments\":{\"file_path\":\"README.md\",\"offset\":5}}\n" +
+			"```",
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), call, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "README.md", input["file_path"])
+	require.Equal(t, float64(5), input["offset"])
+}
+
+func TestPrepareToolCallExtractsJSONBlobFromProse(t *testing.T) {
+	t.Parallel()
+
+	searchTool := fantasy.NewAgentTool(
+		WebSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		WebSearchToolName: searchTool,
+	}
+
+	call := fantasy.ToolCall{
+		ID:    "web-search-blob-1",
+		Name:  WebSearchToolName,
+		Input: `Use this payload next: {"query":"agent loop detection"}`,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), call, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "agent loop detection", input["query"])
+}
+
+func TestPrepareToolCallCoercesRunHarnessRawString(t *testing.T) {
+	t.Parallel()
+
+	runHarnessTool := fantasy.NewAgentTool(
+		RunHarnessToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		RunHarnessToolName: runHarnessTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "harness-raw-1",
+		Name:  RunHarnessToolName,
+		Input: `Initialize the codebase thoroughly and lock the route first.`,
+	}, registry)
+	require.NoError(t, err)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "Initialize the codebase thoroughly and lock the route first.", input["task"])
+}
+
 func TestPrepareToolCallRejectsBashInPlanModeBeforeToolLookup(t *testing.T) {
 	t.Parallel()
 
@@ -265,6 +383,385 @@ func TestPrepareToolCallAllowsProtectedToolsAfterHarnessDecision(t *testing.T) {
 	require.Equal(t, EditToolName, prepared.Name)
 }
 
+func TestHarnessDecisionFallsBackToSessionContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "session-harness")
+	RecordHarnessDecision(ctx, HarnessDecision{
+		Required:        true,
+		ComplexityScore: 3,
+		Pattern:         "planner_executor_reviewer",
+	})
+
+	decision, ok := GetHarnessDecision(ctx)
+	require.True(t, ok)
+	require.Equal(t, "planner_executor_reviewer", decision.Pattern)
+}
+
+func TestGetToolUsageStateFallsBackToSharedSessionState(t *testing.T) {
+	t.Parallel()
+
+	state := ResetSharedToolUsageState("session-usage")
+	t.Cleanup(func() {
+		ClearSharedToolUsageState("session-usage")
+	})
+	state.Increment(ToolSearchToolName)
+
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "session-usage")
+	loaded := GetToolUsageStateFromContext(ctx)
+	require.NotNil(t, loaded)
+	require.Equal(t, 1, loaded.Count(ToolSearchToolName))
+}
+
+func TestPrepareToolCallRewritesDiscoveryToHarnessOnBroadInitialization(t *testing.T) {
+	t.Parallel()
+
+	searchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	runHarnessTool := fantasy.NewAgentTool(
+		RunHarnessToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-harness-init")
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Required:               true,
+		Reason:                 "broad codebase initialization",
+		ComplexityScore:        3,
+		Task:                   "Initialize the codebase thoroughly.",
+		RequireBeforeDiscovery: true,
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "search-harness-1",
+		Name:  ToolSearchToolName,
+		Input: `{"query":"routes"}`,
+	}, map[string]fantasy.AgentTool{ToolSearchToolName: searchTool, RunHarnessToolName: runHarnessTool})
+	require.NoError(t, err)
+	require.Equal(t, RunHarnessToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"task":"Initialize the codebase thoroughly."`)
+}
+
+func TestPrepareToolCallRejectsLearnedDiscoveryBash(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:          "implementation/broad/backend",
+		Reason:              "learned route policy for repeated large-repo implementation turns",
+		ForbidBashDiscovery: true,
+	})
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-bash-1",
+		Name:  BashToolName,
+		Input: `{"command":"find . -name '*.go'","description":"discover files"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "discovery-oriented bash is blocked")
+	require.Contains(t, err.Error(), "`tool_search`")
+}
+
+func TestPrepareToolCallRejectsRepeatedLSBeforeStructuredDiscovery(t *testing.T) {
+	t.Parallel()
+
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(LSToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-ls-1",
+		Name:  LSToolName,
+		Input: `{"path":"."}`,
+	}, map[string]fantasy.AgentTool{LSToolName: lsTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "repeated `ls` browsing is blocked")
+}
+
+func TestPrepareToolCallRewritesLSDiscoveryToToolSearchWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-ls-rewrite-1",
+		Name:  LSToolName,
+		Input: `{"path":"."}`,
+	}, map[string]fantasy.AgentTool{LSToolName: lsTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"query":"Initialize this codebase thoroughly."`)
+}
+
+func TestPrepareToolCallBlocksMutationUntilBroadInitializationContextExists(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "initialize/broad/codebase",
+		Reason:             "learned route policy for recurring initialize/broad/codebase turns",
+		RequireContextRead: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-edit-1",
+		Name:  EditToolName,
+		Input: `{"file_path":"AGENTS.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must gather evidence before writing or executing")
+}
+
+func TestPrepareToolCallAllowsMutationAfterBroadInitializationContextExists(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "initialize/broad/codebase",
+		Reason:             "learned route policy for recurring initialize/broad/codebase turns",
+		RequireContextRead: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-edit-2",
+		Name:  EditToolName,
+		Input: `{"file_path":"AGENTS.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.NoError(t, err)
+	require.Equal(t, EditToolName, prepared.Name)
+}
+
+func TestPrepareToolCallRequiresExplicitPlanAfterBroadDesignSeedContext(t *testing.T) {
+	t.Parallel()
+
+	searchTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:          "design/broad/backend+infra",
+		Reason:              "learned route policy for recurring design/broad/backend+infra turns",
+		RequireExplicitPlan: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-plan-1",
+		Name:  RGFilesToolName,
+		Input: `{"pattern":"*.go"}`,
+	}, map[string]fantasy.AgentTool{RGFilesToolName: searchTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Collect initial repository evidence"`)
+	require.Contains(t, prepared.Input, `"in_progress"`)
+}
+
+func TestPrepareToolCallAllowsBroadDesignContinuationAfterPlanPublished(t *testing.T) {
+	t.Parallel()
+
+	searchTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:          "design/broad/backend+infra",
+		Reason:              "learned route policy for recurring design/broad/backend+infra turns",
+		RequireExplicitPlan: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-plan-2",
+		Name:  RGFilesToolName,
+		Input: `{"pattern":"*.go"}`,
+	}, map[string]fantasy.AgentTool{RGFilesToolName: searchTool})
+	require.NoError(t, err)
+	require.Equal(t, RGFilesToolName, prepared.Name)
+}
+
+func TestWrapRuntimePreflightToolsAppliesHarnessGuardrail(t *testing.T) {
+	t.Parallel()
+
+	searchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	runHarnessTool := fantasy.NewAgentTool(
+		RunHarnessToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{Content: "harness ok"}, nil
+		},
+	)
+
+	wrapped := WrapRuntimePreflightTools([]fantasy.AgentTool{searchTool, runHarnessTool})
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-runtime-harness")
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Required:               true,
+		Reason:                 "broad codebase initialization",
+		ComplexityScore:        3,
+		Task:                   "Initialize the codebase thoroughly.",
+		RequireBeforeDiscovery: true,
+	})
+
+	resp, err := wrapped[0].Run(ctx, fantasy.ToolCall{
+		ID:    "runtime-search-1",
+		Name:  ToolSearchToolName,
+		Input: `{"query":"router"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "harness ok", resp.Content)
+	meta, ok := ParseRuntimeExecutionMetadata(resp.Metadata)
+	require.True(t, ok)
+	require.Equal(t, ToolSearchToolName, meta.RequestedToolName)
+	require.Equal(t, RunHarnessToolName, meta.ExecutedToolName)
+	require.True(t, meta.Rewritten)
+}
+
+func TestWrapRuntimePreflightToolsAnnotatesStructuredDiscoveryRewrite(t *testing.T) {
+	t.Parallel()
+
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{Content: "search ok"}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(LSToolName)
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	wrapped := WrapRuntimePreflightTools([]fantasy.AgentTool{lsTool, toolSearchTool})
+	resp, err := wrapped[0].Run(ctx, fantasy.ToolCall{
+		ID:    "runtime-ls-1",
+		Name:  LSToolName,
+		Input: `{"path":"."}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "search ok", resp.Content)
+
+	meta, ok := ParseRuntimeExecutionMetadata(resp.Metadata)
+	require.True(t, ok)
+	require.Equal(t, LSToolName, meta.RequestedToolName)
+	require.Equal(t, ToolSearchToolName, meta.ExecutedToolName)
+	require.True(t, meta.Rewritten)
+	require.NotEmpty(t, meta.ExecutedInput)
+}
+
 func TestPrepareToolCallBlocksMemoryReadToolsWhenPolicyDisallows(t *testing.T) {
 	t.Parallel()
 
@@ -412,7 +909,7 @@ func TestPrepareToolCallRewritesHeadBashToSingleView(t *testing.T) {
 	require.Equal(t, float64(80), input["limit"])
 }
 
-func TestPrepareToolCallRewritesFindNameBashToGlob(t *testing.T) {
+func TestPrepareToolCallRewritesFindNameBashToRGFiles(t *testing.T) {
 	t.Parallel()
 
 	bashTool := fantasy.NewAgentTool(
@@ -422,16 +919,16 @@ func TestPrepareToolCallRewritesFindNameBashToGlob(t *testing.T) {
 			return fantasy.ToolResponse{}, nil
 		},
 	)
-	globTool := fantasy.NewAgentTool(
-		GlobToolName,
+	rgFilesTool := fantasy.NewAgentTool(
+		RGFilesToolName,
 		"",
-		func(ctx context.Context, params GlobParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		func(ctx context.Context, params RGFilesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			return fantasy.ToolResponse{}, nil
 		},
 	)
 	registry := map[string]fantasy.AgentTool{
-		BashToolName: bashTool,
-		GlobToolName: globTool,
+		BashToolName:    bashTool,
+		RGFilesToolName: rgFilesTool,
 	}
 
 	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
@@ -440,12 +937,12 @@ func TestPrepareToolCallRewritesFindNameBashToGlob(t *testing.T) {
 		Input: `{"command":"find internal -name \"*mcp*\"","description":"discover files"}`,
 	}, registry)
 	require.NoError(t, err)
-	require.Equal(t, GlobToolName, prepared.Name)
+	require.Equal(t, RGFilesToolName, prepared.Name)
 
 	var input map[string]any
 	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
 	require.Equal(t, "internal", input["path"])
-	require.Equal(t, "**/*mcp*", input["pattern"])
+	require.Equal(t, "*mcp*", input["query"])
 }
 
 func TestPrepareToolCallRewritesLSFlagsBashToStructuredLS(t *testing.T) {
@@ -483,7 +980,7 @@ func TestPrepareToolCallRewritesLSFlagsBashToStructuredLS(t *testing.T) {
 	require.Equal(t, ".sapphire", input["path"])
 }
 
-func TestPrepareToolCallRewritesRGShellSearchToGrep(t *testing.T) {
+func TestPrepareToolCallRewritesRGShellSearchToRG(t *testing.T) {
 	t.Parallel()
 
 	bashTool := fantasy.NewAgentTool(
@@ -493,16 +990,16 @@ func TestPrepareToolCallRewritesRGShellSearchToGrep(t *testing.T) {
 			return fantasy.ToolResponse{}, nil
 		},
 	)
-	grepTool := fantasy.NewAgentTool(
-		GrepToolName,
+	rgTool := fantasy.NewAgentTool(
+		RGToolName,
 		"",
-		func(ctx context.Context, params GrepParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		func(ctx context.Context, params RGParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			return fantasy.ToolResponse{}, nil
 		},
 	)
 	registry := map[string]fantasy.AgentTool{
 		BashToolName: bashTool,
-		GrepToolName: grepTool,
+		RGToolName:   rgTool,
 	}
 
 	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
@@ -511,13 +1008,49 @@ func TestPrepareToolCallRewritesRGShellSearchToGrep(t *testing.T) {
 		Input: `{"command":"rg -l -i \"mistake\" --type go internal/agent","description":"search code"}`,
 	}, registry)
 	require.NoError(t, err)
-	require.Equal(t, GrepToolName, prepared.Name)
+	require.Equal(t, RGToolName, prepared.Name)
 
 	var input map[string]any
 	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
-	require.Equal(t, "(?i)mistake", input["pattern"])
+	require.Equal(t, "mistake", input["pattern"])
 	require.Equal(t, "*.go", input["include"])
 	require.Equal(t, "internal/agent", input["path"])
+	require.Equal(t, false, input["case_sensitive"])
+}
+
+func TestPrepareToolCallRewritesCatMultiFileBashToAgenticView(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		BashToolName:        bashTool,
+		AgenticViewToolName: agenticViewTool,
+	}
+
+	prepared, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "bash-cat-1",
+		Name:  BashToolName,
+		Input: `{"command":"cat README.md AGENTS.md","description":"read files"}`,
+	}, registry)
+	require.NoError(t, err)
+	require.Equal(t, AgenticViewToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, []any{"README.md", "AGENTS.md"}, input["file_paths"])
 }
 
 func TestPrepareToolCallRewritesSedSliceBashToSingleView(t *testing.T) {

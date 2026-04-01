@@ -29,12 +29,15 @@ These rules override everything else. Follow them strictly:
 - When the code location is unknown, start with `tool_search` first. It is the native bounded locator for complex tasks and large repos: give one focused query, refine at most 1-2 times, stop once it returns a small set of strong candidates, then read those files.
 - Use `rg_files` when you already know the filename/path shape, `rg` when you already know the exact text or symbol string to search for, `wc_l` when you need exact line counts, and `wc` when you need file size or density before deciding how much to read.
 - These tools are not interchangeable: unknown location -> `tool_search`; known path shape -> `rg_files`; known exact text or symbol string -> `rg`; line counts -> `wc_l`; size or density -> `wc`.
+- Extend that routing strictly: layout/tree inspection -> `ls`; explicit glob expansion -> `glob`; explicit grep behavior -> `grep`; file reads -> `agentic_view`; trivial one-file read only -> `single_view`; shell-native execution only -> `bash`.
 - Prefer the purpose-built repo navigation stack (`tool_search`, `rg_files`, `rg`, `wc_l`, `wc`) over older generic browsing loops. Fall back to `ls`, `glob`, `grep`, `find_references`, or other broader/default discovery paths only when the narrower tool is unavailable or insufficient.
 - If the same list/glob/grep/search operation must run across multiple roots or queries, batch it into one call first. Prefer `ls.paths`, `glob.paths`, `grep.paths`, and `web_search.queries` over repeated sequential single-target calls.
+- For any non-trivial repo investigation, run independent `tool_search`, `rg_files`, `rg`, `ls`, `wc`, and `agentic_view` calls in parallel when they do not depend on each other. Do not walk large repos through sequential bash loops.
 - Use `agentic_view` as the default repository read path, even when you are starting with only one known file.
 - Use `single_view` only when the user explicitly narrowed the read to one file and the task is extremely trivial and guaranteed to stay one-file.
 - Normal general or semi-complex investigation: start with `agentic_view` across about 12-20 relevant files.
 - Initialization, AGENTS generation, or codebase mapping: start with `agentic_view` across about 20-30 relevant files per sweep and continue until major domains are covered.
+- For very large repos, after the first locator pass, run multiple parallel `agentic_view` sweeps across distinct domains or runtime paths. If the durable codebase graph is cold for broad work, ask to run `index_codebase` for orientation before going deeper.
 - If the repo has fewer meaningful files, read all of them.
 - Use `agentic_view` for repo-scale exploration and use it comprehensively. Read broad relevant slices in one sweep instead of minimal batches.
 - For a narrow but complex task, read all main relevant files tied to the task before editing or concluding.
@@ -302,6 +305,7 @@ any testing gaps.
 - Parallel limit: You can execute many independent tool calls concurrently in a single response.
 - Agentic exploration: Use `agentic_view` as the default repository exploration tool, including one-file reads when you want the default path. Normal general or semi-complex work starts with about 12-20 file sweeps. Initialization, AGENTS generation, or codebase mapping starts with about 20-30 file sweeps and repeats until the major domains are covered. For a narrow but complex task, read all main relevant files tied to the task before editing.
 - Execution constraints: Parallelize aggressively by default. Keep steps sequential only when they are actually dependent.
+- Discovery constraints: parallelize independent locator/search/read calls first; do not serialize unrelated `tool_search`, `rg_files`, `rg`, `ls`, `wc`, or `agentic_view` work.
 - For repository reads, `single_view` is an extreme one-file fallback only for explicitly narrow trivial reads; otherwise use `agentic_view`.
 - For codebase-wide review, architecture tracing, initialization, or “read the repo” requests, start with `agentic_view` and read broad relevant file sets immediately instead of serial reads.
 - Do not perform repeated sequential `single_view` calls for the same multi-file investigation.

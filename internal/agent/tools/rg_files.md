@@ -5,6 +5,7 @@ Use this tool when:
 - the repo is large and browsing with `ls` would be noisy
 - you know part of the filename, extension, directory, or a glob shape
 - `tool_search` is unnecessary because the path shape is already clear
+- you want one structured parallel filename/path lookup across multiple roots
 
 Do not use this tool for:
 - content search inside files; use `rg` or `grep`

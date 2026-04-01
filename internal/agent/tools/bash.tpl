@@ -19,7 +19,8 @@ Common shell builtins and core utils available on Windows.
 - Command required, working_dir optional (defaults to current directory)
 - `description` is required. Always provide a short explanation with every bash call.
 - IMPORTANT: `bash` is fallback-only. If a structured Sapphire tool exists, use it instead.
-- IMPORTANT: Use `ls`/`glob`/`grep` for repository discovery and search. Use `single_view`/`agentic_view` for file reads. Do not use shell `find`/`ls`/`cat`/`head`/`tail`/`grep`/`rg`/`tree`/`fd`/`bat`/`eza` for normal repo exploration.
+- IMPORTANT: Use the strict routing stack before bash: unknown location -> `tool_search`; known path shape -> `rg_files`; known exact text -> `rg`; layout -> `ls`; broad reads -> `agentic_view`; trivial one-file read -> `single_view`.
+- IMPORTANT: Do not use shell `find`/`ls`/`cat`/`head`/`tail`/`grep`/`rg`/`tree`/`fd`/`bat`/`eza` for normal repo exploration.
 - Repository discovery and code reading via `bash` are wrong when structured tools exist and may be auto-rewritten or rejected at preflight.
 - Never use `bash` to create temporary `.txt` or `.csv` prompt payloads for `spawn_agent`, `send_input`, or related delegation tools. Pass the prompt directly in the tool call.
 - Chain with ';' or '&&', avoid newlines except in quoted strings

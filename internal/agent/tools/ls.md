@@ -32,6 +32,7 @@ Shows files and subdirectories in tree structure for exploring project organizat
 - If you need multiple directory listings, batch them into one `ls` call with `paths`
 - Use `tool_search` first when the code location is unknown instead of browsing deeply
 - Use `rg_files` for filename/path discovery when the path shape is known
-- Use `rg` or `grep` for searching file contents
+- Use `rg` for exact text or symbol search, and `grep` only when you explicitly need grep behavior
+- Parallelize independent `ls` calls by batching them with `paths` instead of issuing serial single-directory calls
 - Combine with other tools for effective exploration
 </tips>

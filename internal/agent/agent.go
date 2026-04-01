@@ -44,6 +44,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools/mcp"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/csync"
+	"github.com/duggal1/Sapphire-cli/internal/filetracker"
 	pmem "github.com/duggal1/Sapphire-cli/internal/memory"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/permission"
@@ -117,6 +118,8 @@ type SessionAgentCall struct {
 	SkillContext       string
 	ActiveSkills       []string
 	ActiveTools        []string
+	LearnedToolPolicy  tools.LearnedToolPolicy
+	HarnessOverride    *tools.HarnessRequirement
 	ProviderOptions    fantasy.ProviderOptions
 	Attachments        []message.Attachment
 	PrecreatedUser     *message.Message
@@ -396,8 +399,8 @@ type SessionAgent interface {
 
 type SessionToolObserver interface {
 	OnToolInputStart(sessionID, toolName string)
-	OnToolCall(sessionID, toolName string)
-	OnToolResult(sessionID, toolName string)
+	OnToolCall(sessionID, toolName, rawInput string)
+	OnToolResult(sessionID, toolName, content, metadata string, isError bool)
 }
 
 type SessionToolObserverSetter interface {
@@ -451,6 +454,7 @@ type sessionAgent struct {
 	waitBackground          func(ctx context.Context, sessionID string) error
 	checkpointTurn          func(ctx context.Context, sessionID, prompt, result, status string, force bool)
 	toolObserver            SessionToolObserver
+	filetracker             filetracker.Service
 
 	// Python tool failure tracking - quit after 3 consecutive failures
 	pythonFailures atomic.Int32
@@ -481,6 +485,7 @@ type SessionAgentOptions struct {
 	WaitBackground       func(ctx context.Context, sessionID string) error
 	CheckpointTurn       func(ctx context.Context, sessionID, prompt, result, status string, force bool)
 	ToolObserver         SessionToolObserver
+	FileTracker          filetracker.Service
 }
 
 // NewSessionAgent initializes a new session-based AI agent with the provided configuration options.
@@ -514,6 +519,7 @@ func NewSessionAgent(
 		memoryConsolidator:      opts.MemoryConsolidator,
 		checkpointTurn:          opts.CheckpointTurn,
 		toolObserver:            opts.ToolObserver,
+		filetracker:             opts.FileTracker,
 	}
 }
 
@@ -587,8 +593,28 @@ func shouldRetryStreamError(err error) bool {
 		case 0, 408, 409, 425, 429, 500, 502, 503, 504:
 			return true
 		}
+		if looksLikeRetryableTransportError(providerErr.Message) {
+			return true
+		}
 	}
-	return false
+	return looksLikeRetryableTransportError(err.Error())
+}
+
+func looksLikeRetryableTransportError(raw string) bool {
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "connection reset by peer") ||
+		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "eof") ||
+		strings.Contains(lower, "stream error") ||
+		strings.Contains(lower, "temporarily unavailable") ||
+		strings.Contains(lower, "i/o timeout") ||
+		strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(lower, "too many requests") ||
+		strings.Contains(lower, "no such host") ||
+		(strings.Contains(lower, "lookup ") && strings.Contains(lower, "dial tcp"))
 }
 
 func (a *sessionAgent) createMessage(ctx context.Context, sessionID string, params message.CreateMessageParams, timeout time.Duration) (message.Message, error) {
@@ -841,8 +867,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			postCompactionPending = true
 		}
 	}
-	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), a.isLongHorizon(call.SessionID), postCompactionPending)
+	longHorizonActive := a.isLongHorizon(call.SessionID)
+	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), longHorizonActive, postCompactionPending)
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
+	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending)
+
+	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
+	toolUsageState := tools.ResetSharedToolUsageState(call.SessionID)
+	defer tools.ClearSharedToolUsageState(call.SessionID)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -886,6 +918,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var (
 		currentAssistant *message.Message
 		shouldSummarize  bool
+		stepLimitReached bool
+		loopBreak        *repeatedToolLoop
 		stepStartTime    time.Time
 		firstTokenTime   time.Time
 		firstToolName    string
@@ -954,6 +988,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				skillSystemMsg := "<active_skill_context>\n" + call.SkillContext + "\n</active_skill_context>"
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(skillSystemMsg))
 			}
+			if driftPrompt := buildWorkspaceDriftPrompt(callContext, a.filetracker, call.SessionID, a.workingDir.Get()); driftPrompt != "" {
+				systemMessages = append(systemMessages, fantasy.NewSystemMessage(driftPrompt))
+			}
 
 			if isGeminiCodeExecutionModel(largeModel) {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(string(pythonCapabilitiesPrompt)))
@@ -983,12 +1020,27 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
 			callContext = context.WithValue(callContext, tools.WorkingDirContextKey, a.workingDir.Get())
-			callContext = context.WithValue(callContext, tools.HarnessRequirementContextKey, buildHarnessRequirement(call.Prompt))
+			requirement := buildHarnessRequirement(call.Prompt)
+			if call.HarnessOverride != nil && call.HarnessOverride.Required {
+				requirement.Required = true
+				if strings.TrimSpace(call.HarnessOverride.Reason) != "" {
+					requirement.Reason = call.HarnessOverride.Reason
+				}
+				requirement.ComplexityScore = max(requirement.ComplexityScore, call.HarnessOverride.ComplexityScore)
+				if strings.TrimSpace(call.HarnessOverride.Task) != "" {
+					requirement.Task = call.HarnessOverride.Task
+				}
+				requirement.RequireBeforeDiscovery = requirement.RequireBeforeDiscovery || call.HarnessOverride.RequireBeforeDiscovery
+			}
+			callContext = context.WithValue(callContext, tools.HarnessRequirementContextKey, requirement)
+			callContext = context.WithValue(callContext, tools.LearnedToolPolicyContextKey, call.LearnedToolPolicy)
+			callContext = context.WithValue(callContext, tools.ToolUsageStateContextKey, toolUsageState)
 			callContext = context.WithValue(callContext, tools.WriteScopeContextKey, a.writeScope)
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err
 		},
 		RepairToolCall: func(repairCtx context.Context, options fantasy.ToolCallRepairOptions) (*fantasy.ToolCallContent, error) {
+			repairCtx = context.WithValue(repairCtx, tools.SkipPreparedToolUsageContextKey, true)
 			call := fantasy.ToolCall{
 				ID:    options.OriginalToolCall.ToolCallID,
 				Name:  options.OriginalToolCall.ToolName,
@@ -1102,7 +1154,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return genCtx.Err()
 			}
 			if a.toolObserver != nil {
-				a.toolObserver.OnToolCall(call.SessionID, tc.ToolName)
+				a.toolObserver.OnToolCall(call.SessionID, tc.ToolName, tc.Input)
 			}
 			activeTools.Add(tc.ToolName)
 			if firstToolName == "" {
@@ -1129,12 +1181,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if genCtx.Err() != nil {
 				return genCtx.Err()
 			}
-			if a.toolObserver != nil {
-				a.toolObserver.OnToolResult(call.SessionID, result.ToolName)
-			}
-
 			toolResult := a.convertToToolResult(result)
-			persistedToolResult := compactToolResultForPersistence(result.ToolName, toolResult)
 			var rawInput string
 			for _, tc := range currentAssistant.ToolCalls() {
 				if tc.ID == result.ToolCallID {
@@ -1142,28 +1189,55 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					break
 				}
 			}
-			runtimeControl.mistakeSelfHealing.ObserveSelfHealingProgress(result.ToolName, rawInput, toolResult)
-			runtimeControl.mistakeSelfHealing.Observe(result.ToolName, rawInput, toolResult)
+			observedToolName, observedInput := tools.ResolveObservedToolExecution(result.ToolName, rawInput, toolResult.Metadata)
+			if a.toolObserver != nil {
+				a.toolObserver.OnToolResult(call.SessionID, observedToolName, toolResult.Content, toolResult.Metadata, toolResult.IsError)
+			}
+			tools.ObserveSuccessfulTurnGuardrailResult(genCtx, observedToolName, observedInput, toolResult.IsError)
+			runtimeControl.mistakeSelfHealing.ObserveSelfHealingProgress(observedToolName, observedInput, toolResult)
+			runtimeControl.mistakeSelfHealing.Observe(observedToolName, observedInput, toolResult)
+			var toolFailureLimitErr error
 
 			// Track Python tool failures - quit after 3 consecutive failures
-			if result.ToolName == tools.PythonToolName {
+			if observedToolName == tools.PythonToolName {
 				if toolResult.IsError ||
 					strings.Contains(strings.ToLower(toolResult.Content), "error") ||
 					strings.Contains(strings.ToLower(toolResult.Content), "exception") ||
 					strings.Contains(strings.ToLower(toolResult.Content), "traceback") {
 					failures := a.pythonFailures.Add(1)
+					toolResult.Content = appendToolFailureRetryMessage(
+						toolResult.Content,
+						observedToolName,
+						int(failures),
+						max(0, tools.MaxPythonRetries-int(failures)),
+						tools.MaxPythonRetries,
+					)
 					if failures >= tools.MaxPythonRetries {
 						slog.Warn("Python tool failed too many times, quitting", "failures", failures, "max", tools.MaxPythonRetries)
-						// Reset counter and return special error to stop agent from retrying
 						a.pythonFailures.Store(0)
-						return fmt.Errorf("python tool failed %d times consecutively (max: %d). Stopping further Python execution attempts. Please review the task and try a different approach.", failures, tools.MaxPythonRetries)
+						toolFailureLimitErr = &toolFailureLimitError{
+							toolName: observedToolName,
+							failures: int(failures),
+							limit:    tools.MaxPythonRetries,
+						}
 					}
 				} else {
 					// Success - reset failure counter
 					a.pythonFailures.Store(0)
 				}
+			} else if toolResult.IsError {
+				failures, attemptsLeft, limit, limitReached := toolFailureTracker.Record(observedToolName)
+				toolResult.Content = appendToolFailureRetryMessage(toolResult.Content, observedToolName, failures, attemptsLeft, limit)
+				if limitReached {
+					toolFailureLimitErr = &toolFailureLimitError{
+						toolName: observedToolName,
+						failures: failures,
+						limit:    limit,
+					}
+				}
 			}
 
+			persistedToolResult := compactToolResultForPersistence(observedToolName, toolResult)
 			if a.pmem != nil {
 				outStr := toolResult.Content
 				if persistedToolResult.Content != "" {
@@ -1172,8 +1246,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				if persistedToolResult.IsError {
 					outStr = "ERROR: " + outStr
 				}
-				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), result.ToolName, rawInput, outStr)
-				a.pmem.RecordToolResult(genCtx, currentAssistant.SessionID, result.ToolName, outStr, persistedToolResult.IsError)
+				a.pmem.PushToolResult(currentAssistant.SessionID, len(history), observedToolName, observedInput, outStr)
+				a.pmem.RecordToolResult(genCtx, currentAssistant.SessionID, observedToolName, outStr, persistedToolResult.IsError)
 			}
 
 			_, createMsgErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
@@ -1189,7 +1263,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				}
 				return createMsgErr
 			}
-			if grounding := buildToolGrounding(result.ToolName, toolResult.Content); grounding != "" {
+			if grounding := buildToolGrounding(observedToolName, toolResult.Content); grounding != "" {
 				_, groundErr := a.createMessage(genCtx, currentAssistant.SessionID, message.CreateMessageParams{
 					Role: message.System,
 					Parts: []message.ContentPart{
@@ -1203,6 +1277,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 					}
 					return groundErr
 				}
+			}
+			if toolFailureLimitErr != nil {
+				return toolFailureLimitErr
 			}
 			return nil
 		},
@@ -1342,7 +1419,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return false
 			},
 			func(steps []fantasy.StepResult) bool {
-				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+				detectedLoop, ok := detectRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+				if !ok {
+					return false
+				}
+				loopBreak = &detectedLoop
+				return true
+			},
+			func(steps []fantasy.StepResult) bool {
+				if maxStepsThisTurn <= 0 || len(steps) < maxStepsThisTurn {
+					return false
+				}
+				stepLimitReached = true
+				return true
 			},
 			func(steps []fantasy.StepResult) bool {
 				return mode == planmode.DefaultSessionMode &&
@@ -1364,13 +1453,23 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				_ = a.messages.Delete(ctx, currentAssistant.ID)
 				currentAssistant = nil
 			}
-			time.Sleep(streamRetryBackoff * time.Duration(attempt+1))
+			time.Sleep(nextStreamRetryBackoff(attempt))
 			continue
 		}
 		break
 	}
 
 	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
+
+	if err == nil {
+		if verificationErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); verificationErr != nil {
+			err = verificationErr
+		} else if loopBreak != nil {
+			err = &repeatedToolLoopError{loop: *loopBreak}
+		} else if stepLimitReached {
+			err = &turnStepLimitError{limit: maxStepsThisTurn}
+		}
+	}
 
 	if err != nil {
 		isCancelErr := errors.Is(err, context.Canceled)
@@ -1453,29 +1552,41 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
 		} else if isPermissionErr {
 			currentAssistant.AddFinish(message.FinishReasonPermissionDenied, "User denied permission", "")
-		} else if errors.Is(err, hyper.ErrNoCredits) {
-			url := hyper.BaseURL()
-			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
-			currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
-		} else if errors.As(err, &providerErr) {
-			if providerErr.Message == "The requested model is not supported." {
-				url := "https://github.com/settings/copilot/features"
-				link := linkStyle.Hyperlink(url, "id=copilot").Render(url)
-				currentAssistant.AddFinish(
-					message.FinishReasonError,
-					"Copilot model not enabled",
-					fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
-				)
-			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), providerErrorTitle), providerErr.Message)
-			}
-		} else if errors.As(err, &fantasyErr) {
-			currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), requestErrorTitle), fantasyErr.Message)
+		} else if errors.Is(err, ErrRepeatedToolLoopDetected) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Execution loop detected", err.Error())
+		} else if errors.Is(err, ErrStepLimitReached) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Step limit reached", err.Error())
+		} else if errors.Is(err, ErrToolFailureLimitReached) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Tool failure limit reached", err.Error())
 		} else {
-			if title, details, ok := classifyProviderTransportError(err, linkStyle); ok {
-				currentAssistant.AddFinish(message.FinishReasonError, title, details)
-			} else {
-				currentAssistant.AddFinish(message.FinishReasonError, requestErrorTitle, err.Error())
+			var turnGuardrailErr *tools.TurnGuardrailError
+			switch {
+			case errors.As(err, &turnGuardrailErr):
+				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(strings.TrimSpace(turnGuardrailErr.Title), requestErrorTitle), turnGuardrailErr.Message)
+			case errors.Is(err, hyper.ErrNoCredits):
+				url := hyper.BaseURL()
+				link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
+				currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
+			case errors.As(err, &providerErr):
+				if providerErr.Message == "The requested model is not supported." {
+					url := "https://github.com/settings/copilot/features"
+					link := linkStyle.Hyperlink(url, "id=copilot").Render(url)
+					currentAssistant.AddFinish(
+						message.FinishReasonError,
+						"Copilot model not enabled",
+						fmt.Sprintf("%q is not enabled in Copilot. Go to the following page to enable it. Then, wait 5 minutes before trying again. %s", largeModel.CatwalkCfg.Name, link),
+					)
+				} else {
+					currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(providerErr.Title), providerErrorTitle), providerErr.Message)
+				}
+			case errors.As(err, &fantasyErr):
+				currentAssistant.AddFinish(message.FinishReasonError, cmp.Or(stringext.Capitalize(fantasyErr.Title), requestErrorTitle), fantasyErr.Message)
+			default:
+				if title, details, ok := classifyProviderTransportError(err, linkStyle); ok {
+					currentAssistant.AddFinish(message.FinishReasonError, title, details)
+				} else {
+					currentAssistant.AddFinish(message.FinishReasonError, requestErrorTitle, err.Error())
+				}
 			}
 		}
 		// Note: we use the parent context here because the genCtx has been
@@ -1744,8 +1855,8 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			}
 
 			// Max retries exceeded or non-retryable error
-			if attempt < maxRetries {
-				time.Sleep(streamRetryBackoff * time.Duration(attempt+1))
+			if attempt < maxRetries && shouldRetryStreamError(streamErr) {
+				time.Sleep(nextStreamRetryBackoff(attempt))
 				continue
 			}
 			return streamErr
@@ -2737,6 +2848,11 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 		Metadata:   result.ClientMetadata,
 	}
 
+	observedToolName, _ := tools.ResolveObservedToolExecution(result.ToolName, "", baseResult.Metadata)
+	if observedToolName != "" {
+		baseResult.Name = observedToolName
+	}
+
 	switch result.Result.GetType() {
 	case fantasy.ToolResultContentTypeText:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result); ok {
@@ -2746,7 +2862,12 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
 			baseResult.Content = r.Error.Error()
 			baseResult.IsError = true
-			baseResult.Metadata = tools.AnnotateToolErrorMetadata(result.ToolName, r.Error, baseResult.Metadata)
+			baseResult.Metadata = tools.AnnotateRuntimeExecutionErrorMetadata(baseResult.Metadata, r.Error)
+			observedToolName, _ = tools.ResolveObservedToolExecution(result.ToolName, "", baseResult.Metadata)
+			if observedToolName != "" {
+				baseResult.Name = observedToolName
+			}
+			baseResult.Metadata = tools.AnnotateToolErrorMetadata(baseResult.Name, r.Error, baseResult.Metadata)
 		}
 	case fantasy.ToolResultContentTypeMedia:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentMedia](result.Result); ok {

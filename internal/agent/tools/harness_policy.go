@@ -14,10 +14,11 @@ const (
 )
 
 type HarnessRequirement struct {
-	Required        bool   `json:"required"`
-	Reason          string `json:"reason,omitempty"`
-	ComplexityScore int    `json:"complexity_score,omitempty"`
-	Task            string `json:"task,omitempty"`
+	Required               bool   `json:"required"`
+	Reason                 string `json:"reason,omitempty"`
+	ComplexityScore        int    `json:"complexity_score,omitempty"`
+	Task                   string `json:"task,omitempty"`
+	RequireBeforeDiscovery bool   `json:"require_before_discovery,omitempty"`
 }
 
 type HarnessDecision struct {
@@ -32,13 +33,24 @@ var (
 	harnessDecisionByMessage = map[string]HarnessDecision{}
 )
 
+func harnessDecisionKeys(ctx context.Context) []string {
+	keys := make([]string, 0, 2)
+	if messageID := strings.TrimSpace(GetMessageFromContext(ctx)); messageID != "" {
+		keys = append(keys, "message:"+messageID)
+	}
+	if sessionID := strings.TrimSpace(GetSessionFromContext(ctx)); sessionID != "" {
+		keys = append(keys, "session:"+sessionID)
+	}
+	return keys
+}
+
 func GetHarnessRequirementFromContext(ctx context.Context) HarnessRequirement {
 	return getContextValue(ctx, HarnessRequirementContextKey, HarnessRequirement{})
 }
 
 func RecordHarnessDecision(ctx context.Context, decision HarnessDecision) {
-	messageID := strings.TrimSpace(GetMessageFromContext(ctx))
-	if messageID == "" {
+	keys := harnessDecisionKeys(ctx)
+	if len(keys) == 0 {
 		return
 	}
 	if strings.TrimSpace(decision.ToolName) == "" {
@@ -46,16 +58,22 @@ func RecordHarnessDecision(ctx context.Context, decision HarnessDecision) {
 	}
 	harnessDecisionMu.Lock()
 	defer harnessDecisionMu.Unlock()
-	harnessDecisionByMessage[messageID] = decision
+	for _, key := range keys {
+		harnessDecisionByMessage[key] = decision
+	}
 }
 
 func GetHarnessDecision(ctx context.Context) (HarnessDecision, bool) {
-	messageID := strings.TrimSpace(GetMessageFromContext(ctx))
-	if messageID == "" {
+	keys := harnessDecisionKeys(ctx)
+	if len(keys) == 0 {
 		return HarnessDecision{}, false
 	}
 	harnessDecisionMu.RLock()
 	defer harnessDecisionMu.RUnlock()
-	decision, ok := harnessDecisionByMessage[messageID]
-	return decision, ok
+	for _, key := range keys {
+		if decision, ok := harnessDecisionByMessage[key]; ok {
+			return decision, true
+		}
+	}
+	return HarnessDecision{}, false
 }

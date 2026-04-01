@@ -6,9 +6,7 @@ Create or update `{{.Config.Options.InitializeAs}}` so future agents can underst
 
 ## Goal
 
-Document everything an agent needs to work in this codebase — commands, patterns,
-conventions, and gotchas. Aim for **completeness over brevity**. Initialization is a
-deep repository survey task, not a shallow summary task.
+Document everything an agent needs to work in this codebase: commands, patterns, conventions, architecture, runtime paths, and gotchas. Aim for **completeness over brevity**. Initialization is a deep repository survey task, not a shallow summary task.
 
 ---
 
@@ -45,23 +43,49 @@ deep repository survey task, not a shallow summary task.
 
 ---
 
-## Tool Usage Rules
+## Initialization Discipline
+
+### Non-Negotiables
 
 - Read first. Write second.
 - Document only what is explicitly observed.
 - Do not invent commands, paths, architecture, conventions, or workflows.
-- `agentic_view` is the default read tool for initialization, including one-file anchor reads when you want the default path.
-- Use `single_view` only for an explicitly local, trivial one-file follow-up.
-- For initialization, use `agentic_view` in aggressive broad sweeps of about 20-30 files when available.
-- If the repo has fewer meaningful files, read all of them.
-- Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
 - Context quality is part of the deliverable. Read the main important files for each major domain deeply enough to explain actual behavior, architecture, conventions, and integration points.
 - Do not stop after root files, dependency files, and one or two entry points.
+
+### Strict Tool Routing
+
 - Use `tool_search` first when the right file, symbol, subsystem anchor, or product term is still unknown.
-- Use `rg_files` when the filename/path shape is already known, `rg` when the exact text pattern is already known, and `wc_l` / `wc` before large reads when file size matters.
-- These tools are not interchangeable: unknown location -> `tool_search`; known path shape -> `rg_files`; known exact text -> `rg`; line counts -> `wc_l`; size or density -> `wc`.
-- Use `ls`, `glob`, and `grep` for layout inspection, glob expansion, or fallback discovery when the narrower tool is insufficient.
-- Do not use `bash` for repo discovery or file reading when structured tools exist.
+- Use `rg_files` when the filename or path shape is already known.
+- Use `rg` when the exact text or symbol string is already known.
+- Use `wc_l` before long reads when exact line counts matter, and `wc` when file size or density matters.
+- Use `ls` only for layout inspection or exact directory verification.
+- Use `glob` only when explicit glob expansion is the best fit.
+- Use `grep` only when you explicitly need grep behavior or `rg` is insufficient.
+- `agentic_view` is the default read tool for initialization, including one-file anchor reads when you want the default path.
+- Use `single_view` only for an explicitly local, trivial one-file follow-up.
+- `bash` is an absolute fallback for shell-native work only. Do not use `bash` for repo discovery, code search, or file reading when structured tools exist.
+- These tools are not interchangeable. Follow this routing exactly:
+  unknown location -> `tool_search`
+  known path shape -> `rg_files`
+  known exact text or symbol -> `rg`
+  line counts -> `wc_l`
+  size or density -> `wc`
+  layout inspection -> `ls`
+  file reads -> `agentic_view`
+  trivial one-file read -> `single_view`
+  shell-native execution only -> `bash`
+
+### Parallelism Protocol
+
+- Initialization is non-trivial by default. Use structured parallel discovery unless the repo is tiny and obviously simple.
+- Batch repeated structured discovery into one call first. Prefer `ls.paths`, `rg_files.paths`, `rg.paths`, `grep.paths`, and multi-path `agentic_view` over repeated single-target calls.
+- Run independent structured searches and reads in parallel. Do not serialize unrelated discovery work.
+- For initialization, use `agentic_view` in aggressive broad sweeps of about 20-30 files when available.
+- If the repo has fewer meaningful files, read all of them.
+- For large or very large repos, after the initial locator pass, run multiple parallel `agentic_view` sweeps to cover distinct domains or runtime paths. A 3-5 sweep burst is normal for a broad repo; go higher only when repo breadth clearly justifies it.
+- Keep sweeping until every major domain has representative coverage across source, config, tests, scripts/build, and rules/docs.
+- If the repo is broad and durable indexing is cold or too narrow, ask to run `index_codebase` for orientation. The index is orientation only, not evidence; still read exact files before writing.
 - `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees.
 - Do not use sub-agents as a substitute for the main agent's primary coverage sweep.
 - Use sub-agents only when repo complexity justifies them after the main agent has already surveyed the repo broadly.
@@ -105,6 +129,7 @@ Inspect the repo and classify it into exactly one tier:
 - **Small**: if the repo has 20 or fewer meaningful files, read all of them. Otherwise read at least 20 meaningful files across all major areas.
 - **Medium**: read at least 30 meaningful files if available, spanning every major domain.
 - **Large**: read at least 40 meaningful files if available, spanning every major domain, then keep reading until additional sweeps stop changing the architectural picture materially.
+- **Very large / monorepo cases**: after the first broad survey, continue with targeted parallel sweeps and domain follow-ups until the main runtime paths, build surface, tests, and rules are actually understood.
 
 ---
 
@@ -135,14 +160,18 @@ AGENTS.md
 Extract all project-specific context, constraints, and conventions from these files.
 They take precedence over inferred patterns.
 
-### 2.3 — Project Type and Tooling
+### 2.3 — Existing `{{.Config.Options.InitializeAs}}`
+
+If the file already exists, **read it early**. Improve it incrementally instead of blindly overwriting it. Keep only verified material; remove or rewrite stale claims when the repo evidence disagrees.
+
+### 2.4 — Project Type and Tooling
 
 Identify project type from:
 - Config files (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, etc.)
 - Directory structure and naming
 - CI configuration files (`.github/workflows/`, `Makefile`, `justfile`, etc.)
 
-### 2.4 — Commands
+### 2.5 — Commands
 
 Find build, test, run, lint, and deploy commands from:
 - Config files
@@ -152,7 +181,7 @@ Find build, test, run, lint, and deploy commands from:
 
 Do **not** invent commands. If you cannot confirm a command exists, do not include it.
 
-### 2.5 — Source Code Patterns
+### 2.6 — Source Code Patterns and Runtime Paths
 
 Use `agentic_view` for aggressive broad mixed sweeps, typically about 20-30 files at a time when available. It can also read one file when you want to stay on the default path. Read source, test, config,
 build, and schema files deeply enough to understand:
@@ -171,12 +200,7 @@ The survey must include all of the following when they exist:
 
 Do not stop at file names or top-level summaries. Read the main important files for each domain deeply enough to explain actual runtime behavior and integration points.
 
-After the first broad sweep, run targeted follow-up sweeps for any uncovered major domain or critical runtime path.
-
-### 2.6 — Existing `{{.Config.Options.InitializeAs}}`
-
-If the file already exists, **read it first**. Improve it incrementally instead of
-blindly overwriting it.
+After the first broad sweep, run targeted follow-up sweeps for any uncovered major domain or critical runtime path. If the repo is large, do those follow-up sweeps in parallel where domains are independent.
 
 ---
 
@@ -265,9 +289,11 @@ Cite exact file paths throughout the document.
 ## Hard Constraints
 
 - Do **not** write output before broad repo coverage is complete.
-- Do **not** produce a terse summary. Anything materially under roughly 100 lines for a real repository is presumptively incomplete.
-- Small repos with real code should still usually produce at least roughly 100-120 lines of verified material.
-- Medium and large repos should usually land in several hundred lines of verified material, often about 300-600 lines when the evidence supports it.
+- Do **not** default to a one-size-fits-all short boilerplate. Document length must scale with observed repo size, file count, and domain count.
+- Tiny or genuinely simple repos may land around 20-80 lines if the evidence is truly small.
+- Small repos with real code often need roughly 60-150 lines of verified material.
+- Anything materially under roughly 120 lines for a medium or large repository is presumptively incomplete.
+- Large repos should usually land in several hundred lines of verified material, often about 300-600 lines when the evidence supports it.
 - Very large repos may require more than that, but keep the document compressed, evidence-dense, and specific instead of padded.
 - If the repo genuinely cannot support that depth, explain the missing evidence instead of padding or inventing content.
 - Do **not** leave major sections as one-line placeholders.

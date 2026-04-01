@@ -237,6 +237,8 @@ func NewToolMessageItem(
 		item = NewUpdatePlanToolMessageItem(sty, toolCall, result, canceled)
 	case tools.RequestUserInputToolName:
 		item = NewRequestUserInputToolMessageItem(sty, toolCall, result, canceled)
+	case tools.RunHarnessToolName:
+		item = NewHarnessToolMessageItem(sty, toolCall, result, canceled)
 	case agent.AgentToolName:
 		item = NewAgentToolMessageItem(sty, toolCall, result, canceled)
 	case agent.BackgroundSubAgentsToolName:

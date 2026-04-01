@@ -88,6 +88,8 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	}
 	call, tool, input = rewriteToHarnessWhenRequired(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToStructuredDiscoveryWhenPreferred(ctx, call, tool, input, tools)
+	call, tool, input = rewriteInitializationSkillDetourToDiscovery(ctx, call, tool, input, tools)
+	call, tool, input = rewriteRepeatedInitializationSkillDetour(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToExplicitPlanWhenRequired(ctx, call, tool, input, tools)
 
 	if err := enforceTurnPolicy(ctx, call.Name, input); err != nil {
@@ -683,7 +685,8 @@ func rewriteToStructuredDiscoveryWhenPreferred(
 		call.Name = RGFilesToolName
 		tool = next
 		input = map[string]any{
-			"pattern": "*",
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
 		}
 		if path, ok := input["path"].(string); ok && strings.TrimSpace(path) != "" {
 			input["path"] = strings.TrimSpace(path)
@@ -722,6 +725,87 @@ func rewriteToExplicitPlanWhenRequired(
 	return call, tool, input
 }
 
+func rewriteInitializationSkillDetourToDiscovery(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if strings.TrimSpace(policy.TaskFamily) != "initialize/broad/codebase" {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isInitializationSkillDetourTool(canonical) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if hasStructuredDiscoveryOrReadContext(usage) {
+		return call, tool, input
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
+func rewriteRepeatedInitializationSkillDetour(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if strings.TrimSpace(policy.TaskFamily) != "initialize/broad/codebase" {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isInitializationSkillDetourTool(canonical) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage == nil || usage.Total("list_skills", "search_skills", LoadSkillToolName) < 1 {
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = buildRepeatedInitializationRouteCorrectionInput(ctx, policy, usage)
+		return call, tool, input
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
 func preferredStructuredDiscoveryQuery(ctx context.Context, policy LearnedToolPolicy) string {
 	if requirement := GetHarnessRequirementFromContext(ctx); strings.TrimSpace(requirement.Task) != "" {
 		return strings.TrimSpace(requirement.Task)
@@ -733,6 +817,49 @@ func preferredStructuredDiscoveryQuery(ctx context.Context, policy LearnedToolPo
 		return reason
 	}
 	return "repo architecture and initialization"
+}
+
+func preferredStructuredDiscoveryFileQuery(ctx context.Context, policy LearnedToolPolicy) string {
+	query := strings.ToLower(strings.TrimSpace(preferredStructuredDiscoveryQuery(ctx, policy)))
+	switch {
+	case strings.Contains(query, "initialize"), strings.Contains(query, "codebase"), strings.Contains(query, "repository"):
+		return "readme agents package go mod cmd internal app src config main"
+	default:
+		return "readme agents main app src internal cmd"
+	}
+}
+
+func buildRepeatedInitializationRouteCorrectionInput(ctx context.Context, policy LearnedToolPolicy, usage *ToolUsageState) map[string]any {
+	query := preferredStructuredDiscoveryFileQuery(ctx, policy)
+	limit := 40
+	if usage != nil && usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0 {
+		query = "readme agents config package go mod main cmd internal app src"
+		limit = 24
+	}
+	if usage != nil && usage.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0 {
+		query = "config package go mod tsconfig main cmd internal app src server api"
+		limit = 20
+	}
+	return map[string]any{
+		"query": query,
+		"limit": limit,
+	}
+}
+
+func isInitializationSkillDetourTool(toolName string) bool {
+	switch toolName {
+	case LoadSkillToolName, "search_skills", "list_skills":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasStructuredDiscoveryOrReadContext(usage *ToolUsageState) bool {
+	if usage == nil {
+		return false
+	}
+	return usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
 }
 
 func repairUpdatePlanInput(input map[string]any) map[string]any {
@@ -1119,6 +1246,32 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 				),
 			)
 		}
+		if shouldRestrictInitializationArtifactWrite(policy, canonical) {
+			if blockedPath := firstNonInitializationArtifactWritePath(ctx, canonical, input); blockedPath != "" {
+				return NewToolGuidanceError(
+					toolName,
+					"learned_route_policy",
+					"Write only the initialization artifact.",
+					fmt.Sprintf(
+						"%s: broad initialization turns that generate `AGENTS.md` must not mutate unrelated files. Write the initialization artifact only, then verify it before completing. Blocked path: %s.",
+						policy.GuidanceReason(),
+						blockedPath,
+					),
+				)
+			}
+		}
+		if blockedSkill := shouldBlockRepeatedInitializationSkillTool(policy, canonical, GetToolUsageStateFromContext(ctx)); blockedSkill {
+			return NewToolGuidanceError(
+				toolName,
+				"learned_route_policy",
+				"Stop loading more skills; continue repo inspection.",
+				fmt.Sprintf(
+					"%s: broad initialization turns may use at most one skill inventory step. Continue with repository discovery and code reads instead of more `list_skills`, `search_skills`, or `load_skill` calls. Sapphire could not auto-reroute this call because the structured discovery tools needed for route correction were unavailable. Blocked tool: %s.",
+					policy.GuidanceReason(),
+					canonical,
+				),
+			)
+		}
 		return nil
 	}
 	command, _ := input["command"].(string)
@@ -1145,6 +1298,39 @@ func isLearnedContextProtectedTool(toolName string) bool {
 	default:
 		return false
 	}
+}
+
+func shouldRestrictInitializationArtifactWrite(policy LearnedToolPolicy, toolName string) bool {
+	return strings.TrimSpace(policy.TaskFamily) == "initialize/broad/codebase" &&
+		policy.RequirePostWriteVerification &&
+		isArtifactWriteTool(toolName)
+}
+
+func firstNonInitializationArtifactWritePath(ctx context.Context, toolName string, input map[string]any) string {
+	for _, path := range extractArtifactWritePathsFromInput(toolName, input) {
+		if !isInitializationArtifactPath(ctx, path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func isInitializationArtifactPath(ctx context.Context, path string) bool {
+	resolved := resolveArtifactVerificationPath(ctx, path)
+	if resolved == "" {
+		return false
+	}
+	return strings.EqualFold(filepath.Base(resolved), "AGENTS.md")
+}
+
+func shouldBlockRepeatedInitializationSkillTool(policy LearnedToolPolicy, toolName string, usage *ToolUsageState) bool {
+	if strings.TrimSpace(policy.TaskFamily) != "initialize/broad/codebase" || !isInitializationSkillDetourTool(toolName) {
+		return false
+	}
+	if usage == nil {
+		return false
+	}
+	return usage.Total("list_skills", "search_skills", LoadSkillToolName) >= 1
 }
 
 func hasBroadInitializationContext(usage *ToolUsageState) bool {

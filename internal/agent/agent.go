@@ -870,7 +870,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	longHorizonActive := a.isLongHorizon(call.SessionID)
 	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), longHorizonActive, postCompactionPending)
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
-	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending)
+	structuredTurn := call.LearnedToolPolicy.RequireExplicitPlan || call.LearnedToolPolicy.RequirePostWriteVerification || (call.HarnessOverride != nil && call.HarnessOverride.Required)
+	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn)
 
 	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
 	toolUsageState := tools.ResetSharedToolUsageState(call.SessionID)

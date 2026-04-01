@@ -545,6 +545,200 @@ func TestPrepareToolCallRewritesLSDiscoveryToToolSearchWhenAvailable(t *testing.
 	require.Contains(t, prepared.Input, `"query":"Initialize this codebase thoroughly."`)
 }
 
+func TestPrepareToolCallRewritesLSDiscoveryToRGFilesWhenToolSearchUnavailable(t *testing.T) {
+	t.Parallel()
+
+	lsTool := fantasy.NewAgentTool(
+		LSToolName,
+		"",
+		func(ctx context.Context, params LSParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	rgFilesTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params RGFilesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-ls-rgfiles-1",
+		Name:  LSToolName,
+		Input: `{"path":"."}`,
+	}, map[string]fantasy.AgentTool{LSToolName: lsTool, RGFilesToolName: rgFilesTool})
+	require.NoError(t, err)
+	require.Equal(t, RGFilesToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "readme agents package go mod cmd internal app src config main", input["query"])
+	require.Equal(t, float64(40), input["limit"])
+}
+
+func TestPrepareToolCallRewritesInitializationSkillDetourToToolSearch(t *testing.T) {
+	t.Parallel()
+
+	searchSkillsTool := fantasy.NewAgentTool(
+		"search_skills",
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-skill-rewrite-1",
+		Name:  "search_skills",
+		Input: `{"query":"architecture"}`,
+	}, map[string]fantasy.AgentTool{"search_skills": searchSkillsTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"query":"Initialize this codebase thoroughly."`)
+}
+
+func TestPrepareToolCallRewritesInitializationSkillDetourToRGFilesWhenToolSearchUnavailable(t *testing.T) {
+	t.Parallel()
+
+	searchSkillsTool := fantasy.NewAgentTool(
+		"search_skills",
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	rgFilesTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params RGFilesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Initialize this codebase thoroughly.",
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-skill-rewrite-rgfiles-1",
+		Name:  "search_skills",
+		Input: `{"query":"architecture"}`,
+	}, map[string]fantasy.AgentTool{"search_skills": searchSkillsTool, RGFilesToolName: rgFilesTool})
+	require.NoError(t, err)
+	require.Equal(t, RGFilesToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "readme agents package go mod cmd internal app src config main", input["query"])
+	require.Equal(t, float64(40), input["limit"])
+}
+
+func TestPrepareToolCallRewritesRepeatedInitializationSkillToolToRGFiles(t *testing.T) {
+	t.Parallel()
+
+	usage := NewToolUsageState()
+	usage.Increment("list_skills")
+
+	loadSkillTool := fantasy.NewAgentTool(
+		LoadSkillToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	rgFilesTool := fantasy.NewAgentTool(
+		RGFilesToolName,
+		"",
+		func(ctx context.Context, params RGFilesParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-skill-block-1",
+		Name:  LoadSkillToolName,
+		Input: `{"name":"architect"}`,
+	}, map[string]fantasy.AgentTool{LoadSkillToolName: loadSkillTool, RGFilesToolName: rgFilesTool})
+	require.NoError(t, err)
+	require.Equal(t, RGFilesToolName, prepared.Name)
+
+	var input map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.Input), &input))
+	require.Equal(t, "readme agents package go mod cmd internal app src config main", input["query"])
+	require.Equal(t, float64(40), input["limit"])
+}
+
+func TestPrepareToolCallBlocksRepeatedInitializationSkillToolWithoutStructuredFallback(t *testing.T) {
+	t.Parallel()
+
+	usage := NewToolUsageState()
+	usage.Increment("list_skills")
+
+	loadSkillTool := fantasy.NewAgentTool(
+		LoadSkillToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                "initialize/broad/codebase",
+		Reason:                    "learned route policy for recurring initialize/broad/codebase turns",
+		PreferStructuredDiscovery: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-skill-block-hard-1",
+		Name:  LoadSkillToolName,
+		Input: `{"name":"architect"}`,
+	}, map[string]fantasy.AgentTool{LoadSkillToolName: loadSkillTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "could not auto-reroute")
+}
+
 func TestPrepareToolCallBlocksMutationUntilBroadInitializationContextExists(t *testing.T) {
 	t.Parallel()
 
@@ -596,6 +790,73 @@ func TestPrepareToolCallAllowsMutationAfterBroadInitializationContextExists(t *t
 
 	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
 		ID:    "learned-edit-2",
+		Name:  EditToolName,
+		Input: `{"file_path":"AGENTS.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.NoError(t, err)
+	require.Equal(t, EditToolName, prepared.Name)
+}
+
+func TestPrepareToolCallBlocksNonAgentsWritesDuringBroadInitialization(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequireContextRead:           true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-edit-docs-1",
+		Name:  EditToolName,
+		Input: `{"file_path":"docs/overview.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must not mutate unrelated files")
+	require.Contains(t, err.Error(), "docs/overview.md")
+}
+
+func TestPrepareToolCallAllowsAgentsWriteDuringBroadInitialization(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		RequireContextRead:           true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, WorkingDirContextKey, "/repo")
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "learned-edit-agents-1",
 		Name:  EditToolName,
 		Input: `{"file_path":"AGENTS.md","old_string":"old","new_string":"new"}`,
 	}, map[string]fantasy.AgentTool{EditToolName: editTool})

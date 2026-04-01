@@ -206,6 +206,65 @@ func TestPrepareToolCallBlocksToolsOnDirectReplyOnlyTurn(t *testing.T) {
 	require.Contains(t, err.Error(), "casual conversation only")
 }
 
+func TestPrepareToolCallBlocksProtectedToolsUntilHarnessRuns(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-harness-required")
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Required:        true,
+		Reason:          "multi-phase non-trivial task",
+		ComplexityScore: 5,
+	})
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "edit-harness-1",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","old_string":"alpha","new_string":"beta"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "call `run_harness`")
+}
+
+func TestPrepareToolCallAllowsProtectedToolsAfterHarnessDecision(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-harness-approved")
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Required:        true,
+		Reason:          "multi-phase non-trivial task",
+		ComplexityScore: 5,
+	})
+	RecordHarnessDecision(ctx, HarnessDecision{
+		Required:        true,
+		ComplexityScore: 5,
+		Pattern:         "planner_executor_reviewer",
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "edit-harness-2",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","old_string":"alpha","new_string":"beta"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.NoError(t, err)
+	require.Equal(t, EditToolName, prepared.Name)
+}
+
 func TestPrepareToolCallBlocksMemoryReadToolsWhenPolicyDisallows(t *testing.T) {
 	t.Parallel()
 

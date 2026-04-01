@@ -53,10 +53,19 @@ func TestCoderPromptIncludesOrchestrationOverlay(t *testing.T) {
 	if !strings.Contains(out, "If there is even slight uncertainty about which skill applies, call `search_skills` first") {
 		t.Fatalf("expected strict skill policy in coder prompt")
 	}
+	if !strings.Contains(out, "call `run_harness` before editing, execution, delegation, or orchestration") {
+		t.Fatalf("expected mandatory harness routing in coder prompt")
+	}
 	if !strings.Contains(out, "Skills are local-first.") {
 		t.Fatalf("expected local-first skill routing in coder prompt")
 	}
-	if !strings.Contains(out, "If local search returns no result or only weak/incomplete fits, call `install_skill` immediately") {
+	if !strings.Contains(out, "Extended skills are exclusive fallback only.") {
+		t.Fatalf("expected exclusive extended-skill fallback policy in coder prompt")
+	}
+	if !strings.Contains(out, "run `run_harness` first on complex work, then load the relevant local skills immediately before implementation") {
+		t.Fatalf("expected harness and skill example in coder prompt")
+	}
+	if !strings.Contains(out, "If local search returns no result or only weak or generic fits, call `install_skill`") {
 		t.Fatalf("expected install_skill to be fallback-only in coder prompt")
 	}
 	if !strings.Contains(out, "`install_mcp`") || !strings.Contains(out, "Verify before claim.") {
@@ -141,9 +150,17 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 			},
 			needle: []string{
 				"Your knowledge cutoff is mid-2025.",
-				"Today's date is in the runtime context below.",
-				"If asked for today's date, day, or current time, answer from the runtime context, not model memory.",
-				"For anything time-sensitive or likely to have changed since the cutoff, verify with tools or web search before answering.",
+				"The runtime clocks below are the authoritative present-time sources.",
+				"Use New York for U.S. present-time decisions, San Francisco for Pacific-time checks, and Kolkata for India.",
+				"If asked for today's date, current year, or current time, answer from the matching runtime clock, not model memory.",
+				"Runtime clock (UTC):",
+				"Runtime clock (New York):",
+				"Runtime clock (San Francisco):",
+				"Runtime clock (Kolkata):",
+				"Runtime year:",
+				"Runtime date:",
+				"Runtime time:",
+				"For anything time-sensitive or likely to have changed since the cutoff, compare it against the matching runtime clock first, then verify with tools or web search before answering.",
 				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
 				"Treat long-horizon work as work that may span compaction, restarts, many turns, multiple sub-agents, or many hours of token usage.",
 				"Use `save_memory` for durable facts that future sessions must not lose",
@@ -161,7 +178,12 @@ func TestPromptsIncludeTemporalRealityGuardrails(t *testing.T) {
 			},
 			needle: []string{
 				"Your knowledge cutoff is mid-2025.",
-				"Today's date is in the runtime context below.",
+				"The runtime clocks below are the authoritative present-time sources.",
+				"Use New York for U.S. timing, San Francisco for Pacific timing, and Kolkata for India.",
+				"Runtime clock (UTC):",
+				"Runtime clock (New York):",
+				"Runtime clock (San Francisco):",
+				"Runtime clock (Kolkata):",
 				"Never fabricate, hallucinate, improvise facts, or state anything you cannot verify.",
 				"Do not rely on the raw transcript alone.",
 				"If memory continuity appears broken or contradictory, use `memory_health` and then recover from durable state instead of guessing.",

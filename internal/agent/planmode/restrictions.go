@@ -114,6 +114,7 @@ var planModeAllowedTools = []string{
 	"list_skills",
 	"search_skills",
 	"load_skill",
+	"run_harness",
 
 	// LSP tools - ALLOWED (static analysis, non-mutating)
 	"lsp_diagnostics",

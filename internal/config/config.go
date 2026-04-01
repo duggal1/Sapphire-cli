@@ -956,6 +956,7 @@ func allToolNames() []string {
 		"list_tools",
 		"search_tools",
 		"tool_search",
+		"run_harness",
 		"search_skills",
 		"install_skill",
 		"index_codebase",

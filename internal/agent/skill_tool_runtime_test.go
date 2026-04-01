@@ -49,6 +49,31 @@ Use strict backend workflows.`), 0o644))
 	require.Contains(t, loadResp.Content, "Use strict backend workflows.")
 }
 
+func TestRunHarnessToolReturnsStrictJSONContract(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	cfg, err := config.Init(workingDir, "", false)
+	require.NoError(t, err)
+
+	coord := &coordinator{cfg: cfg}
+	tool, err := coord.runHarnessTool(t.Context())
+	require.NoError(t, err)
+
+	resp := runAgentTool(t, tool, "run_harness", RunHarnessParams{
+		Task:       "Implement an auth flow touching frontend, backend, and integration tests",
+		WorkingDir: workingDir,
+	})
+
+	var contract HarnessExecutionContract
+	require.NoError(t, json.Unmarshal([]byte(resp.Content), &contract))
+	require.True(t, contract.Required)
+	require.Equal(t, "agent_team", contract.ExecutionMode)
+	require.NotEmpty(t, contract.RequiredSkills)
+	require.Equal(t, bundledHarnessSkillPath, contract.SourceSkill)
+	require.Contains(t, contract.SkillPolicy.LoadImmediately, "harness")
+}
+
 func TestSkillToolsRediscoverNewLocalSkills(t *testing.T) {
 	t.Parallel()
 

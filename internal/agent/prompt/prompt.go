@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/home"
@@ -17,6 +18,12 @@ import (
 )
 
 const gitPromptTimeout = 750 * time.Millisecond
+
+const (
+	runtimeClockLocationNewYork      = "America/New_York"
+	runtimeClockLocationSanFrancisco = "America/Los_Angeles"
+	runtimeClockLocationKolkata      = "Asia/Kolkata"
+)
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
@@ -36,6 +43,13 @@ type PromptDat struct {
 	IsGitRepo                      bool
 	Platform                       string
 	Date                           string
+	RuntimeClock                   string
+	RuntimeYear                    string
+	RuntimeDate                    string
+	RuntimeTime                    string
+	RuntimeClockNewYork            string
+	RuntimeClockSanFrancisco       string
+	RuntimeClockKolkata            string
 	GitStatus                      string
 	ContextFiles                   []ContextFile
 	PlanToolPrompt                 string
@@ -71,6 +85,14 @@ func WithPlanToolPrompt(planToolPrompt string) Option {
 	return func(p *Prompt) {
 		p.planToolPrompt = planToolPrompt
 	}
+}
+
+func runtimeClockInLocation(now time.Time, locationName string) string {
+	loc, err := time.LoadLocation(locationName)
+	if err != nil {
+		return now.UTC().Format(time.RFC3339)
+	}
+	return now.In(loc).Format(time.RFC3339)
 }
 
 func NewPrompt(name, promptTemplate string, opts ...Option) (*Prompt, error) {
@@ -180,6 +202,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 	if nowFn == nil {
 		nowFn = time.Now
 	}
+	now := nowFn()
 
 	files := map[string][]ContextFile{}
 
@@ -201,7 +224,14 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, cfg con
 		WorkingDir:                     filepath.ToSlash(workingDir),
 		IsGitRepo:                      isGit,
 		Platform:                       platform,
-		Date:                           nowFn().Format("1/2/2006"),
+		Date:                           now.Format("1/2/2006"),
+		RuntimeClock:                   now.Format(time.RFC3339),
+		RuntimeYear:                    now.Format("2006"),
+		RuntimeDate:                    now.Format("Monday, January 2, 2006"),
+		RuntimeTime:                    now.Format("15:04:05 MST"),
+		RuntimeClockNewYork:            runtimeClockInLocation(now, runtimeClockLocationNewYork),
+		RuntimeClockSanFrancisco:       runtimeClockInLocation(now, runtimeClockLocationSanFrancisco),
+		RuntimeClockKolkata:            runtimeClockInLocation(now, runtimeClockLocationKolkata),
 		PlanToolPrompt:                 p.planToolPrompt,
 		HasApplicableAgentInstructions: hasApplicableAgentInstructions(workingDir, cmp.Or(options.InitializeAs, "AGENTS.md")),
 	}

@@ -163,6 +163,12 @@ func repairToolCall(
 	case WriteToolName:
 		normalizeKey(input, "file_path", "path", "file", "filename", "filepath")
 		normalizeKey(input, "content", "text", "body", "data", "file_content")
+	case RunHarnessToolName:
+		normalizeKey(input, "task", "prompt", "request", "instruction", "work")
+		normalizeKey(input, "working_dir", "working_directory", "cwd", "dir", "directory")
+		normalizeKey(input, "goal_type", "goal", "task_type")
+		normalizeKey(input, "force", "required")
+		normalizeKey(input, "mode", "execution_mode")
 	case ApplyPatchToolName:
 		normalizeKey(input, "file_path", "path", "file", "filename", "filepath")
 		normalizeKey(input, "unified_diff", "patch", "diff")
@@ -651,7 +657,49 @@ func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]an
 	if policy.DirectResponseOnly {
 		return errors.New("tool use blocked: this turn is casual conversation only. Reply directly without tools.")
 	}
+	if err := enforceHarnessRequirement(ctx, toolName); err != nil {
+		return err
+	}
 	return enforceMemoryAccessPolicy(ctx, policy, toolName, input)
+}
+
+func enforceHarnessRequirement(ctx context.Context, toolName string) error {
+	requirement := GetHarnessRequirementFromContext(ctx)
+	if !requirement.Required {
+		return nil
+	}
+	canonical := canonicalToolNameForModePolicy(toolName)
+	if canonical == "" {
+		canonical = normalizeToolName(toolName)
+	}
+	if canonical == "" || canonical == RunHarnessToolName || !isHarnessProtectedTool(canonical) {
+		return nil
+	}
+	if _, ok := GetHarnessDecision(ctx); ok {
+		return nil
+	}
+	reason := strings.TrimSpace(requirement.Reason)
+	if reason == "" {
+		reason = "complex turn"
+	}
+	return NewToolGuidanceError(
+		toolName,
+		"harness_required",
+		"Run harness first.",
+		fmt.Sprintf("This turn is classified as complex (%s). Before editing, executing, or delegating, call `run_harness` with the current task. Read and search tools remain allowed before harness. Protected tool blocked: %s.", reason, canonical),
+	)
+}
+
+func isHarnessProtectedTool(toolName string) bool {
+	switch toolName {
+	case "agent", "spawn_agent", "resume_agent", "send_input", "spawn_agents_on_csv",
+		"report_agent_job_result", "orchestrate_worktrees", BashToolName, "python",
+		EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName,
+		WriteToolName, DownloadToolName:
+		return true
+	default:
+		return false
+	}
 }
 
 func enforceMemoryAccessPolicy(ctx context.Context, policy TurnPolicy, toolName string, input map[string]any) error {

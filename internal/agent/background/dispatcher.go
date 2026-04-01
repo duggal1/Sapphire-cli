@@ -45,6 +45,7 @@ func DefaultPlanModeRestrictor() PlanModeRestrictor {
 			"lsp_restart",
 			"list_tools",
 			"search_tools",
+			"run_harness",
 			"search_skills",
 			"tool_suggest",
 			"list_available_mcps",

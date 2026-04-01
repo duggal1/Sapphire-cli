@@ -1865,6 +1865,10 @@ func (c *coordinator) buildToolsForWorkingDir(ctx context.Context, agent config.
 	if err == nil {
 		allTools = append(allTools, loadSkillTool)
 	}
+	runHarnessTool, err := c.runHarnessTool(ctx)
+	if err == nil {
+		allTools = append(allTools, runHarnessTool)
+	}
 	listSkillsTool, err := c.listSkillsTool(ctx)
 	if err == nil {
 		allTools = append(allTools, listSkillsTool)

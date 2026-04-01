@@ -75,8 +75,11 @@ func Parse(path string) (*Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSkillContent(string(content), path)
+}
 
-	frontmatter, body, err := splitFrontmatter(string(content))
+func parseSkillContent(content string, sourcePath string) (*Skill, error) {
+	frontmatter, body, err := splitFrontmatter(content)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +90,8 @@ func Parse(path string) (*Skill, error) {
 	}
 
 	skill.Instructions = strings.TrimSpace(body)
-	skill.Path = filepath.Dir(path)
-	skill.SkillFilePath = path
+	skill.Path = filepath.Dir(sourcePath)
+	skill.SkillFilePath = sourcePath
 
 	return &skill, nil
 }

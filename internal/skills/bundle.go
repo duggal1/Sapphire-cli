@@ -4,7 +4,9 @@ import (
 	"embed"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
+	"strings"
 )
 
 const ProjectSkillsDirName = "skills"
@@ -45,4 +47,22 @@ func EnsureProjectSkills(dataDir string) error {
 
 		return os.WriteFile(targetPath, content, 0o644)
 	})
+}
+
+func LoadBundledSkill(name string) (*Skill, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, os.ErrNotExist
+	}
+	skillPath := pathpkg.Join("bundled", name, SkillFileName)
+	content, err := bundledSkills.ReadFile(skillPath)
+	if err != nil {
+		return nil, err
+	}
+	skill, err := parseSkillContent(string(content), skillPath)
+	if err != nil {
+		return nil, err
+	}
+	skill.IsInternal = true
+	return skill, nil
 }

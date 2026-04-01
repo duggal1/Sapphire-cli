@@ -52,6 +52,7 @@ var runtimeToolSummaries = map[string]string{
 	"report_agent_job_result": "report a CSV batch-worker result row",
 	"rg":                      "run real ripgrep content search when the exact text or symbol string is already known",
 	"rg_files":                "run ripgrep --files style filename/path search when the path shape is already known",
+	"run_harness":             "classify the turn, route complex work through the harness, and return a strict JSON execution contract",
 	"request_user_input":      "ask structured clarifying questions when mode permits",
 	"resume_agent":            "resume a previously spawned sub-agent",
 	"search_skills":           "search built-in and installed local skills by focused domain query",

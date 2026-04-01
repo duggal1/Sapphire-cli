@@ -19,17 +19,17 @@ Detailed writing guide for improving the quality of skills created by the harnes
 
 ## 1. Description Writing Patterns
 
-The description is the only trigger mechanism for a skill. Claude decides whether to use a skill by looking only at `name + description` in the `available_skills` list.
+The description is the primary trigger mechanism for a skill. Sapphire routes from the local skill inventory using the skill name and description. Extended install is fallback only, not the default discovery path.
 
 ### Understand the Trigger Mechanism
 
-Claude tends not to call a skill for simple work it believes it can handle with its default tools. A simple request such as "read this PDF" may not trigger even with a perfect description. Complex, multi-step, specialist work is far more likely to trigger the skill.
+Sapphire tends not to call a skill for simple work it believes it can handle with its default tools. A simple request such as "read this PDF" may not trigger even with a perfect description. Complex, multi-step, specialist work is far more likely to trigger the skill.
 
 ### Writing Rules
 
 1. State both **what the skill does** and **the specific trigger situations**
 2. State the boundary conditions that distinguish similar cases which must not trigger the skill
-3. Be slightly aggressive to compensate for Claude's conservative trigger behavior
+3. Be slightly aggressive to compensate for Sapphire's conservative trigger behavior
 
 ### Good Examples
 
@@ -96,8 +96,8 @@ Use direct instruction form, not soft phrasing. A skill is an instruction docume
 ### Conserve Context
 
 The context window is shared infrastructure. Every sentence must justify its token cost:
-- "Does Claude already know this?" → delete it
-- "Will Claude make a mistake without this explanation?" → keep it
+- "Does Sapphire already know this?" → delete it
+- "Will Sapphire make a mistake without this explanation?" → keep it
 - "Will one concrete example be better than a long explanation?" → replace with an example
 
 ---
@@ -144,7 +144,7 @@ Output: fix(login): fix password visibility toggle button behavior
 
 ```
 bigquery-skill/
-├── skill.md (overview + domain selection guide)
+├── SKILL.md (overview + domain selection guide)
 └── references/
     ├── finance.md (revenue, billing metrics)
     ├── sales.md (opportunities, pipeline)
@@ -258,7 +258,7 @@ Execution time and token metrics:
 }
 ```
 
-Save `total_tokens` and `duration_ms` immediately when the sub-agent completion notification arrives. This data is only available at notification time and cannot be recovered later.
+Save available execution metadata as soon as the worker run completes and the result is collected.
 
 ---
 
@@ -267,4 +267,4 @@ Save `total_tokens` and `duration_ms` immediately when the sub-agent completion 
 - supplementary documents such as `README.md`, `CHANGELOG.md`, and `INSTALLATION_GUIDE.md`
 - meta-information about the skill creation process, such as test results and iteration history
 - documentation intended for end users (a skill is an instruction document for AI agents)
-- general knowledge Claude already knows
+- general knowledge Sapphire already knows

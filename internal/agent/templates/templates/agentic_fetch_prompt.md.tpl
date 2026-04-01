@@ -51,7 +51,13 @@ Include only URLs that directly contributed information.
 <env>
 Working directory: {{.WorkingDir}}
 Platform: {{.Platform}}
-Today's date: {{.Date}}
+Runtime clock (UTC): {{.RuntimeClock}}
+Runtime clock (New York): {{.RuntimeClockNewYork}}
+Runtime clock (San Francisco): {{.RuntimeClockSanFrancisco}}
+Runtime clock (Kolkata): {{.RuntimeClockKolkata}}
+Runtime year: {{.RuntimeYear}}
+Runtime date: {{.RuntimeDate}}
+Runtime time: {{.RuntimeTime}}
 </env>
 
 <web_search_tool>

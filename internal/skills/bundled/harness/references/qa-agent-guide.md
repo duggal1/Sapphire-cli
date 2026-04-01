@@ -10,7 +10,7 @@ Guide for including a QA agent in a build harness. Based on bug patterns and roo
 2. Integration Coherence Verification
 3. QA Agent Design Principles
 4. Verification Checklist Template
-5. QA Agent Definition Template
+5. QA Worker Template
 
 ---
 
@@ -101,14 +101,18 @@ Verification steps:
 
 ## 3. QA Agent Design Principles
 
-### 3-1. Use `general-purpose`, Not `Explore`
+### 3-1. Use `task` by Default, `coder` Only When Fixes Are Authorized
 
-If the QA agent uses `Explore`, it is read-only. Effective QA requires:
-- grep-based pattern search (extract all `NextResponse.json()` calls)
-- script execution for automated comparison (API shape vs hook type)
-- optional fixes when necessary
+In Sapphire, QA should usually run as a spawned worker with profile `task`.
 
-**Required choice**: use `general-purpose`, and state the "verify → report → fix request" protocol in the agent definition.
+`task` is the correct default because it supports:
+- repository reads and search
+- diagnostics and verification commands
+- analysis without repository mutation
+
+Use `coder` only when the QA worker is explicitly allowed to patch or rewrite files.
+
+**Required choice**: default to `task`, and state the `verify → report → fix request` protocol in the worker message or reusable QA skill.
 
 ### 3-2. Prioritize "Cross-Comparison" Over "Existence Check" in the Checklist
 
@@ -126,7 +130,7 @@ To catch boundary bugs, QA must not read only one side. It must read:
 - the state transition map **and** the actual update code **together**
 - the file structure **and** the link paths **together**
 
-State this rule explicitly in the agent definition.
+State this rule explicitly in the worker instructions or reusable QA skill.
 
 ### 3-4. Run QA Immediately After Each Module, Not Only After the Full Build
 
@@ -140,7 +144,7 @@ If the orchestrator places QA only at "Phase 4: after everything is complete":
 
 ## 4. Verification Checklist Template
 
-Integration coherence checklist for web applications. Include this in the QA agent definition.
+Integration coherence checklist for web applications. Include this in the QA worker instructions or QA skill.
 
 ```markdown
 ### Integration Coherence Verification (Web App)
@@ -171,17 +175,15 @@ Integration coherence checklist for web applications. Include this in the QA age
 
 ---
 
-## 5. QA Agent Definition Template
+## 5. QA Worker Template
 
-Core sections to include in a QA agent for a build harness.
+Core sections to include in a QA worker packet or reusable QA skill.
 
 ```markdown
----
-name: qa-inspector
-description: "QA verification specialist. Verifies spec compliance, integration coherence, and design quality."
----
-
 # QA Inspector
+
+## Profile
+task
 
 ## Core Role
 Verify implementation quality against the spec and **integration coherence across modules**.
@@ -206,9 +208,16 @@ For boundary verification, always **open both sides of the boundary at the same 
 
 ## Team Communication Protocol
 
-- On discovery, send a concrete fix request to the responsible agent immediately (file:line + fix method)
-- For boundary issues, notify **both** relevant agents
-- To the leader: send a verification report that separates pass/fail/not-verified items
+- On discovery, send a concrete fix request immediately through `agent_mail_send` or report to the leader through `collect_result`
+- For boundary issues, notify **both** relevant owners when a team is active
+- Separate pass/fail/not-verified items in the final report
+
+## Output Contract
+- Write the verification report to `_workspace/{phase}_qa_report.md`
+- Include concrete file references and evidence
+
+## Escalation Rule
+- Stay in `task` unless the leader explicitly respawns or reassigns the QA role as `coder`
 ```
 
 ---

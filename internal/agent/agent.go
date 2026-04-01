@@ -983,6 +983,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
 			callContext = context.WithValue(callContext, tools.WorkingDirContextKey, a.workingDir.Get())
+			callContext = context.WithValue(callContext, tools.HarnessRequirementContextKey, buildHarnessRequirement(call.Prompt))
 			callContext = context.WithValue(callContext, tools.WriteScopeContextKey, a.writeScope)
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err

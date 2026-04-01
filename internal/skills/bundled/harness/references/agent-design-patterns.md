@@ -1,285 +1,275 @@
 # Agent Team Design Patterns
 
-## Execution Modes: Agent Team vs Sub-agent
+## Execution Modes: Agent Team vs Isolated Worker
 
 Understand the core difference between the two execution modes and choose the correct mode.
 
-### Agent Team — Default Mode
+### Agent Team — Default Mode for Complex Work
 
-The team leader builds the team with `TeamCreate`. Team members run as independent Claude Code instances. Team members communicate directly through `SendMessage` and self-coordinate through the shared task list (`TaskCreate`/`TaskUpdate`).
+In Sapphire, an agent team is implemented with multiple `spawn_agent` workers plus explicit coordination.
 
 ```
-[Leader] ←→ [Member A] ←→ [Member B]
-  ↕          ↕          ↕
-  └──── Shared Task List ────┘
+[Leader]
+  ├── spawn_agent(worker-a)
+  ├── spawn_agent(worker-b)
+  ├── agent_directory
+  ├── agent_mail_send / inbox / ack
+  ├── wait / collect_result
+  └── close_agent
 ```
 
 **Core tools:**
-- `TeamCreate`: create the team and spawn members
-- `SendMessage({to: name})`: send a message to a specific member
-- `SendMessage({to: "all"})`: broadcast to all members (high cost, rare use only)
-- `TaskCreate`/`TaskUpdate`: manage the shared task list
+- `spawn_agent`: create workers with explicit ownership and definition of done
+- `agent_mail_send` / `agent_mail_inbox` / `agent_mail_ack`: durable peer coordination
+- `agent_directory`: inspect active agents, route aliases, and work-item relationships
+- `send_input`: leader follow-up or correction
+- `wait` / `collect_result` / `close_agent`: completion, result retrieval, cleanup
 
 **Characteristics:**
-- Members can talk to, challenge, and verify each other directly
-- Information exchange happens between members without passing through the leader
-- Members self-coordinate through the shared task list and may request work themselves
-- Idle members automatically notify the leader
-- Plan approval mode can be used to review risky work before execution
+- workers can challenge and verify each other through durable mail
+- peer communication does not need to route through the leader
+- artifacts remain in files, not only in conversation state
+- the leader can re-route work without rebuilding the entire flow
 
 **Constraints:**
-- Only one team can be **active** per session (however, a team may be dismantled and replaced between phases)
-- Nested teams are not allowed (a team member cannot create another team)
-- The leader is fixed and cannot be transferred
-- Token cost is higher
+- no shared task-list tool exists; use explicit ownership, artifacts, and mail instead
+- worktree isolation is not the default path for `spawn_agent`
+- coordination quality depends on narrow scopes and clear artifact contracts
+- too many active workers increase integration overhead
 
 **Team reconfiguration pattern:**
-If different phases require different specialist combinations, save the previous team's outputs to files, dismantle that team, then create the next team. The previous team's artifacts remain in `_workspace/`, so the new team can access them with `Read`.
+If different phases need different specialists, preserve `_workspace/` artifacts, `close_agent` the old set, then `spawn_agent` the next set.
 
-### Sub-agent — Lightweight Mode
+### Isolated Worker — Lightweight Mode
 
-The main agent creates sub-agents with the `Agent` tool. A sub-agent returns results only to the main agent and does not communicate with other sub-agents.
+Use one worker when peer communication is unnecessary.
 
 ```
-[Main] → [Sub A] → Return result
-      → [Sub B] → Return result
-      → [Sub C] → Return result
+[Main] → agent(...) → final result
+```
+
+or
+
+```
+[Main] → spawn_agent → wait → collect_result → close_agent
 ```
 
 **Core tools:**
-- `Agent(prompt, subagent_type, run_in_background)`: create a sub-agent
+- `agent`: one-shot isolated worker execution
+- `spawn_agent`: isolated worker with lifecycle control
 
 **Characteristics:**
-- Lightweight and fast
-- Results return to main context in summarized form
-- Token-efficient
+- fast and simple
+- low coordination cost
+- best for bounded one-shot tasks
 
 **Constraints:**
-- No communication between sub-agents
-- The main agent handles all coordination
-- No real-time collaboration or challenge loop
+- no peer review loop
+- no direct worker-to-worker collaboration
+- main agent owns all integration
 
 ### Mode Selection Decision Tree
 
 ```
-Are there 2 or more agents?
-├── Yes → Is agent-to-agent communication required?
-│         ├── Yes → Agent Team (default)
-│         │         Cross-verification, shared discovery, and real-time feedback improve quality.
-│         │
-│         └── No → Sub-agents are also possible
-│                  Use for producer-reviewer, expert pool, and similar cases where only result delivery is needed.
-│
-└── No (1 agent) → Sub-agent
-                  A team is unnecessary for a single agent.
+Are there 2 or more meaningful specialist roles?
+├── Yes → Does peer communication improve quality or reduce integration risk?
+│         ├── Yes → Agent Team
+│         └── No  → Multiple isolated workers are possible
+└── No  → Isolated Worker
 ```
 
-> **Core rule:** Agent team is the default. Before choosing sub-agents, ask one question: "Is communication between members truly unnecessary?"
+> Core rule: for complex multi-domain work, start with agent team thinking. Downgrade to isolated workers only when peer coordination adds no value.
 
 ---
 
 ## Agent Team Architecture Types
 
 ### 1. Pipeline
-Sequential workflow. The output of the previous agent becomes the input of the next agent.
+Sequential workflow. One worker's output becomes the next worker's input.
 
 ```
 [Analysis] → [Design] → [Implementation] → [Verification]
 ```
 
-**Appropriate when:** each stage depends strongly on the output of the previous stage
-**Example:** novel writing — worldbuilding → characters → plot → drafting → editing
-**Caution:** a bottleneck delays the entire pipeline. Design each stage to be as independent as possible.
-**Team mode fit:** limited, because sequential dependency dominates. Still useful if the pipeline contains parallel segments.
+**Appropriate when:** each stage depends strongly on the previous result  
+**Caution:** bottlenecks slow the entire flow  
+**Sapphire fit:** use one worker per stage, pass artifacts through `_workspace/`, and use `send_input` or mail only when stage correction is required
 
 ### 2. Fan-out/Fan-in
-Parallel processing followed by integration. Independent work runs concurrently.
+Parallel processing followed by integration.
 
 ```
          ┌→ [Specialist A] ─┐
-[Router] → ├→ [Specialist B] ─┼→ [Integration]
+[Router] ├→ [Specialist B] ─┼→ [Integration]
          └→ [Specialist C] ─┘
 ```
 
-**Appropriate when:** the same input requires analysis from different perspectives or domains
-**Example:** composite research — official/media/community/background research in parallel → integrated report
-**Caution:** integration quality determines total quality.
-**Team mode fit:** the most natural agent team pattern. **This must be implemented as an agent team.** Members can share findings, challenge each other, and update investigation direction in real time. This materially improves quality over isolated work.
+**Appropriate when:** one input needs multiple perspectives or domains  
+**Caution:** integration quality determines total quality  
+**Sapphire fit:** strongest default team pattern. Use multiple `spawn_agent` calls, durable mail for cross-checking, then `wait` + `collect_result`
 
 ### 3. Expert Pool
-Select and invoke the correct specialist based on the situation.
+Invoke only the specialist required by the case.
 
 ```
 [Router] → { Specialist A | Specialist B | Specialist C }
 ```
 
-**Appropriate when:** different input types require different handling
-**Example:** code review — invoke only the security, performance, or architecture reviewer that matches the case
-**Caution:** router classification accuracy is critical.
-**Team mode fit:** sub-agents are usually better. Only the required specialist is invoked, so a persistent team is unnecessary.
+**Appropriate when:** only one domain applies at a time  
+**Caution:** routing accuracy is critical  
+**Sapphire fit:** isolated worker mode is usually sufficient
 
 ### 4. Producer-Reviewer
-A producer agent and a reviewer agent operate as a pair.
+Generation followed by verification.
 
 ```
 [Producer] → [Reviewer] → (if needed) → [Producer] rerun
 ```
 
-**Appropriate when:** output quality must be guaranteed and objective verification criteria exist
-**Example:** webtoon production — artist generates → reviewer inspects → failed panels regenerate
-**Caution:** set a hard retry limit of 2 to 3 attempts to prevent loops.
-**Team mode fit:** agent team is useful. `SendMessage` enables real-time feedback between producer and reviewer.
+**Appropriate when:** objective review materially improves output  
+**Caution:** cap reruns to prevent loops  
+**Sapphire fit:** strong team pattern. Use mail for concrete review feedback and leader-controlled retries
 
 ### 5. Supervisor
-A central agent manages work state and dynamically assigns work to lower-level agents.
+A central worker assigns or reassigns work dynamically.
 
 ```
          ┌→ [Worker A]
-[Supervisor] ─┼→ [Worker B]    ← Supervisor observes state and assigns dynamically
+[Supervisor] ├→ [Worker B]
          └→ [Worker C]
 ```
 
-**Appropriate when:** workload is variable or work assignment must be decided at runtime
-**Example:** large-scale code migration — the supervisor analyzes the file list and assigns batches to workers
-**Difference from fan-out:** fan-out uses fixed pre-assignment. Supervisor adjusts dynamically based on progress.
-**Caution:** avoid turning the supervisor into a bottleneck. Make delegation units large enough.
-**Team mode fit:** the shared task list maps naturally to the supervisor pattern. Register tasks with `TaskCreate`, then let members request them.
+**Appropriate when:** workload is variable or needs dynamic redistribution  
+**Caution:** avoid turning the supervisor into the bottleneck  
+**Sapphire fit:** use `_workspace/coordination/` files plus `agent_directory` and mail, not an imaginary shared task API
 
 ### 6. Hierarchical Delegation
-A higher-level agent recursively delegates to lower-level agents. A complex problem is decomposed step by step.
+Higher-level decomposition with bounded depth.
 
 ```
-[Lead] → [Team Lead A] → [Executor A1]
-                  → [Executor A2]
-       → [Team Lead B] → [Executor B1]
+[Lead] → [Domain Lead A] → [Executor A1]
+       → [Domain Lead B] → [Executor B1]
 ```
 
-**Appropriate when:** the problem decomposes naturally into a hierarchy
-**Example:** full-stack app development — overall lead → frontend lead → (UI/logic/test) + backend lead → (API/DB/test)
-**Caution:** beyond 3 levels, latency and context loss increase significantly. Keep depth to 2 levels or less.
-**Team mode fit:** nested teams are not allowed in agent team mode. Implement level 1 as a team and level 2 as sub-agents, or flatten into a single team.
+**Appropriate when:** the problem decomposes naturally into layers  
+**Caution:** keep depth low to prevent latency and context loss  
+**Sapphire fit:** use at most 2 levels; beyond that, flatten into a simpler team
 
 ## Composite Patterns
 
-In production use, composite patterns are more common than single patterns:
+Composite patterns are common in production use:
 
 | Composite pattern | Composition | Example |
 |----------|------|------|
-| **Fan-out + Producer-Reviewer** | parallel generation, then separate review for each branch | multilingual translation — translate 4 languages in parallel → each reviewed by a native reviewer |
-| **Pipeline + Fan-out** | sequential stages with one or more parallel segments | analysis (sequential) → implementation (parallel) → integration test (sequential) |
-| **Supervisor + Expert Pool** | supervisor invokes specialists dynamically | customer inquiry handling — supervisor classifies the inquiry and assigns the correct specialist |
+| **Fan-out + Producer-Reviewer** | parallel generation, then review per branch | multilingual content generation |
+| **Pipeline + Fan-out** | sequential stages with one or more parallel stages | analysis → parallel implementation → integration |
+| **Supervisor + Expert Pool** | dynamic routing to specialists | runtime triage and targeted remediation |
 
 ### Execution Mode for Composite Patterns
 
-**Use an agent team for all composite patterns by default.** Active communication between members is a primary driver of result quality.
+Use an agent team by default when the composite pattern benefits from peer review, coordination, or dynamic routing.
 
 | Scenario | Recommended mode | Reason |
 |---------|----------|------|
-| **Research + Analysis** | Agent team | members share findings and debate conflicting information in real time |
-| **Design + Implementation + Verification** | Agent team | feedback loop between designer, implementer, and verifier |
-| **Supervisor + Workers** | Agent team | dynamic assignment through the shared task list and shared progress visibility |
-| **Producer + Reviewer** | Agent team | real-time feedback minimizes rework |
+| Research + analysis | Agent team | findings improve when workers cross-check each other |
+| Design + implementation + verification | Agent team | feedback loops reduce rework |
+| Supervisor + workers | Agent team | the leader can reassign based on progress |
+| One specialist at a time | Isolated worker | team coordination would add unnecessary overhead |
 
-> Mix in sub-agents only when a single agent performs a fully isolated one-shot task.
+## Agent Profile Selection
 
-## Agent Type Selection
+When spawning a worker, set the profile with the `agent` parameter.
 
-When invoking an agent, set the type with the Agent tool `subagent_type` parameter. Team members in an agent team may also use custom agent definitions.
+### Built-in Profiles
 
-### Built-in Types
-
-| Type | Tool access | Appropriate use |
+| Profile | Capability shape | Appropriate use |
 |------|----------|-----------|
-| `general-purpose` | full access (including WebSearch and WebFetch) | web research, general tasks |
-| `Explore` | read-only (no Edit/Write) | codebase exploration, analysis |
-| `Plan` | read-only (no Edit/Write) | architecture design, planning |
+| `coder` | implementation profile with repository mutation tools | coding, refactors, writing outputs, active fixes |
+| `task` | read-heavy profile without repository mutation tools | analysis, QA, research, validation, review |
 
 ### Custom Types
 
-If an agent is defined in `.claude/agents/{name}.md`, invoke it with `subagent_type: "{name}"`. Custom agents have access to the full toolset.
+Sapphire does **not** currently expose a runtime custom `subagent_type` registry. Do not rely on `.sapphire/agents/{name}.md` as an executable primitive.
+
+Encode specialization through:
+- the `spawn_agent.message`
+- the selected profile (`coder` or `task`)
+- explicit owned scope
+- local skills loaded inside the worker
 
 ### Selection Criteria
 
 | Situation | Recommended choice | Reason |
 |------|------|------|
-| Role is complex and reused across sessions | **Custom type** (`.claude/agents/`) | manage persona and work principles in a file |
-| Task is simple research or collection and a prompt is enough | **`general-purpose`** + detailed prompt | no agent file logic required beyond prompt instructions |
-| Only code reading is required (analysis/review) | **`Explore`** | prevents accidental file modification |
-| Only design or planning is required | **`Plan`** | focuses on analysis and prevents code changes |
-| Implementation requires file edits | **Custom type** | full tool access plus specialist instructions |
+| Code implementation or edits | `coder` | requires mutation tools |
+| QA, review, research, validation | `task` | safer read-heavy profile |
+| Reusable specialist behavior | profile + strict message + skills | current runtime uses prompt+skill composition, not custom agent registration |
 
-**Rule:** Every agent must be defined in `.claude/agents/{name}.md`. Even when using a built-in type, create the agent definition file and state the role, principles, and protocol. The file is required for reuse in later sessions, and the team communication protocol must be explicit to preserve collaboration quality.
+## Agent Work Packet Structure
 
-**Model:** Every agent uses `model: "opus"`. Every Agent tool call must explicitly include `model: "opus"`.
-
-## Agent Definition Structure
+Use this structure in the `spawn_agent.message` or an optional planning note:
 
 ```markdown
----
-name: agent-name
-description: "1-2 sentence role description. Include trigger keywords."
----
+# Worker: {name}
 
-# Agent Name — one-line role summary
-
-You are a specialist for [role] in [domain].
+## Profile
+{coder|task}
 
 ## Core Role
-1. Role 1
-2. Role 2
+- primary responsibility
+- decision boundary
 
-## Work Principles
-- Principle 1
-- Principle 2
+## Owned Scope
+- files or domains owned
+- explicit non-owned areas
 
-## Input/Output Protocol
-- Input: [what is received, and from where]
-- Output: [what is written, and where]
-- Format: [file format, structure]
+## Skills To Load
+- exact local skill names
 
-## Team Communication Protocol (agent team mode)
-- Message intake: [who sends what]
-- Message output: [who receives what]
-- Task requests: [what type of work is requested through the shared task list]
+## Output Contract
+- output path
+- required format
 
-## Error Handling
-- [behavior on failure]
-- [behavior on timeout]
+## Blocker Protocol
+- when to send mail
+- when to ask leader for reroute
 
-## Collaboration
-- relationship with other agents
+## Definition Of Done
+- concrete completion criteria
 ```
 
 ## Agent Separation Criteria
 
 | Criterion | Separate | Merge |
 |------|------|------|
-| Expertise | separate if domains differ | merge if domains overlap |
-| Parallelism | separate if work can run independently | consider merge if work is sequentially dependent |
-| Context | separate if context load is high | merge if it stays light and fast |
-| Reusability | separate if it will be used by other teams | consider merge if it is only for this team |
+| Expertise | separate if domains differ materially | merge if the same reasoning handles both |
+| Parallelism | separate if work can run independently | merge if the dependency chain is tight |
+| Context | separate if one worker would overload | merge if one worker can hold the context cleanly |
+| Reuse | separate if the role recurs | merge if it is one-off and narrow |
 
 ## Skill vs Agent
 
-| Category | Skill | Agent |
+| Category | Skill | Worker |
 |------|-------------|-----------------|
-| Definition | procedural knowledge + tool bundle | specialist persona + behavior principles |
-| Location | `.claude/skills/` | `.claude/agents/` |
-| Trigger | user request keyword matching | explicit invocation through the Agent tool |
-| Size | small to large (workflow) | small (role definition) |
-| Purpose | "how" | "who" |
+| Definition | procedural knowledge + bundled references/scripts | owned scope + responsibility + output contract |
+| Location | `<repo-root>/.sapphire/skills/` or installed local skill store | `spawn_agent.message` or optional planning note |
+| Trigger | user request or `search_skills` / `load_skill` after local-first discovery | explicit spawn by the leader |
+| Purpose | "how" | "who owns what" |
 
-A skill is a **procedural guide** referenced while the agent performs work.
-An agent is a **specialist role definition** that uses skills.
+A skill is a procedural guide.  
+A worker is an execution unit with explicit ownership.
 
 ## Skill ↔ Agent Integration Methods
 
-Three ways an agent can use a skill:
-
 | Method | Implementation | Appropriate use |
 |------|------|-----------|
-| **Skill tool call** | specify `call /skill-name with the Skill tool` in the agent prompt | when the skill is an independent workflow and may also be user-invoked |
-| **Inline in prompt** | include the skill content directly in the agent definition | when the skill is short (50 lines or less) and dedicated to one agent |
-| **Reference load** | load the skill `references/` files with `Read` only when needed | when the skill content is large and only conditionally required |
+| **Local skill load** | `search_skills` → `load_skill` inside the worker | reusable domain workflow |
+| **Inline instructions** | include short procedural rules directly in the worker message | narrow dedicated behavior |
+| **Reference load** | read `references/` only when needed | large conditional detail |
 
-Recommended rule: use the Skill tool for reusable skills, inline for dedicated skills, and reference loading for large content.
+Recommended rule: use local skill loads for reusable workflows, inline only for short narrow rules, and reference loading for large conditional detail.
+
+Strict skill rule:
+- Search local skills first.
+- Load a local skill immediately when it is a strong fit.
+- Use `install_skill` only when local search has no direct fit or only weak generic fits.

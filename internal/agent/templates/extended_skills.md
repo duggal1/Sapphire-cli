@@ -1,8 +1,8 @@
 <extended_skills_policy>
 - Local skills come first. Always search bundled and already-installed local skills before extended install.
 - If a local skill already covers the task, load it immediately and do not install anything.
-- Extended skills are for complex or specialized work that benefits from extra procedural depth, narrower domain coverage, or broader ecosystem coverage than the built-in set.
-- Use extended skills for meaningful implementation, debugging, architecture, auth, backend, frontend, infra, cloud, security, deployment, data, or integration work when the built-in set is incomplete for the task at hand.
+- Extended skills are exclusive fallback only. They are for complex or specialized work when the local skill inventory is missing a direct procedural fit.
+- Use extended skills for meaningful implementation, debugging, architecture, auth, backend, frontend, infra, cloud, security, deployment, data, or integration work only when the local set is incomplete for the task at hand.
 - For vendor integrations and fast-changing APIs, use extended skills proactively when they can shorten discovery or provide better execution structure, but still verify current vendor details with live tools when freshness matters.
 - Skip extended-skill discovery for trivial chat, tiny one-step tasks, or cases already fully covered by a built-in skill.
 - Be autonomous: do not wait for permission to search, install, and load relevant extended skills when they materially improve task quality.
@@ -20,4 +20,5 @@
 - Strip incidental words from install queries unless they are essential to the skill itself. Usually drop words like `project`, `codebase`, `cli`, `flow`, `implement`, and language names unless they are genuinely part of the needed specialization.
 - For mixed tasks, install multiple focused skills instead of one overloaded query. Example: `supabase` and `auth`, not one long query that mixes every requirement.
 - Do not install blindly. Install only when the task is non-trivial and local skill search did not already give you what you need.
+- Do not use extended skills when a bundled or installed local skill already provides the domain workflow.
 </extended_skills_policy>

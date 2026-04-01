@@ -78,19 +78,23 @@ Start with 2 to 3 prompts, but cover:
 
 ### 3-1. Comparison Execution Structure
 
-For each test prompt, spawn two sub-agents **at the same time**:
+For each test prompt, run two workers **at the same time** when possible:
 
 **With-skill run:**
 ```
 Prompt: "{test prompt}"
-Skill path: {skill path}
+Worker primitive: spawn_agent
+Profile: {task|coder}
+Skill load: {skill path}
 Output path: _workspace/iteration-N/eval-{id}/with_skill/outputs/
 ```
 
 **Baseline run:**
 ```
 Prompt: "{test prompt}"  (same prompt)
-Skill: none
+Worker primitive: spawn_agent
+Profile: {task|coder}
+Skill load: none
 Output path: _workspace/iteration-N/eval-{id}/without_skill/outputs/
 ```
 
@@ -103,7 +107,7 @@ Output path: _workspace/iteration-N/eval-{id}/without_skill/outputs/
 
 ### 3-3. Capture Timing Data
 
-When the sub-agent completion notification arrives, save `total_tokens` and `duration_ms` **immediately**. This data is only accessible at notification time and cannot be recovered later.
+When `wait` and `collect_result` return worker results, save any available execution metadata immediately. Do not rely on being able to reconstruct timing later.
 
 ```json
 {
@@ -273,7 +277,7 @@ If description optimization is required:
 4. Select the best description on the Test set, not the Train set (prevents overfitting)
 5. Repeat up to 5 times
 
-> Run this process with an automation script that uses `claude -p`. Token cost is high. Use it only at the final stage after the skill is already stable.
+> Run this process with automation only after the evaluation set is stable enough to justify the cost.
 
 ---
 

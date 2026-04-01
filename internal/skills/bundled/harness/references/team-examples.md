@@ -7,241 +7,193 @@
 ### Team Architecture: Fan-out/Fan-in
 ### Execution Mode: Agent Team
 
-```
+```text
 [Leader/Orchestrator]
-    ├── TeamCreate(research-team)
-    ├── TaskCreate(4 research tasks)
-    ├── Team members self-coordinate (SendMessage)
-    ├── Collect results (Read)
+    ├── spawn_agent x 4
+    ├── agent_directory
+    ├── agent_mail_* for peer coordination
+    ├── wait / collect_result
     └── Create integrated report
 ```
 
 ### Agent Composition
 
-| Member | Agent Type | Role | Output |
+| Member | Profile | Role | Output |
 |------|-------------|------|------|
-| official-researcher | general-purpose | official documents/blog | research_official.md |
-| media-researcher | general-purpose | media/investment | research_media.md |
-| community-researcher | general-purpose | community/social | research_community.md |
-| background-researcher | general-purpose | background/competition/academic | research_background.md |
+| official-researcher | task | official documents/blog | research_official.md |
+| media-researcher | task | media/investment | research_media.md |
+| community-researcher | task | community/social | research_community.md |
+| background-researcher | task | background/competition/academic | research_background.md |
 | (leader = orchestrator) | — | integrated report | integrated_report.md |
 
-> Research agents use the `general-purpose` built-in type, but each one must still be defined in `.claude/agents/{name}.md`. The file must specify the role, research scope, and team communication protocol so reuse and collaboration quality are preserved.
+> Research workers use profile `task`. Specialization is expressed through the `spawn_agent.message` and loaded skills, not a custom agent-definition registry.
 
 ### Orchestrator Workflow (Agent Team)
 
-```
+```text
 Phase 1: Preparation
-  - Analyze user input (identify topic and research mode)
+  - Analyze user input
   - Create _workspace/
 
-Phase 2: Team Setup
-  - TeamCreate(team_name: "research-team", members: [
-      { name: "official", prompt: "Research official channels..." },
-      { name: "media", prompt: "Research media and investment trends..." },
-      { name: "community", prompt: "Research community reaction..." },
-      { name: "background", prompt: "Research background and competitive landscape..." }
-    ])
-  - TaskCreate(tasks: [
-      { title: "Research official channels", assignee: "official" },
-      { title: "Research media trends", assignee: "media" },
-      { title: "Research community reaction", assignee: "community" },
-      { title: "Research background context", assignee: "background" }
-    ])
+Phase 2: Spawn Workers
+  - spawn_agent(official-researcher)
+  - spawn_agent(media-researcher)
+  - spawn_agent(community-researcher)
+  - spawn_agent(background-researcher)
+  - each worker owns one artifact path under _workspace/
 
 Phase 3: Research Execution
-  - 4 members investigate independently
-  - If one member finds a relevant discovery, share it through SendMessage
-    (example: media sends investment news to background)
-  - If conflicting information is found, members discuss it directly
-  - Each member saves a file on completion and notifies the leader
+  - all 4 workers investigate independently
+  - if one worker finds relevant evidence for another, send it by agent_mail_send
+  - all workers write artifacts to _workspace/
 
 Phase 4: Integration
-  - Leader reads 4 artifacts
-  - Create integrated report
-  - Conflicting information is preserved with attribution
+  - wait
+  - collect_result
+  - leader reads 4 artifacts
+  - create integrated report
 
 Phase 5: Cleanup
-  - Request termination from members
-  - Delete team
-  - Preserve _workspace/ (required for post-run verification and audit traceability)
+  - close_agent for all 4 workers
+  - preserve _workspace/
 ```
 
 ### Team Communication Pattern
 
-```
-official ──SendMessage──→ background  (share relevant official announcements)
-media ────SendMessage──→ background  (share investment and acquisition information)
-community ─SendMessage──→ media      (share media-relevant community reactions)
-all members ──TaskUpdate──→ shared task list  (progress update)
-leader ←───── idle notification ──── completed member   (automatic)
+```text
+official ──agent_mail_send──→ background
+media ────agent_mail_send──→ background
+community ─agent_mail_send──→ media
+leader ───agent_directory──→ inspect status and route aliases
 ```
 
 ---
 
-## Example 2: SF Novel Writing Team (Agent Team Mode)
+## Example 2: SF Novel Writing Team (Hybrid Team)
 
 ### Team Architecture: Pipeline + Fan-out
-### Execution Mode: Agent Team
+### Execution Mode: Agent Team + Isolated Worker
 
-```
-Phase 1 (parallel — agent team): worldbuilder + character-designer + plot-architect
-  → coordinate consistency through SendMessage
-Phase 2 (sequential): prose-stylist (drafting)
-Phase 3 (parallel — agent team): science-consultant + continuity-manager (review)
-  → share findings through SendMessage
-Phase 4 (sequential): prose-stylist (apply review revisions)
+```text
+Phase 1 (parallel): worldbuilder + character-designer + plot-architect
+  → coordinate consistency by mail
+Phase 2 (sequential): prose-stylist isolated worker
+Phase 3 (parallel): science-consultant + continuity-manager
+Phase 4 (sequential): prose-stylist isolated worker applies review
 ```
 
 ### Agent Composition
 
-| Member | Agent Type | Role | Skill |
+| Member | Profile | Role | Skill |
 |------|-------------|------|------|
-| worldbuilder | custom | worldbuilding | world-setting |
-| character-designer | custom | character design | character-profile |
-| plot-architect | custom | plot structure | outline |
-| prose-stylist | custom | style editing + drafting | write-scene, review-chapter |
-| science-consultant | custom | science validation | science-check |
-| continuity-manager | custom | continuity validation | consistency-check |
+| worldbuilder | task | worldbuilding | world-setting |
+| character-designer | task | character design | character-profile |
+| plot-architect | task | plot structure | outline |
+| prose-stylist | coder | drafting and revision | write-scene, review-chapter |
+| science-consultant | task | science validation | science-check |
+| continuity-manager | task | continuity validation | consistency-check |
 
-### Full Agent File Example: `worldbuilder.md`
+### Example Worker Packet: `worldbuilder`
 
 ```markdown
----
-name: worldbuilder
-description: "Specialist in building SF worlds. Designs physical laws, social structures, technology levels, and history."
----
+# Worker: worldbuilder
 
-# Worldbuilder — SF World Design Specialist
-
-You are a specialist in designing SF worlds. Ground the world in scientific fact, extend it with disciplined imagination, and build the physical, social, and technological foundation in which the story operates.
+## Profile
+task
 
 ## Core Role
-1. Define the physical laws and technology level of the world
-2. Design the social structure, political system, and economic system
-3. Establish historical context and the structure of the current conflict
-4. Describe environment and atmosphere by location
+1. Define the physical and technological foundation of the world
+2. Define the social and political structure
+3. Write a setting artifact that downstream workers can consume
 
-## Work Principles
-- Internal consistency is the highest priority — no contradiction between settings
-- Use chained "if this technology exists, then what follows?" reasoning to derive systemic effects
-- Build a world that serves the story — avoid excessive setting that obstructs the plot
+## Owned Scope
+- `_workspace/01_worldbuilder_setting.md`
+- no drafting or prose revision
 
-## Input/Output Protocol
-- Input: user world concept and genre requirements
-- Output: `_workspace/01_worldbuilder_setting.md`
-- Format: markdown. Sectioned by physics/social/technology/history/location
+## Skills To Load
+- world-setting
 
-## Team Communication Protocol
-- To character-designer: send social structure, class system, and profession information
-- To plot-architect: send major conflict structures and crisis elements
-- From science-consultant: receive scientific error feedback → revise setting
-- On world change: broadcast to all affected members
+## Blocker Protocol
+- send mail to character-designer when social structure is stable
+- send mail to plot-architect when conflict structure is stable
 
-## Error Handling
-- If the concept is vague, propose 3 directions and request selection
-- If a scientific error is found, provide an alternative with the correction
-
-## Collaboration
-- Provide social structure information to character-designer
-- Provide conflict structure information to plot-architect
-- Revise the setting based on science-consultant feedback
+## Definition Of Done
+- setting artifact is complete, internally consistent, and usable by downstream workers
 ```
 
 ### Detailed Team Workflow
 
-```
-Phase 1: TeamCreate(team_name: "novel-team", members: [worldbuilder, character-designer, plot-architect])
-         TaskCreate([worldbuilding, character design, plot structure])
-         → members self-coordinate and work in parallel
-         → when worldbuilder completes the social structure, send it to character-designer
-         → when character-designer defines the protagonist, send it to plot-architect
+```text
+Phase 1:
+  - spawn_agent(worldbuilder)
+  - spawn_agent(character-designer)
+  - spawn_agent(plot-architect)
+  - workers coordinate by agent_mail_send and write artifacts to _workspace/
 
-Phase 2: Delete the Phase 1 team → call prose-stylist as a sub-agent (no team required for solo drafting)
-         prose-stylist reads 3 artifacts from _workspace/ and drafts
-         → save result to `_workspace/02_prose_draft.md`
+Phase 2:
+  - close Phase 1 workers
+  - run prose-stylist as an isolated worker against the Phase 1 artifacts
 
-Phase 3: Create a new team — TeamCreate(team_name: "review-team", members: [science-consultant, continuity-manager])
-         (only one team may be active per session, but the Phase 1 team has been deleted, so a new team is valid)
-         → both reviewers inspect the draft and share findings
-         → if science-consultant finds a physics error, notify continuity-manager as well
-         → delete team after review completes
+Phase 3:
+  - spawn_agent(science-consultant)
+  - spawn_agent(continuity-manager)
+  - both review the draft and mail findings when overlap matters
 
-Phase 4: Call prose-stylist as a sub-agent, apply review results, and produce final revision
+Phase 4:
+  - close reviewers
+  - run prose-stylist again to apply review results
 ```
 
 ---
 
-## Example 3: Webtoon Production Team (Sub-agent Mode)
+## Example 3: Webtoon Production Team (Producer-Reviewer)
 
 ### Team Architecture: Producer-Reviewer
-### Execution Mode: Sub-agent
+### Execution Mode: Isolated Worker or Small Team
 
-> In a producer-reviewer pattern with only 2 agents, result delivery matters more than direct communication. Sub-agents are the correct mode.
+> When only one producer and one reviewer are needed, isolated workers are often sufficient.
 
-```
-Phase 1: Agent(webtoon-artist) → generate panels
-Phase 2: Agent(webtoon-reviewer) → review
-Phase 3: Agent(webtoon-artist) → regenerate failed panels (maximum 2 times)
+```text
+Phase 1: spawn_agent(webtoon-artist)
+Phase 2: spawn_agent(webtoon-reviewer)
+Phase 3: if needed, respawn or re-input artist with revision instructions
 ```
 
 ### Agent Composition
 
-| Agent | subagent_type | Role | Skill |
+| Worker | Profile | Role | Skill |
 |---------|--------------|------|------|
-| webtoon-artist | custom | generate panel images | generate-webtoon |
-| webtoon-reviewer | custom | quality review | review-webtoon, fix-webtoon-panel |
+| webtoon-artist | coder | generate panels | generate-webtoon |
+| webtoon-reviewer | task | review quality | review-webtoon, fix-webtoon-panel |
 
-### Full Agent File Example: `webtoon-reviewer.md`
+### Example Review Worker Packet
 
 ```markdown
----
-name: webtoon-reviewer
-description: "Specialist in reviewing webtoon panel quality. Evaluates composition, character consistency, text readability, and direction."
----
+# Worker: webtoon-reviewer
 
-# Webtoon Reviewer — Webtoon Quality Review Specialist
-
-You are a specialist in reviewing webtoon panel quality. Evaluate panels against visual completeness, narrative clarity, and character consistency.
+## Profile
+task
 
 ## Core Role
 1. Evaluate panel composition and visual completeness
-2. Verify cross-panel consistency of character appearance
-3. Evaluate readability and placement of speech balloon text
-4. Review pacing and scene direction across the full episode
+2. Verify consistency across panels
+3. Report PASS | FIX | REDO with evidence
 
-## Work Principles
-- Decide clearly with PASS/FIX/REDO
-- Use FIX when partial repair is enough, REDO when full regeneration is required
-- Judge by objective criteria such as consistency, readability, and composition, not personal taste
+## Output Contract
+- write `_workspace/review_report.md`
+- include concrete panel-level revision instructions
 
-## Input/Output Protocol
-- Input: panel images in `_workspace/panels/`
-- Output: `_workspace/review_report.md`
-- Format:
-  ```
-  ## Panel {N}
-  - Decision: PASS | FIX | REDO
-  - Reason: [concrete reason]
-  - Revision Instruction: [concrete direction if FIX or REDO]
-  ```
-
-## Error Handling
-- If image load fails, mark that panel as REDO
-- If a panel remains REDO after 2 regeneration attempts, mark it PASS with warning
-
-## Collaboration
-- Deliver revision instructions to webtoon-artist (file-based result)
-- Review regenerated panels again (maximum 2 loops)
+## Retry Rule
+- allow at most 2 regenerate loops before escalation
 ```
 
 ### Error Handling
 
-```
+```text
 Retry policy:
-- REDO panel → request regeneration from artist (include concrete revision instruction)
-- maximum 2 loops, then force PASS
-- if more than 50% of all panels are REDO, propose prompt revision to the user
+- REDO panel → send concrete revision instructions back to artist
+- maximum 2 loops
+- if more than 50% of panels fail, escalate prompt-level revision to the user
 ```
 
 ---
@@ -251,78 +203,85 @@ Retry policy:
 ### Team Architecture: Fan-out/Fan-in + Discussion
 ### Execution Mode: Agent Team
 
-> Code review is a primary example where agent teams outperform isolated agents. Reviewers with different perspectives share findings and challenge each other, which produces deeper review quality.
+> Code review is a strong team case because independent reviewers cross-check each other’s findings.
 
-```
-[Leader] → TeamCreate(review-team)
-    ├── security-reviewer: inspect security vulnerabilities
-    ├── performance-reviewer: analyze performance impact
-    └── test-reviewer: verify test coverage
-    → reviewers share findings with each other (SendMessage)
-    → leader synthesizes results
-```
-
-### Team Communication Pattern
-
-```
-security ──SendMessage──→ performance  ("This SQL query may be injectable. Check performance implications too.")
-performance ──SendMessage──→ test      ("Found N+1 queries. Confirm whether related tests exist.")
-test ────SendMessage──→ security      ("Authentication module has no tests. Confirm security priority.")
-```
-
-Core rule: reviewers communicate **directly without routing through the leader** so cross-domain issues are identified quickly.
-
----
-
-## Example 5: Supervisor Pattern — Code Migration Team (Agent Team Mode)
-
-### Team Architecture: Supervisor
-### Execution Mode: Agent Team
-
-```
-[supervisor/leader] → analyze file list → assign batches
-    ├→ [migrator-1] (batch A)
-    ├→ [migrator-2] (batch B)
-    └→ [migrator-3] (batch C)
-    ← receive TaskUpdate → assign additional batches or reassign
+```text
+[Leader]
+    ├── spawn_agent(security-reviewer)
+    ├── spawn_agent(performance-reviewer)
+    └── spawn_agent(test-reviewer)
+        → reviewers share findings by mail
+        → leader synthesizes results
 ```
 
 ### Agent Composition
 
-| Member | Role |
-|------|------|
-| (leader = migration-supervisor) | file analysis, batch distribution, progress management |
-| migrator-1~3 | migrate assigned file batches |
+| Member | Profile | Role |
+|------|------|------|
+| security-reviewer | task | inspect security risks |
+| performance-reviewer | task | inspect performance impact |
+| test-reviewer | task | inspect test coverage and test gaps |
 
-### Supervisor Dynamic Assignment Logic (Agent Team)
+### Team Communication Pattern
 
-```
-1. Collect the full target file list
-2. Estimate complexity (file size, import count, dependency count)
-3. Register file batches as tasks through TaskCreate (including dependencies)
-4. Members claim tasks themselves
-5. When a member reports completion with TaskUpdate:
-   - success → request next task automatically
-   - failure → leader confirms cause through SendMessage → reassign or transfer to another member
-6. After all tasks complete → leader runs integration tests
+```text
+security ──agent_mail_send──→ performance
+performance ──agent_mail_send──→ test
+test ────agent_mail_send──→ security
 ```
 
-Difference from fan-out: assignment is not fixed in advance. It is **allocated dynamically at runtime**. The shared task list claim model aligns naturally with the supervisor pattern.
+Core rule: reviewers communicate directly so cross-domain issues surface early.
+
+---
+
+## Example 5: Supervisor Pattern — Code Migration Team
+
+### Team Architecture: Supervisor
+### Execution Mode: Agent Team
+
+```text
+[supervisor/leader] → analyze file list → assign batches
+    ├→ [migrator-1] (batch A)
+    ├→ [migrator-2] (batch B)
+    └→ [migrator-3] (batch C)
+    ← agent_directory / collect_result / mail-driven reassignment
+```
+
+### Agent Composition
+
+| Member | Profile | Role |
+|------|------|------|
+| (leader = migration-supervisor) | — | batch analysis, reassignment, progress management |
+| migrator-1~3 | coder | migrate owned file batches |
+
+### Supervisor Dynamic Assignment Logic
+
+```text
+1. Collect the target file list
+2. Estimate complexity
+3. Spawn 3 migrators with disjoint write_manifest scopes
+4. Each migrator writes outputs for its owned batch
+5. When a batch finishes:
+   - success → assign the next batch through send_input
+   - failure → confirm the cause and respawn or reroute
+6. After all batches complete → run integration verification
+```
+
+Difference from fan-out: assignment is adjusted at runtime instead of being fixed once.
 
 ---
 
 ## Artifact Pattern Summary
 
-### Agent Definition Files
-Location: `project/.claude/agents/{agent-name}.md`
-Required sections: core role, work principles, input/output protocol, error handling, collaboration
-Additional section for team mode: **Team Communication Protocol** (message intake/output, task request scope)
+### Worker Packet Notes
+Location: optional `_workspace/agents/{worker-name}.md` planning artifact or inline in `spawn_agent.message`  
+Required sections: profile, owned scope, skills to load, output contract, blocker protocol, definition of done
 
 ### Skill File Structure
-Location: `project/.claude/skills/{skill-name}/skill.md` (project level)
-or: `~/.claude/skills/{skill-name}/skill.md` (global level)
+Location: `<repo-root>/.sapphire/skills/{skill-name}/SKILL.md` (project level)  
+or: installed local skill store after `install_skill`
 
 ### Integrated Skill (Orchestrator)
-Top-level skill that coordinates the full team. Defines scenario-specific agent composition and workflow.
-Template: see `references/orchestrator-template.md`.
-**Execution mode must be declared explicitly** — Agent Team (default) or Sub-agent.
+Top-level skill that coordinates the full team.  
+Template: see `references/orchestrator-template.md`.  
+**Execution mode must be declared explicitly** — Agent Team or Isolated Worker.

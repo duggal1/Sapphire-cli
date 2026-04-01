@@ -146,6 +146,9 @@ func toolNameAlias(name string) string {
 		"new_file", "newfile", "save_file", "savefile":
 		return WriteToolName
 
+	case "run_harness", "harness_run", "activate_harness", "harness_route", "route_harness":
+		return RunHarnessToolName
+
 	// File editing aliases — fixes "tool not found: modify_file"
 	case "update_file", "updatefile", "modify_file", "modifyfile",
 		"patch_file", "patchfile", "replace", "replace_in_file":

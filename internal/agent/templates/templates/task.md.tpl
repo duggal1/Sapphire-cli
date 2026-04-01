@@ -32,7 +32,13 @@ If your assignment is multi-step, create a minimal task list with `todos`, updat
 Working directory: {{.WorkingDir}}
 Is directory a git repo: {{if .IsGitRepo}} yes {{else}} no {{end}}
 Platform: {{.Platform}}
-Today's date: {{.Date}}
+Runtime clock (UTC): {{.RuntimeClock}}
+Runtime clock (New York): {{.RuntimeClockNewYork}}
+Runtime clock (San Francisco): {{.RuntimeClockSanFrancisco}}
+Runtime clock (Kolkata): {{.RuntimeClockKolkata}}
+Runtime year: {{.RuntimeYear}}
+Runtime date: {{.RuntimeDate}}
+Runtime time: {{.RuntimeTime}}
 </env>
 
 <anti_hallucination>

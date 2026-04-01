@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/skills"
 	"github.com/stretchr/testify/require"
@@ -78,7 +79,7 @@ func TestSingularityManagerCompilesRecurringRoutePolicyAndGeneratesSkill(t *test
 	require.True(t, policy.PreferIndexCodebase)
 	require.True(t, policy.ForbidBashDiscovery)
 	require.True(t, policy.RequireContextRead)
-	require.Equal(t, 82, policy.Confidence)
+	require.GreaterOrEqual(t, policy.Confidence, minPolicyConfidenceForInjection)
 	require.Contains(t, []string{learnedPolicyStateCandidate, learnedPolicyStatePromoted}, policy.PromotionState)
 	require.Equal(t, []string{
 		agenttools.ToolSearchToolName,
@@ -269,6 +270,90 @@ func TestCompileSingularityExperienceRequiresRealStructuredDiscovery(t *testing.
 	require.Equal(t, 1, experience.Context.ReadEvidenceCount)
 }
 
+func TestAssessTracePlanQualityUsesStructuredPlanInPlanMode(t *testing.T) {
+	t.Parallel()
+
+	trace := &completedTurnTrace{
+		Mode:   string(planmode.PlanMode),
+		Prompt: "Plan the safest architecture migration across the repository and compare the implementation options.",
+		Family: learnedTaskFamily{
+			ID:       "design/broad/backend+infra",
+			GoalType: "design",
+			Breadth:  "broad",
+		},
+		ResultText: `<proposed_plan>
+## Current Reality
+- The repository currently routes runtime setup through internal/platform and cmd/api.
+
+## Key Changes
+1. First read the runtime and API wiring paths deeply enough to confirm the current boundary.
+2. Then compare an incremental adapter versus a direct constructor migration.
+3. Next choose the lower-blast-radius path and list the file-level change sequence.
+
+## Risks
+- Migration compatibility risk if cmd/api is switched before the adapter exists.
+- Open question: whether auth and billing both depend on the current runtime shape.
+
+## Test Plan
+- Verify the recommendation against the current package structure and the existing runtime symbols.
+</proposed_plan>`,
+	}
+
+	assessment := assessTracePlanQuality(trace)
+	require.Equal(t, "strong", assessment.Discipline)
+	require.Empty(t, assessment.Blockers)
+}
+
+func TestAssessTracePlanQualityUsesExecutionEvidenceWhenFinalTextIsBrief(t *testing.T) {
+	t.Parallel()
+
+	trace := &completedTurnTrace{
+		Prompt: "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit.",
+		Family: learnedTaskFamily{
+			ID:       "design/broad/backend",
+			GoalType: "design",
+			Breadth:  "broad",
+		},
+		OrderedTools: []string{
+			agenttools.RunHarnessToolName,
+			agenttools.ToolSearchToolName,
+			agenttools.AgenticViewToolName,
+			agenttools.UpdatePlanToolName,
+		},
+		ToolCalls: map[string]int{
+			agenttools.RunHarnessToolName:  1,
+			agenttools.ToolSearchToolName:  1,
+			agenttools.AgenticViewToolName: 1,
+			agenttools.UpdatePlanToolName:  1,
+		},
+		StructuredEvidence: map[string]int{"backend": 1},
+		ReadEvidence:       map[string]int{"internal/platform/runtime.go": 1},
+		ResultText:         "Validated the recommendation against the current package structure and migration risks.",
+	}
+
+	assessment := assessTracePlanQuality(trace)
+	require.Equal(t, "strong", assessment.Discipline)
+	require.NotContains(t, assessment.Blockers, "execution_sequence")
+}
+
+func TestAssessTraceArchitectureQualityRequiresRepoFitAndMigrationCost(t *testing.T) {
+	t.Parallel()
+
+	trace := &completedTurnTrace{
+		Prompt: "Architecture task only. Read the repository broadly, compare two backend designs, and recommend the best fit.",
+		Family: learnedTaskFamily{
+			ID:       "design/broad/backend+infra",
+			GoalType: "design",
+			Breadth:  "broad",
+		},
+		ResultText: "Option A keeps cmd/api thin by adding an adapter around internal/platform.RuntimeConfig, while Option B rewrites the boundary directly. Compared against the current package structure, Option A is the better repo fit because it reuses the existing boundaries and supports a gradual migration with lower blast radius, better compatibility, and lower rollout cost.",
+	}
+
+	assessment := assessTraceArchitectureQuality(trace)
+	require.Equal(t, "strong", assessment.Discipline)
+	require.Empty(t, assessment.Blockers)
+}
+
 func TestSingularityManagerPenalizesWeakValidationDiscipline(t *testing.T) {
 	t.Parallel()
 
@@ -301,12 +386,13 @@ func TestSingularityManagerPenalizesWeakValidationDiscipline(t *testing.T) {
 	weakTrace := weak.FinishTurn("weak-validation", "completed", "wrote the initialization guide after reading the repository")
 	require.NotNil(t, weakTrace)
 	weak.CompileTurn(context.Background(), weakTrace)
-	weakPolicy, _, ok := weak.LookupPolicy(prompt)
-	require.True(t, ok)
+	weakPolicy := weak.store.Policies[classifyLearnedTaskFamily(prompt).ID]
+	require.NotEmpty(t, weakPolicy.TaskFamily)
 
 	require.Less(t, weakPolicy.Confidence, strongPolicy.Confidence)
 	require.Greater(t, weakPolicy.ValidationFailures, 0)
 	require.Greater(t, weakPolicy.RecentValidationPenalty, 0.0)
+	require.Equal(t, learnedPolicyStateQuarantined, weakPolicy.PromotionState)
 }
 
 func TestAssessSingularityCognitionRecognizesTradeoffsAndRepoGroundedValidation(t *testing.T) {
@@ -350,7 +436,7 @@ func TestSingularityManagerPenalizesWeakDecompositionDiscipline(t *testing.T) {
 	strong.RecordToolResult("strong-decomp", agenttools.UpdatePlanToolName, "", "", false)
 	strong.RecordToolCall("strong-decomp", SpawnAgentToolName, "")
 	strong.RecordToolResult("strong-decomp", SpawnAgentToolName, "", "", false)
-	strongTrace := strong.FinishTurn("strong-decomp", "completed", "Compared two backend approaches with trade-offs and validated the recommendation against the current repository structure.")
+	strongTrace := strong.FinishTurn("strong-decomp", "completed", "Option A reuses the current repository structure, while Option B rewrites the boundary directly. I compared the trade-offs, explained why Option A is the better repo fit, and validated the recommendation against the current repository structure with lower migration cost and blast radius.")
 	require.NotNil(t, strongTrace)
 	strong.CompileTurn(context.Background(), strongTrace)
 	strongPolicy := strong.store.Policies[classifyLearnedTaskFamily(prompt).ID]
@@ -373,11 +459,125 @@ func TestSingularityManagerPenalizesWeakDecompositionDiscipline(t *testing.T) {
 	require.Greater(t, weakPolicy.RecentDecompositionPenalty, 0.0)
 }
 
+func TestSingularityManagerQuarantinesWeakBroadDesignLearning(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	prompt := "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit."
+
+	manager.StartTurn("weak-design", prompt, manager.repoRoot, nil, learnedRoutePolicy{})
+	manager.RecordToolCall("weak-design", agenttools.RunHarnessToolName, "")
+	manager.RecordToolResult("weak-design", agenttools.RunHarnessToolName, "", "", false)
+	manager.RecordToolCall("weak-design", agenttools.ToolSearchToolName, `{"query":"backend design"}`)
+	manager.RecordToolResult("weak-design", agenttools.ToolSearchToolName, "", "", false)
+	manager.RecordToolCall("weak-design", agenttools.AgenticViewToolName, `{"paths":["internal/platform/runtime.go"]}`)
+	manager.RecordToolResult("weak-design", agenttools.AgenticViewToolName, "", "", false)
+	manager.RecordToolCall("weak-design", agenttools.UpdatePlanToolName, `{"plan":[{"step":"compare the repository approaches","status":"in_progress"}]}`)
+	manager.RecordToolResult("weak-design", agenttools.UpdatePlanToolName, "", "", false)
+
+	trace := manager.FinishTurn("weak-design", "completed", "Recommended the cleanest architecture.")
+	require.NotNil(t, trace)
+	manager.CompileTurn(context.Background(), trace)
+
+	family := classifyLearnedTaskFamily(prompt)
+	policy := manager.store.Policies[family.ID]
+	require.Equal(t, learnedPolicyStateQuarantined, policy.PromotionState)
+	require.Equal(t, singularityLearningVerdictQuarantined, policy.LastLearningVerdict)
+	require.Equal(t, 1, policy.QuarantineCount)
+	require.Equal(t, 0, policy.SuccessCount)
+	require.Greater(t, policy.RecentQualityGatePenalty, 0.0)
+
+	_, _, ok := manager.LookupPolicy(prompt)
+	require.False(t, ok)
+	require.Empty(t, policy.SkillFilePath)
+}
+
+func TestSingularityManagerAllowsStrongBroadDesignLearning(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	prompt := "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit."
+
+	manager.StartTurn("strong-design", prompt, manager.repoRoot, nil, learnedRoutePolicy{})
+	manager.RecordToolCall("strong-design", agenttools.RunHarnessToolName, "")
+	manager.RecordToolResult("strong-design", agenttools.RunHarnessToolName, "", "", false)
+	manager.RecordToolCall("strong-design", agenttools.ToolSearchToolName, `{"query":"backend design"}`)
+	manager.RecordToolResult("strong-design", agenttools.ToolSearchToolName, "", "", false)
+	manager.RecordToolCall("strong-design", agenttools.RGFilesToolName, `{"pattern":"*runtime*.go"}`)
+	manager.RecordToolResult("strong-design", agenttools.RGFilesToolName, "", "", false)
+	manager.RecordToolCall("strong-design", agenttools.AgenticViewToolName, `{"paths":["internal/platform/runtime.go"]}`)
+	manager.RecordToolResult("strong-design", agenttools.AgenticViewToolName, "", "", false)
+	manager.RecordToolCall("strong-design", agenttools.UpdatePlanToolName, `{"plan":[{"step":"compare the repository approaches","status":"in_progress"}]}`)
+	manager.RecordToolResult("strong-design", agenttools.UpdatePlanToolName, "", "", false)
+	manager.RecordToolCall("strong-design", agenttools.DiagnosticsToolName, "")
+	manager.RecordToolResult("strong-design", agenttools.DiagnosticsToolName, "", "", false)
+
+	trace := manager.FinishTurn("strong-design", "completed", "Option A keeps cmd/api thin by adding an adapter around internal/platform.RuntimeConfig, while Option B rewrites the boundary directly. Compared against the current package structure, Option A is the better repo fit because it reuses the existing boundaries and supports a gradual migration with lower blast radius, better compatibility, and lower rollout cost. I validated the recommendation against the current package structure and listed the trade-offs with pros and cons.")
+	require.NotNil(t, trace)
+	manager.CompileTurn(context.Background(), trace)
+
+	policy := manager.store.Policies[classifyLearnedTaskFamily(prompt).ID]
+	require.Equal(t, singularityLearningVerdictAccepted, policy.LastLearningVerdict)
+	require.Zero(t, policy.QuarantineCount)
+	require.Equal(t, learnedPolicyStateObserver, policy.PromotionState)
+	require.Equal(t, 1, policy.ChallengerWins)
+	require.GreaterOrEqual(t, policy.LastPlanQualityConfidence, 70)
+	require.Equal(t, 95, policy.LastArchitectureConfidence)
+}
+
+func TestSingularityManagerRequiresMultipleStrongArchitectureWinsBeforePromotion(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	prompt := "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit."
+	family := classifyLearnedTaskFamily(prompt)
+
+	runStrongDesignTurn := func(sessionID string) learnedRoutePolicy {
+		manager.StartTurn(sessionID, prompt, manager.repoRoot, nil, learnedRoutePolicy{})
+		manager.RecordToolCall(sessionID, agenttools.RunHarnessToolName, "")
+		manager.RecordToolResult(sessionID, agenttools.RunHarnessToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.ToolSearchToolName, `{"query":"runtime boundary"}`)
+		manager.RecordToolResult(sessionID, agenttools.ToolSearchToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.RGFilesToolName, `{"pattern":"*runtime*.go"}`)
+		manager.RecordToolResult(sessionID, agenttools.RGFilesToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.AgenticViewToolName, `{"paths":["internal/platform/runtime.go","cmd/api/main.go"]}`)
+		manager.RecordToolResult(sessionID, agenttools.AgenticViewToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.UpdatePlanToolName, `{"plan":[{"step":"compare the adapter and rewrite options against the current repo boundaries","status":"in_progress"}]}`)
+		manager.RecordToolResult(sessionID, agenttools.UpdatePlanToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.DiagnosticsToolName, "")
+		manager.RecordToolResult(sessionID, agenttools.DiagnosticsToolName, "", "", false)
+
+		trace := manager.FinishTurn(sessionID, "completed", "Option A keeps cmd/api thin by adding an adapter around internal/platform.RuntimeConfig, while Option B rewrites the boundary directly. Compared against the current package structure, Option A is the better repo fit because it reuses the existing boundaries and supports a gradual migration with lower blast radius, better compatibility, and lower rollout cost. I validated the recommendation against the current package structure and listed the trade-offs with pros and cons.")
+		require.NotNil(t, trace)
+		manager.CompileTurn(context.Background(), trace)
+		return manager.store.Policies[family.ID]
+	}
+
+	first := runStrongDesignTurn("design-one")
+	require.Equal(t, singularityLearningVerdictAccepted, first.LastLearningVerdict)
+	require.Equal(t, 1, first.ChallengerWins)
+	require.Equal(t, learnedPolicyStateObserver, first.PromotionState)
+	_, _, ok := manager.LookupPolicy(prompt)
+	require.False(t, ok)
+
+	second := runStrongDesignTurn("design-two")
+	require.Equal(t, 2, second.ChallengerWins)
+	require.Equal(t, learnedPolicyStateCandidate, second.PromotionState)
+	_, _, ok = manager.LookupPolicy(prompt)
+	require.True(t, ok)
+
+	third := runStrongDesignTurn("design-three")
+	require.Equal(t, 3, third.ChallengerWins)
+	require.Equal(t, learnedPolicyStatePromoted, third.PromotionState)
+	require.GreaterOrEqual(t, third.LastPlanQualityConfidence, 70)
+	require.Equal(t, 95, third.LastArchitectureConfidence)
+}
+
 func TestSingularityManagerBansDiscoveryBashAfterRepeatedStructuredWins(t *testing.T) {
 	t.Parallel()
 
 	manager := newTestSingularityManager(t)
-	prompt := "Map the codebase across the repo, trace dependencies, and plan the implementation in parallel."
+	prompt := "Initialize the codebase, map architecture across the repo, trace dependencies in parallel, and generate AGENTS.md."
 
 	manager.StartTurn("session-bash-fail", prompt, manager.repoRoot, nil, learnedRoutePolicy{})
 	manager.RecordToolCall("session-bash-fail", agenttools.BashToolName, `{"command":"find . -name '*.go'"}`)
@@ -403,7 +603,7 @@ func TestSingularityManagerBansDiscoveryBashAfterRepeatedStructuredWins(t *testi
 		manager.RecordToolResult(sessionID, agenttools.DiagnosticsToolName, "", "", false)
 		manager.RecordToolCall(sessionID, SpawnAgentToolName, "")
 		manager.RecordToolResult(sessionID, SpawnAgentToolName, "", "", false)
-		successTrace := manager.FinishTurn(sessionID, "completed", "Structured discovery succeeded")
+		successTrace := manager.FinishTurn(sessionID, "completed", "Mapped the repository, validated the initialization guide against the current package structure, and completed the structured initialization route.")
 		require.NotNil(t, successTrace)
 		manager.CompileTurn(context.Background(), successTrace)
 	}

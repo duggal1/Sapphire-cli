@@ -118,6 +118,7 @@ var policyPromptSeparatorRegex = regexp.MustCompile(`[^a-z0-9./_]+`)
 type SessionAgentCall struct {
 	SessionID              string
 	Prompt                 string
+	SessionMode            planmode.SessionMode
 	ResumePointID          string
 	TodoReconcileTry       int
 	StructuredTry          int

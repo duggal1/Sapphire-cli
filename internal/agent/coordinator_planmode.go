@@ -6,6 +6,7 @@ import (
 
 	"charm.land/fantasy"
 	agentformula "github.com/duggal1/Sapphire-cli/internal/agent/formula"
+	"github.com/duggal1/Sapphire-cli/internal/message"
 )
 
 func (c *coordinator) initPlanMode() error {
@@ -49,4 +50,30 @@ func extractAgentResultText(result *fantasy.AgentResult) string {
 		return ""
 	}
 	return strings.TrimSpace(result.Response.Content.Text())
+}
+
+func (c *coordinator) extractSingularityResultText(ctx context.Context, sessionID string, result *fantasy.AgentResult) string {
+	text := strings.TrimSpace(extractAgentResultText(result))
+	if c == nil || c.messages == nil || strings.TrimSpace(sessionID) == "" {
+		return text
+	}
+	msgs, err := c.messages.List(ctx, sessionID)
+	if err != nil {
+		return text
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		msg := msgs[i]
+		if msg.SessionID != sessionID || msg.Role != message.Assistant || msg.IsSummaryMessage {
+			continue
+		}
+		candidate := strings.TrimSpace(msg.Content().Text)
+		if candidate == "" {
+			continue
+		}
+		if len(candidate) >= len(text) {
+			return candidate
+		}
+		break
+	}
+	return text
 }

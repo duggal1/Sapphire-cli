@@ -26,6 +26,8 @@ type singularityCognitiveAssessment struct {
 	ContextDiscipline       string `json:"context_discipline"`
 	PlanningDiscipline      string `json:"planning_discipline"`
 	DecompositionDiscipline string `json:"decomposition_discipline"`
+	PlanQualityDiscipline   string `json:"plan_quality_discipline"`
+	ArchitectureDiscipline  string `json:"architecture_discipline"`
 	ValidationDiscipline    string `json:"validation_discipline"`
 	RecoveryDiscipline      string `json:"recovery_discipline"`
 	TradeoffDiscipline      string `json:"tradeoff_discipline"`
@@ -165,6 +167,8 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 	}
 
 	validationDiscipline := experience.Verification.Discipline
+	planQuality := assessTracePlanQuality(trace)
+	architecture := assessTraceArchitectureQuality(trace)
 
 	recoveryDiscipline := "clean"
 	switch {
@@ -187,7 +191,16 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 
 	executionRisk := "low"
 	weakCount := 0
-	for _, value := range []string{contextDiscipline, planningDiscipline, experience.Decomposition.Discipline, validationDiscipline, recoveryDiscipline, tradeoffDiscipline} {
+	for _, value := range []string{
+		contextDiscipline,
+		planningDiscipline,
+		experience.Decomposition.Discipline,
+		planQuality.Discipline,
+		architecture.Discipline,
+		validationDiscipline,
+		recoveryDiscipline,
+		tradeoffDiscipline,
+	} {
 		if value == "weak" {
 			weakCount++
 		}
@@ -204,6 +217,8 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 		ContextDiscipline:       contextDiscipline,
 		PlanningDiscipline:      planningDiscipline,
 		DecompositionDiscipline: experience.Decomposition.Discipline,
+		PlanQualityDiscipline:   planQuality.Discipline,
+		ArchitectureDiscipline:  architecture.Discipline,
 		ValidationDiscipline:    validationDiscipline,
 		RecoveryDiscipline:      recoveryDiscipline,
 		TradeoffDiscipline:      tradeoffDiscipline,

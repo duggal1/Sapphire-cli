@@ -739,6 +739,12 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if err != nil {
 		return nil, err
 	}
+	sessionMode := planmode.DefaultSessionMode
+	if c.sessions != nil {
+		if currentMode, modeErr := c.sessions.GetMode(ctx, env.sessionID); modeErr == nil {
+			sessionMode = planmode.NormalizeMode(currentMode)
+		}
+	}
 	workingDir, branch, err := c.prepareCurrentAgentForSession(ctx, env.sessionID, agent)
 	if err != nil {
 		return nil, err
@@ -871,6 +877,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	call := SessionAgentCall{
 		SessionID:         env.sessionID,
 		Prompt:            env.userPrompt,
+		SessionMode:       sessionMode,
 		SkillContext:      skillContext,
 		ActiveSkills:      activeSkillNames,
 		ActiveTools:       activeTools,
@@ -901,7 +908,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		"message_id": env.userMessage.ID,
 	}))
 	if c.singularity != nil {
-		c.singularity.StartTurn(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute)
+		c.singularity.StartTurnWithMode(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode)
 	}
 	result, err := agent.Run(ctx, call)
 	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
@@ -928,15 +935,16 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
 		"session_id": env.sessionID,
 	})
+	resultText := c.extractSingularityResultText(ctx, env.sessionID, result)
 	if c.pmem != nil {
-		c.pmem.RecordAssistantTurn(ctx, env.sessionID, extractAgentResultText(result))
+		c.pmem.RecordAssistantTurn(ctx, env.sessionID, resultText)
 	}
 	if c.singularity != nil {
-		if trace := c.singularity.FinishTurn(env.sessionID, "completed", extractAgentResultText(result)); trace != nil {
+		if trace := c.singularity.FinishTurn(env.sessionID, "completed", resultText); trace != nil {
 			go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
 		}
 	}
-	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, extractAgentResultText(result), "completed", nil))
+	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, resultText, "completed", nil))
 	return result, nil
 }
 

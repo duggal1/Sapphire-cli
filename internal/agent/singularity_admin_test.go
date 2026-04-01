@@ -16,7 +16,7 @@ func TestSingularityPolicyDemotionAfterRegression(t *testing.T) {
 	t.Parallel()
 
 	manager := newTestSingularityManager(t)
-	prompt := "Map the codebase across the repo, trace dependencies, and plan the implementation in parallel."
+	prompt := "Initialize the codebase, map architecture across the repo, trace dependencies in parallel, and generate AGENTS.md."
 
 	for i := 0; i < 2; i++ {
 		sessionID := "promote-" + string(rune('a'+i))
@@ -27,9 +27,13 @@ func TestSingularityPolicyDemotionAfterRegression(t *testing.T) {
 		manager.RecordToolResult(sessionID, agenttools.ToolSearchToolName, "", "", false)
 		manager.RecordToolCall(sessionID, agenttools.RGFilesToolName, "")
 		manager.RecordToolResult(sessionID, agenttools.RGFilesToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.AgenticViewToolName, "")
+		manager.RecordToolResult(sessionID, agenttools.AgenticViewToolName, "", "", false)
+		manager.RecordToolCall(sessionID, agenttools.DiagnosticsToolName, "")
+		manager.RecordToolResult(sessionID, agenttools.DiagnosticsToolName, "", "", false)
 		manager.RecordToolCall(sessionID, SpawnAgentToolName, "")
 		manager.RecordToolResult(sessionID, SpawnAgentToolName, "", "", false)
-		trace := manager.FinishTurn(sessionID, "completed", "structured plan succeeded")
+		trace := manager.FinishTurn(sessionID, "completed", "Mapped the repository, validated the initialization guide against the current package structure, and completed the structured initialization route.")
 		require.NotNil(t, trace)
 		manager.CompileTurn(context.Background(), trace)
 	}

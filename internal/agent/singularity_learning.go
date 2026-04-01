@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	"github.com/duggal1/Sapphire-cli/internal/agent/tools"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/skills"
@@ -32,6 +33,7 @@ const (
 	learnedPolicyStateObserver      = "observer"
 	learnedPolicyStateCandidate     = "candidate"
 	learnedPolicyStatePromoted      = "promoted"
+	learnedPolicyStateQuarantined   = "quarantined"
 	learnedPolicyStateDemoted       = "demoted"
 )
 
@@ -80,18 +82,36 @@ type learnedRoutePolicy struct {
 	RecentBashSuccessWeight      float64        `json:"recent_bash_success_weight,omitempty"`
 	RecentContextPenalty         float64        `json:"recent_context_penalty,omitempty"`
 	RecentPlanningPenalty        float64        `json:"recent_planning_penalty,omitempty"`
+	RecentPlanQualityPenalty     float64        `json:"recent_plan_quality_penalty,omitempty"`
+	RecentArchitecturePenalty    float64        `json:"recent_architecture_penalty,omitempty"`
 	RecentValidationPenalty      float64        `json:"recent_validation_penalty,omitempty"`
 	RecentVerifierWeight         float64        `json:"recent_verifier_weight,omitempty"`
 	RecentRecoveryPenalty        float64        `json:"recent_recovery_penalty,omitempty"`
 	RecentTradeoffPenalty        float64        `json:"recent_tradeoff_penalty,omitempty"`
 	RecentDecompositionPenalty   float64        `json:"recent_decomposition_penalty,omitempty"`
+	RecentQualityGatePenalty     float64        `json:"recent_quality_gate_penalty,omitempty"`
 	ContextFailures              int            `json:"context_failures,omitempty"`
 	PlanningFailures             int            `json:"planning_failures,omitempty"`
+	PlanQualityFailures          int            `json:"plan_quality_failures,omitempty"`
+	ArchitectureFailures         int            `json:"architecture_failures,omitempty"`
 	ValidationFailures           int            `json:"validation_failures,omitempty"`
 	VerifierSuccesses            int            `json:"verifier_successes,omitempty"`
 	RecoveryFailures             int            `json:"recovery_failures,omitempty"`
 	TradeoffFailures             int            `json:"tradeoff_failures,omitempty"`
 	DecompositionFailures        int            `json:"decomposition_failures,omitempty"`
+	QuarantineCount              int            `json:"quarantine_count,omitempty"`
+	LastLearningVerdict          string         `json:"last_learning_verdict,omitempty"`
+	LastContextConfidence        int            `json:"last_context_confidence,omitempty"`
+	LastPlanningConfidence       int            `json:"last_planning_confidence,omitempty"`
+	LastDecompositionConfidence  int            `json:"last_decomposition_confidence,omitempty"`
+	LastPlanQualityConfidence    int            `json:"last_plan_quality_confidence,omitempty"`
+	LastArchitectureConfidence   int            `json:"last_architecture_confidence,omitempty"`
+	LastValidationConfidence     int            `json:"last_validation_confidence,omitempty"`
+	LastTradeoffConfidence       int            `json:"last_tradeoff_confidence,omitempty"`
+	LastRecoveryConfidence       int            `json:"last_recovery_confidence,omitempty"`
+	ChampionQualityScore         int            `json:"champion_quality_score,omitempty"`
+	ChallengerWins               int            `json:"challenger_wins,omitempty"`
+	ChallengerLosses             int            `json:"challenger_losses,omitempty"`
 	PromotionState               string         `json:"promotion_state,omitempty"`
 	AppliedCount                 int            `json:"applied_count,omitempty"`
 	LastAppliedAt                string         `json:"last_applied_at,omitempty"`
@@ -107,6 +127,7 @@ type learnedPolicyStore struct {
 
 type turnLearningTrace struct {
 	SessionID            string
+	Mode                 string
 	WorkingDir           string
 	Prompt               string
 	Family               learnedTaskFamily
@@ -127,6 +148,7 @@ type turnLearningTrace struct {
 
 type completedTurnTrace struct {
 	SessionID            string
+	Mode                 string
 	WorkingDir           string
 	Prompt               string
 	Family               learnedTaskFamily
@@ -144,6 +166,7 @@ type completedTurnTrace struct {
 	BlockedBash          int
 	ValidationChecks     int
 	Status               string
+	ResultText           string
 	ResultSummary        string
 	FinishedAt           time.Time
 }
@@ -152,6 +175,7 @@ type singularityTurnAuditRecord struct {
 	Timestamp                 string         `json:"timestamp"`
 	SessionID                 string         `json:"session_id"`
 	WorkingDir                string         `json:"working_dir,omitempty"`
+	Mode                      string         `json:"mode,omitempty"`
 	TaskFamily                string         `json:"task_family"`
 	GoalType                  string         `json:"goal_type"`
 	Breadth                   string         `json:"breadth"`
@@ -174,10 +198,22 @@ type singularityTurnAuditRecord struct {
 	ContextDiscipline         string         `json:"context_discipline,omitempty"`
 	PlanningDiscipline        string         `json:"planning_discipline,omitempty"`
 	DecompositionDiscipline   string         `json:"decomposition_discipline,omitempty"`
+	PlanQualityDiscipline     string         `json:"plan_quality_discipline,omitempty"`
+	ArchitectureDiscipline    string         `json:"architecture_discipline,omitempty"`
 	ValidationDiscipline      string         `json:"validation_discipline,omitempty"`
 	RecoveryDiscipline        string         `json:"recovery_discipline,omitempty"`
 	TradeoffDiscipline        string         `json:"tradeoff_discipline,omitempty"`
 	ExecutionRisk             string         `json:"execution_risk,omitempty"`
+	LearningVerdict           string         `json:"learning_verdict,omitempty"`
+	LearningBlockers          []string       `json:"learning_blockers,omitempty"`
+	ContextConfidence         int            `json:"context_confidence,omitempty"`
+	PlanningConfidence        int            `json:"planning_confidence,omitempty"`
+	DecompositionConfidence   int            `json:"decomposition_confidence,omitempty"`
+	PlanQualityConfidence     int            `json:"plan_quality_confidence,omitempty"`
+	ArchitectureConfidence    int            `json:"architecture_confidence,omitempty"`
+	ValidationConfidence      int            `json:"validation_confidence,omitempty"`
+	TradeoffConfidence        int            `json:"tradeoff_confidence,omitempty"`
+	RecoveryConfidence        int            `json:"recovery_confidence,omitempty"`
 	ResultSummary             string         `json:"result_summary,omitempty"`
 }
 
@@ -341,12 +377,17 @@ func (m *singularityManager) LookupPolicy(prompt string) (learnedRoutePolicy, le
 }
 
 func (m *singularityManager) StartTurn(sessionID, prompt, workingDir string, loadedSkills []string, policy learnedRoutePolicy) learnedTaskFamily {
+	return m.StartTurnWithMode(sessionID, prompt, workingDir, loadedSkills, policy, planmode.DefaultSessionMode)
+}
+
+func (m *singularityManager) StartTurnWithMode(sessionID, prompt, workingDir string, loadedSkills []string, policy learnedRoutePolicy, mode planmode.SessionMode) learnedTaskFamily {
 	family := classifyLearnedTaskFamily(prompt)
 	if m == nil || !shouldTrackLearnedTurn(prompt, family) {
 		return family
 	}
 	trace := &turnLearningTrace{
 		SessionID:            strings.TrimSpace(sessionID),
+		Mode:                 string(planmode.NormalizeMode(mode)),
 		WorkingDir:           strings.TrimSpace(workingDir),
 		Prompt:               strings.TrimSpace(prompt),
 		Family:               family,
@@ -561,6 +602,7 @@ func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string)
 	}
 	return &completedTurnTrace{
 		SessionID:            trace.SessionID,
+		Mode:                 trace.Mode,
 		WorkingDir:           trace.WorkingDir,
 		Prompt:               trace.Prompt,
 		Family:               trace.Family,
@@ -578,6 +620,7 @@ func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string)
 		BlockedBash:          trace.BlockedBash,
 		ValidationChecks:     trace.ValidationChecks,
 		Status:               strings.TrimSpace(status),
+		ResultText:           compactLearnedText(strings.TrimSpace(resultSummary), 2400),
 		ResultSummary:        compactLearnedText(strings.TrimSpace(resultSummary), 600),
 		FinishedAt:           time.Now().UTC(),
 	}
@@ -778,7 +821,10 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 	parallelSuccess := containsAnyTool(seenTools, SpawnAgentToolName, WaitAgentsToolName, CollectResultToolName)
 	assessment := assessSingularityCognition(trace)
 	experience := compileSingularityExperience(trace)
-	if success {
+	learningVerdict := evaluateSingularityLearningVerdict(trace, assessment)
+	applyLearningVector(&policy, learningVerdict)
+	qualityScore := deriveLearnedQualityScore(learningVerdict)
+	if success && learningVerdict.Decision == singularityLearningVerdictAccepted {
 		policy.SuccessCount++
 		policy.RecentSuccessWeight += 1
 		for _, toolName := range seenTools {
@@ -808,6 +854,11 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 			policy.BashDiscoverySuccess += trace.BashDiscovery
 			policy.RecentBashSuccessWeight += float64(trace.BashDiscovery)
 		}
+		policy = recordChampionChallengerOutcome(policy, qualityScore, true)
+	} else if success {
+		policy.QuarantineCount++
+		policy.RecentQualityGatePenalty += 1
+		policy = recordChampionChallengerOutcome(policy, qualityScore, false)
 	} else {
 		policy.FailureCount++
 		policy.RecentFailureWeight += 1
@@ -818,12 +869,14 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 			policy.BashDiscoveryFailures += trace.BashDiscovery
 			policy.RecentBashFailureWeight += float64(trace.BashDiscovery)
 		}
+		policy = recordChampionChallengerOutcome(policy, qualityScore, false)
 	}
 	if trace.BlockedBash > 0 {
 		policy.BashDiscoveryFailures += trace.BlockedBash
 		policy.RecentBashFailureWeight += float64(trace.BlockedBash)
 	}
 	policy = applyCognitiveAssessment(policy, assessment)
+	policy.LastLearningVerdict = learningVerdict.Decision
 
 	policy.PreferredDiscovery = derivePreferredDiscoveryTools(policy)
 	policy.PreferredVerification = mergeLearnedDiscoveryPreference(experience.Verification.PreferredTools, policy.PreferredVerification, 4)
@@ -957,10 +1010,26 @@ func applyCognitiveAssessment(policy learnedRoutePolicy, assessment singularityC
 	applyPenalty(assessment.ContextDiscipline, &policy.ContextFailures, &policy.RecentContextPenalty)
 	applyPenalty(assessment.PlanningDiscipline, &policy.PlanningFailures, &policy.RecentPlanningPenalty)
 	applyPenalty(assessment.DecompositionDiscipline, &policy.DecompositionFailures, &policy.RecentDecompositionPenalty)
+	applyPenalty(assessment.PlanQualityDiscipline, &policy.PlanQualityFailures, &policy.RecentPlanQualityPenalty)
+	applyPenalty(assessment.ArchitectureDiscipline, &policy.ArchitectureFailures, &policy.RecentArchitecturePenalty)
 	applyPenalty(assessment.ValidationDiscipline, &policy.ValidationFailures, &policy.RecentValidationPenalty)
 	applyPenalty(assessment.RecoveryDiscipline, &policy.RecoveryFailures, &policy.RecentRecoveryPenalty)
 	applyPenalty(assessment.TradeoffDiscipline, &policy.TradeoffFailures, &policy.RecentTradeoffPenalty)
 	return policy
+}
+
+func applyLearningVector(policy *learnedRoutePolicy, verdict singularityLearningVerdict) {
+	if policy == nil {
+		return
+	}
+	policy.LastContextConfidence = verdict.Vector.Context
+	policy.LastPlanningConfidence = verdict.Vector.Planning
+	policy.LastDecompositionConfidence = verdict.Vector.Decomposition
+	policy.LastPlanQualityConfidence = verdict.Vector.PlanQuality
+	policy.LastArchitectureConfidence = verdict.Vector.Architecture
+	policy.LastValidationConfidence = verdict.Vector.Validation
+	policy.LastTradeoffConfidence = verdict.Vector.Tradeoff
+	policy.LastRecoveryConfidence = verdict.Vector.Recovery
 }
 
 func derivePolicyConfidence(policy learnedRoutePolicy) int {
@@ -980,26 +1049,45 @@ func derivePolicyConfidence(policy learnedRoutePolicy) int {
 	score -= int(policy.RecentContextPenalty * 10)
 	score -= int(policy.RecentPlanningPenalty * 10)
 	score -= int(policy.RecentDecompositionPenalty * 9)
+	score -= int(policy.RecentPlanQualityPenalty * 10)
+	score -= int(policy.RecentArchitecturePenalty * 10)
 	score -= int(policy.RecentValidationPenalty * 8)
 	score -= int(policy.RecentRecoveryPenalty * 6)
 	score -= int(policy.RecentTradeoffPenalty * 6)
+	score -= int(policy.RecentQualityGatePenalty * 12)
+	score += min(policy.ChallengerWins*2, 6)
+	score -= min(policy.ChallengerLosses*2, 6)
 	if policy.SuccessCount == 0 && policy.FailureCount < 2 {
+		if policy.QuarantineCount > 0 {
+			return max(0, min(35, score))
+		}
 		return 0
 	}
 	return max(0, min(95, score))
 }
 
 func derivePromotionState(policy learnedRoutePolicy) string {
+	requiresChallenger := requiresChallengerPromotion(policy)
 	switch {
+	case policy.RecentQualityGatePenalty >= 0.8 || (policy.QuarantineCount > 0 && policy.LastLearningVerdict == singularityLearningVerdictQuarantined):
+		return learnedPolicyStateQuarantined
 	case policy.Confidence < 25:
 		return learnedPolicyStateDemoted
 	case policy.RecentContextPenalty >= 1.1 || policy.RecentPlanningPenalty >= 1.1 || policy.RecentDecompositionPenalty >= 1.1 || policy.RecentValidationPenalty >= 1.1:
 		return learnedPolicyStateObserver
 	case policy.RecentFailureWeight > policy.RecentSuccessWeight+0.4 && policy.Confidence < minPolicyConfidenceForInjection:
 		return learnedPolicyStateDemoted
+	case requiresChallenger && policy.ChallengerWins < 2:
+		return learnedPolicyStateObserver
 	case policy.Confidence >= 78 && policy.RecentSuccessWeight >= 1.8 && policy.RecentFailureWeight <= 0.7:
+		if requiresChallenger && policy.ChallengerWins < 3 {
+			return learnedPolicyStateCandidate
+		}
 		return learnedPolicyStatePromoted
 	case policy.Confidence >= minPolicyConfidenceForInjection && policy.RecentSuccessWeight >= 0.75:
+		if requiresChallenger && policy.ChallengerWins < 2 {
+			return learnedPolicyStateObserver
+		}
 		return learnedPolicyStateCandidate
 	default:
 		return learnedPolicyStateObserver
@@ -1042,7 +1130,7 @@ func normalizeLoadedLearnedRoutePolicy(policy learnedRoutePolicy) learnedRoutePo
 
 func normalizeLearnedPromotionState(state string, confidence int, evidence int) string {
 	switch strings.TrimSpace(strings.ToLower(state)) {
-	case learnedPolicyStateObserver, learnedPolicyStateCandidate, learnedPolicyStatePromoted, learnedPolicyStateDemoted:
+	case learnedPolicyStateObserver, learnedPolicyStateCandidate, learnedPolicyStatePromoted, learnedPolicyStateQuarantined, learnedPolicyStateDemoted:
 		return strings.TrimSpace(strings.ToLower(state))
 	}
 	switch {
@@ -1070,9 +1158,12 @@ func learnedPolicyRecentWeightsZero(policy learnedRoutePolicy) bool {
 		policy.RecentContextPenalty == 0 &&
 		policy.RecentPlanningPenalty == 0 &&
 		policy.RecentDecompositionPenalty == 0 &&
+		policy.RecentPlanQualityPenalty == 0 &&
+		policy.RecentArchitecturePenalty == 0 &&
 		policy.RecentValidationPenalty == 0 &&
 		policy.RecentRecoveryPenalty == 0 &&
-		policy.RecentTradeoffPenalty == 0
+		policy.RecentTradeoffPenalty == 0 &&
+		policy.RecentQualityGatePenalty == 0
 }
 
 func applyRecentLearnedPolicyDecay(policy learnedRoutePolicy) learnedRoutePolicy {
@@ -1088,9 +1179,65 @@ func applyRecentLearnedPolicyDecay(policy learnedRoutePolicy) learnedRoutePolicy
 	policy.RecentContextPenalty *= learnedPolicyDecayFactor
 	policy.RecentPlanningPenalty *= learnedPolicyDecayFactor
 	policy.RecentDecompositionPenalty *= learnedPolicyDecayFactor
+	policy.RecentPlanQualityPenalty *= learnedPolicyDecayFactor
+	policy.RecentArchitecturePenalty *= learnedPolicyDecayFactor
 	policy.RecentValidationPenalty *= learnedPolicyDecayFactor
 	policy.RecentRecoveryPenalty *= learnedPolicyDecayFactor
 	policy.RecentTradeoffPenalty *= learnedPolicyDecayFactor
+	policy.RecentQualityGatePenalty *= learnedPolicyDecayFactor
+	return policy
+}
+
+func deriveLearnedQualityScore(verdict singularityLearningVerdict) int {
+	if verdict.Decision != singularityLearningVerdictAccepted {
+		return 0
+	}
+	score := 0
+	score += verdict.Vector.Context
+	score += verdict.Vector.Planning
+	score += verdict.Vector.Decomposition
+	score += verdict.Vector.PlanQuality
+	score += verdict.Vector.Architecture
+	score += verdict.Vector.Validation
+	score += verdict.Vector.Tradeoff
+	score += verdict.Vector.Recovery
+	return score / 8
+}
+
+func requiresChallengerPromotion(policy learnedRoutePolicy) bool {
+	switch strings.TrimSpace(policy.GoalType) {
+	case "design", "research", "review", "migration":
+		return true
+	case "implementation":
+		return policy.Breadth == "broad"
+	default:
+		return false
+	}
+}
+
+func recordChampionChallengerOutcome(policy learnedRoutePolicy, qualityScore int, accepted bool) learnedRoutePolicy {
+	if !requiresChallengerPromotion(policy) {
+		return policy
+	}
+	if !accepted || qualityScore <= 0 {
+		policy.ChallengerLosses++
+		return policy
+	}
+	if policy.ChampionQualityScore <= 0 {
+		policy.ChampionQualityScore = qualityScore
+		policy.ChallengerWins++
+		return policy
+	}
+	if qualityScore > policy.ChampionQualityScore {
+		policy.ChampionQualityScore = qualityScore
+		policy.ChallengerWins++
+		return policy
+	}
+	if qualityScore >= policy.ChampionQualityScore-5 {
+		policy.ChallengerWins++
+		return policy
+	}
+	policy.ChallengerLosses++
 	return policy
 }
 
@@ -1387,6 +1534,7 @@ func (m *singularityManager) appendTurnAuditLocked(trace *completedTurnTrace, po
 		Timestamp:                 trace.FinishedAt.UTC().Format(time.RFC3339),
 		SessionID:                 trace.SessionID,
 		WorkingDir:                trace.WorkingDir,
+		Mode:                      trace.Mode,
 		TaskFamily:                trace.Family.ID,
 		GoalType:                  trace.Family.GoalType,
 		Breadth:                   trace.Family.Breadth,
@@ -1409,13 +1557,26 @@ func (m *singularityManager) appendTurnAuditLocked(trace *completedTurnTrace, po
 		ResultSummary:             trace.ResultSummary,
 	}
 	assessment := assessSingularityCognition(trace)
+	learningVerdict := evaluateSingularityLearningVerdict(trace, assessment)
 	record.ContextDiscipline = assessment.ContextDiscipline
 	record.PlanningDiscipline = assessment.PlanningDiscipline
 	record.DecompositionDiscipline = assessment.DecompositionDiscipline
+	record.PlanQualityDiscipline = assessment.PlanQualityDiscipline
+	record.ArchitectureDiscipline = assessment.ArchitectureDiscipline
 	record.ValidationDiscipline = assessment.ValidationDiscipline
 	record.RecoveryDiscipline = assessment.RecoveryDiscipline
 	record.TradeoffDiscipline = assessment.TradeoffDiscipline
 	record.ExecutionRisk = assessment.ExecutionRisk
+	record.LearningVerdict = learningVerdict.Decision
+	record.LearningBlockers = append([]string{}, learningVerdict.Blockers...)
+	record.ContextConfidence = learningVerdict.Vector.Context
+	record.PlanningConfidence = learningVerdict.Vector.Planning
+	record.DecompositionConfidence = learningVerdict.Vector.Decomposition
+	record.PlanQualityConfidence = learningVerdict.Vector.PlanQuality
+	record.ArchitectureConfidence = learningVerdict.Vector.Architecture
+	record.ValidationConfidence = learningVerdict.Vector.Validation
+	record.TradeoffConfidence = learningVerdict.Vector.Tradeoff
+	record.RecoveryConfidence = learningVerdict.Vector.Recovery
 	line, err := json.Marshal(record)
 	if err != nil {
 		return err

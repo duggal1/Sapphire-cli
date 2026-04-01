@@ -69,7 +69,8 @@ func assessTraceContextSufficiency(profile singularityCognitiveProfile, trace *c
 
 func assessTraceVerificationGraph(profile singularityCognitiveProfile, trace *completedTurnTrace) singularityVerificationAssessment {
 	evidenceCount := countPositiveTraceEvidence(trace.VerificationEvidence)
-	repoGrounded := resultShowsValidationReasoning(trace.ResultSummary) ||
+	resultText := effectiveSingularityResultText(trace)
+	repoGrounded := resultShowsValidationReasoning(resultText) ||
 		countPositiveTraceEvidence(trace.ReadEvidence) > 0 ||
 		hasStructuredDiscovery(trace)
 
@@ -77,7 +78,7 @@ func assessTraceVerificationGraph(profile singularityCognitiveProfile, trace *co
 	switch {
 	case trace.ValidationChecks > 0 && repoGrounded:
 		discipline = "strong"
-	case profile.RequireValidation && resultShowsValidationReasoning(trace.ResultSummary) && repoGrounded:
+	case profile.RequireValidation && resultShowsValidationReasoning(resultText) && repoGrounded:
 		discipline = "strong"
 	case trace.ValidationChecks > 0:
 		discipline = "adequate"
@@ -175,6 +176,16 @@ func countPositiveTraceEvidence(values map[string]int) int {
 		}
 	}
 	return count
+}
+
+func effectiveSingularityResultText(trace *completedTurnTrace) string {
+	if trace == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(trace.ResultText); text != "" {
+		return text
+	}
+	return strings.TrimSpace(trace.ResultSummary)
 }
 
 func parseObservedToolInput(rawInput string) map[string]any {

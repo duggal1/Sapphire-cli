@@ -57,6 +57,13 @@ type ToolUsageState struct {
 	structuredEvidence          map[string]struct{}
 	readEvidence                map[string]struct{}
 	verificationEvidence        map[string]struct{}
+	deterministicToolCounts     map[string]int
+	deterministicTotalCalls     int
+	deterministicReadCounts     map[string]int
+	deterministicWriteCounts    map[string]int
+	deterministicBlindWrites    map[string]int
+	deterministicCreatedFiles   map[string]struct{}
+	deterministicModifiedFiles  map[string]struct{}
 }
 
 var (
@@ -71,6 +78,12 @@ func NewToolUsageState() *ToolUsageState {
 		structuredEvidence:          map[string]struct{}{},
 		readEvidence:                map[string]struct{}{},
 		verificationEvidence:        map[string]struct{}{},
+		deterministicToolCounts:     map[string]int{},
+		deterministicReadCounts:     map[string]int{},
+		deterministicWriteCounts:    map[string]int{},
+		deterministicBlindWrites:    map[string]int{},
+		deterministicCreatedFiles:   map[string]struct{}{},
+		deterministicModifiedFiles:  map[string]struct{}{},
 	}
 }
 
@@ -298,6 +311,119 @@ func (s *ToolUsageState) VerificationEvidenceCount() int {
 	return len(s.verificationEvidence)
 }
 
+type DeterministicLoopMetrics struct {
+	TotalCalls       int            `json:"total_calls"`
+	UniqueToolNames  []string       `json:"unique_tool_names,omitempty"`
+	ReadCounts       map[string]int `json:"read_counts,omitempty"`
+	WriteCounts      map[string]int `json:"write_counts,omitempty"`
+	BlindWriteCounts map[string]int `json:"blind_write_counts,omitempty"`
+	CreatedFiles     []string       `json:"created_files,omitempty"`
+	ModifiedFiles    []string       `json:"modified_files,omitempty"`
+}
+
+func (s *ToolUsageState) RecordDeterministicToolCall(toolName string) {
+	if s == nil {
+		return
+	}
+	toolName = normalizeToolName(toolName)
+	if toolName == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deterministicToolCounts == nil {
+		s.deterministicToolCounts = map[string]int{}
+	}
+	s.deterministicToolCounts[toolName]++
+	s.deterministicTotalCalls++
+}
+
+func (s *ToolUsageState) RecordDeterministicRead(path string) {
+	if s == nil {
+		return
+	}
+	path, ok := normalizeArtifactVerificationPath(path)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deterministicReadCounts == nil {
+		s.deterministicReadCounts = map[string]int{}
+	}
+	s.deterministicReadCounts[path]++
+}
+
+func (s *ToolUsageState) RecordDeterministicWrite(path string, blind bool, created bool) {
+	if s == nil {
+		return
+	}
+	path, ok := normalizeArtifactVerificationPath(path)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deterministicWriteCounts == nil {
+		s.deterministicWriteCounts = map[string]int{}
+	}
+	if s.deterministicBlindWrites == nil {
+		s.deterministicBlindWrites = map[string]int{}
+	}
+	if s.deterministicCreatedFiles == nil {
+		s.deterministicCreatedFiles = map[string]struct{}{}
+	}
+	if s.deterministicModifiedFiles == nil {
+		s.deterministicModifiedFiles = map[string]struct{}{}
+	}
+	s.deterministicWriteCounts[path]++
+	if blind {
+		s.deterministicBlindWrites[path]++
+	}
+	if created {
+		s.deterministicCreatedFiles[path] = struct{}{}
+		delete(s.deterministicModifiedFiles, path)
+		return
+	}
+	if _, alreadyCreated := s.deterministicCreatedFiles[path]; alreadyCreated {
+		return
+	}
+	s.deterministicModifiedFiles[path] = struct{}{}
+}
+
+func (s *ToolUsageState) ResetDeterministicLoopMetrics() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deterministicToolCounts = map[string]int{}
+	s.deterministicTotalCalls = 0
+	s.deterministicReadCounts = map[string]int{}
+	s.deterministicWriteCounts = map[string]int{}
+	s.deterministicBlindWrites = map[string]int{}
+	s.deterministicCreatedFiles = map[string]struct{}{}
+	s.deterministicModifiedFiles = map[string]struct{}{}
+}
+
+func (s *ToolUsageState) SnapshotDeterministicLoopMetrics() DeterministicLoopMetrics {
+	if s == nil {
+		return DeterministicLoopMetrics{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	metrics := DeterministicLoopMetrics{
+		TotalCalls:       s.deterministicTotalCalls,
+		UniqueToolNames:  sortedMapKeys(s.deterministicToolCounts),
+		ReadCounts:       cloneStringIntMapLocked(s.deterministicReadCounts),
+		WriteCounts:      cloneStringIntMapLocked(s.deterministicWriteCounts),
+		BlindWriteCounts: cloneStringIntMapLocked(s.deterministicBlindWrites),
+		CreatedFiles:     sortedSetKeys(s.deterministicCreatedFiles),
+		ModifiedFiles:    sortedSetKeys(s.deterministicModifiedFiles),
+	}
+	return metrics
+}
+
 func HasRequiredContextReadEvidence(state *ToolUsageState) bool {
 	if state == nil {
 		return false
@@ -429,6 +555,41 @@ func normalizeArtifactVerificationPath(path string) (string, bool) {
 		return "", false
 	}
 	return path, true
+}
+
+func cloneStringIntMapLocked(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func sortedMapKeys(in map[string]int) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(in))
+	for key := range in {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedSetKeys(in map[string]struct{}) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(in))
+	for key := range in {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func resolveArtifactVerificationPath(ctx context.Context, path string) string {

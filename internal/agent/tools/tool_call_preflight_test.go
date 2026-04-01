@@ -43,6 +43,38 @@ func TestPrepareToolCallNormalizesEditAliases(t *testing.T) {
 	require.Equal(t, "beta", input["new_string"])
 }
 
+func TestPrepareToolCallDoesNotRewriteEmptyEditPayloadToAgenticEdit(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	agenticEditTool := fantasy.NewAgentTool(
+		AgenticEditToolName,
+		"",
+		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	registry := map[string]fantasy.AgentTool{
+		EditToolName:        editTool,
+		AgenticEditToolName: agenticEditTool,
+	}
+
+	_, _, err := PrepareToolCall(context.Background(), fantasy.ToolCall{
+		ID:    "edit-empty-1",
+		Name:  EditToolName,
+		Input: `{"file_edits":[]}`,
+	}, registry)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "agentic_edit requires")
+	require.Contains(t, err.Error(), "edit only accepts a single file_path plus old_string/new_string")
+}
+
 func TestPrepareToolCallUnwrapsArgumentsEnvelope(t *testing.T) {
 	t.Parallel()
 

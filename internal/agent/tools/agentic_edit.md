@@ -1,4 +1,13 @@
-Makes batched edits across one or more files in one operation. Built on Edit tool for efficient multiple find-and-replace operations across a file set.
+Makes batched edits across one or more files in one operation.
+
+<strict_contract>
+- Read the target file(s) first.
+- Call only when exact file_path(s) and exact edit operations are already known.
+- Never use this tool for discovery, guessing paths, or placeholder edits.
+- `single_edit` is for exactly 1 file.
+- `agentic_edit` is for 2+ files or batched edits.
+- Never call this tool with empty input.
+</strict_contract>
 
 **Note**: This tool is only available to the main agent. Sub-agents do not have multi-edit capability to prevent token explosion.
 

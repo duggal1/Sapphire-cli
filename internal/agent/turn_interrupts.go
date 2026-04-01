@@ -98,6 +98,35 @@ func (e *repeatedToolLoopError) Is(target error) bool {
 	return target == ErrRepeatedToolLoopDetected
 }
 
+type deterministicDoomLoopError struct {
+	loop deterministicDoomLoop
+}
+
+func (e *deterministicDoomLoopError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if len(e.loop.Signals) == 0 {
+		return "deterministic doom loop detected: repeated low-value execution without material progress"
+	}
+	summaries := make([]string, 0, len(e.loop.Signals))
+	for _, signal := range e.loop.Signals {
+		summary := strings.TrimSpace(signal.Summary)
+		if summary == "" {
+			continue
+		}
+		summaries = append(summaries, summary)
+	}
+	if len(summaries) == 0 {
+		return "deterministic doom loop detected: repeated low-value execution without material progress"
+	}
+	return "deterministic doom loop detected: " + strings.Join(summaries, " ")
+}
+
+func (e *deterministicDoomLoopError) Is(target error) bool {
+	return target == ErrDeterministicDoomLoop
+}
+
 func uniqueNonEmptyStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))

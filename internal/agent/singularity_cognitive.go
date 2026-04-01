@@ -182,7 +182,7 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 
 	tradeoffDiscipline := "not_required"
 	if profile.RequireTradeoffReasoning {
-		if resultShowsTradeoffReasoning(trace.ResultSummary) {
+		if resultShowsTradeoffReasoning(effectiveSingularityResultText(trace)) {
 			tradeoffDiscipline = "strong"
 		} else {
 			tradeoffDiscipline = "weak"

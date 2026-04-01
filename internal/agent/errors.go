@@ -10,4 +10,5 @@ var (
 	ErrToolFailureLimitReached  = errors.New("maximum tool failures per turn reached")
 	ErrStepLimitReached         = errors.New("maximum steps per turn reached")
 	ErrRepeatedToolLoopDetected = errors.New("repeated tool-call loop detected")
+	ErrDeterministicDoomLoop    = errors.New("deterministic doom loop detected")
 )

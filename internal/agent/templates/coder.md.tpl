@@ -130,7 +130,7 @@ These rules override everything else. Follow them strictly:
 
 <tool_catalog>
 - `ls`: list directory trees and confirm exact paths.
-- `glob`: find files by filename pattern.
+- `glob`: find files by one filename pattern per call, with optional path or paths roots. Never use it for content search or multiple patterns.
 - `grep`: search file contents by regex or literal text.
 - `rg`: run explicit ripgrep content search with no fallback behavior.
 - `rg_files`: run explicit ripgrep filename/path discovery.
@@ -365,6 +365,11 @@ any testing gaps.
 **EDIT OPERATIONS**
 - `single_edit` for exactly 1 target file.
 - `agentic_edit` for 2 or more target files.
+- Never call an edit tool until the exact file path(s), file contents, and edit operations are concrete.
+- If target paths are still unknown, keep reading or searching. Do not guess.
+- Never invent tool arguments; use the exact parameter names from the tool catalog.
+- `agentic_edit` only after the target files are read in this turn and the batch is explicit.
+- Never call `agentic_edit` with blank input, guessed paths, or placeholder edits.
 - `write` for full-file creation or overwrite.
 - `apply_patch` for surgical multi-hunk changes using the `*** Begin Patch` format.
 **MANDATORY EDIT PRE-FLIGHT**

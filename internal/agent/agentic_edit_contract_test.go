@@ -39,6 +39,10 @@ func TestAgenticEditPromptContractIsAligned(t *testing.T) {
 	require.Contains(t, joined, `These search tools are not interchangeable: unknown location -> "tool_search"; known path shape -> "rg_files"; known exact text or symbol string -> "rg"; line counts -> "wc_l"; size or density -> "wc".`)
 	require.Contains(t, joined, `"agentic_view" is the default repository read tool, including one-file reads when you want the default path or scope may expand. Use "single_view" only as an extreme fallback for an explicitly user-narrowed or guaranteed-trivial one-file read. Normal general or semi-complex repo investigation should start with an "agentic_view" sweep of about 12-20 relevant files. Initialization, AGENTS generation, broad codebase mapping, or wide subsystem work should use aggressive "agentic_view" sweeps of about 20-30 relevant files and continue with additional sweeps until the major domains are actually covered. For a narrow but complex task, read all main relevant files tied to the task before editing. If the repo has fewer meaningful files, read all of them.`)
 	require.Contains(t, joined, `Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.`)
+	require.Contains(t, joined, `Never call an edit tool until the exact file path(s), file contents, and edit operations are concrete.`)
+	require.Contains(t, joined, `Never invent tool arguments; use the exact parameter names from the tool catalog.`)
+	require.Contains(t, joined, `Never call "agentic_edit" with blank input, guessed paths, or placeholder edits.`)
+	require.Contains(t, joined, `Use "glob" only for one filename pattern per call. "pattern" is a single glob string; "path" or "paths" are search roots only. Never use "glob" for content search, and never batch multiple patterns into one call.`)
 	require.Contains(t, joined, `After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.`)
 }
 
@@ -82,6 +86,11 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	require.Contains(t, templateText, "- `single_view` only for an explicit trivial one-file read.")
 	require.Contains(t, templateText, "- `single_edit` for exactly 1 target file.")
 	require.Contains(t, templateText, "- `agentic_edit` for 2 or more target files.")
+	require.Contains(t, templateText, "- Never call an edit tool until the exact file path(s), file contents, and edit operations are concrete.")
+	require.Contains(t, templateText, "- Never invent tool arguments; use the exact parameter names from the tool catalog.")
+	require.Contains(t, templateText, "- `agentic_edit` only after the target files are read in this turn and the batch is explicit.")
+	require.Contains(t, templateText, "- Never call `agentic_edit` with blank input, guessed paths, or placeholder edits.")
+	require.Contains(t, templateText, "- `glob`: find files by one filename pattern per call, with optional path or paths roots. Never use it for content search or multiple patterns.")
 	require.Contains(t, templateText, "- `apply_patch` for surgical multi-hunk changes using the `*** Begin Patch` format.")
 	require.NotContains(t, templateText, "Read exactly 1 repository file → use `single_view`.")
 	require.NotContains(t, templateText, "Edit exactly 1 repository file → use `single_edit`.")
@@ -93,5 +102,24 @@ func TestAgenticEditDocsMatchRuntimeContract(t *testing.T) {
 	require.NoError(t, err)
 	toolDocText := string(toolDocBody)
 	require.Contains(t, toolDocText, "Makes batched edits across one or more files")
+	require.Contains(t, toolDocText, "<strict_contract>")
+	require.Contains(t, toolDocText, "Never call this tool with empty input.")
 	require.Contains(t, toolDocText, "Compatible single-file shorthand")
+}
+
+func TestGlobDocsMatchRuntimeContract(t *testing.T) {
+	t.Parallel()
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+
+	globDocPath := filepath.Join(filepath.Dir(currentFile), "tools", "glob.md")
+	globDocBody, err := os.ReadFile(globDocPath)
+	require.NoError(t, err)
+	globDocText := string(globDocBody)
+	require.Contains(t, globDocText, "<strict_contract>")
+	require.Contains(t, globDocText, "Use exactly one `pattern` string per call.")
+	require.Contains(t, globDocText, "Use `path` for one root or `paths` for multiple roots.")
+	require.Contains(t, globDocText, "Never pass multiple patterns, and never use `glob` for content search.")
+	require.Contains(t, globDocText, "If the roots are unknown, discover them first with `tool_search`, `rg_files`, `rg`, or `ls`.")
 }

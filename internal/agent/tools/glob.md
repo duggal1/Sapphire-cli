@@ -1,5 +1,12 @@
 Fast file pattern matching tool that finds files by name/pattern, returning paths sorted by modification time (newest first).
 
+<strict_contract>
+- Use exactly one `pattern` string per call.
+- Use `path` for one root or `paths` for multiple roots.
+- Never pass multiple patterns, and never use `glob` for content search.
+- If the roots are unknown, discover them first with `tool_search`, `rg_files`, `rg`, or `ls`.
+</strict_contract>
+
 <usage>
 - Provide glob pattern to match against file paths
 - Optional starting directory (defaults to current working directory)

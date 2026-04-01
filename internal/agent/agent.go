@@ -93,6 +93,9 @@ const (
 
 	// Completion-guardrail recovery tuning.
 	maxCompletionGuardrailRecoveryAttempts = 1
+
+	// Doom-loop recovery tuning.
+	maxDoomLoopRecoveryAttempts = 1
 )
 
 func shouldGenerateSessionTitle() bool {
@@ -124,6 +127,7 @@ type SessionAgentCall struct {
 	StructuredTry          int
 	MistakeSelfHealTry     int
 	CompletionGuardrailTry int
+	DoomLoopRecoveryTry    int
 	SkillContext           string
 	ActiveSkills           []string
 	ActiveTools            []string
@@ -309,6 +313,11 @@ func supportsCompletionGuardrailRecovery(policy tools.LearnedToolPolicy) bool {
 }
 
 func prepareTurnToolUsageState(call SessionAgentCall) *tools.ToolUsageState {
+	if call.DoomLoopRecoveryTry > 0 {
+		state := tools.SharedToolUsageState(call.SessionID)
+		state.ResetDeterministicLoopMetrics()
+		return state
+	}
 	if call.CompletionGuardrailTry > 0 {
 		return tools.SharedToolUsageState(call.SessionID)
 	}
@@ -447,6 +456,10 @@ func buildComplexityModeReminder(mode planmode.SessionMode) string {
 - These search tools are not interchangeable: unknown location -> "tool_search"; known path shape -> "rg_files"; known exact text or symbol string -> "rg"; line counts -> "wc_l"; size or density -> "wc".
 - "agentic_view" is the default repository read tool, including one-file reads when you want the default path or scope may expand. Use "single_view" only as an extreme fallback for an explicitly user-narrowed or guaranteed-trivial one-file read. Normal general or semi-complex repo investigation should start with an "agentic_view" sweep of about 12-20 relevant files. Initialization, AGENTS generation, broad codebase mapping, or wide subsystem work should use aggressive "agentic_view" sweeps of about 20-30 relevant files and continue with additional sweeps until the major domains are actually covered. For a narrow but complex task, read all main relevant files tied to the task before editing. If the repo has fewer meaningful files, read all of them.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
+- Never call an edit tool until the exact file path(s), file contents, and edit operations are concrete.
+- Never invent tool arguments; use the exact parameter names from the tool catalog.
+- Never call "agentic_edit" with blank input, guessed paths, or placeholder edits.
+- Use "glob" only for one filename pattern per call. "pattern" is a single glob string; "path" or "paths" are search roots only. Never use "glob" for content search, and never batch multiple patterns into one call.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
 - Do not use "bash" for repository discovery, file reads, content search, or temporary prompt/CSV setup when a structured tool exists.
@@ -1023,6 +1036,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		shouldSummarize  bool
 		stepLimitReached bool
 		loopBreak        *repeatedToolLoop
+		doomLoopBreak    *deterministicDoomLoop
 		stepStartTime    time.Time
 		firstTokenTime   time.Time
 		firstToolName    string
@@ -1522,6 +1536,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return false
 			},
 			func(steps []fantasy.StepResult) bool {
+				detectedLoop, ok := detectDeterministicDoomLoop(toolUsageState, a.filetracker, call.SessionID, a.workingDir.Get(), call.LearnedToolPolicy.TaskFamily)
+				if !ok {
+					return false
+				}
+				doomLoopBreak = &detectedLoop
+				return true
+			},
+			func(steps []fantasy.StepResult) bool {
 				detectedLoop, ok := detectRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
 				if !ok {
 					return false
@@ -1579,11 +1601,29 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			} else {
 				err = verificationErr
 			}
+		} else if doomLoopBreak != nil {
+			err = &deterministicDoomLoopError{loop: *doomLoopBreak}
 		} else if loopBreak != nil {
 			err = &repeatedToolLoopError{loop: *loopBreak}
 		} else if stepLimitReached {
 			err = &turnStepLimitError{limit: maxStepsThisTurn}
 		}
+	}
+
+	if followUp, ok := buildDoomLoopRecoveryCall(mode, call, err, currentAssistant); ok {
+		if currentAssistant != nil {
+			currentAssistant.FinishThinking()
+			currentAssistant.AddFinish(message.FinishReasonEndTurn, "Doom-loop recovery", "Sapphire is continuing automatically with a materially different path to break the loop.")
+			if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
+				return nil, updateErr
+			}
+		}
+		a.activeRequests.Del(call.SessionID)
+		cancel()
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
+		}
+		return a.Run(ctx, followUp)
 	}
 
 	if followUp, ok := buildCompletionGuardrailRecoveryCall(mode, call, err, currentAssistant); ok {
@@ -1685,6 +1725,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			currentAssistant.AddFinish(message.FinishReasonPermissionDenied, "User denied permission", "")
 		} else if errors.Is(err, ErrRepeatedToolLoopDetected) {
 			currentAssistant.AddFinish(message.FinishReasonError, "Execution loop detected", err.Error())
+		} else if errors.Is(err, ErrDeterministicDoomLoop) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Doom loop detected", err.Error())
 		} else if errors.Is(err, ErrStepLimitReached) {
 			currentAssistant.AddFinish(message.FinishReasonError, "Step limit reached", err.Error())
 		} else if errors.Is(err, ErrToolFailureLimitReached) {
@@ -2348,6 +2390,10 @@ func (a *sessionAgent) preparePrompt(mode planmode.SessionMode, msgs []message.M
 Execute your assigned chunk of the tasks autonomously and efficiently.
 - Use "single_view" only when exactly one verified repository file is sufficient. For any non-trivial task, multi-file target set, subsystem, architecture trace, initialization, or broad repository slice, use "agentic_view". Normal non-trivial investigation should start with about 8-12 relevant files. Initialization, AGENTS generation, or broad codebase mapping should use broader sweeps of about 12-20 relevant files and continue until the major domains are covered. If the repo has fewer meaningful files, read all of them. Do not drift into serial single-file exploration loops.
 - Use "agentic_edit" for any multi-line or multi-file change. Use "single_edit" only for a trivial one-line tweak in one file. Use "apply_patch" only for an exact unified-diff patch, or when add/delete/move semantics are required.
+- Never call an edit tool until the exact file path(s), file contents, and edit operations are concrete.
+- Never invent tool arguments; use the exact parameter names from the tool catalog.
+- Never call "agentic_edit" with blank input, guessed paths, or placeholder edits.
+- Use "glob" only for one filename pattern per call. "pattern" is a single glob string; "path" or "paths" are search roots only. Never use "glob" for content search, and never batch multiple patterns into one call.
 - After every edit, read the full current-file diagnostics and keep repairing that file until current-file errors and warnings are zero. Use exact reported lines and messages; never guess.
 - Add comments only when they explain genuinely non-obvious logic in a complex code path. Never comment trivial code or communicate through comments.
 - Do not use "bash" for repository discovery, file reads, content search, or temporary prompt/CSV setup when a structured tool exists.

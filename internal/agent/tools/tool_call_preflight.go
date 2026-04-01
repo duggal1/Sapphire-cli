@@ -1459,20 +1459,16 @@ func promoteAgenticEditFileEditsShape(input map[string]any) {
 	}
 }
 
-func editPayloadRequiresAgenticEdit(input map[string]any, multi MultiEditParams) bool {
-	if _, ok := input["file_edits"]; ok {
-		return true
-	}
-	if _, ok := input["edits"]; ok {
-		if len(multi.Edits) > 1 {
-			return true
-		}
-		if len(multi.FileEdits) == 1 && len(multi.FileEdits[0].Edits) > 1 {
-			return true
-		}
-	}
+func editPayloadRequiresAgenticEdit(_ map[string]any, multi MultiEditParams) bool {
+	// Only rewrite when the payload is already a concrete multi-target edit batch.
 	if len(multi.FileEdits) > 1 {
 		return true
+	}
+	if len(multi.FileEdits) == 1 {
+		return len(multi.FileEdits[0].Edits) > 1
+	}
+	if len(multi.Edits) > 1 {
+		return strings.TrimSpace(multi.FilePath) != ""
 	}
 	return false
 }
@@ -1818,6 +1814,7 @@ func recordPreparedToolUsage(ctx context.Context, toolName string, input map[str
 	}
 	usage.Increment(canonical)
 	recordContextEvidence(usage, canonical, input)
+	recordDeterministicToolUsage(ctx, usage, canonical, input)
 	if canonical == UpdatePlanToolName {
 		usage.MarkPlanPublished()
 	}

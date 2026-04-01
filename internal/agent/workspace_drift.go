@@ -15,14 +15,43 @@ const (
 	maxWorkspaceDriftReported   = 8
 )
 
+type workspaceDriftSummary struct {
+	Modified []string
+	Removed  []string
+}
+
+func (s workspaceDriftSummary) HasDrift() bool {
+	return len(s.Modified) > 0 || len(s.Removed) > 0
+}
+
 func buildWorkspaceDriftPrompt(ctx context.Context, tracker filetracker.Service, sessionID, workingDir string) string {
-	if tracker == nil || strings.TrimSpace(sessionID) == "" {
+	summary := collectWorkspaceDrift(ctx, tracker, sessionID, workingDir)
+	if !summary.HasDrift() {
 		return ""
+	}
+
+	lines := []string{
+		"<workspace_drift>",
+		"Previously read workspace files changed outside the agent. Re-read them before relying on earlier observations or editing around them.",
+	}
+	if len(summary.Modified) > 0 {
+		lines = append(lines, "- modified: "+strings.Join(summary.Modified, ", "))
+	}
+	if len(summary.Removed) > 0 {
+		lines = append(lines, "- removed: "+strings.Join(summary.Removed, ", "))
+	}
+	lines = append(lines, "</workspace_drift>")
+	return strings.Join(lines, "\n")
+}
+
+func collectWorkspaceDrift(ctx context.Context, tracker filetracker.Service, sessionID, workingDir string) workspaceDriftSummary {
+	if tracker == nil || strings.TrimSpace(sessionID) == "" {
+		return workspaceDriftSummary{}
 	}
 
 	readFiles, err := tracker.ListReadFiles(ctx, sessionID)
 	if err != nil || len(readFiles) == 0 {
-		return ""
+		return workspaceDriftSummary{}
 	}
 	if len(readFiles) > maxWorkspaceDriftCandidates {
 		readFiles = readFiles[:maxWorkspaceDriftCandidates]
@@ -58,7 +87,7 @@ func buildWorkspaceDriftPrompt(ctx context.Context, tracker filetracker.Service,
 	modified = uniqueNonEmptyStrings(modified)
 	removed = uniqueNonEmptyStrings(removed)
 	if len(modified) == 0 && len(removed) == 0 {
-		return ""
+		return workspaceDriftSummary{}
 	}
 	if len(modified) > maxWorkspaceDriftReported {
 		modified = modified[:maxWorkspaceDriftReported]
@@ -66,19 +95,10 @@ func buildWorkspaceDriftPrompt(ctx context.Context, tracker filetracker.Service,
 	if len(removed) > maxWorkspaceDriftReported {
 		removed = removed[:maxWorkspaceDriftReported]
 	}
-
-	lines := []string{
-		"<workspace_drift>",
-		"Previously read workspace files changed outside the agent. Re-read them before relying on earlier observations or editing around them.",
+	return workspaceDriftSummary{
+		Modified: modified,
+		Removed:  removed,
 	}
-	if len(modified) > 0 {
-		lines = append(lines, "- modified: "+strings.Join(modified, ", "))
-	}
-	if len(removed) > 0 {
-		lines = append(lines, "- removed: "+strings.Join(removed, ", "))
-	}
-	lines = append(lines, "</workspace_drift>")
-	return strings.Join(lines, "\n")
 }
 
 func displayWorkspacePath(path, workingDir string) string {

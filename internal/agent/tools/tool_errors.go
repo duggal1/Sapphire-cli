@@ -164,6 +164,10 @@ func DeriveToolErrorMetadata(toolName, content string) (ToolErrorMetadata, bool)
 		if strings.Contains(normalized, "has been modified since it was last read") {
 			return ToolErrorMetadata{ToolName: toolName, Code: "reread_before_edit", UIMessage: "Re-read files before editing."}, true
 		}
+	case GlobToolName:
+		if strings.Contains(normalized, "pattern is required") || strings.Contains(normalized, "glob requires one pattern string in pattern") {
+			return ToolErrorMetadata{ToolName: toolName, Code: "missing_pattern", UIMessage: "Missing glob pattern."}, true
+		}
 	case WebSearchToolName, GoogleSearchToolName:
 		if strings.Contains(normalized, "query is required") || strings.Contains(normalized, "no query provided") {
 			return ToolErrorMetadata{ToolName: toolName, Code: "missing_query", UIMessage: "Missing search query."}, true

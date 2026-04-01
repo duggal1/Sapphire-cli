@@ -56,6 +56,16 @@ func validateToolCallInput(ctx context.Context, tool fantasy.AgentTool, call fan
 				"google_search requires a grounded query or at least one URL context target. Do not call it empty. Provide query, url, or urls, then retry.",
 			)
 		}
+	case GlobToolName:
+		pattern := strings.TrimSpace(firstStringValueFromMap(input, "pattern"))
+		if pattern == "" {
+			return NewToolGuidanceError(
+				call.Name,
+				"missing_pattern",
+				"Missing glob pattern.",
+				"glob requires one pattern string in pattern. Do not call glob with blank input or multiple patterns. Use path or paths only for search roots. If the roots are unknown, discover them first with tool_search, rg_files, rg, or ls.",
+			)
+		}
 	case ConnectMCPToolName:
 		if strings.TrimSpace(firstStringValueFromMap(input, "mcp_name")) == "" {
 			return NewToolGuidanceError(
@@ -157,6 +167,14 @@ func validateEditInputMap(input map[string]any) error {
 	if input == nil {
 		return errors.New("edit input must be a JSON object")
 	}
+	if _, hasFileEdits := input["file_edits"]; hasFileEdits {
+		return NewToolGuidanceError(
+			EditToolName,
+			"use_agentic_edit",
+			"Use agentic_edit for batched edits.",
+			"edit only accepts a single file_path plus old_string/new_string. If you already have file_edits, call agentic_edit with concrete file_path(s) and edits.",
+		)
+	}
 	filePath, _ := input["file_path"].(string)
 	if strings.TrimSpace(filePath) == "" {
 		return NewToolGuidanceError(
@@ -192,7 +210,7 @@ func validateAgenticEditInputMap(input map[string]any) error {
 				AgenticEditToolName,
 				"invalid_file_edits",
 				"Invalid edit payload.",
-				"agentic_edit file_edits must be an object or array of file edit specs. Do not send free-form text. Retry with structured file_edits JSON.",
+				"agentic_edit file_edits must be an object or array of file edit specs. Do not send free-form text. Retry with structured file_edits JSON that names concrete file_path(s) and edits.",
 			)
 		}
 		if len(editItems) == 0 {
@@ -200,7 +218,7 @@ func validateAgenticEditInputMap(input map[string]any) error {
 				AgenticEditToolName,
 				"missing_edit_payload",
 				"Missing edit target or edits.",
-				"agentic_edit requires at least one file edit operation. Provide file_edits with file_path and edits, or use the single-file shape with file_path plus edits.",
+				"agentic_edit requires concrete file_path(s) and edit operations. Read the target file(s) first, then provide file_edits or file_path/path plus edits. Do not call it with empty input.",
 			)
 		}
 		validItems := 0
@@ -230,7 +248,7 @@ func validateAgenticEditInputMap(input map[string]any) error {
 				AgenticEditToolName,
 				"missing_edit_payload",
 				"Missing edit target or edits.",
-				"agentic_edit requires at least one valid file edit operation. Empty or pathless edit items are invalid.",
+				"agentic_edit requires at least one valid file edit operation with a concrete file_path and edits. Empty or pathless edit items are invalid.",
 			)
 		}
 		return nil
@@ -258,7 +276,7 @@ func validateAgenticEditInputMap(input map[string]any) error {
 				AgenticEditToolName,
 				"missing_edit_payload",
 				"Missing edit target or edits.",
-				"agentic_edit requires either file_edits or a single-file shape with file_path/path plus edit operations. Do not call it with empty input.",
+				"agentic_edit requires concrete file_path(s) and edit operations. Read the target file(s) first, then provide file_edits or file_path/path plus edits. Do not call it with empty input.",
 			)
 		}
 	}
@@ -274,7 +292,7 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 				AgenticEditToolName,
 				"invalid_edits",
 				"Invalid edit payload.",
-				"agentic_edit edits must be an object or array of edit operations. Do not pass free-form text or malformed JSON.",
+				"agentic_edit edits must be an object or array of edit operations. Do not pass free-form text or malformed JSON. Each batch needs concrete file_path(s) and edits.",
 			)
 		}
 		if len(editList) == 0 {
@@ -282,7 +300,7 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 				AgenticEditToolName,
 				"missing_edit_payload",
 				"Missing edit target or edits.",
-				"agentic_edit edits cannot be empty. Provide at least one edit operation with old_string or new_string.",
+				"agentic_edit edits cannot be empty. Read the target file(s) first, then provide at least one concrete edit operation with old_string or new_string.",
 			)
 		}
 		for _, op := range editList {
@@ -293,7 +311,7 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 						AgenticEditToolName,
 						"missing_edit_payload",
 						"Invalid edit payload.",
-						"each agentic_edit operation must include old_string or new_string. Do not submit empty edit operations.",
+						"each agentic_edit operation must include old_string or new_string. Do not submit empty edit operations or guess edits without reading the file first.",
 					)
 				}
 			}
@@ -311,7 +329,7 @@ func validateAgenticEditOperationsMap(editMap map[string]any) error {
 		AgenticEditToolName,
 		"missing_edit_payload",
 		"Missing edit target or edits.",
-		"agentic_edit requires at least one concrete edit operation. Provide edits or old_string/new_string instead of empty input.",
+		"agentic_edit requires at least one concrete edit operation. Read the target file first, then provide edits or old_string/new_string instead of empty input.",
 	)
 }
 

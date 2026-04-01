@@ -61,7 +61,18 @@ func (c *coordinator) extractSingularityResultText(ctx context.Context, sessionI
 	if err != nil {
 		return text
 	}
+	start := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
+		msg := msgs[i]
+		if msg.SessionID == sessionID && msg.Role == message.User && !msg.IsSummaryMessage {
+			start = i + 1
+			break
+		}
+	}
+
+	best := text
+	bestScore := singularityResultTextScore(text)
+	for i := start; i < len(msgs); i++ {
 		msg := msgs[i]
 		if msg.SessionID != sessionID || msg.Role != message.Assistant || msg.IsSummaryMessage {
 			continue
@@ -70,10 +81,31 @@ func (c *coordinator) extractSingularityResultText(ctx context.Context, sessionI
 		if candidate == "" {
 			continue
 		}
-		if len(candidate) >= len(text) {
-			return candidate
+		score := singularityResultTextScore(candidate)
+		if score > bestScore || (score == bestScore && len(candidate) > len(best)) {
+			best = candidate
+			bestScore = score
 		}
-		break
 	}
-	return text
+	return best
+}
+
+func singularityResultTextScore(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	score := len(text)
+	lower := strings.ToLower(text)
+	if hasAnySignal(lower, []string{
+		"option a", "option b", "pros", "cons", "repo fit", "migration cost",
+		"compatibility risk", "trade-off", "tradeoff", "validated",
+		"current package structure", "current repository", "does not exist",
+	}) {
+		score += 400
+	}
+	if strings.Count(text, "\n") >= 6 {
+		score += 200
+	}
+	return score
 }

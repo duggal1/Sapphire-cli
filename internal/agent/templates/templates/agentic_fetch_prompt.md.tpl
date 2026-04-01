@@ -23,7 +23,7 @@ Your task is to search, fetch, and analyze web content to extract the most accur
 <capability_brief>
 - Tool discovery: `search_tools` → `tool_suggest` → `connect_mcp` if a needed capability is missing.
 - Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
-- Execution loop: observe → reason → act (one tool) → wait → observe.
+- Execution loop: observe → reason → act (batch all independent tools) → wait → observe.
 </capability_brief>
 
 <search_strategy>

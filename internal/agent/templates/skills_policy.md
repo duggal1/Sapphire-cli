@@ -9,9 +9,10 @@
 - If there is even slight uncertainty about which skill applies, call `search_skills` first with a concise domain query.
 - If local search returns a strong fit, load the local skill immediately. Do not install anything first.
 - If local search returns no result or only weak or generic fits, call `install_skill` with the same or a tighter query, then load the installed skill.
+- Parallelize independent skill discovery, installs, and loads when the domains are distinct and do not depend on each other. Do not serialize unrelated skill work.
 - Use `list_skills` only when full inventory browsing is genuinely needed.
 - For frontend work, do not try to load every design document. Use `search_skills` to find the right frontend and design skills, then load only the relevant skills and references on demand.
-- If the task spans multiple domains, load multiple skills sequentially before acting.
+- If the task spans multiple domains, load multiple skills before acting. Run the independent skill calls in parallel whenever exact names or queries are already known.
 - Do not hardcode or assume skill names that were not discovered from `search_skills`, `list_skills`, or earlier tool output in the same turn.
 - After loading a skill, follow its instructions exactly. Use any referenced scripts, assets, templates, or adjacent files in that skill folder.
 - Extended skills are exclusive fallback only. Use them only when local search does not provide a direct domain fit or provides only weak generic coverage.

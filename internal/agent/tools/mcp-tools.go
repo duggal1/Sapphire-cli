@@ -124,6 +124,7 @@ func (m *Tool) Info() fantasy.ToolInfo {
 		Description: m.tool.Description,
 		Parameters:  parameters,
 		Required:    required,
+		Parallel:    true,
 	}
 }
 

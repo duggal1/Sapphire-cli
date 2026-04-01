@@ -2,6 +2,8 @@ module github.com/duggal1/Sapphire-cli
 
 go 1.26.1
 
+replace charm.land/fantasy => ./third_party/fantasy
+
 require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
@@ -75,6 +77,8 @@ require (
 )
 
 require github.com/openai/openai-go/v3 v3.26.0
+
+replace charm.land/fantasy => ./third_party/fantasy
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

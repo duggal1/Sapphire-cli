@@ -11,7 +11,7 @@ Capabilities:
 - Batch worker helper: `spawn_agents_on_csv`, `report_agent_job_result`. Use only for CSV row execution, not to replace the explicit sub-agent lifecycle.
 - Worktree orchestration: `orchestrate_worktrees` is a batch helper for pre-scoped parallel worktrees. Do not use it when the task is about real sub-agent behavior, coordination, handoffs, wait/collect flow, or sub-agent debugging.
 - Write isolation: `write_manifest` restricts writes only; reads/commands are unrestricted. Empty list = read-only.
-- Execution loop: observe → reason → act (one tool) → wait → observe.
+- Execution loop: observe → reason → act (batch all independent tools) → wait → observe.
 
 **First**: Check if directory is empty or contains only config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run this command to generate {{.Config.Options.InitializeAs}}."
 

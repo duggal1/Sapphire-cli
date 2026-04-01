@@ -138,17 +138,71 @@ func inferHarnessGoalType(task string, explicit string) string {
 		return "initialize"
 	case hasAnySignal(normalized, []string{"debug", "fix", "bug", "regression", "incident"}):
 		return "debug"
+	case hasAnySignal(normalized, []string{"migrate", "migration", "upgrade", "refactor"}) && !hasExplicitImplementationIntent(normalized):
+		return "migration"
+	case hasExplicitImplementationIntent(normalized):
+		return "implementation"
 	case hasAnySignal(normalized, []string{"research", "investigate", "survey", "deep dive", "explore the repo", "analyze the repo"}):
 		return "research"
-	case hasAnySignal(normalized, []string{"review", "audit", "inspect"}):
+	case hasExplicitReviewIntent(normalized):
 		return "review"
 	case hasAnySignal(normalized, []string{"architecture", "architect", "design", "ui", "ux", "copy", "content"}):
 		return "design"
-	case hasAnySignal(normalized, []string{"migrate", "migration", "upgrade", "refactor"}):
-		return "migration"
 	default:
 		return "implementation"
 	}
+}
+
+func hasExplicitImplementationIntent(task string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	if normalized == "" || hasExplicitAnalysisOnlyDirective(normalized) {
+		return false
+	}
+	return hasAnySignal(normalized, []string{
+		"implement ",
+		"implementation task",
+		"wire ",
+		"make the minimal code changes",
+		"make minimal code changes",
+		"modify the code",
+		"edit the code",
+		"change the code",
+		"update the code",
+		"write the code",
+		"patch the code",
+		"apply the change",
+		"without changing ",
+		"while keeping ",
+	})
+}
+
+func hasExplicitAnalysisOnlyDirective(task string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	if normalized == "" {
+		return false
+	}
+	return hasAnySignal(normalized, []string{
+		"do not edit code",
+		"don't edit code",
+		"do not modify code",
+		"don't modify code",
+		"no code changes",
+		"without editing code",
+		"analysis only",
+		"review only",
+		"task only",
+	})
+}
+
+func hasExplicitReviewIntent(task string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	if normalized == "" || hasExplicitImplementationIntent(normalized) {
+		return false
+	}
+	if hasAnySignal(normalized, []string{"review", "audit"}) {
+		return true
+	}
+	return hasAnySignal(normalized, []string{"inspect"}) && hasExplicitAnalysisOnlyDirective(normalized)
 }
 
 func isBroadHarnessAnalysisTask(task, goalType string, decision subAgentLaunchDecision) bool {

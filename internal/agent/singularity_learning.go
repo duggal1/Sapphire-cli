@@ -60,11 +60,13 @@ type learnedRoutePolicy struct {
 	ToolSuccessCounts            map[string]int `json:"tool_success_counts,omitempty"`
 	ToolFailureCounts            map[string]int `json:"tool_failure_counts,omitempty"`
 	PreferredDiscovery           []string       `json:"preferred_discovery,omitempty"`
+	PreferredVerification        []string       `json:"preferred_verification,omitempty"`
 	PreferredSkills              []string       `json:"preferred_skills,omitempty"`
 	RequireHarness               bool           `json:"require_harness,omitempty"`
 	PreferParallel               bool           `json:"prefer_parallel,omitempty"`
 	PreferIndexCodebase          bool           `json:"prefer_index_codebase,omitempty"`
 	ForbidBashDiscovery          bool           `json:"forbid_bash_discovery,omitempty"`
+	RequireContextRead           bool           `json:"require_context_read,omitempty"`
 	RequireExplicitPlan          bool           `json:"require_explicit_plan,omitempty"`
 	RequirePostWriteVerification bool           `json:"require_post_write_verification,omitempty"`
 	Confidence                   int            `json:"confidence"`
@@ -79,13 +81,17 @@ type learnedRoutePolicy struct {
 	RecentContextPenalty         float64        `json:"recent_context_penalty,omitempty"`
 	RecentPlanningPenalty        float64        `json:"recent_planning_penalty,omitempty"`
 	RecentValidationPenalty      float64        `json:"recent_validation_penalty,omitempty"`
+	RecentVerifierWeight         float64        `json:"recent_verifier_weight,omitempty"`
 	RecentRecoveryPenalty        float64        `json:"recent_recovery_penalty,omitempty"`
 	RecentTradeoffPenalty        float64        `json:"recent_tradeoff_penalty,omitempty"`
+	RecentDecompositionPenalty   float64        `json:"recent_decomposition_penalty,omitempty"`
 	ContextFailures              int            `json:"context_failures,omitempty"`
 	PlanningFailures             int            `json:"planning_failures,omitempty"`
 	ValidationFailures           int            `json:"validation_failures,omitempty"`
+	VerifierSuccesses            int            `json:"verifier_successes,omitempty"`
 	RecoveryFailures             int            `json:"recovery_failures,omitempty"`
 	TradeoffFailures             int            `json:"tradeoff_failures,omitempty"`
+	DecompositionFailures        int            `json:"decomposition_failures,omitempty"`
 	PromotionState               string         `json:"promotion_state,omitempty"`
 	AppliedCount                 int            `json:"applied_count,omitempty"`
 	LastAppliedAt                string         `json:"last_applied_at,omitempty"`
@@ -100,69 +106,79 @@ type learnedPolicyStore struct {
 }
 
 type turnLearningTrace struct {
-	SessionID        string
-	WorkingDir       string
-	Prompt           string
-	Family           learnedTaskFamily
-	StartedAt        time.Time
-	LoadedSkills     []string
-	ActivePolicyID   string
-	OrderedTools     []string
-	ToolCalls        map[string]int
-	ToolResults      map[string]int
-	ToolErrorCodes   map[string]int
-	BashDiscovery    int
-	BlockedBash      int
-	ValidationChecks int
+	SessionID            string
+	WorkingDir           string
+	Prompt               string
+	Family               learnedTaskFamily
+	StartedAt            time.Time
+	LoadedSkills         []string
+	ActivePolicyID       string
+	OrderedTools         []string
+	ToolCalls            map[string]int
+	ToolResults          map[string]int
+	ToolErrorCodes       map[string]int
+	StructuredEvidence   map[string]int
+	ReadEvidence         map[string]int
+	VerificationEvidence map[string]int
+	BashDiscovery        int
+	BlockedBash          int
+	ValidationChecks     int
 }
 
 type completedTurnTrace struct {
-	SessionID        string
-	WorkingDir       string
-	Prompt           string
-	Family           learnedTaskFamily
-	StartedAt        time.Time
-	LoadedSkills     []string
-	ActivePolicyID   string
-	OrderedTools     []string
-	ToolCalls        map[string]int
-	ToolResults      map[string]int
-	ToolErrorCodes   map[string]int
-	BashDiscovery    int
-	BlockedBash      int
-	ValidationChecks int
-	Status           string
-	ResultSummary    string
-	FinishedAt       time.Time
+	SessionID            string
+	WorkingDir           string
+	Prompt               string
+	Family               learnedTaskFamily
+	StartedAt            time.Time
+	LoadedSkills         []string
+	ActivePolicyID       string
+	OrderedTools         []string
+	ToolCalls            map[string]int
+	ToolResults          map[string]int
+	ToolErrorCodes       map[string]int
+	StructuredEvidence   map[string]int
+	ReadEvidence         map[string]int
+	VerificationEvidence map[string]int
+	BashDiscovery        int
+	BlockedBash          int
+	ValidationChecks     int
+	Status               string
+	ResultSummary        string
+	FinishedAt           time.Time
 }
 
 type singularityTurnAuditRecord struct {
-	Timestamp            string         `json:"timestamp"`
-	SessionID            string         `json:"session_id"`
-	WorkingDir           string         `json:"working_dir,omitempty"`
-	TaskFamily           string         `json:"task_family"`
-	GoalType             string         `json:"goal_type"`
-	Breadth              string         `json:"breadth"`
-	Status               string         `json:"status"`
-	ActivePolicyID       string         `json:"active_policy_id,omitempty"`
-	AppliedPolicy        bool           `json:"applied_policy"`
-	PolicyState          string         `json:"policy_state,omitempty"`
-	PolicyConfidence     int            `json:"policy_confidence,omitempty"`
-	OrderedTools         []string       `json:"ordered_tools,omitempty"`
-	ToolCalls            map[string]int `json:"tool_calls,omitempty"`
-	ToolResults          map[string]int `json:"tool_results,omitempty"`
-	ToolErrorCodes       map[string]int `json:"tool_error_codes,omitempty"`
-	LoadedSkills         []string       `json:"loaded_skills,omitempty"`
-	BashDiscovery        int            `json:"bash_discovery,omitempty"`
-	BlockedBashDiscovery int            `json:"blocked_bash_discovery,omitempty"`
-	ValidationChecks     int            `json:"validation_checks,omitempty"`
-	ContextDiscipline    string         `json:"context_discipline,omitempty"`
-	PlanningDiscipline   string         `json:"planning_discipline,omitempty"`
-	ValidationDiscipline string         `json:"validation_discipline,omitempty"`
-	RecoveryDiscipline   string         `json:"recovery_discipline,omitempty"`
-	TradeoffDiscipline   string         `json:"tradeoff_discipline,omitempty"`
-	ExecutionRisk        string         `json:"execution_risk,omitempty"`
-	ResultSummary        string         `json:"result_summary,omitempty"`
+	Timestamp                 string         `json:"timestamp"`
+	SessionID                 string         `json:"session_id"`
+	WorkingDir                string         `json:"working_dir,omitempty"`
+	TaskFamily                string         `json:"task_family"`
+	GoalType                  string         `json:"goal_type"`
+	Breadth                   string         `json:"breadth"`
+	Status                    string         `json:"status"`
+	ActivePolicyID            string         `json:"active_policy_id,omitempty"`
+	AppliedPolicy             bool           `json:"applied_policy"`
+	PolicyState               string         `json:"policy_state,omitempty"`
+	PolicyConfidence          int            `json:"policy_confidence,omitempty"`
+	OrderedTools              []string       `json:"ordered_tools,omitempty"`
+	ToolCalls                 map[string]int `json:"tool_calls,omitempty"`
+	ToolResults               map[string]int `json:"tool_results,omitempty"`
+	ToolErrorCodes            map[string]int `json:"tool_error_codes,omitempty"`
+	StructuredEvidenceCount   int            `json:"structured_evidence_count,omitempty"`
+	ReadEvidenceCount         int            `json:"read_evidence_count,omitempty"`
+	VerificationEvidenceCount int            `json:"verification_evidence_count,omitempty"`
+	LoadedSkills              []string       `json:"loaded_skills,omitempty"`
+	BashDiscovery             int            `json:"bash_discovery,omitempty"`
+	BlockedBashDiscovery      int            `json:"blocked_bash_discovery,omitempty"`
+	ValidationChecks          int            `json:"validation_checks,omitempty"`
+	ContextDiscipline         string         `json:"context_discipline,omitempty"`
+	PlanningDiscipline        string         `json:"planning_discipline,omitempty"`
+	DecompositionDiscipline   string         `json:"decomposition_discipline,omitempty"`
+	ValidationDiscipline      string         `json:"validation_discipline,omitempty"`
+	RecoveryDiscipline        string         `json:"recovery_discipline,omitempty"`
+	TradeoffDiscipline        string         `json:"tradeoff_discipline,omitempty"`
+	ExecutionRisk             string         `json:"execution_risk,omitempty"`
+	ResultSummary             string         `json:"result_summary,omitempty"`
 }
 
 type kernelMutationBoundary struct {
@@ -330,16 +346,19 @@ func (m *singularityManager) StartTurn(sessionID, prompt, workingDir string, loa
 		return family
 	}
 	trace := &turnLearningTrace{
-		SessionID:      strings.TrimSpace(sessionID),
-		WorkingDir:     strings.TrimSpace(workingDir),
-		Prompt:         strings.TrimSpace(prompt),
-		Family:         family,
-		StartedAt:      time.Now().UTC(),
-		LoadedSkills:   compactLearnedStrings(loadedSkills),
-		ActivePolicyID: strings.TrimSpace(policy.TaskFamily),
-		ToolCalls:      map[string]int{},
-		ToolResults:    map[string]int{},
-		ToolErrorCodes: map[string]int{},
+		SessionID:            strings.TrimSpace(sessionID),
+		WorkingDir:           strings.TrimSpace(workingDir),
+		Prompt:               strings.TrimSpace(prompt),
+		Family:               family,
+		StartedAt:            time.Now().UTC(),
+		LoadedSkills:         compactLearnedStrings(loadedSkills),
+		ActivePolicyID:       strings.TrimSpace(policy.TaskFamily),
+		ToolCalls:            map[string]int{},
+		ToolResults:          map[string]int{},
+		ToolErrorCodes:       map[string]int{},
+		StructuredEvidence:   map[string]int{},
+		ReadEvidence:         map[string]int{},
+		VerificationEvidence: map[string]int{},
 	}
 	m.mu.Lock()
 	m.active[trace.SessionID] = trace
@@ -438,6 +457,7 @@ func (m *singularityManager) applyObservedToolCall(trace *turnLearningTrace, too
 		return
 	}
 	trace.ToolCalls[toolName]++
+	recordTraceContextEvidence(trace, toolName, rawInput, 1)
 	if toolName == tools.BashToolName {
 		if command := extractObservedBashCommand(rawInput); command != "" {
 			if looksLikeObservedDiscoveryBash(command) {
@@ -472,6 +492,7 @@ func (m *singularityManager) removeObservedToolCall(trace *turnLearningTrace, to
 	} else {
 		delete(trace.ToolCalls, toolName)
 	}
+	recordTraceContextEvidence(trace, toolName, rawInput, -1)
 	if toolName == tools.BashToolName {
 		if command := extractObservedBashCommand(rawInput); command != "" {
 			if looksLikeObservedDiscoveryBash(command) && trace.BashDiscovery > 0 {
@@ -495,6 +516,38 @@ func (m *singularityManager) removeObservedToolCall(trace *turnLearningTrace, to
 	}
 }
 
+func recordTraceContextEvidence(trace *turnLearningTrace, toolName, rawInput string, delta int) {
+	if trace == nil || delta == 0 {
+		return
+	}
+	input := parseObservedToolInput(rawInput)
+	if len(input) == 0 {
+		return
+	}
+	evidence := tools.ExtractContextEvidence(toolName, input)
+	adjustTraceEvidence(trace.StructuredEvidence, evidence.Structured, delta)
+	adjustTraceEvidence(trace.ReadEvidence, evidence.Read, delta)
+	adjustTraceEvidence(trace.VerificationEvidence, evidence.Verification, delta)
+}
+
+func adjustTraceEvidence(target map[string]int, values []string, delta int) {
+	if len(values) == 0 || target == nil {
+		return
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		next := target[value] + delta
+		if next <= 0 {
+			delete(target, value)
+			continue
+		}
+		target[value] = next
+	}
+}
+
 func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string) *completedTurnTrace {
 	if m == nil {
 		return nil
@@ -507,23 +560,26 @@ func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string)
 		return nil
 	}
 	return &completedTurnTrace{
-		SessionID:        trace.SessionID,
-		WorkingDir:       trace.WorkingDir,
-		Prompt:           trace.Prompt,
-		Family:           trace.Family,
-		StartedAt:        trace.StartedAt,
-		LoadedSkills:     append([]string{}, trace.LoadedSkills...),
-		ActivePolicyID:   trace.ActivePolicyID,
-		OrderedTools:     append([]string{}, trace.OrderedTools...),
-		ToolCalls:        cloneStringIntMap(trace.ToolCalls),
-		ToolResults:      cloneStringIntMap(trace.ToolResults),
-		ToolErrorCodes:   cloneStringIntMap(trace.ToolErrorCodes),
-		BashDiscovery:    trace.BashDiscovery,
-		BlockedBash:      trace.BlockedBash,
-		ValidationChecks: trace.ValidationChecks,
-		Status:           strings.TrimSpace(status),
-		ResultSummary:    compactLearnedText(strings.TrimSpace(resultSummary), 600),
-		FinishedAt:       time.Now().UTC(),
+		SessionID:            trace.SessionID,
+		WorkingDir:           trace.WorkingDir,
+		Prompt:               trace.Prompt,
+		Family:               trace.Family,
+		StartedAt:            trace.StartedAt,
+		LoadedSkills:         append([]string{}, trace.LoadedSkills...),
+		ActivePolicyID:       trace.ActivePolicyID,
+		OrderedTools:         append([]string{}, trace.OrderedTools...),
+		ToolCalls:            cloneStringIntMap(trace.ToolCalls),
+		ToolResults:          cloneStringIntMap(trace.ToolResults),
+		ToolErrorCodes:       cloneStringIntMap(trace.ToolErrorCodes),
+		StructuredEvidence:   cloneStringIntMap(trace.StructuredEvidence),
+		ReadEvidence:         cloneStringIntMap(trace.ReadEvidence),
+		VerificationEvidence: cloneStringIntMap(trace.VerificationEvidence),
+		BashDiscovery:        trace.BashDiscovery,
+		BlockedBash:          trace.BlockedBash,
+		ValidationChecks:     trace.ValidationChecks,
+		Status:               strings.TrimSpace(status),
+		ResultSummary:        compactLearnedText(strings.TrimSpace(resultSummary), 600),
+		FinishedAt:           time.Now().UTC(),
 	}
 }
 
@@ -630,8 +686,8 @@ func (m *singularityManager) LearnedToolPolicy(policy learnedRoutePolicy) tools.
 		TaskFamily:                   policy.TaskFamily,
 		Reason:                       "learned route policy for recurring " + policy.TaskFamily + " turns",
 		ForbidBashDiscovery:          policy.ForbidBashDiscovery,
-		PreferStructuredDiscovery:    policy.Breadth == "broad" && (policy.GoalType == "initialize" || policy.GoalType == "design" || policy.GoalType == "research"),
-		RequireContextRead:           policy.GoalType == "initialize" && policy.Breadth == "broad",
+		PreferStructuredDiscovery:    policy.RequireContextRead,
+		RequireContextRead:           policy.RequireContextRead,
 		RequireExplicitPlan:          policy.RequireExplicitPlan,
 		RequirePostWriteVerification: policy.RequirePostWriteVerification,
 	}
@@ -721,6 +777,7 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 	indexSuccess := containsTool(seenTools, tools.IndexCodebaseToolName)
 	parallelSuccess := containsAnyTool(seenTools, SpawnAgentToolName, WaitAgentsToolName, CollectResultToolName)
 	assessment := assessSingularityCognition(trace)
+	experience := compileSingularityExperience(trace)
 	if success {
 		policy.SuccessCount++
 		policy.RecentSuccessWeight += 1
@@ -742,6 +799,10 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 		if parallelSuccess {
 			policy.ParallelSuccesses++
 			policy.RecentParallelWeight += 1
+		}
+		if experience.Verification.Discipline == "strong" {
+			policy.VerifierSuccesses++
+			policy.RecentVerifierWeight += 1
 		}
 		if trace.BashDiscovery > 0 {
 			policy.BashDiscoverySuccess += trace.BashDiscovery
@@ -765,10 +826,12 @@ func mergeCompletedTurnIntoPolicy(existing learnedRoutePolicy, trace *completedT
 	policy = applyCognitiveAssessment(policy, assessment)
 
 	policy.PreferredDiscovery = derivePreferredDiscoveryTools(policy)
+	policy.PreferredVerification = mergeLearnedDiscoveryPreference(experience.Verification.PreferredTools, policy.PreferredVerification, 4)
 	policy.RequireHarness = deriveHarnessRequirement(policy)
 	policy.PreferParallel = deriveParallelPreference(policy)
 	policy.PreferIndexCodebase = deriveIndexPreference(policy)
 	policy.ForbidBashDiscovery = deriveBashDiscoveryBan(policy)
+	policy.RequireContextRead = deriveContextReadRequirement(policy)
 	policy.RequireExplicitPlan = deriveExplicitPlanRequirement(policy)
 	policy.RequirePostWriteVerification = derivePostWriteVerificationRequirement(policy)
 	if promptMentionsAgentsArtifact(trace.Prompt) {
@@ -871,11 +934,15 @@ func deriveBashDiscoveryBan(policy learnedRoutePolicy) bool {
 }
 
 func deriveExplicitPlanRequirement(policy learnedRoutePolicy) bool {
-	return policy.Breadth == "broad" && (policy.GoalType == "design" || policy.GoalType == "research")
+	return policy.Breadth == "broad" && (policy.GoalType == "design" || policy.GoalType == "research" || policy.GoalType == "review" || policy.GoalType == "migration" || (policy.GoalType == "implementation" && policy.RecentHarnessWeight >= 0.75))
 }
 
 func derivePostWriteVerificationRequirement(policy learnedRoutePolicy) bool {
 	return policy.GoalType == "initialize" && policy.Breadth == "broad"
+}
+
+func deriveContextReadRequirement(policy learnedRoutePolicy) bool {
+	return policy.Breadth == "broad"
 }
 
 func applyCognitiveAssessment(policy learnedRoutePolicy, assessment singularityCognitiveAssessment) learnedRoutePolicy {
@@ -889,6 +956,7 @@ func applyCognitiveAssessment(policy learnedRoutePolicy, assessment singularityC
 
 	applyPenalty(assessment.ContextDiscipline, &policy.ContextFailures, &policy.RecentContextPenalty)
 	applyPenalty(assessment.PlanningDiscipline, &policy.PlanningFailures, &policy.RecentPlanningPenalty)
+	applyPenalty(assessment.DecompositionDiscipline, &policy.DecompositionFailures, &policy.RecentDecompositionPenalty)
 	applyPenalty(assessment.ValidationDiscipline, &policy.ValidationFailures, &policy.RecentValidationPenalty)
 	applyPenalty(assessment.RecoveryDiscipline, &policy.RecoveryFailures, &policy.RecentRecoveryPenalty)
 	applyPenalty(assessment.TradeoffDiscipline, &policy.TradeoffFailures, &policy.RecentTradeoffPenalty)
@@ -902,6 +970,7 @@ func derivePolicyConfidence(policy learnedRoutePolicy) int {
 	score += int(policy.RecentHarnessWeight * 8)
 	score += int(policy.RecentParallelWeight * 6)
 	score += int(policy.RecentIndexWeight * 4)
+	score += int(policy.RecentVerifierWeight * 6)
 	score += min(policy.AppliedCount*2, 6)
 	if policy.GoalType == "initialize" && policy.Breadth == "broad" && policy.RecentStructuredWeight >= 0.8 {
 		score += 12
@@ -910,6 +979,7 @@ func derivePolicyConfidence(policy learnedRoutePolicy) int {
 	score -= int(policy.RecentBashFailureWeight * 8)
 	score -= int(policy.RecentContextPenalty * 10)
 	score -= int(policy.RecentPlanningPenalty * 10)
+	score -= int(policy.RecentDecompositionPenalty * 9)
 	score -= int(policy.RecentValidationPenalty * 8)
 	score -= int(policy.RecentRecoveryPenalty * 6)
 	score -= int(policy.RecentTradeoffPenalty * 6)
@@ -923,7 +993,7 @@ func derivePromotionState(policy learnedRoutePolicy) string {
 	switch {
 	case policy.Confidence < 25:
 		return learnedPolicyStateDemoted
-	case policy.RecentContextPenalty >= 1.1 || policy.RecentPlanningPenalty >= 1.1 || policy.RecentValidationPenalty >= 1.1:
+	case policy.RecentContextPenalty >= 1.1 || policy.RecentPlanningPenalty >= 1.1 || policy.RecentDecompositionPenalty >= 1.1 || policy.RecentValidationPenalty >= 1.1:
 		return learnedPolicyStateObserver
 	case policy.RecentFailureWeight > policy.RecentSuccessWeight+0.4 && policy.Confidence < minPolicyConfidenceForInjection:
 		return learnedPolicyStateDemoted
@@ -962,6 +1032,7 @@ func normalizeLoadedLearnedRoutePolicy(policy learnedRoutePolicy) learnedRoutePo
 		policy.RecentHarnessWeight = minFloat64(float64(policy.HarnessSuccesses), 2.0)
 		policy.RecentParallelWeight = minFloat64(float64(policy.ParallelSuccesses), 2.0)
 		policy.RecentIndexWeight = minFloat64(float64(policy.IndexSuccesses), 2.0)
+		policy.RecentVerifierWeight = minFloat64(float64(policy.VerifierSuccesses), 2.0)
 		policy.RecentBashFailureWeight = minFloat64(float64(policy.BashDiscoveryFailures), 2.0)
 		policy.RecentBashSuccessWeight = minFloat64(float64(policy.BashDiscoverySuccess), 2.0)
 	}
@@ -993,10 +1064,12 @@ func learnedPolicyRecentWeightsZero(policy learnedRoutePolicy) bool {
 		policy.RecentHarnessWeight == 0 &&
 		policy.RecentParallelWeight == 0 &&
 		policy.RecentIndexWeight == 0 &&
+		policy.RecentVerifierWeight == 0 &&
 		policy.RecentBashFailureWeight == 0 &&
 		policy.RecentBashSuccessWeight == 0 &&
 		policy.RecentContextPenalty == 0 &&
 		policy.RecentPlanningPenalty == 0 &&
+		policy.RecentDecompositionPenalty == 0 &&
 		policy.RecentValidationPenalty == 0 &&
 		policy.RecentRecoveryPenalty == 0 &&
 		policy.RecentTradeoffPenalty == 0
@@ -1009,10 +1082,12 @@ func applyRecentLearnedPolicyDecay(policy learnedRoutePolicy) learnedRoutePolicy
 	policy.RecentHarnessWeight *= learnedPolicyDecayFactor
 	policy.RecentParallelWeight *= learnedPolicyDecayFactor
 	policy.RecentIndexWeight *= learnedPolicyDecayFactor
+	policy.RecentVerifierWeight *= learnedPolicyDecayFactor
 	policy.RecentBashFailureWeight *= learnedPolicyDecayFactor
 	policy.RecentBashSuccessWeight *= learnedPolicyDecayFactor
 	policy.RecentContextPenalty *= learnedPolicyDecayFactor
 	policy.RecentPlanningPenalty *= learnedPolicyDecayFactor
+	policy.RecentDecompositionPenalty *= learnedPolicyDecayFactor
 	policy.RecentValidationPenalty *= learnedPolicyDecayFactor
 	policy.RecentRecoveryPenalty *= learnedPolicyDecayFactor
 	policy.RecentTradeoffPenalty *= learnedPolicyDecayFactor
@@ -1027,7 +1102,7 @@ func minFloat64(a, b float64) float64 {
 }
 
 func hasStructuredDiscovery(trace *completedTurnTrace) bool {
-	return containsAnyTool(uniqueLearnedToolNames(trace.OrderedTools), "tool_search", tools.RGFilesToolName, tools.RGToolName, tools.GlobToolName, tools.GrepToolName, tools.AgenticViewToolName)
+	return containsAnyTool(uniqueLearnedToolNames(trace.OrderedTools), tools.ToolSearchToolName, tools.RGFilesToolName, tools.RGToolName, tools.GlobToolName, tools.GrepToolName)
 }
 
 func uniqueLearnedToolNames(items []string) []string {
@@ -1163,6 +1238,12 @@ func renderLearnedRoutePolicyBlock(policy learnedRoutePolicy) string {
 	if len(policy.PreferredDiscovery) > 0 {
 		lines = append(lines, "- Preferred discovery order: "+strings.Join(policy.PreferredDiscovery, " -> "))
 	}
+	if policy.RequireContextRead {
+		lines = append(lines, "- Do not commit to edits, delegation, or conclusions until structured discovery and real code reads establish enough repository evidence.")
+	}
+	if len(policy.PreferredVerification) > 0 {
+		lines = append(lines, "- Preferred verification tools: "+strings.Join(policy.PreferredVerification, " -> "))
+	}
 	if policy.PreferParallel {
 		lines = append(lines, "- If the task is non-trivial, prefer parallel exploration or delegation instead of a single serial pass.")
 	}
@@ -1210,6 +1291,12 @@ func renderLearnedSkillMarkdown(skillName string, policy learnedRoutePolicy) str
 	}
 	if len(policy.PreferredDiscovery) > 0 {
 		lines = append(lines, "- Discovery order: "+strings.Join(policy.PreferredDiscovery, " -> "))
+	}
+	if policy.RequireContextRead {
+		lines = append(lines, "- Require real repository evidence before edits, delegation, or conclusions: at least one structured discovery pass and one concrete code read.")
+	}
+	if len(policy.PreferredVerification) > 0 {
+		lines = append(lines, "- Verification order: "+strings.Join(policy.PreferredVerification, " -> "))
 	}
 	if policy.PreferParallel {
 		lines = append(lines, "- For non-trivial scope, use parallel exploration or sub-agents instead of one long serial pass.")
@@ -1297,30 +1384,34 @@ func (m *singularityManager) appendTurnAuditLocked(trace *completedTurnTrace, po
 		return err
 	}
 	record := singularityTurnAuditRecord{
-		Timestamp:            trace.FinishedAt.UTC().Format(time.RFC3339),
-		SessionID:            trace.SessionID,
-		WorkingDir:           trace.WorkingDir,
-		TaskFamily:           trace.Family.ID,
-		GoalType:             trace.Family.GoalType,
-		Breadth:              trace.Family.Breadth,
-		Status:               trace.Status,
-		ActivePolicyID:       trace.ActivePolicyID,
-		AppliedPolicy:        strings.TrimSpace(trace.ActivePolicyID) == trace.Family.ID,
-		PolicyState:          normalizeLearnedPromotionState(policy.PromotionState, policy.Confidence, policy.EvidenceCount),
-		PolicyConfidence:     policy.Confidence,
-		OrderedTools:         append([]string{}, trace.OrderedTools...),
-		ToolCalls:            cloneStringIntMap(trace.ToolCalls),
-		ToolResults:          cloneStringIntMap(trace.ToolResults),
-		ToolErrorCodes:       cloneStringIntMap(trace.ToolErrorCodes),
-		LoadedSkills:         append([]string{}, trace.LoadedSkills...),
-		BashDiscovery:        trace.BashDiscovery,
-		BlockedBashDiscovery: trace.BlockedBash,
-		ValidationChecks:     trace.ValidationChecks,
-		ResultSummary:        trace.ResultSummary,
+		Timestamp:                 trace.FinishedAt.UTC().Format(time.RFC3339),
+		SessionID:                 trace.SessionID,
+		WorkingDir:                trace.WorkingDir,
+		TaskFamily:                trace.Family.ID,
+		GoalType:                  trace.Family.GoalType,
+		Breadth:                   trace.Family.Breadth,
+		Status:                    trace.Status,
+		ActivePolicyID:            trace.ActivePolicyID,
+		AppliedPolicy:             strings.TrimSpace(trace.ActivePolicyID) == trace.Family.ID,
+		PolicyState:               normalizeLearnedPromotionState(policy.PromotionState, policy.Confidence, policy.EvidenceCount),
+		PolicyConfidence:          policy.Confidence,
+		OrderedTools:              append([]string{}, trace.OrderedTools...),
+		ToolCalls:                 cloneStringIntMap(trace.ToolCalls),
+		ToolResults:               cloneStringIntMap(trace.ToolResults),
+		ToolErrorCodes:            cloneStringIntMap(trace.ToolErrorCodes),
+		StructuredEvidenceCount:   countPositiveTraceEvidence(trace.StructuredEvidence),
+		ReadEvidenceCount:         countPositiveTraceEvidence(trace.ReadEvidence),
+		VerificationEvidenceCount: countPositiveTraceEvidence(trace.VerificationEvidence),
+		LoadedSkills:              append([]string{}, trace.LoadedSkills...),
+		BashDiscovery:             trace.BashDiscovery,
+		BlockedBashDiscovery:      trace.BlockedBash,
+		ValidationChecks:          trace.ValidationChecks,
+		ResultSummary:             trace.ResultSummary,
 	}
 	assessment := assessSingularityCognition(trace)
 	record.ContextDiscipline = assessment.ContextDiscipline
 	record.PlanningDiscipline = assessment.PlanningDiscipline
+	record.DecompositionDiscipline = assessment.DecompositionDiscipline
 	record.ValidationDiscipline = assessment.ValidationDiscipline
 	record.RecoveryDiscipline = assessment.RecoveryDiscipline
 	record.TradeoffDiscipline = assessment.TradeoffDiscipline

@@ -77,7 +77,8 @@ func TestSingularityManagerCompilesRecurringRoutePolicyAndGeneratesSkill(t *test
 	require.True(t, policy.PreferParallel)
 	require.True(t, policy.PreferIndexCodebase)
 	require.True(t, policy.ForbidBashDiscovery)
-	require.Equal(t, 76, policy.Confidence)
+	require.True(t, policy.RequireContextRead)
+	require.Equal(t, 82, policy.Confidence)
 	require.Contains(t, []string{learnedPolicyStateCandidate, learnedPolicyStatePromoted}, policy.PromotionState)
 	require.Equal(t, []string{
 		agenttools.ToolSearchToolName,
@@ -86,6 +87,7 @@ func TestSingularityManagerCompilesRecurringRoutePolicyAndGeneratesSkill(t *test
 		agenttools.RGToolName,
 		agenttools.LSToolName,
 	}, policy.PreferredDiscovery)
+	require.NotEmpty(t, policy.PreferredVerification)
 	require.NotEmpty(t, policy.SkillName)
 	require.NotEmpty(t, policy.SkillFilePath)
 	require.Equal(t, []string{policy.SkillName}, policy.PreferredSkills)
@@ -101,6 +103,7 @@ func TestSingularityManagerCompilesRecurringRoutePolicyAndGeneratesSkill(t *test
 	require.Contains(t, hints, "<learned_route_policy")
 	require.Contains(t, hints, "Run `run_harness` before editing, execution, or delegation.")
 	require.Contains(t, hints, "Preferred discovery order:")
+	require.Contains(t, hints, "Preferred verification tools:")
 	require.Contains(t, hints, "<learned_project_skill>")
 	require.Contains(t, activeSkills, policy.SkillName)
 
@@ -148,6 +151,14 @@ func TestClassifyLearnedTaskFamilyTreatsResearchPromptsAsResearch(t *testing.T) 
 	require.Equal(t, "broad", family.Breadth)
 }
 
+func TestClassifyLearnedTaskFamilyTreatsBroadImplementationPromptsAsImplementation(t *testing.T) {
+	t.Parallel()
+
+	family := classifyLearnedTaskFamily("Implement a safe multi-file change to wire platform.RuntimeConfig into cmd/api without changing auth or billing signatures. Inspect the repository broadly, plan the work before editing, then make the minimal code changes and verify the build.")
+	require.Equal(t, "implementation", family.GoalType)
+	require.Equal(t, "broad", family.Breadth)
+}
+
 func TestBuildHarnessRequirementRequiresHarnessBeforeBroadDesignDiscovery(t *testing.T) {
 	t.Parallel()
 
@@ -164,6 +175,14 @@ func TestBuildHarnessRequirementRequiresHarnessBeforeBroadResearchDiscovery(t *t
 	require.True(t, requirement.Required)
 	require.True(t, requirement.RequireBeforeDiscovery)
 	require.Contains(t, requirement.Reason, "research")
+}
+
+func TestBuildHarnessRequirementTreatsBroadImplementationPromptsAsImplementation(t *testing.T) {
+	t.Parallel()
+
+	requirement := buildHarnessRequirement("Implement a safe multi-file change to wire platform.RuntimeConfig into cmd/api without changing auth or billing signatures. Inspect the repository broadly, plan the work before editing, then make the minimal code changes and verify the build.")
+	require.True(t, requirement.Required)
+	require.GreaterOrEqual(t, requirement.ComplexityScore, 3)
 }
 
 func TestColdStartRoutePolicyInjectsBroadInitializationDefaults(t *testing.T) {
@@ -195,6 +214,7 @@ func TestColdStartRoutePolicyInjectsBroadDesignDefaults(t *testing.T) {
 	require.Equal(t, "design", family.GoalType)
 	require.True(t, policy.RequireHarness)
 	require.True(t, policy.ForbidBashDiscovery)
+	require.True(t, policy.RequireContextRead)
 	require.True(t, policy.RequireExplicitPlan)
 	require.False(t, policy.RequirePostWriteVerification)
 }
@@ -207,7 +227,46 @@ func TestColdStartRoutePolicyInjectsBroadResearchDefaults(t *testing.T) {
 	require.Equal(t, "research", family.GoalType)
 	require.True(t, policy.RequireHarness)
 	require.True(t, policy.ForbidBashDiscovery)
+	require.True(t, policy.RequireContextRead)
 	require.True(t, policy.RequireExplicitPlan)
+}
+
+func TestColdStartRoutePolicyInjectsBroadImplementationDefaults(t *testing.T) {
+	t.Parallel()
+
+	policy, family, ok := coldStartRoutePolicy("Implement a broad multi-file change across the repository, compare the safest integration path, and update the codebase in parallel.")
+	require.True(t, ok)
+	require.Equal(t, "implementation", family.GoalType)
+	require.Equal(t, "broad", family.Breadth)
+	require.True(t, policy.RequireHarness)
+	require.True(t, policy.ForbidBashDiscovery)
+	require.True(t, policy.RequireContextRead)
+	require.True(t, policy.RequireExplicitPlan)
+}
+
+func TestCompileSingularityExperienceRequiresRealStructuredDiscovery(t *testing.T) {
+	t.Parallel()
+
+	trace := &completedTurnTrace{
+		Prompt: "Architecture task only. Read the repository broadly, compare two backend designs, and recommend the best fit.",
+		Family: learnedTaskFamily{
+			ID:       "design/broad/backend",
+			GoalType: "design",
+			Breadth:  "broad",
+			Domains:  []string{"backend"},
+		},
+		OrderedTools: []string{agenttools.RunHarnessToolName, agenttools.AgenticViewToolName},
+		ToolCalls: map[string]int{
+			agenttools.RunHarnessToolName:  1,
+			agenttools.AgenticViewToolName: 1,
+		},
+		ReadEvidence: map[string]int{"internal/platform/runtime.go": 1},
+	}
+
+	experience := compileSingularityExperience(trace)
+	require.Equal(t, "weak", experience.Context.Discipline)
+	require.Equal(t, 0, experience.Context.StructuredEvidenceCount)
+	require.Equal(t, 1, experience.Context.ReadEvidenceCount)
 }
 
 func TestSingularityManagerPenalizesWeakValidationDiscipline(t *testing.T) {
@@ -272,6 +331,46 @@ func TestAssessSingularityCognitionRecognizesTradeoffsAndRepoGroundedValidation(
 	require.Equal(t, "strong", assessment.ContextDiscipline)
 	require.Equal(t, "strong", assessment.TradeoffDiscipline)
 	require.Equal(t, "strong", assessment.ValidationDiscipline)
+}
+
+func TestSingularityManagerPenalizesWeakDecompositionDiscipline(t *testing.T) {
+	t.Parallel()
+
+	prompt := "Architecture task only. Read the repository broadly, compare two backend designs, and recommend the best fit."
+
+	strong := newTestSingularityManager(t)
+	strong.StartTurn("strong-decomp", prompt, strong.repoRoot, nil, learnedRoutePolicy{})
+	strong.RecordToolCall("strong-decomp", agenttools.RunHarnessToolName, "")
+	strong.RecordToolResult("strong-decomp", agenttools.RunHarnessToolName, "", "", false)
+	strong.RecordToolCall("strong-decomp", agenttools.ToolSearchToolName, `{"query":"backend designs"}`)
+	strong.RecordToolResult("strong-decomp", agenttools.ToolSearchToolName, "", "", false)
+	strong.RecordToolCall("strong-decomp", agenttools.AgenticViewToolName, `{"paths":["internal/agent/coordinator.go"]}`)
+	strong.RecordToolResult("strong-decomp", agenttools.AgenticViewToolName, "", "", false)
+	strong.RecordToolCall("strong-decomp", agenttools.UpdatePlanToolName, `{"plan":[{"step":"compare designs","status":"in_progress"}]}`)
+	strong.RecordToolResult("strong-decomp", agenttools.UpdatePlanToolName, "", "", false)
+	strong.RecordToolCall("strong-decomp", SpawnAgentToolName, "")
+	strong.RecordToolResult("strong-decomp", SpawnAgentToolName, "", "", false)
+	strongTrace := strong.FinishTurn("strong-decomp", "completed", "Compared two backend approaches with trade-offs and validated the recommendation against the current repository structure.")
+	require.NotNil(t, strongTrace)
+	strong.CompileTurn(context.Background(), strongTrace)
+	strongPolicy := strong.store.Policies[classifyLearnedTaskFamily(prompt).ID]
+	require.NotEmpty(t, strongPolicy.TaskFamily)
+
+	weak := newTestSingularityManager(t)
+	weak.StartTurn("weak-decomp", prompt, weak.repoRoot, nil, learnedRoutePolicy{})
+	weak.RecordToolCall("weak-decomp", agenttools.ToolSearchToolName, `{"query":"backend designs"}`)
+	weak.RecordToolResult("weak-decomp", agenttools.ToolSearchToolName, "", "", false)
+	weak.RecordToolCall("weak-decomp", agenttools.AgenticViewToolName, `{"paths":["internal/agent/coordinator.go"]}`)
+	weak.RecordToolResult("weak-decomp", agenttools.AgenticViewToolName, "", "", false)
+	weakTrace := weak.FinishTurn("weak-decomp", "completed", "Compared two backend approaches and recommended one.")
+	require.NotNil(t, weakTrace)
+	weak.CompileTurn(context.Background(), weakTrace)
+	weakPolicy := weak.store.Policies[classifyLearnedTaskFamily(prompt).ID]
+	require.NotEmpty(t, weakPolicy.TaskFamily)
+
+	require.Less(t, weakPolicy.Confidence, strongPolicy.Confidence)
+	require.Greater(t, weakPolicy.DecompositionFailures, 0)
+	require.Greater(t, weakPolicy.RecentDecompositionPenalty, 0.0)
 }
 
 func TestSingularityManagerBansDiscoveryBashAfterRepeatedStructuredWins(t *testing.T) {

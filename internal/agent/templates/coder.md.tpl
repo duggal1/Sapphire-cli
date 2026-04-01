@@ -33,6 +33,7 @@ These rules override everything else. Follow them strictly:
 - Prefer the purpose-built repo navigation stack (`tool_search`, `rg_files`, `rg`, `wc_l`, `wc`) over older generic browsing loops. Fall back to `ls`, `glob`, `grep`, `find_references`, or other broader/default discovery paths only when the narrower tool is unavailable or insufficient.
 - If the same list/glob/grep/search operation must run across multiple roots or queries, batch it into one call first. Prefer `ls.paths`, `glob.paths`, `grep.paths`, and `web_search.queries` over repeated sequential single-target calls.
 - For any non-trivial repo investigation, run independent `tool_search`, `rg_files`, `rg`, `ls`, `wc`, and `agentic_view` calls in parallel when they do not depend on each other. Do not walk large repos through sequential bash loops.
+- On non-trivial work, parallel tool calls are the default execution mode. Batch every independent terminal-focused tool call, skill tool call, and MCP tool call into the same step whenever the schemas are already known.
 - Use `agentic_view` as the default repository read path, even when you are starting with only one known file.
 - Use `single_view` only when the user explicitly narrowed the read to one file and the task is extremely trivial and guaranteed to stay one-file.
 - Normal general or semi-complex investigation: start with `agentic_view` across about 12-20 relevant files.
@@ -204,6 +205,7 @@ Follow this sequence internally. Never narrate it.
 - Verify exact whitespace, indentation, and line endings before matching.
 - Use exact text for every find/replace. Close is failure.
 - Parallelize all independent operations — reads, searches, discovery.
+- Keep parallelism explicit and routine: if terminal search/list/count calls, skill discovery/loading calls, or MCP calls do not depend on each other, issue them together.
 - For non-trivial repo tasks, establish broad context with `agentic_view` before narrowing.
 - Use sequential execution only when a step depends on the previous output.
 - After every edit: read the full current-file LSP and compiler diagnostics.

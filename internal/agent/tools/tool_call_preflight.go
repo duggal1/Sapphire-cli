@@ -88,6 +88,7 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	}
 	call, tool, input = rewriteToHarnessWhenRequired(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToStructuredDiscoveryWhenPreferred(ctx, call, tool, input, tools)
+	call, tool, input = rewriteToContextReadWhenRequired(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationSkillDetourToDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteRepeatedInitializationSkillDetour(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationArtifactWriteDetour(ctx, call, tool, input, tools)
@@ -628,17 +629,24 @@ func rewriteToHarnessWhenRequired(
 	tools map[string]fantasy.AgentTool,
 ) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
 	requirement := GetHarnessRequirementFromContext(ctx)
-	if !requirement.Required || !requirement.RequireBeforeDiscovery {
+	if !requirement.Required {
 		return call, tool, input
 	}
 	canonical := canonicalToolNameForModePolicy(call.Name)
 	if canonical == "" {
 		canonical = normalizeToolName(call.Name)
 	}
-	if canonical == "" || !isHarnessDiscoveryTool(canonical) {
+	if canonical == "" || canonical == RunHarnessToolName {
 		return call, tool, input
 	}
 	if _, ok := GetHarnessDecision(ctx); ok {
+		return call, tool, input
+	}
+	shouldRewrite := isHarnessProtectedTool(canonical)
+	if requirement.RequireBeforeDiscovery && isHarnessDiscoveryTool(canonical) {
+		shouldRewrite = true
+	}
+	if !shouldRewrite {
 		return call, tool, input
 	}
 	runHarnessTool, ok := tools[RunHarnessToolName]
@@ -695,6 +703,64 @@ func rewriteToStructuredDiscoveryWhenPreferred(
 		}
 		if path, ok := input["path"].(string); ok && strings.TrimSpace(path) != "" {
 			input["path"] = strings.TrimSpace(path)
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
+func rewriteToContextReadWhenRequired(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !policy.RequireContextRead {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isLearnedContextProtectedTool(canonical) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if hasBroadInitializationContext(usage) {
+		return call, tool, input
+	}
+	if usage != nil && usage.StructuredEvidenceCount() > 0 && usage.ReadEvidenceCount() == 0 {
+		if path := firstGuardedContextReadPathFromInput(ctx, canonical, input); path != "" {
+			if next, ok := tools[SingleViewToolName]; ok {
+				call.Name = SingleViewToolName
+				tool = next
+				input = map[string]any{"file_path": path}
+				return call, tool, input
+			}
+			if next, ok := tools[ViewToolName]; ok {
+				call.Name = ViewToolName
+				tool = next
+				input = map[string]any{"file_path": path}
+				return call, tool, input
+			}
+		}
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
 		}
 		return call, tool, input
 	}
@@ -972,6 +1038,20 @@ func rewriteForbiddenDiscoveryBash(
 		return call, tool, input
 	}
 	return call, tool, input
+}
+
+func firstGuardedContextReadPathFromInput(ctx context.Context, toolName string, input map[string]any) string {
+	for _, path := range extractArtifactWritePathsFromInput(toolName, input) {
+		if resolved := resolveArtifactVerificationPath(ctx, path); resolved != "" {
+			return resolved
+		}
+	}
+	for _, path := range extractArtifactVerificationPathsFromInput(toolName, input) {
+		if resolved := resolveArtifactVerificationPath(ctx, path); resolved != "" {
+			return resolved
+		}
+	}
+	return ""
 }
 
 func preferredStructuredDiscoveryQuery(ctx context.Context, policy LearnedToolPolicy) string {
@@ -1591,7 +1671,7 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 					"learned_route_policy",
 					"Publish update_plan before continuing.",
 					fmt.Sprintf(
-						"%s: broad design/research turns must lock the analysis plan after the first real evidence pass. After `run_harness` and the initial structured read/search context, call `update_plan` before continuing with more discovery, delegation, or execution. Blocked tool: %s.",
+						"%s: broad non-trivial turns must lock the working plan after the first real evidence pass. After `run_harness` and the initial structured read/search context, call `update_plan` before continuing with more discovery, delegation, or execution. Blocked tool: %s.",
 						policy.GuidanceReason(),
 						canonical,
 					),
@@ -1604,7 +1684,7 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 				"learned_route_policy",
 				"Read more code before mutating or executing.",
 				fmt.Sprintf(
-					"%s: broad initialization turns must gather evidence before writing or executing. Complete structured discovery with `tool_search`, `rg_files`, or `rg`, then inspect real code with `agentic_view`, `view`, or `single_view` before using %s.",
+					"%s: this broad task must gather repository evidence before writing, delegating, executing, or making a confident conclusion. Complete structured discovery with `tool_search`, `rg_files`, or `rg`, then inspect real code with `agentic_view`, `view`, or `single_view` before using %s.",
 					policy.GuidanceReason(),
 					canonical,
 				),
@@ -1657,7 +1737,8 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 
 func isLearnedContextProtectedTool(toolName string) bool {
 	switch toolName {
-	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName:
+	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName,
+		"spawn_agent", "resume_agent", "send_input", "collect_result", "agent":
 		return true
 	default:
 		return false
@@ -1698,12 +1779,7 @@ func shouldBlockRepeatedInitializationSkillTool(policy LearnedToolPolicy, toolNa
 }
 
 func hasBroadInitializationContext(usage *ToolUsageState) bool {
-	if usage == nil {
-		return false
-	}
-	hasStructuredDiscovery := usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0
-	hasCodeRead := usage.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
-	return hasStructuredDiscovery && hasCodeRead
+	return HasRequiredContextReadEvidence(usage)
 }
 
 func shouldBlockForExplicitPlan(toolName string, usage *ToolUsageState) bool {
@@ -1714,12 +1790,7 @@ func shouldBlockForExplicitPlan(toolName string, usage *ToolUsageState) bool {
 }
 
 func hasPlanningSeedContext(usage *ToolUsageState) bool {
-	if usage == nil {
-		return false
-	}
-	hasStructuredDiscovery := usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0
-	hasCodeRead := usage.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
-	return hasStructuredDiscovery && hasCodeRead
+	return HasPlanningSeedEvidence(usage)
 }
 
 func isLearnedPlanProtectedTool(toolName string) bool {
@@ -1737,7 +1808,6 @@ func recordPreparedToolUsage(ctx context.Context, toolName string, input map[str
 	if skip, ok := ctx.Value(SkipPreparedToolUsageContextKey).(bool); ok && skip {
 		return
 	}
-	_ = input
 	usage := GetToolUsageStateFromContext(ctx)
 	if usage == nil {
 		return
@@ -1747,6 +1817,7 @@ func recordPreparedToolUsage(ctx context.Context, toolName string, input map[str
 		canonical = normalizeToolName(toolName)
 	}
 	usage.Increment(canonical)
+	recordContextEvidence(usage, canonical, input)
 	if canonical == UpdatePlanToolName {
 		usage.MarkPlanPublished()
 	}
@@ -1789,10 +1860,24 @@ func buildExplicitPlanCheckpointInput(ctx context.Context, policy LearnedToolPol
 	focusStep := "Compare candidate designs and trade-offs"
 	validateStep := "Validate recommendation against repo constraints"
 	deliverStep := "Deliver final repo-grounded recommendation"
-	if strings.Contains(strings.ToLower(policy.TaskFamily), "research/") || strings.HasPrefix(strings.ToLower(policy.TaskFamily), "research") {
+	taskFamily := strings.ToLower(strings.TrimSpace(policy.TaskFamily))
+	switch {
+	case strings.Contains(taskFamily, "research/") || strings.HasPrefix(taskFamily, "research"):
 		focusStep = "Compare research directions and trade-offs"
 		validateStep = "Validate conclusions against repo evidence"
 		deliverStep = "Deliver final research recommendation"
+	case strings.Contains(taskFamily, "review/") || strings.HasPrefix(taskFamily, "review"):
+		focusStep = "Collect review findings and trade-offs"
+		validateStep = "Validate findings against repo evidence"
+		deliverStep = "Deliver final review recommendation"
+	case strings.Contains(taskFamily, "migration/") || strings.HasPrefix(taskFamily, "migration"):
+		focusStep = "Compare migration options and trade-offs"
+		validateStep = "Validate migration plan against repo constraints"
+		deliverStep = "Deliver final migration recommendation"
+	case strings.Contains(taskFamily, "implementation/") || strings.HasPrefix(taskFamily, "implementation"):
+		focusStep = "Sequence implementation phases and trade-offs"
+		validateStep = "Validate execution plan against repo constraints"
+		deliverStep = "Deliver final implementation plan"
 	}
 
 	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{

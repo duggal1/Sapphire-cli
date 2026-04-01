@@ -54,6 +54,9 @@ type ToolUsageState struct {
 	counts                      map[string]int
 	planPublished               bool
 	pendingArtifactVerification map[string]struct{}
+	structuredEvidence          map[string]struct{}
+	readEvidence                map[string]struct{}
+	verificationEvidence        map[string]struct{}
 }
 
 var (
@@ -65,6 +68,9 @@ func NewToolUsageState() *ToolUsageState {
 	return &ToolUsageState{
 		counts:                      map[string]int{},
 		pendingArtifactVerification: map[string]struct{}{},
+		structuredEvidence:          map[string]struct{}{},
+		readEvidence:                map[string]struct{}{},
+		verificationEvidence:        map[string]struct{}{},
 	}
 }
 
@@ -211,6 +217,100 @@ func (s *ToolUsageState) MarkAllArtifactsVerified() {
 	clear(s.pendingArtifactVerification)
 }
 
+func (s *ToolUsageState) MarkStructuredEvidence(values ...string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.structuredEvidence == nil {
+		s.structuredEvidence = map[string]struct{}{}
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		s.structuredEvidence[value] = struct{}{}
+	}
+}
+
+func (s *ToolUsageState) MarkReadEvidence(values ...string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readEvidence == nil {
+		s.readEvidence = map[string]struct{}{}
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		s.readEvidence[value] = struct{}{}
+	}
+}
+
+func (s *ToolUsageState) MarkVerificationEvidence(values ...string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.verificationEvidence == nil {
+		s.verificationEvidence = map[string]struct{}{}
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		s.verificationEvidence[value] = struct{}{}
+	}
+}
+
+func (s *ToolUsageState) StructuredEvidenceCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.structuredEvidence)
+}
+
+func (s *ToolUsageState) ReadEvidenceCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.readEvidence)
+}
+
+func (s *ToolUsageState) VerificationEvidenceCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.verificationEvidence)
+}
+
+func HasRequiredContextReadEvidence(state *ToolUsageState) bool {
+	if state == nil {
+		return false
+	}
+	hasStructuredDiscovery := state.StructuredEvidenceCount() > 0 || state.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName) > 0
+	hasCodeRead := state.ReadEvidenceCount() > 0 || state.Total(AgenticViewToolName, ViewToolName, SingleViewToolName) > 0
+	return hasStructuredDiscovery && hasCodeRead
+}
+
+func HasPlanningSeedEvidence(state *ToolUsageState) bool {
+	return HasRequiredContextReadEvidence(state)
+}
+
 func (s *ToolUsageState) PendingArtifactVerificationPaths() []string {
 	if s == nil {
 		return nil
@@ -263,14 +363,17 @@ func ObserveSuccessfulTurnGuardrailResult(ctx context.Context, toolName string, 
 	if err != nil {
 		return
 	}
+	recordContextEvidence(state, canonical, input)
 	for _, path := range extractArtifactWritePathsFromInput(canonical, input) {
 		state.MarkArtifactWrite(resolveArtifactVerificationPath(ctx, path))
 	}
 	for _, path := range extractArtifactVerificationPathsFromInput(canonical, input) {
 		state.MarkArtifactVerified(resolveArtifactVerificationPath(ctx, path))
+		state.MarkVerificationEvidence(resolveArtifactVerificationPath(ctx, path))
 	}
 	if isArtifactValidationExecution(canonical, input) {
 		state.MarkAllArtifactsVerified()
+		state.MarkVerificationEvidence("artifact_validation_execution")
 	}
 }
 
@@ -289,6 +392,34 @@ func RequirePostWriteVerificationCompletion(ctx context.Context, policy LearnedT
 	return &TurnGuardrailError{
 		Title:   "Verification Required",
 		Message: fmt.Sprintf("The turn wrote %s but never verified the written artifact. Read it back with `single_view`, `view`, `agentic_view`, or `lsp_diagnostics`, or run a narrow verification command before completing.", strings.Join(pending, ", ")),
+	}
+}
+
+func RequireContextReadCompletion(ctx context.Context, policy LearnedToolPolicy) error {
+	if !policy.RequireContextRead {
+		return nil
+	}
+	state := GetToolUsageStateFromContext(ctx)
+	if state == nil || HasRequiredContextReadEvidence(state) {
+		return nil
+	}
+	return &TurnGuardrailError{
+		Title:   "More Evidence Required",
+		Message: "This broad turn completed without enough repository evidence. Use structured discovery plus at least one real code read before concluding, delegating, or editing.",
+	}
+}
+
+func RequireExplicitPlanCompletion(ctx context.Context, policy LearnedToolPolicy) error {
+	if !policy.RequireExplicitPlan {
+		return nil
+	}
+	state := GetToolUsageStateFromContext(ctx)
+	if state == nil || state.HasPublishedPlan() {
+		return nil
+	}
+	return &TurnGuardrailError{
+		Title:   "Plan Required",
+		Message: "This broad turn completed without publishing `update_plan`. After the first real repository evidence pass, use `update_plan` to lock the working plan before finishing.",
 	}
 }
 

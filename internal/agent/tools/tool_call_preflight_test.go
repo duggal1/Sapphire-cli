@@ -351,6 +351,115 @@ func TestPrepareToolCallBlocksProtectedToolsUntilHarnessRuns(t *testing.T) {
 	require.Contains(t, err.Error(), "call `run_harness`")
 }
 
+func TestPrepareToolCallRewritesProtectedToolsToHarnessWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	runHarnessTool := fantasy.NewAgentTool(
+		RunHarnessToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-harness-rewrite")
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Required:        true,
+		Reason:          "multi-phase non-trivial task",
+		ComplexityScore: 5,
+		Task:            "Implement a safe multi-file change and verify the build.",
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "edit-harness-rewrite-1",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","old_string":"alpha","new_string":"beta"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool, RunHarnessToolName: runHarnessTool})
+	require.NoError(t, err)
+	require.Equal(t, RunHarnessToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"task":"Implement a safe multi-file change and verify the build."`)
+}
+
+func TestPrepareToolCallRewritesProtectedToolsToStructuredDiscoveryBeforeContextRead(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		SingleEditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	searchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-context-rewrite")
+	ctx = context.WithValue(ctx, LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "implementation/broad/backend",
+		Reason:             "learned route policy for recurring implementation/broad/backend turns",
+		RequireContextRead: true,
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "context-rewrite-1",
+		Name:  SingleEditToolName,
+		Input: `{"file_path":"cmd/api/main.go","old_string":"before","new_string":"after"}`,
+	}, map[string]fantasy.AgentTool{SingleEditToolName: editTool, ToolSearchToolName: searchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+}
+
+func TestPrepareToolCallRewritesProtectedToolsToReadWhenStructuredEvidenceExists(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		SingleEditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	viewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.MarkStructuredEvidence("cmd/api/main.go")
+
+	ctx := context.WithValue(context.Background(), MessageIDContextKey, "msg-context-read-rewrite")
+	ctx = context.WithValue(ctx, LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "implementation/broad/backend",
+		Reason:             "learned route policy for recurring implementation/broad/backend turns",
+		RequireContextRead: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "context-read-rewrite-1",
+		Name:  SingleEditToolName,
+		Input: `{"file_path":"cmd/api/main.go","old_string":"before","new_string":"after"}`,
+	}, map[string]fantasy.AgentTool{SingleEditToolName: editTool, SingleViewToolName: viewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"file_path":"cmd/api/main.go"`)
+}
+
 func TestPrepareToolCallAllowsProtectedToolsAfterHarnessDecision(t *testing.T) {
 	t.Parallel()
 
@@ -763,7 +872,7 @@ func TestPrepareToolCallBlocksMutationUntilBroadInitializationContextExists(t *t
 		Input: `{"file_path":"AGENTS.md","old_string":"old","new_string":"new"}`,
 	}, map[string]fantasy.AgentTool{EditToolName: editTool})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "must gather evidence before writing or executing")
+	require.Contains(t, err.Error(), "must gather repository evidence")
 }
 
 func TestPrepareToolCallAllowsMutationAfterBroadInitializationContextExists(t *testing.T) {

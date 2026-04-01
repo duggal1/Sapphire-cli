@@ -1445,6 +1445,9 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 		if !hasReasoningEffort && model.ModelCfg.ReasoningEffort != "" {
 			mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
 		}
+		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
+			mergedOptions["parallel_tool_calls"] = true
+		}
 		if openai.IsResponsesModel(model.CatwalkCfg.ID) {
 			if openai.IsResponsesReasoningModel(model.CatwalkCfg.ID) {
 				mergedOptions["reasoning_summary"] = "auto"
@@ -1484,6 +1487,9 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 				"effort":  model.ModelCfg.ReasoningEffort,
 			}
 		}
+		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
+			mergedOptions["parallel_tool_calls"] = true
+		}
 		parsed, err := openrouter.ParseOptions(mergedOptions)
 		if err == nil {
 			options[openrouter.Name] = parsed
@@ -1495,6 +1501,9 @@ func (c *coordinator) getProviderOptions(model Model, providerCfg config.Provide
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
 			}
+		}
+		if _, hasParallelToolCalls := mergedOptions["parallel_tool_calls"]; !hasParallelToolCalls {
+			mergedOptions["parallel_tool_calls"] = true
 		}
 		parsed, err := vercel.ParseOptions(mergedOptions)
 		if err == nil {

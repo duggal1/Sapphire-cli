@@ -1468,7 +1468,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
 
 	if err == nil {
-		if verificationErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); verificationErr != nil {
+		if contextErr := tools.RequireContextReadCompletion(genCtx, call.LearnedToolPolicy); contextErr != nil {
+			err = contextErr
+		} else if planErr := tools.RequireExplicitPlanCompletion(genCtx, call.LearnedToolPolicy); planErr != nil {
+			err = planErr
+		} else if groundingErr := verifyRepoGroundingClaims(genCtx, call.LearnedToolPolicy, currentAssistant.Content().Text); groundingErr != nil {
+			err = groundingErr
+		} else if verificationErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); verificationErr != nil {
 			if autoVerifyErr := a.autoVerifyPendingArtifacts(genCtx, call.SessionID, agentTools); autoVerifyErr == nil {
 				if retryErr := tools.RequirePostWriteVerificationCompletion(genCtx, call.LearnedToolPolicy); retryErr != nil {
 					err = retryErr

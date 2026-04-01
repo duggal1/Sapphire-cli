@@ -8,6 +8,7 @@
   4. `connect_mcp`
   5. direct `mcp_*` tools or `list_mcp_tools`
   6. `call_mcp_tool` only when dynamic dispatch is required
+- When multiple MCP servers or MCP tool calls are independent, execute the discovery, connect, and tool-call batches in parallel instead of serializing them.
 - `list_available_mcps` first checks the local registry-backed inventory and can fall back to the live official MCP registry when a query misses locally.
 - If the local inventory and live official registry still do not provide a usable MCP, do not stall. Continue with current web/docs retrieval via `google_search`, `web_search`, and URL context, then implement from verified sources.
 - Use exact `mcp_name` values returned by `list_available_mcps`. Never pass descriptions or prose where `mcp_name` is required.

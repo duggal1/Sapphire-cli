@@ -22,13 +22,14 @@ type singularityCognitiveProfile struct {
 }
 
 type singularityCognitiveAssessment struct {
-	TaskClass            string `json:"task_class"`
-	ContextDiscipline    string `json:"context_discipline"`
-	PlanningDiscipline   string `json:"planning_discipline"`
-	ValidationDiscipline string `json:"validation_discipline"`
-	RecoveryDiscipline   string `json:"recovery_discipline"`
-	TradeoffDiscipline   string `json:"tradeoff_discipline"`
-	ExecutionRisk        string `json:"execution_risk"`
+	TaskClass               string `json:"task_class"`
+	ContextDiscipline       string `json:"context_discipline"`
+	PlanningDiscipline      string `json:"planning_discipline"`
+	DecompositionDiscipline string `json:"decomposition_discipline"`
+	ValidationDiscipline    string `json:"validation_discipline"`
+	RecoveryDiscipline      string `json:"recovery_discipline"`
+	TradeoffDiscipline      string `json:"tradeoff_discipline"`
+	ExecutionRisk           string `json:"execution_risk"`
 }
 
 func buildSingularityCognitiveProfile(prompt string, family learnedTaskFamily) singularityCognitiveProfile {
@@ -40,7 +41,7 @@ func buildSingularityCognitiveProfile(prompt string, family learnedTaskFamily) s
 		RequireObjectiveLock:      true,
 		RequireConstraintLock:     true,
 		RequireRepositoryReading:  family.Breadth == "broad" || decision.Complexity >= 2,
-		RequirePlanning:           decision.Complexity >= 2 || family.GoalType == "initialize" || family.GoalType == "migration" || family.GoalType == "research",
+		RequirePlanning:           decision.Complexity >= 2 || family.Breadth == "broad" || family.GoalType == "initialize" || family.GoalType == "migration" || family.GoalType == "research" || family.GoalType == "design" || family.GoalType == "review",
 		RequireValidation:         decision.Complexity >= 2 || family.GoalType == "debug" || family.GoalType == "implementation" || family.GoalType == "initialize" || family.GoalType == "design" || family.GoalType == "review" || family.GoalType == "migration" || family.GoalType == "research",
 		RequireRecoveryDiscipline: decision.Complexity >= 2 || family.Breadth == "broad",
 		RequireLongHorizon:        family.Breadth == "broad" || decision.Complexity >= 3,
@@ -95,6 +96,7 @@ func renderSingularityCognitiveContract(profile singularityCognitiveProfile) str
 
 func coldStartRoutePolicy(prompt string) (learnedRoutePolicy, learnedTaskFamily, bool) {
 	family := classifyLearnedTaskFamily(prompt)
+	decision := evaluateSubAgentLaunch(prompt)
 	if family.GoalType == "initialize" && family.Breadth == "broad" {
 		return learnedRoutePolicy{
 			TaskFamily:                   family.ID,
@@ -103,16 +105,24 @@ func coldStartRoutePolicy(prompt string) (learnedRoutePolicy, learnedTaskFamily,
 			Breadth:                      family.Breadth,
 			Domains:                      append([]string{}, family.Domains...),
 			PreferredDiscovery:           []string{tools.ToolSearchToolName, tools.RGFilesToolName, tools.AgenticViewToolName, tools.RGToolName, tools.LSToolName},
+			PreferredVerification:        []string{tools.SingleViewToolName, tools.ViewToolName, tools.AgenticViewToolName, tools.DiagnosticsToolName},
 			RequireHarness:               true,
 			PreferParallel:               true,
 			PreferIndexCodebase:          false,
 			ForbidBashDiscovery:          true,
+			RequireContextRead:           true,
 			RequirePostWriteVerification: promptMentionsAgentsArtifact(prompt),
 			Confidence:                   72,
 			PromotionState:               learnedPolicyStateCandidate,
 		}, family, true
 	}
-	if family.Breadth == "broad" && (family.GoalType == "design" || family.GoalType == "research") {
+	if family.Breadth == "broad" {
+		requireHarness := family.GoalType == "design" || family.GoalType == "research" || family.GoalType == "review" || family.GoalType == "migration" || decision.Parallelizable || decision.Complexity >= 4
+		requirePlan := family.GoalType == "design" || family.GoalType == "research" || family.GoalType == "review" || family.GoalType == "migration" || (family.GoalType == "implementation" && (decision.Parallelizable || decision.Complexity >= 3)) || decision.Complexity >= 4
+		confidence := 62
+		if family.GoalType == "design" || family.GoalType == "research" {
+			confidence = 68
+		}
 		return learnedRoutePolicy{
 			TaskFamily:                   family.ID,
 			TaskFamilySlug:               sanitizeLearnedSlug(family.ID),
@@ -120,12 +130,14 @@ func coldStartRoutePolicy(prompt string) (learnedRoutePolicy, learnedTaskFamily,
 			Breadth:                      family.Breadth,
 			Domains:                      append([]string{}, family.Domains...),
 			PreferredDiscovery:           []string{tools.ToolSearchToolName, tools.RGFilesToolName, tools.AgenticViewToolName, tools.RGToolName, tools.LSToolName},
-			RequireHarness:               true,
-			PreferParallel:               true,
+			PreferredVerification:        []string{tools.DiagnosticsToolName, tools.AgenticViewToolName, tools.ViewToolName, tools.SingleViewToolName},
+			RequireHarness:               requireHarness,
+			PreferParallel:               decision.Parallelizable || family.GoalType == "design" || family.GoalType == "research",
 			ForbidBashDiscovery:          true,
-			RequireExplicitPlan:          true,
+			RequireContextRead:           true,
+			RequireExplicitPlan:          requirePlan,
 			RequirePostWriteVerification: promptMentionsAgentsArtifact(prompt),
-			Confidence:                   68,
+			Confidence:                   confidence,
 			PromotionState:               learnedPolicyStateCandidate,
 		}, family, true
 	}
@@ -139,15 +151,8 @@ func promptMentionsAgentsArtifact(prompt string) bool {
 
 func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveAssessment {
 	profile := buildSingularityCognitiveProfile(trace.Prompt, trace.Family)
-	contextDiscipline := "adequate"
-	switch {
-	case structuredDiscoveryBeforeProtectedExecution(trace):
-		contextDiscipline = "strong"
-	case hasStructuredDiscovery(trace):
-		contextDiscipline = "adequate"
-	case profile.RequireRepositoryReading:
-		contextDiscipline = "weak"
-	}
+	experience := compileSingularityExperience(trace)
+	contextDiscipline := experience.Context.Discipline
 
 	planningDiscipline := "adequate"
 	switch {
@@ -159,15 +164,7 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 		planningDiscipline = "weak"
 	}
 
-	validationDiscipline := "adequate"
-	switch {
-	case trace.ValidationChecks > 0:
-		validationDiscipline = "strong"
-	case profile.RequireValidation && resultShowsValidationReasoning(trace.ResultSummary) && hasStructuredDiscovery(trace):
-		validationDiscipline = "strong"
-	case profile.RequireValidation:
-		validationDiscipline = "weak"
-	}
+	validationDiscipline := experience.Verification.Discipline
 
 	recoveryDiscipline := "clean"
 	switch {
@@ -190,7 +187,7 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 
 	executionRisk := "low"
 	weakCount := 0
-	for _, value := range []string{contextDiscipline, planningDiscipline, validationDiscipline, recoveryDiscipline, tradeoffDiscipline} {
+	for _, value := range []string{contextDiscipline, planningDiscipline, experience.Decomposition.Discipline, validationDiscipline, recoveryDiscipline, tradeoffDiscipline} {
 		if value == "weak" {
 			weakCount++
 		}
@@ -203,13 +200,14 @@ func assessSingularityCognition(trace *completedTurnTrace) singularityCognitiveA
 	}
 
 	return singularityCognitiveAssessment{
-		TaskClass:            trace.Family.GoalType,
-		ContextDiscipline:    contextDiscipline,
-		PlanningDiscipline:   planningDiscipline,
-		ValidationDiscipline: validationDiscipline,
-		RecoveryDiscipline:   recoveryDiscipline,
-		TradeoffDiscipline:   tradeoffDiscipline,
-		ExecutionRisk:        executionRisk,
+		TaskClass:               trace.Family.GoalType,
+		ContextDiscipline:       contextDiscipline,
+		PlanningDiscipline:      planningDiscipline,
+		DecompositionDiscipline: experience.Decomposition.Discipline,
+		ValidationDiscipline:    validationDiscipline,
+		RecoveryDiscipline:      recoveryDiscipline,
+		TradeoffDiscipline:      tradeoffDiscipline,
+		ExecutionRisk:           executionRisk,
 	}
 }
 
@@ -222,7 +220,7 @@ func structuredDiscoveryBeforeProtectedExecution(trace *completedTurnTrace) bool
 	for idx, toolName := range trace.OrderedTools {
 		canonical := strings.TrimSpace(toolName)
 		switch canonical {
-		case tools.ToolSearchToolName, tools.RGFilesToolName, tools.RGToolName, tools.GlobToolName, tools.GrepToolName, tools.AgenticViewToolName:
+		case tools.ToolSearchToolName, tools.RGFilesToolName, tools.RGToolName, tools.GlobToolName, tools.GrepToolName:
 			if structuredIndex == -1 {
 				structuredIndex = idx
 			}

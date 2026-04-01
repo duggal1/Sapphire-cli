@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -12,13 +11,13 @@ const (
 	runtimePhaseObserve runtimePhase = "observe"
 	runtimePhaseReason  runtimePhase = "reason"
 	runtimePhaseAct     runtimePhase = "act"
-	runtimePhaseWait    runtimePhase = "wait"
 )
 
 type runtimeControl struct {
 	mu                 sync.Mutex
 	phase              runtimePhase
 	toolCallsInStep    int
+	activeExecutions   int
 	lastTool           string
 	lastChange         time.Time
 	mistakeSelfHealing *mistakeSelfHealingMonitor
@@ -43,11 +42,9 @@ func (r *runtimeControl) Observe() {
 func (r *runtimeControl) ObserveAfterStep() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.phase == runtimePhaseWait {
-		return
-	}
 	r.phase = runtimePhaseObserve
 	r.toolCallsInStep = 0
+	r.activeExecutions = 0
 	r.lastChange = time.Now()
 }
 
@@ -63,12 +60,6 @@ func (r *runtimeControl) NoteReasoning() {
 func (r *runtimeControl) AllowToolCall(toolName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.phase == runtimePhaseWait {
-		return fmt.Errorf("execution loop violation: tool call attempted while waiting on a prior tool")
-	}
-	if r.toolCallsInStep >= 1 {
-		return fmt.Errorf("execution loop violation: only one tool call is allowed per step")
-	}
 	if r.phase == runtimePhaseObserve {
 		r.phase = runtimePhaseReason
 	}
@@ -82,17 +73,19 @@ func (r *runtimeControl) AllowToolCall(toolName string) error {
 func (r *runtimeControl) BeginToolExecution(toolName string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.phase == runtimePhaseAct {
-		r.phase = runtimePhaseWait
-		r.lastTool = toolName
-		r.lastChange = time.Now()
-	}
+	r.phase = runtimePhaseAct
+	r.activeExecutions++
+	r.lastTool = toolName
+	r.lastChange = time.Now()
 }
 
 func (r *runtimeControl) FinishToolExecution(_ string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.phase == runtimePhaseWait || r.phase == runtimePhaseAct {
+	if r.activeExecutions > 0 {
+		r.activeExecutions--
+	}
+	if r.phase == runtimePhaseAct && r.activeExecutions == 0 {
 		r.phase = runtimePhaseObserve
 		r.toolCallsInStep = 0
 		r.lastChange = time.Now()

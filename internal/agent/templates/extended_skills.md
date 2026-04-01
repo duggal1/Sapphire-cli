@@ -6,14 +6,14 @@
 - For vendor integrations and fast-changing APIs, use extended skills proactively when they can shorten discovery or provide better execution structure, but still verify current vendor details with live tools when freshness matters.
 - Skip extended-skill discovery for trivial chat, tiny one-step tasks, or cases already fully covered by a built-in skill.
 - Be autonomous: do not wait for permission to search, install, and load relevant extended skills when they materially improve task quality.
+- Parallelize independent extended-skill discovery, install, and load calls when the domains are separate and do not depend on the output of one another.
 - Use exact tool calls in this order when needed:
   1. `search_skills(query: "...")` to inspect the local skill store
   2. If local search returns no relevant match or the local matches are clearly insufficient, `install_skill(query: "...")`
   3. `install_skill` returns the exact installed local name and the full `SKILL.md`; read it immediately
   4. After install, call `search_skills(query: "...")` again only if you still need ranking or exact confirmation
   5. `load_skill(name: "<exact-name>")`
-- For multi-domain tasks, load multiple skills sequentially. Example pattern:
-  `search_skills` -> `install_skill` if needed -> `load_skill` -> `load_skill`
+- For multi-domain tasks, load multiple focused skills. Run independent search/install/load paths in parallel when the exact domains are already known.
 - Installed extended skills become local skills under `<data-dir>/skills` and should be treated as directly available local skills after installation.
 - Treat the installed `SKILL.md` as the source of truth once loaded. Follow it exactly.
 - Prefer concise, high-signal install queries. Start with 1-4 strong domain terms such as `supabase auth`, `frontend auth form`, `aws terraform deploy`, or `backend api observability`.

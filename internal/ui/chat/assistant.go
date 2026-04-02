@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
+	"github.com/duggal1/Sapphire-cli/internal/deepplanning"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/shell"
 	"github.com/duggal1/Sapphire-cli/internal/ui/common"
@@ -101,15 +102,15 @@ var mainLoaderPhrases = []string{
 	"Sock-hopping...",
 	"Topsy-turvying...",
 	"Wibbling...",
-"Schlepping...",
-"Jitterbugging...",
-"Moonwalking...",
-"Honking...",
-"Quantumizing...",
-"Hyperspacing...",
-"Ionizing...",
-"Smooshing...",
-"Newspapering...",
+	"Schlepping...",
+	"Jitterbugging...",
+	"Moonwalking...",
+	"Honking...",
+	"Quantumizing...",
+	"Hyperspacing...",
+	"Ionizing...",
+	"Smooshing...",
+	"Newspapering...",
 }
 
 type AssistantMessageItem struct {
@@ -242,6 +243,9 @@ func (a *AssistantMessageItem) renderLiveLoader(width int) string {
 	}
 
 	line := styles.ShimmerText(a.sty, loadingPhraseForMessage(a.message.ID), 0)
+	if deepplanning.IsPlanningAssistantPlaceholderID(a.message.ID) {
+		line = styles.ShimmerTextPlan(a.sty, deepplanning.PlanningStatusText, 0)
+	}
 
 	loader := lipgloss.NewStyle().
 		PaddingTop(1).

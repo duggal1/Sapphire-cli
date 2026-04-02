@@ -64,6 +64,7 @@ type ToolUsageState struct {
 	deterministicBlindWrites    map[string]int
 	deterministicCreatedFiles   map[string]struct{}
 	deterministicModifiedFiles  map[string]struct{}
+	lastQualityReminderKey      string
 }
 
 var (
@@ -422,6 +423,23 @@ func (s *ToolUsageState) SnapshotDeterministicLoopMetrics() DeterministicLoopMet
 		ModifiedFiles:    sortedSetKeys(s.deterministicModifiedFiles),
 	}
 	return metrics
+}
+
+func (s *ToolUsageState) ShouldEmitQualityReminder(key string) bool {
+	if s == nil {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastQualityReminderKey == key {
+		return false
+	}
+	s.lastQualityReminderKey = key
+	return true
 }
 
 func HasRequiredContextReadEvidence(state *ToolUsageState) bool {

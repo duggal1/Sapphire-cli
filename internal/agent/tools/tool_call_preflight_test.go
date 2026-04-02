@@ -1308,6 +1308,190 @@ func TestPrepareToolCallAllowsBroadDesignContinuationAfterPlanPublished(t *testi
 	require.Equal(t, RGFilesToolName, prepared.Name)
 }
 
+func TestPrepareToolCallRewritesLateBroadImplementationDiscoveryToVerificationRead(t *testing.T) {
+	t.Parallel()
+
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+	usage.MarkArtifactWrite("/repo/internal/platform/runtime.go")
+	usage.RecordDeterministicToolCall(AgenticEditToolName)
+	usage.RecordDeterministicWrite("/repo/internal/platform/runtime.go", false, false)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:          "implementation/broad/backend",
+		Reason:              "learned route policy for recurring implementation/broad/backend turns",
+		RequireContextRead:  true,
+		RequireExplicitPlan: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, TurnStepOrdinalContextKey, 10)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "impl-late-discovery-1",
+		Name:  ToolSearchToolName,
+		Input: `{"query":"runtime config"}`,
+	}, map[string]fantasy.AgentTool{ToolSearchToolName: toolSearchTool, SingleViewToolName: singleViewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"/repo/internal/platform/runtime.go"`)
+}
+
+func TestPrepareToolCallRewritesLateBroadImplementationEditChurnToVerificationRead(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		AgenticEditToolName,
+		"",
+		func(ctx context.Context, params MultiEditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+	usage.MarkArtifactWrite("/repo/internal/platform/runtime.go")
+	usage.RecordDeterministicToolCall(AgenticEditToolName)
+	usage.RecordDeterministicWrite("/repo/internal/platform/runtime.go", false, false)
+	usage.RecordDeterministicToolCall(SingleEditToolName)
+	usage.RecordDeterministicWrite("/repo/internal/platform/runtime.go", false, false)
+	usage.RecordDeterministicToolCall(SingleEditToolName)
+	usage.RecordDeterministicWrite("/repo/internal/platform/runtime.go", false, false)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:          "implementation/broad/backend",
+		Reason:              "learned route policy for recurring implementation/broad/backend turns",
+		RequireContextRead:  true,
+		RequireExplicitPlan: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, TurnStepOrdinalContextKey, 11)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "impl-late-edit-1",
+		Name:  AgenticEditToolName,
+		Input: `{"file_path":"internal/platform/runtime.go","edits":[{"old_string":"old","new_string":"new"}]}`,
+	}, map[string]fantasy.AgentTool{AgenticEditToolName: editTool, SingleViewToolName: singleViewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"/repo/internal/platform/runtime.go"`)
+}
+
+func TestPrepareToolCallRewritesLateBroadInitializationCompoundBashToVerificationRead(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	singleViewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+	usage.MarkArtifactWrite("/repo/AGENTS.md")
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		ForbidBashDiscovery:          true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, TurnStepOrdinalContextKey, 11)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-late-bash-verify-1",
+		Name:  BashToolName,
+		Input: `{"command":"cd /repo && find . -maxdepth 3 -type f | head -n 20","description":"discover repo files"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool, SingleViewToolName: singleViewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"/repo/AGENTS.md"`)
+}
+
+func TestPrepareToolCallRewritesLateBroadInitializationCompoundBashToUpdatePlanWithoutPendingArtifact(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		ForbidBashDiscovery:          true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, TurnStepOrdinalContextKey, 11)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-late-bash-plan-1",
+		Name:  BashToolName,
+		Input: `{"command":"cd /repo && find . -maxdepth 3 -type f | head -n 20","description":"discover repo files"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Write or refine AGENTS.md only"`)
+}
+
 func TestWrapRuntimePreflightToolsAppliesHarnessGuardrail(t *testing.T) {
 	t.Parallel()
 

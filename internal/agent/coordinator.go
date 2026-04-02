@@ -41,6 +41,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/db"
+	"github.com/duggal1/Sapphire-cli/internal/deepplanning"
 	"github.com/duggal1/Sapphire-cli/internal/filetracker"
 	"github.com/duggal1/Sapphire-cli/internal/history"
 	"github.com/duggal1/Sapphire-cli/internal/log"
@@ -356,6 +357,7 @@ type submissionEnvelope struct {
 	userPrompt     string
 	attachments    []message.Attachment
 	userMessage    message.Message
+	deepPlanning   bool
 	model          Model
 	providerCfg    config.ProviderConfig
 	mergedOptions  fantasy.ProviderOptions
@@ -618,11 +620,12 @@ func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, 
 	}
 	if agent.IsSessionBusy(sessionID) {
 		call := SessionAgentCall{
-			SessionID:       env.sessionID,
-			Prompt:          env.userPrompt,
-			Attachments:     env.attachments,
-			PrecreatedUser:  &env.userMessage,
-			SkipUserMessage: true,
+			SessionID:          env.sessionID,
+			Prompt:             env.userPrompt,
+			DeepPlanningActive: env.deepPlanning,
+			Attachments:        env.attachments,
+			PrecreatedUser:     &env.userMessage,
+			SkipUserMessage:    true,
 		}
 		if err := agent.Enqueue(call); err != nil {
 			return SubmissionResult{}, err
@@ -711,6 +714,7 @@ func (c *coordinator) prepareSubmission(
 		userPrompt:     userPrompt,
 		attachments:    attachments,
 		userMessage:    userMessage,
+		deepPlanning:   deepplanning.IsRequested(userPrompt),
 		model:          model,
 		providerCfg:    providerCfg,
 		mergedOptions:  mergedOptions,
@@ -875,22 +879,23 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		skillContext += orchestrationContext
 	}
 	call := SessionAgentCall{
-		SessionID:         env.sessionID,
-		Prompt:            env.userPrompt,
-		SessionMode:       sessionMode,
-		SkillContext:      skillContext,
-		ActiveSkills:      activeSkillNames,
-		ActiveTools:       activeTools,
-		LearnedToolPolicy: learnedToolPolicy,
-		HarnessOverride:   learnedHarness,
-		Attachments:       env.attachments,
-		MaxOutputTokens:   env.maxTokens,
-		ProviderOptions:   env.mergedOptions,
-		Temperature:       env.temp,
-		TopP:              env.topP,
-		TopK:              env.topK,
-		FrequencyPenalty:  env.freqPenalty,
-		PresencePenalty:   env.presPenalty,
+		SessionID:          env.sessionID,
+		Prompt:             env.userPrompt,
+		SessionMode:        sessionMode,
+		DeepPlanningActive: env.deepPlanning,
+		SkillContext:       skillContext,
+		ActiveSkills:       activeSkillNames,
+		ActiveTools:        activeTools,
+		LearnedToolPolicy:  learnedToolPolicy,
+		HarnessOverride:    learnedHarness,
+		Attachments:        env.attachments,
+		MaxOutputTokens:    env.maxTokens,
+		ProviderOptions:    env.mergedOptions,
+		Temperature:        env.temp,
+		TopP:               env.topP,
+		TopK:               env.topK,
+		FrequencyPenalty:   env.freqPenalty,
+		PresencePenalty:    env.presPenalty,
 	}
 	if env.userMessage.ID != "" {
 		call.PrecreatedUser = &env.userMessage

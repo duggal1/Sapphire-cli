@@ -33,25 +33,31 @@ func TestRepeatedToolLoopErrorMatchesSentinel(t *testing.T) {
 func TestMaxStepsPerTurn(t *testing.T) {
 	t.Parallel()
 
-	if got := maxStepsPerTurn(false, false, false, false); got != defaultMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, false, false, false); got != defaultMaxStepsPerTurn {
 		t.Fatalf("unexpected default max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(false, true, false, false); got != postCompactionMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, true, false, false, false); got != postCompactionMaxStepsPerTurn {
 		t.Fatalf("unexpected post-compaction max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(false, false, true, false); got != structuredTurnMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, true, false, false); got != structuredTurnMaxStepsPerTurn {
 		t.Fatalf("unexpected structured-turn max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(false, false, true, true); got != broadInitMaxStepsPerTurn {
+	if got := maxStepsPerTurn(false, false, false, true, false); got != broadImplementationMaxSteps {
+		t.Fatalf("unexpected broad-implementation max steps: %d", got)
+	}
+	if got := maxStepsPerTurn(false, false, true, false, true); got != broadInitMaxStepsPerTurn {
 		t.Fatalf("unexpected broad-init max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(true, false, false, false); got != longHorizonMaxStepsPerTurn {
+	if got := maxStepsPerTurn(true, false, false, false, false); got != longHorizonMaxStepsPerTurn {
 		t.Fatalf("unexpected long-horizon max steps: %d", got)
 	}
-	if got := maxStepsPerTurn(true, false, true, true); got != broadInitMaxStepsPerTurn {
+	if got := maxStepsPerTurn(true, false, true, true, true); got != broadInitMaxStepsPerTurn {
 		t.Fatalf("expected broad-init budget to outrank long-horizon, got %d", got)
 	}
-	if got := maxStepsPerTurn(true, false, true, false); got != longHorizonMaxStepsPerTurn {
+	if got := maxStepsPerTurn(true, false, true, true, false); got != longHorizonMaxStepsPerTurn {
+		t.Fatalf("unexpected long-horizon broad-implementation max steps: %d", got)
+	}
+	if got := maxStepsPerTurn(true, false, true, false, false); got != longHorizonMaxStepsPerTurn {
 		t.Fatalf("unexpected long-horizon structured max steps: %d", got)
 	}
 }

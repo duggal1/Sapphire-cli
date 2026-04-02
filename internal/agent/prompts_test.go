@@ -326,6 +326,22 @@ func TestPromptsRequireAutonomousCurrentIntegrationDiscovery(t *testing.T) {
 	}
 }
 
+func TestAppendDeepPlanningPromptAddsRuntimeGuardrails(t *testing.T) {
+	t.Parallel()
+
+	out := appendDeepPlanningPrompt("base system prompt")
+	for _, needle := range []string{
+		"<deep-planning-prompt>",
+		"Deep planning was activated by the user's input.",
+		"`update_plan`",
+		"do not mutate the repository before that first `update_plan` call",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("expected %q in deep planning overlay", needle)
+		}
+	}
+}
+
 func TestPromptsRequireComplexTaskChecklistPlanning(t *testing.T) {
 	t.Parallel()
 

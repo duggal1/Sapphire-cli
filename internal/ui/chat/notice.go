@@ -9,6 +9,7 @@ import (
 
 const InterruptNoticeID = "local:interrupt-notice"
 const LocalErrorNoticeID = "local:error-notice"
+const PlanSuccessNoticeID = "local:plan-success-notice"
 
 const interruptNoticeText = "Conversation interrupted — tell the agent what to do differently. Did something go wrong? Please hit `/feedback` to report the issue."
 
@@ -52,6 +53,18 @@ func NewErrorNoticeMessageItem(sty *styles.Styles, text, details string) Message
 	}
 }
 
+func NewPlanSuccessNoticeMessageItem(sty *styles.Styles) MessageItem {
+	return &NoticeMessageItem{
+		highlightableMessageItem: defaultHighlighter(sty),
+		cachedMessageItem:        &cachedMessageItem{},
+		focusableMessageItem:     &focusableMessageItem{},
+		id:                       PlanSuccessNoticeID,
+		label:                    "✓",
+		text:                     "Planned successfully",
+		sty:                      sty,
+	}
+}
+
 func (n *NoticeMessageItem) ID() string {
 	return n.id
 }
@@ -87,6 +100,9 @@ func (n *NoticeMessageItem) renderContent(width int) string {
 	if n.id == InterruptNoticeID {
 		return renderInterruptNotice(n.sty, n.text, width)
 	}
+	if n.id == PlanSuccessNoticeID {
+		return renderPlanSuccessNotice(n.sty, n.label, n.text, width)
+	}
 	return renderErrorNotice(n.sty, n.label, n.text, n.details, width)
 }
 
@@ -118,5 +134,16 @@ func renderErrorNotice(sty *styles.Styles, label, text, details string, width in
 		}
 	}
 	prefix := sty.Chat.Message.ErrorTag.Render(label)
+	return prefixRenderedBlock(prefix, strings.Join(body, "\n"))
+}
+
+func renderPlanSuccessNotice(sty *styles.Styles, label, text string, width int) string {
+	contentWidth := max(0, width-4)
+	lines := wrapPrefixedText(strings.TrimSpace(text), max(1, contentWidth), "", "")
+	body := make([]string, 0, len(lines))
+	for _, line := range lines {
+		body = append(body, sty.Base.Foreground(sty.BlueLight).Bold(true).Render(line))
+	}
+	prefix := sty.Base.Foreground(sty.Blue).Bold(true).Render(label)
 	return prefixRenderedBlock(prefix, strings.Join(body, "\n"))
 }

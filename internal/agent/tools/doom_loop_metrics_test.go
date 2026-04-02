@@ -62,4 +62,3 @@ func TestRecordPreparedToolUsageTracksDeterministicLoopMetrics(t *testing.T) {
 	require.Contains(t, metrics.CreatedFiles, filepath.ToSlash(filepath.Join(workingDir, "new", "feature.go")))
 	require.Contains(t, metrics.ModifiedFiles, filepath.ToSlash(alreadyRead))
 }
-

@@ -55,6 +55,9 @@ var reviewModePromptSection []byte
 //go:embed templates/modes/orchestrator-mode.md
 var orchestratorModePromptSection []byte
 
+//go:embed templates/deep-planning/deep-plan-mode.md
+var deepPlanningPromptSection []byte
+
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
@@ -218,6 +221,34 @@ func InitializePrompt(cfg config.Config) (string, error) {
 		return "", err
 	}
 	return systemPrompt.Build(context.Background(), "", "", cfg)
+}
+
+func appendDeepPlanningPrompt(systemPrompt string) string {
+	overlay := strings.TrimSpace(string(deepPlanningPromptSection))
+	if overlay == "" {
+		return systemPrompt
+	}
+
+	runtimeGuardrails := strings.TrimSpace(`
+<deep-planning-runtime>
+Deep planning was activated by the user's input.
+This is separate from the selectable Session Plan Mode.
+You remain in normal execution mode, so ` + "`update_plan`" + ` is available and required for the planning transition.
+
+Rules:
+- treat the deep-planning markdown as binding execution doctrine for this turn
+- for non-trivial work, do a real repository evidence pass first
+- before any file mutation or execution-heavy command, call ` + "`update_plan`" + ` with the concrete checklist you will actually follow
+- do not mutate the repository before that first ` + "`update_plan`" + ` call
+- once the first ` + "`update_plan`" + ` is published, deep planning is complete and execution begins immediately
+- after that transition, follow the published plan strictly and keep ` + "`update_plan`" + ` aligned with reality
+- revise the plan only when new evidence forces a justified change
+</deep-planning-runtime>`)
+
+	if strings.TrimSpace(systemPrompt) == "" {
+		return "<deep-planning-prompt>\n" + overlay + "\n</deep-planning-prompt>\n\n" + runtimeGuardrails
+	}
+	return systemPrompt + "\n\n<deep-planning-prompt>\n" + overlay + "\n</deep-planning-prompt>\n\n" + runtimeGuardrails
 }
 
 func composePromptSections(parts ...[]byte) []byte {

@@ -122,12 +122,14 @@ type SessionAgentCall struct {
 	SessionID              string
 	Prompt                 string
 	SessionMode            planmode.SessionMode
+	DeepPlanningActive     bool
 	ResumePointID          string
 	TodoReconcileTry       int
 	StructuredTry          int
 	MistakeSelfHealTry     int
 	CompletionGuardrailTry int
 	DoomLoopRecoveryTry    int
+	HeadlessCompletionTry  int
 	SkillContext           string
 	ActiveSkills           []string
 	ActiveTools            []string
@@ -881,6 +883,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	promptPrefix := a.systemPromptPrefix.Get()
 	var instructions strings.Builder
 	activeTools := newActiveToolSet(call.ActiveTools)
+	if call.DeepPlanningActive {
+		systemPrompt = appendDeepPlanningPrompt(systemPrompt)
+	}
 
 	if a.longHorizon != nil {
 		if active, ok := a.longHorizonSessions.Get(call.SessionID); ok && active {
@@ -985,14 +990,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), longHorizonActive, postCompactionPending)
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
 	structuredTurn := call.LearnedToolPolicy.RequireExplicitPlan || call.LearnedToolPolicy.RequirePostWriteVerification || (call.HarnessOverride != nil && call.HarnessOverride.Required)
+	broadImplementationTurn := strings.HasPrefix(strings.TrimSpace(call.LearnedToolPolicy.TaskFamily), "implementation/broad/")
 	broadInitializationTurn := strings.TrimSpace(call.LearnedToolPolicy.TaskFamily) == "initialize/broad/codebase"
-	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn, broadInitializationTurn)
+	maxStepsThisTurn := maxStepsPerTurn(longHorizonActive, postCompactionPending, structuredTurn, broadImplementationTurn, broadInitializationTurn)
 
 	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
 	toolUsageState := prepareTurnToolUsageState(call)
 	defer tools.ClearSharedToolUsageState(call.SessionID)
 
-	genCtx, cancel := context.WithCancel(ctx)
+	headlessCompletion := newHeadlessCompletionController(buildHeadlessCompletionBudget(mode, call))
+	genCtx, cancel := headlessCompletion.WrapContext(ctx)
 	defer cancel()
 	a.activeRequests.Set(call.SessionID, cancel)
 	defer a.activeRequests.Del(call.SessionID)
@@ -1038,6 +1045,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		loopBreak        *repeatedToolLoop
 		doomLoopBreak    *deterministicDoomLoop
 		stepStartTime    time.Time
+		stepOrdinal      int
 		firstTokenTime   time.Time
 		firstToolName    string
 	)
@@ -1055,6 +1063,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			markActivity()
+			stepOrdinal++
 			stepStartTime = time.Now()
 			firstTokenTime = time.Time{}
 			prepared.Messages = options.Messages
@@ -1108,6 +1117,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if driftPrompt := buildWorkspaceDriftPrompt(callContext, a.filetracker, call.SessionID, a.workingDir.Get()); driftPrompt != "" {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(driftPrompt))
 			}
+			if qualityPrompt := buildQualityAssessmentPrompt(callContext, a.filetracker, toolUsageState, call.SessionID, a.workingDir.Get(), call.LearnedToolPolicy.TaskFamily, prepared.ActiveTools); qualityPrompt != "" {
+				systemMessages = append(systemMessages, fantasy.NewSystemMessage(qualityPrompt))
+			}
 
 			if isGeminiCodeExecutionModel(largeModel) {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(string(pythonCapabilitiesPrompt)))
@@ -1137,6 +1149,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			callContext = context.WithValue(callContext, tools.SupportsImagesContextKey, largeModel.CatwalkCfg.SupportsImages)
 			callContext = context.WithValue(callContext, tools.ModelNameContextKey, largeModel.CatwalkCfg.Name)
 			callContext = context.WithValue(callContext, tools.WorkingDirContextKey, a.workingDir.Get())
+			callContext = context.WithValue(callContext, tools.TurnStepOrdinalContextKey, stepOrdinal)
+			callContext = context.WithValue(callContext, tools.TurnStepBudgetContextKey, maxStepsThisTurn)
 			requirement := buildHarnessRequirement(call.Prompt)
 			if call.HarnessOverride != nil && call.HarnessOverride.Required {
 				requirement.Required = true
@@ -1196,7 +1210,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				firstTokenTime = time.Now()
 			}
 			currentAssistant.AppendReasoningContent(text)
-			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
+			if err := updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false); err != nil {
+				return err
+			}
+			if interruptErr := headlessCompletion.MaybeForceFinalize(time.Now(), currentAssistant, toolUsageState); interruptErr != nil {
+				return interruptErr
+			}
+			return nil
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			markActivity()
@@ -1233,7 +1253,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			currentAssistant.AppendContent(text)
-			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
+			if err := updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false); err != nil {
+				return err
+			}
+			if interruptErr := headlessCompletion.MaybeForceFinalize(time.Now(), currentAssistant, toolUsageState); interruptErr != nil {
+				return interruptErr
+			}
+			return nil
 		},
 		OnToolInputStart: func(id string, toolName string) error {
 			markActivity()
@@ -1570,6 +1596,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	var result *fantasy.AgentResult
 	for attempt := 0; attempt <= maxStreamRetries; attempt++ {
 		result, err = agent.Stream(genCtx, streamCall)
+		err = headlessCompletion.TranslateStreamError(genCtx, err, currentAssistant, toolUsageState)
 		if err == nil || genCtx.Err() != nil {
 			break
 		}
@@ -1630,6 +1657,22 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if currentAssistant != nil {
 			currentAssistant.FinishThinking()
 			currentAssistant.AddFinish(message.FinishReasonEndTurn, "Completion guardrail recovery", "Sapphire is continuing automatically to gather missing evidence or correct grounded claims.")
+			if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
+				return nil, updateErr
+			}
+		}
+		a.activeRequests.Del(call.SessionID)
+		cancel()
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
+		}
+		return a.Run(ctx, followUp)
+	}
+
+	if followUp, ok := buildHeadlessCompletionRecoveryCall(mode, call, err, currentAssistant); ok {
+		if currentAssistant != nil {
+			currentAssistant.FinishThinking()
+			currentAssistant.AddFinish(message.FinishReasonEndTurn, "Headless closure recovery", "Sapphire is continuing automatically to force a terminal answer from the existing evidence.")
 			if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
 				return nil, updateErr
 			}
@@ -1731,6 +1774,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			currentAssistant.AddFinish(message.FinishReasonError, "Step limit reached", err.Error())
 		} else if errors.Is(err, ErrToolFailureLimitReached) {
 			currentAssistant.AddFinish(message.FinishReasonError, "Tool failure limit reached", err.Error())
+		} else if errors.Is(err, ErrHeadlessCompletionBudgetReached) {
+			currentAssistant.AddFinish(message.FinishReasonError, "Headless runtime budget reached", err.Error())
 		} else {
 			var turnGuardrailErr *tools.TurnGuardrailError
 			switch {
@@ -1780,6 +1825,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			_, _ = a.Run(ctx, firstQueuedMessage)
 		}
 		return nil, err
+	}
+
+	if result == nil && currentAssistant != nil {
+		result = buildHeadlessCompletionResult(currentAssistant)
 	}
 
 	if shouldSummarize {

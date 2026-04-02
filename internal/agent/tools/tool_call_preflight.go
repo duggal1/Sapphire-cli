@@ -93,6 +93,7 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	call, tool, input = rewriteRepeatedInitializationSkillDetour(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationArtifactWriteDetour(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationMemoryArtifactDetour(ctx, call, tool, input, tools)
+	call, tool, input = rewriteLateTurnImplementationExecutionFocus(ctx, call, tool, input, tools)
 	call, tool, input = rewriteRedundantInitializationDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteForbiddenDiscoveryBash(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToExplicitPlanWhenRequired(ctx, call, tool, input, tools)
@@ -951,6 +952,50 @@ func rewriteInitializationMemoryArtifactDetour(
 	return call, tool, input
 }
 
+func rewriteLateTurnImplementationExecutionFocus(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	if !strings.HasPrefix(strings.TrimSpace(policy.TaskFamily), "implementation/") {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if !shouldForceLateImplementationExecutionFocus(ctx, usage) {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isLateImplementationExecutionFocusTool(canonical, input) {
+		return call, tool, input
+	}
+	if verificationTool, verificationInput, ok := buildGenericArtifactVerificationRewrite(tools, usage); ok {
+		call.Name = verificationTool.Info().Name
+		tool = verificationTool
+		input = verificationInput
+		return call, tool, input
+	}
+	if mostWrittenTool, mostWrittenInput, ok := buildMostWrittenFileReadRewrite(tools, usage); ok {
+		call.Name = mostWrittenTool.Info().Name
+		tool = mostWrittenTool
+		input = mostWrittenInput
+		return call, tool, input
+	}
+	next, ok := tools[UpdatePlanToolName]
+	if !ok {
+		return call, tool, input
+	}
+	call.Name = UpdatePlanToolName
+	tool = next
+	input = buildImplementationExecutionFocusPlanInput(ctx, usage, canonical)
+	return call, tool, input
+}
+
 func rewriteRedundantInitializationDiscovery(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -1012,6 +1057,23 @@ func rewriteForbiddenDiscoveryBash(
 	if !looksLikeDiscoveryShellCommand(command) {
 		return call, tool, input
 	}
+	if strings.TrimSpace(policy.TaskFamily) == "initialize/broad/codebase" {
+		usage := GetToolUsageStateFromContext(ctx)
+		if shouldForceLateInitializationExecutionFocus(ctx, usage) {
+			if verificationTool, verificationInput, ok := buildGenericArtifactVerificationRewrite(tools, usage); ok {
+				call.Name = verificationTool.Info().Name
+				tool = verificationTool
+				input = verificationInput
+				return call, tool, input
+			}
+			if next, ok := tools[UpdatePlanToolName]; ok {
+				call.Name = UpdatePlanToolName
+				tool = next
+				input = buildInitializationExecutionFocusPlanInput(BashToolName, usage)
+				return call, tool, input
+			}
+		}
+	}
 	if nextName, nextInput, ok := simpleBashToTool(command); ok {
 		if next, exists := tools[nextName]; exists {
 			call.Name = nextName
@@ -1038,6 +1100,52 @@ func rewriteForbiddenDiscoveryBash(
 		return call, tool, input
 	}
 	return call, tool, input
+}
+
+func shouldForceLateImplementationExecutionFocus(ctx context.Context, usage *ToolUsageState) bool {
+	if usage == nil || !HasRequiredContextReadEvidence(usage) || !usage.HasPublishedPlan() {
+		return false
+	}
+	metrics := usage.SnapshotDeterministicLoopMetrics()
+	if totalDeterministicWrites(metrics) == 0 {
+		return false
+	}
+	remaining := GetRemainingTurnStepsFromContext(ctx)
+	if remaining > 0 && remaining <= 3 {
+		return true
+	}
+	if metrics.TotalCalls >= 9 {
+		return true
+	}
+	return maxDeterministicWriteCount(metrics) >= 3
+}
+
+func shouldForceLateInitializationExecutionFocus(ctx context.Context, usage *ToolUsageState) bool {
+	if usage == nil || !hasBroadInitializationContext(usage) {
+		return false
+	}
+	if len(usage.PendingArtifactVerificationPaths()) > 0 {
+		return true
+	}
+	remaining := GetRemainingTurnStepsFromContext(ctx)
+	if remaining > 0 && remaining <= 3 && usage.HasPublishedPlan() {
+		return true
+	}
+	return totalInitializationDiscoveryCalls(usage) >= 5 && usage.HasPublishedPlan()
+}
+
+func isLateImplementationExecutionFocusTool(toolName string, input map[string]any) bool {
+	switch toolName {
+	case ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName:
+		return true
+	case BashToolName:
+		command, _ := input["command"].(string)
+		return looksLikeDiscoveryShellCommand(command)
+	case EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName:
+		return true
+	default:
+		return false
+	}
 }
 
 func firstGuardedContextReadPathFromInput(ctx context.Context, toolName string, input map[string]any) string {
@@ -1120,6 +1228,28 @@ func buildInitializationVerificationRewrite(tools map[string]fantasy.AgentTool, 
 	return nil, nil, false
 }
 
+func buildGenericArtifactVerificationRewrite(tools map[string]fantasy.AgentTool, usage *ToolUsageState) (fantasy.AgentTool, map[string]any, bool) {
+	return buildInitializationVerificationRewrite(tools, usage)
+}
+
+func buildMostWrittenFileReadRewrite(tools map[string]fantasy.AgentTool, usage *ToolUsageState) (fantasy.AgentTool, map[string]any, bool) {
+	if usage == nil {
+		return nil, nil, false
+	}
+	metrics := usage.SnapshotDeterministicLoopMetrics()
+	path := mostWrittenDeterministicPath(metrics)
+	if path == "" {
+		return nil, nil, false
+	}
+	if next, ok := tools[SingleViewToolName]; ok {
+		return next, map[string]any{"file_path": path}, true
+	}
+	if next, ok := tools[ViewToolName]; ok {
+		return next, map[string]any{"file_path": path}, true
+	}
+	return nil, nil, false
+}
+
 func buildInitializationExecutionFocusPlanInput(blockedToolName string, usage *ToolUsageState) map[string]any {
 	explanation := fmt.Sprintf(
 		"Broad initialization already has enough repository evidence. Stop another %s sweep and move directly toward the AGENTS.md artifact.",
@@ -1140,6 +1270,42 @@ func buildInitializationExecutionFocusPlanInput(blockedToolName string, usage *T
 			{Step: "Deliver final initialization summary", Status: StepStatusPending},
 		},
 	})
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
+	}
+}
+
+func buildImplementationExecutionFocusPlanInput(ctx context.Context, usage *ToolUsageState, blockedToolName string) map[string]any {
+	explanation := fmt.Sprintf(
+		"Broad implementation is late in the turn. Stop low-yield %s churn, finish the smallest correct change, and move directly into verification.",
+		blockedToolName,
+	)
+	finishStatus := StepStatusInProgress
+	verifyStatus := StepStatusPending
+	if usage != nil && len(usage.PendingArtifactVerificationPaths()) > 0 {
+		finishStatus = StepStatusCompleted
+		verifyStatus = StepStatusInProgress
+	}
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Lock the exact implementation files and invariants", Status: StepStatusCompleted},
+			{Step: "Finish the smallest correct code change only", Status: finishStatus},
+			{Step: "Verify the changed code path before any more edits", Status: verifyStatus},
+			{Step: "Deliver the final implementation summary", Status: StepStatusPending},
+		},
+	})
+	if task := strings.TrimSpace(GetHarnessRequirementFromContext(ctx).Task); task != "" {
+		args.Plan[1].Step = "Finish the smallest correct code change for " + task
+	}
 	plan := make([]any, 0, len(args.Plan))
 	for _, item := range args.Plan {
 		plan = append(plan, map[string]any{
@@ -1217,6 +1383,36 @@ func totalInitializationDiscoveryCalls(usage *ToolUsageState) int {
 		return 0
 	}
 	return usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName)
+}
+
+func totalDeterministicWrites(metrics DeterministicLoopMetrics) int {
+	total := 0
+	for _, count := range metrics.WriteCounts {
+		total += count
+	}
+	return total
+}
+
+func maxDeterministicWriteCount(metrics DeterministicLoopMetrics) int {
+	maxCount := 0
+	for _, count := range metrics.WriteCounts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+	return maxCount
+}
+
+func mostWrittenDeterministicPath(metrics DeterministicLoopMetrics) string {
+	bestPath := ""
+	bestCount := 0
+	for path, count := range metrics.WriteCounts {
+		if count > bestCount || (count == bestCount && bestPath != "" && path < bestPath) {
+			bestPath = path
+			bestCount = count
+		}
+	}
+	return bestPath
 }
 
 func buildInitializationArtifactCorrectionPlanInput(ctx context.Context, blockedPath string) map[string]any {
@@ -1825,7 +2021,13 @@ func looksLikeDiscoveryShellCommand(command string) bool {
 	if command == "" {
 		return false
 	}
-	prefixes := []string{
+	if _, _, ok := simpleBashToTool(command); ok {
+		return true
+	}
+	if strings.Contains(command, "cat <<") {
+		return false
+	}
+	for _, token := range []string{
 		"ls",
 		"find ",
 		"fd ",
@@ -1838,9 +2040,27 @@ func looksLikeDiscoveryShellCommand(command string) bool {
 		"ack ",
 		"ag ",
 		"wc ",
+		"head ",
+		"tail ",
+	} {
+		if hasShellCommandToken(command, token) {
+			return true
+		}
 	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(command, prefix) {
+	return false
+}
+
+func hasShellCommandToken(command string, token string) bool {
+	command = strings.ToLower(strings.TrimSpace(command))
+	token = strings.ToLower(strings.TrimSpace(token))
+	if command == "" || token == "" {
+		return false
+	}
+	if command == token || strings.HasPrefix(command, token+" ") {
+		return true
+	}
+	for _, prefix := range []string{"&& ", "|| ", "; ", "| ", "\n", "\t", "("} {
+		if strings.Contains(command, prefix+token) {
 			return true
 		}
 	}

@@ -27,6 +27,7 @@ func (m *UI) cancelAgent() tea.Cmd {
 	if m.isCanceling {
 		// Second escape press - actually cancel the agent.
 		m.isCanceling = false
+		m.clearDeepPlanningState(false)
 		m.fixedTailNotice = nil
 		coordinator.Cancel(m.session.ID)
 		// Stop the spinning todo indicator.

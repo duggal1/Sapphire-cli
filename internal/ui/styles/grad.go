@@ -162,6 +162,12 @@ func ShimmerTextWarm(t *Styles, input string, shift int) string {
 	return ShimmerTextWithDot(t, input)
 }
 
+func ShimmerTextPlan(t *Styles, input string, shift int) string {
+	_ = t
+	_ = shift
+	return shimmer.PlanWithDot(input)
+}
+
 // ── internal helpers ──────────────────────────────────────────────────────────
 
 func splitGraphemeClusters(input string) []string {

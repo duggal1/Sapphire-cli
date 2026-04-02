@@ -16,6 +16,8 @@ type (
 	runtimeControlKey     string
 	writeScopeKey         string
 	turnPolicyKey         string
+	turnStepOrdinalKey    string
+	turnStepBudgetKey     string
 )
 
 const (
@@ -37,6 +39,10 @@ const (
 	WriteScopeContextKey writeScopeKey = "write_scope"
 	// TurnPolicyContextKey is the key for per-turn runtime guardrails.
 	TurnPolicyContextKey turnPolicyKey = "turn_policy"
+	// TurnStepOrdinalContextKey is the current 1-based step number within the turn.
+	TurnStepOrdinalContextKey turnStepOrdinalKey = "turn_step_ordinal"
+	// TurnStepBudgetContextKey is the maximum step budget for the turn.
+	TurnStepBudgetContextKey turnStepBudgetKey = "turn_step_budget"
 
 	// LoadSkillToolName is the name of the tool used to load skills.
 	LoadSkillToolName = "load_skill"
@@ -147,4 +153,28 @@ func GetWriteScopeFromContext(ctx context.Context) *WriteScope {
 
 func GetTurnPolicyFromContext(ctx context.Context) TurnPolicy {
 	return getContextValue(ctx, TurnPolicyContextKey, DefaultTurnPolicy())
+}
+
+func GetTurnStepOrdinalFromContext(ctx context.Context) int {
+	return getContextValue(ctx, TurnStepOrdinalContextKey, 0)
+}
+
+func GetTurnStepBudgetFromContext(ctx context.Context) int {
+	return getContextValue(ctx, TurnStepBudgetContextKey, 0)
+}
+
+func GetRemainingTurnStepsFromContext(ctx context.Context) int {
+	step := GetTurnStepOrdinalFromContext(ctx)
+	budget := GetTurnStepBudgetFromContext(ctx)
+	if budget <= 0 {
+		return 0
+	}
+	if step <= 0 {
+		return budget
+	}
+	remaining := budget - step
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }

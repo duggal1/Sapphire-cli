@@ -159,4 +159,3 @@ func deterministicPathExists(path string) bool {
 	}
 	return !info.IsDir()
 }
-

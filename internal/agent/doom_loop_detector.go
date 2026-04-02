@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -32,11 +33,11 @@ type doomLoopSignal struct {
 }
 
 type deterministicDoomLoop struct {
-	TaskFamily      string
-	TotalCalls      int
-	UniqueToolCount int
+	TaskFamily       string
+	TotalCalls       int
+	UniqueToolCount  int
 	ConsecutiveCalls int
-	Signals         []doomLoopSignal
+	Signals          []doomLoopSignal
 }
 
 func detectDeterministicDoomLoop(state *tools.ToolUsageState, tracker filetracker.Service, sessionID, workingDir, taskFamily string) (deterministicDoomLoop, bool) {
@@ -44,7 +45,7 @@ func detectDeterministicDoomLoop(state *tools.ToolUsageState, tracker filetracke
 	if state != nil {
 		metrics = state.SnapshotDeterministicLoopMetrics()
 	}
-	drift := collectWorkspaceDrift(nil, tracker, sessionID, workingDir)
+	drift := collectWorkspaceDrift(context.Background(), tracker, sessionID, workingDir)
 	report := evaluateDeterministicDoomLoop(metrics, drift, taskFamily)
 	return report, len(report.Signals) > 0 && shouldBreakDeterministicDoomLoop(report)
 }
@@ -219,4 +220,3 @@ func maxDeterministicLoopCount(values ...int) int {
 	}
 	return best
 }
-

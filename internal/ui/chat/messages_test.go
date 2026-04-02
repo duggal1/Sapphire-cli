@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/duggal1/Sapphire-cli/internal/deepplanning"
 	"github.com/duggal1/Sapphire-cli/internal/message"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
@@ -224,5 +225,20 @@ func TestAssistantMessageItemRendersInlineLoaderWithVerticalSpacing(t *testing.T
 	}
 	if !strings.Contains(lines[1], label) {
 		t.Fatalf("expected vertical padding around inline loader, got %q", rendered)
+	}
+}
+
+func TestAssistantMessageItemRendersPlanningLoaderForDeepPlanningPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:   deepplanning.PendingAssistantPlaceholderID("session-1", true),
+		Role: message.Assistant,
+	})
+
+	rendered := ansi.Strip(item.Render(80))
+	if !strings.Contains(rendered, deepplanning.PlanningStatusText) {
+		t.Fatalf("expected planning loader label, got %q", rendered)
 	}
 }

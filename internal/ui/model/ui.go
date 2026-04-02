@@ -93,6 +93,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/codeindex"
 	"github.com/duggal1/Sapphire-cli/internal/commands"
 	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/deepplanning"
 	"github.com/duggal1/Sapphire-cli/internal/fsext"
 	"github.com/duggal1/Sapphire-cli/internal/history"
 	"github.com/duggal1/Sapphire-cli/internal/home"
@@ -253,6 +254,8 @@ type UI struct {
 	pendingUserPlaceholderText    string
 	assistantFooter               *chat.AssistantInfoItem
 	pendingAssistantPlaceholderID string
+	deepPlanningPending           bool
+	deepPlanningSessionID         string
 	planApprovalContent           string
 
 	// onboarding state
@@ -552,6 +555,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearPendingAssistantPlaceholder()
 
 	case pendingAssistantErrorMsg:
+		m.clearDeepPlanningState(false)
 		m.clearPendingAssistantPlaceholder()
 		title, details := splitPendingAssistantError(msg.err)
 		m.fixedTailNotice = chat.NewErrorNoticeMessageItem(m.com.Styles, title, details)
@@ -1153,6 +1157,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		m.chat.SelectLast()
 	case message.Assistant:
 		m.clearPendingAssistantPlaceholder()
+		m.maybeCompleteDeepPlanning(&msg)
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
@@ -1215,6 +1220,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
 	if msg.Role == message.Assistant {
 		m.clearPendingAssistantPlaceholder()
+		m.maybeCompleteDeepPlanning(&msg)
 	}
 	existingItem := m.chat.MessageItem(msg.ID)
 
@@ -3788,8 +3794,15 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 	// Capture session ID to avoid race with main goroutine updating m.session.
 	sessionID := m.session.ID
+	deepPlanningActive := deepplanning.IsRequested(content)
+	if deepPlanningActive {
+		m.deepPlanningPending = true
+		m.deepPlanningSessionID = sessionID
+	} else {
+		m.clearDeepPlanningState(false)
+	}
 	m.showPendingUserPlaceholder(sessionID, content)
-	if cmd := m.showPendingAssistantPlaceholder(sessionID); cmd != nil {
+	if cmd := m.showPendingAssistantPlaceholder(sessionID, deepPlanningActive); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	cmds = append(cmds, func() tea.Msg {
@@ -3807,7 +3820,7 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 	return tea.Batch(cmds...)
 }
 
-func (m *UI) showPendingAssistantPlaceholder(sessionID string) tea.Cmd {
+func (m *UI) showPendingAssistantPlaceholder(sessionID string, planning bool) tea.Cmd {
 	m.clearPendingAssistantPlaceholder()
 	m.fixedTailNotice = nil
 	if sessionID == "" {
@@ -3815,7 +3828,7 @@ func (m *UI) showPendingAssistantPlaceholder(sessionID string) tea.Cmd {
 	}
 
 	now := time.Now().Unix()
-	placeholderID := "local:pending-assistant:" + sessionID
+	placeholderID := deepplanning.PendingAssistantPlaceholderID(sessionID, planning)
 	msg := &message.Message{
 		ID:        placeholderID,
 		Role:      message.Assistant,
@@ -3920,6 +3933,32 @@ func (m *UI) clearPendingAssistantPlaceholder() {
 	}
 	m.chat.RemoveMessage(m.pendingAssistantPlaceholderID)
 	m.pendingAssistantPlaceholderID = ""
+}
+
+func (m *UI) clearDeepPlanningState(showSuccess bool) {
+	sessionID := m.deepPlanningSessionID
+	m.deepPlanningPending = false
+	m.deepPlanningSessionID = ""
+	if !showSuccess || sessionID == "" || m.session == nil || m.session.ID != sessionID {
+		return
+	}
+	m.fixedTailNotice = chat.NewPlanSuccessNoticeMessageItem(m.com.Styles)
+}
+
+func (m *UI) maybeCompleteDeepPlanning(msg *message.Message) {
+	if !m.deepPlanningPending || msg == nil {
+		return
+	}
+	if strings.TrimSpace(m.deepPlanningSessionID) == "" || msg.SessionID != m.deepPlanningSessionID {
+		return
+	}
+	for _, tc := range msg.ToolCalls() {
+		if tc.Name == agenttools.UpdatePlanToolName && tc.Finished {
+			m.clearDeepPlanningState(true)
+			m.updateLayoutAndSize()
+			return
+		}
+	}
 }
 
 func (m *UI) syncPendingAssistantPlaceholder() tea.Cmd {

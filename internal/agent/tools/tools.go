@@ -67,6 +67,7 @@ type RuntimeControl interface {
 }
 
 type TurnPolicy struct {
+	DirectResponseOnly       bool
 	AllowMemoryRead          bool
 	AllowMemoryWrite         bool
 	AllowAutoMemoryInjection bool
@@ -74,6 +75,7 @@ type TurnPolicy struct {
 
 func DefaultTurnPolicy() TurnPolicy {
 	return TurnPolicy{
+		DirectResponseOnly:       false,
 		AllowMemoryRead:          true,
 		AllowMemoryWrite:         true,
 		AllowAutoMemoryInjection: true,

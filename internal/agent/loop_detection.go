@@ -13,6 +13,8 @@ const (
 	loopDetectionWindowSize = 10
 	loopDetectionMaxRepeats = 5
 	loopPatternMinRepeats   = 3
+	reasoningLoopMaxRepeats = 3
+	reasoningLoopMinChars   = 120
 )
 
 type repeatedToolLoop struct {
@@ -21,6 +23,8 @@ type repeatedToolLoop struct {
 	WindowSize  int
 	ToolNames   []string
 	PatternSize int
+	LoopSource  string
+	Summary     string
 }
 
 // hasRepeatedToolCalls checks whether the agent is stuck in a loop by looking
@@ -40,31 +44,50 @@ func detectRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats 
 	if windowSize > 0 && len(window) > windowSize {
 		window = steps[len(steps)-windowSize:]
 	}
-	counts := make(map[string]int)
-	interactions := make([]repeatedToolLoop, 0, len(window))
-
+	toolInteractions := make([]repeatedToolLoop, 0, len(window))
+	reasoningInteractions := make([]repeatedToolLoop, 0, len(window))
 	for _, step := range window {
-		loop, ok := summarizeToolInteraction(step.Content)
-		if !ok || loop.Signature == "" {
+		if loop, ok := summarizeToolInteraction(step.Content); ok && loop.Signature != "" {
+			toolInteractions = append(toolInteractions, loop)
 			continue
 		}
-		interactions = append(interactions, loop)
-		counts[loop.Signature]++
-		if counts[loop.Signature] > maxRepeats {
-			loop.RepeatCount = counts[loop.Signature]
-			loop.WindowSize = len(window)
-			return loop, true
+		if loop, ok := summarizeReasoningInteraction(step.Content); ok && loop.Signature != "" {
+			reasoningInteractions = append(reasoningInteractions, loop)
 		}
 	}
 
-	if loop, ok := detectRepeatedToolSuffixPattern(interactions, loopPatternMinRepeats); ok {
+	if loop, ok := detectRepeatedInteractionWindow(toolInteractions, len(window), maxRepeats, loopPatternMinRepeats); ok {
+		return loop, true
+	}
+	if loop, ok := detectRepeatedInteractionWindow(reasoningInteractions, len(window), reasoningLoopMaxRepeats, loopPatternMinRepeats); ok {
 		return loop, true
 	}
 
 	return repeatedToolLoop{}, false
 }
 
-func detectRepeatedToolSuffixPattern(sequence []repeatedToolLoop, minRepeats int) (repeatedToolLoop, bool) {
+func detectRepeatedInteractionWindow(sequence []repeatedToolLoop, windowSize, maxRepeats, minPatternRepeats int) (repeatedToolLoop, bool) {
+	if len(sequence) == 0 {
+		return repeatedToolLoop{}, false
+	}
+
+	counts := make(map[string]int, len(sequence))
+	for _, loop := range sequence {
+		if loop.Signature == "" {
+			continue
+		}
+		counts[loop.Signature]++
+		if counts[loop.Signature] > maxRepeats {
+			loop.RepeatCount = counts[loop.Signature]
+			loop.WindowSize = windowSize
+			return loop, true
+		}
+	}
+
+	return detectRepeatedInteractionSuffixPattern(sequence, minPatternRepeats)
+}
+
+func detectRepeatedInteractionSuffixPattern(sequence []repeatedToolLoop, minRepeats int) (repeatedToolLoop, bool) {
 	if minRepeats < 2 || len(sequence) < minRepeats*2 {
 		return repeatedToolLoop{}, false
 	}
@@ -101,6 +124,8 @@ func detectRepeatedToolSuffixPattern(sequence []repeatedToolLoop, minRepeats int
 			WindowSize:  coverage,
 			ToolNames:   collectPatternToolNames(pattern),
 			PatternSize: patternSize,
+			LoopSource:  dominantLoopSource(pattern),
+			Summary:     collectPatternSummary(pattern),
 		}
 	}
 
@@ -142,6 +167,30 @@ func collectPatternToolNames(pattern []repeatedToolLoop) []string {
 		names = append(names, interaction.ToolNames...)
 	}
 	return uniqueNonEmptyStrings(names)
+}
+
+func dominantLoopSource(pattern []repeatedToolLoop) string {
+	if len(pattern) == 0 {
+		return ""
+	}
+	best := strings.TrimSpace(pattern[0].LoopSource)
+	for _, interaction := range pattern {
+		source := strings.TrimSpace(interaction.LoopSource)
+		if source != "" {
+			best = source
+			break
+		}
+	}
+	return best
+}
+
+func collectPatternSummary(pattern []repeatedToolLoop) string {
+	for _, interaction := range pattern {
+		if summary := strings.TrimSpace(interaction.Summary); summary != "" {
+			return summary
+		}
+	}
+	return ""
 }
 
 func getToolPatternSignature(pattern []repeatedToolLoop) string {
@@ -222,7 +271,54 @@ func summarizeToolInteraction(content fantasy.ResponseContent) (repeatedToolLoop
 		toolNames = append(toolNames, tc.ToolName)
 	}
 	return repeatedToolLoop{
-		Signature: getToolInteractionSignature(content),
-		ToolNames: uniqueNonEmptyStrings(toolNames),
+		Signature:  getToolInteractionSignature(content),
+		ToolNames:  uniqueNonEmptyStrings(toolNames),
+		LoopSource: "tool",
 	}, true
+}
+
+func summarizeReasoningInteraction(content fantasy.ResponseContent) (repeatedToolLoop, bool) {
+	if len(content.ToolCalls()) > 0 {
+		return repeatedToolLoop{}, false
+	}
+
+	reasoning := normalizeRepeatedReasoningText(content.ReasoningText())
+	text := normalizeRepeatedReasoningText(content.Text())
+	combined := reasoning
+	if combined == "" {
+		combined = text
+	} else if text != "" {
+		combined += "\n" + text
+	}
+	if len(combined) < reasoningLoopMinChars {
+		return repeatedToolLoop{}, false
+	}
+
+	h := sha256.New()
+	io.WriteString(h, combined)
+
+	return repeatedToolLoop{
+		Signature:  hex.EncodeToString(h.Sum(nil)),
+		LoopSource: "reasoning",
+		Summary:    summarizeRepeatedReasoningExcerpt(text, reasoning),
+	}, true
+}
+
+func normalizeRepeatedReasoningText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func summarizeRepeatedReasoningExcerpt(text, reasoning string) string {
+	summary := strings.TrimSpace(text)
+	if summary == "" {
+		summary = strings.TrimSpace(reasoning)
+	}
+	if len(summary) > 160 {
+		summary = summary[:160]
+	}
+	return summary
 }

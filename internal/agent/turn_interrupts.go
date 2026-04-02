@@ -95,6 +95,15 @@ func (e *repeatedToolLoopError) Error() string {
 	if windowSize < repeatCount {
 		windowSize = repeatCount
 	}
+	if e.loop.LoopSource == "reasoning" {
+		if e.loop.PatternSize > 1 {
+			return fmt.Sprintf("repeated reasoning-path loop detected: a %d-step reasoning suffix pattern repeated %d times within the last %d steps; stop replaying the same analysis and change the diagnosis", e.loop.PatternSize, repeatCount, windowSize)
+		}
+		if summary := strings.TrimSpace(e.loop.Summary); summary != "" {
+			return fmt.Sprintf("repeated reasoning-path loop detected: near-identical analysis repeated %d times within the last %d steps; repeated analysis sample: %q; stop replaying the same diagnosis and change tactics", repeatCount, windowSize, summary)
+		}
+		return fmt.Sprintf("repeated reasoning-path loop detected: near-identical analysis repeated %d times within the last %d steps; stop replaying the same diagnosis and change tactics", repeatCount, windowSize)
+	}
 	if e.loop.PatternSize > 1 {
 		return fmt.Sprintf("repeated tool-call loop detected: %s repeated as a %d-step suffix pattern %d times within the last %d steps; stop replaying the same sequence and change tactics", toolSummary, e.loop.PatternSize, repeatCount, windowSize)
 	}

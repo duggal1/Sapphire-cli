@@ -1967,6 +1967,14 @@ func extractWritePaths(toolName string, input map[string]any) []string {
 
 func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]any) error {
 	policy := GetTurnPolicyFromContext(ctx)
+	if policy.DirectResponseOnly {
+		return NewToolGuidanceError(
+			toolName,
+			"direct_response_only",
+			"This turn is casual conversation only.",
+			"This turn is casual conversation only. Reply naturally without tool calls, repository reads, planning, or background work.",
+		)
+	}
 	if err := enforceDeepPlanningTransition(ctx, toolName); err != nil {
 		return err
 	}
@@ -2184,8 +2192,7 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 
 func isLearnedContextProtectedTool(toolName string) bool {
 	switch toolName {
-	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName,
-		"spawn_agent", "resume_agent", "send_input", "collect_result", "agent":
+	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName:
 		return true
 	default:
 		return false

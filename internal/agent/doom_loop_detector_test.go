@@ -108,6 +108,38 @@ func TestBuildDoomLoopRecoveryCallHandlesRepeatedToolLoop(t *testing.T) {
 	require.Contains(t, followUp.Prompt, "read, grep, patch")
 }
 
+func TestBuildDoomLoopRecoveryCallHandlesRepeatedReasoningLoop(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{
+		SessionID: "session-3",
+		Prompt:    "Choose the right architecture and stop restating the same analysis.",
+	}
+	assistant := &message.Message{
+		Role: message.Assistant,
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "I keep defending the same architecture without adding new evidence."},
+		},
+	}
+	err := &repeatedToolLoopError{
+		loop: repeatedToolLoop{
+			RepeatCount: 4,
+			WindowSize:  4,
+			PatternSize: 1,
+			LoopSource:  "reasoning",
+			Summary:     "the current best option is still the same architecture because the tradeoffs still appear favorable without any new repository evidence.",
+		},
+	}
+
+	followUp, ok := buildDoomLoopRecoveryCall(planmode.DefaultSessionMode, call, err, assistant)
+
+	require.True(t, ok)
+	require.Contains(t, followUp.Prompt, "Detected Repeated Reasoning Loop")
+	require.Contains(t, followUp.Prompt, "Near-identical analysis repeated 4 times")
+	require.Contains(t, followUp.Prompt, "Repeated analysis sample")
+	require.Contains(t, followUp.Prompt, "stop restating the same analysis")
+}
+
 func TestPrepareTurnToolUsageStateResetsDeterministicMetricsDuringDoomRecovery(t *testing.T) {
 	t.Parallel()
 

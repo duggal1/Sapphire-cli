@@ -303,6 +303,8 @@ type coordinator struct {
 	formulaExecutor           *agentformula.Executor
 	subAgentsMu               sync.Mutex
 	subAgents                 map[string]*subAgentRunner
+	subAgentActiveCount       map[string]int // cached active count per parent session (O(1))
+	depthCache                map[string]int // cached session depth to avoid repeated DB walks
 	subAgentRegistry          *subAgentRegistry
 	orchestrationStore        *orchestrationdb.Store
 	mailbox                   *agentmailbox.Service
@@ -429,6 +431,7 @@ func NewCoordinator(
 		backgroundIndicators:      make(map[string]*backgroundIndicatorState),
 		backgroundRegistry:        agentbackground.NewRegistry(),
 		subAgents:                 make(map[string]*subAgentRunner),
+		subAgentActiveCount:       make(map[string]int),
 		subAgentRegistry:          newSubAgentRegistry(),
 		worktreeOps:               make(map[string]*sync.Mutex),
 		agentJobs:                 newAgentJobManager(),

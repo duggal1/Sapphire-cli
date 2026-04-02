@@ -71,6 +71,9 @@ type App struct {
 	events          chan tea.Msg
 	tuiWG           *sync.WaitGroup
 
+	agentInitMu  sync.Mutex
+	lspTrackOnce sync.Once
+
 	// global context and cleanup functions
 	globalCtx    context.Context
 	cleanupFuncs []func(context.Context) error
@@ -148,7 +151,9 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 	}
 
 	app.setupEvents()
-	app.startRuntimeControlLoop()
+	if !isNonInteractiveRuntime() {
+		app.startRuntimeControlLoop()
+	}
 
 	// Skip update checks on headless runs to keep the cold-start path focused on
 	// task execution rather than background network work.
@@ -170,25 +175,11 @@ func New(ctx context.Context, conn *sql.DB, cfg *config.Config) (*App, error) {
 		slog.Warn("No agent configuration found")
 		return app, nil
 	}
-	if err := app.InitCoderAgent(ctx, conn); err != nil {
-		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
-	}
-	if closer, ok := app.AgentCoordinator.(interface{ Close() error }); ok {
-		app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
-			return closer.Close()
-		})
-	}
-
-	// Set up callback for LSP state updates.
-	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
-		if client == nil {
-			updateLSPState(name, lsp.StateUnstarted, nil, nil, 0)
-			return
+	if !isNonInteractiveRuntime() {
+		if err := app.ensureAgentCoordinator(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 		}
-		client.SetDiagnosticsCallback(updateLSPDiagnostics)
-		updateLSPState(name, client.GetServerState(), nil, client, 0)
-	})
-	go app.LSPManager.TrackConfigured()
+	}
 
 	return app, nil
 }
@@ -210,6 +201,9 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel, reasoningEffort); err != nil {
 			return fmt.Errorf("failed to override models: %w", err)
 		}
+	}
+	if err := app.ensureAgentCoordinator(ctx); err != nil {
+		return fmt.Errorf("failed to initialize coder agent: %w", err)
 	}
 
 	var (
@@ -432,7 +426,55 @@ func (app *App) overrideModelsForNonInteractive(ctx context.Context, largeModel,
 		}
 	}
 
+	if app.AgentCoordinator == nil {
+		return nil
+	}
 	return app.AgentCoordinator.UpdateModels(ctx)
+}
+
+func (app *App) ensureAgentCoordinator(ctx context.Context) error {
+	if app == nil {
+		return fmt.Errorf("app is nil")
+	}
+	if app.AgentCoordinator != nil {
+		app.startLSPTracking()
+		return nil
+	}
+
+	app.agentInitMu.Lock()
+	defer app.agentInitMu.Unlock()
+
+	if app.AgentCoordinator != nil {
+		app.startLSPTracking()
+		return nil
+	}
+	if err := app.InitCoderAgent(ctx, app.Conn); err != nil {
+		return err
+	}
+	if closer, ok := app.AgentCoordinator.(interface{ Close() error }); ok {
+		app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+			return closer.Close()
+		})
+	}
+	app.startLSPTracking()
+	return nil
+}
+
+func (app *App) startLSPTracking() {
+	if app == nil || app.LSPManager == nil {
+		return
+	}
+	app.lspTrackOnce.Do(func() {
+		app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
+			if client == nil {
+				updateLSPState(name, lsp.StateUnstarted, nil, nil, 0)
+				return
+			}
+			client.SetDiagnosticsCallback(updateLSPDiagnostics)
+			updateLSPState(name, client.GetServerState(), nil, client, 0)
+		})
+		go app.LSPManager.TrackConfigured()
+	})
 }
 
 func isSupportedReasoningEffort(effort string) bool {

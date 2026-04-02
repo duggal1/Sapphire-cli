@@ -188,7 +188,26 @@ func renderRepeatedToolLoopReminder(loop repeatedToolLoop) string {
 	}
 	body := strings.ReplaceAll(string(doomLoopReminderTemplate), "{{consecutive_calls}}", strconv.Itoa(consecutive))
 
-	lines := []string{strings.TrimSpace(body), "", "## Detected Repeated Interaction Loop"}
+	lines := []string{strings.TrimSpace(body)}
+	if loop.LoopSource == "reasoning" {
+		lines = append(lines, "", "## Detected Repeated Reasoning Loop")
+		if loop.PatternSize > 1 {
+			lines = append(lines, fmt.Sprintf("- A %d-step reasoning suffix pattern repeated %d times.", loop.PatternSize, loop.RepeatCount))
+		} else {
+			lines = append(lines, fmt.Sprintf("- Near-identical analysis repeated %d times.", loop.RepeatCount))
+		}
+		if summary := strings.TrimSpace(loop.Summary); summary != "" {
+			lines = append(lines, "- Repeated analysis sample: "+summary)
+		}
+		lines = append(lines, "", "## Immediate Execution Constraints")
+		lines = append(lines, "- Stop replaying the same diagnosis, explanation, or architecture argument.")
+		lines = append(lines, "- Resolve one missing uncertainty with concrete evidence before continuing.")
+		lines = append(lines, "- If local evidence is exhausted, switch to stronger grounding or finalize the best supported conclusion.")
+		lines = append(lines, "- Do not spend another step paraphrasing the same plan or tradeoff.")
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+
+	lines = append(lines, "", "## Detected Repeated Interaction Loop")
 	if loop.PatternSize > 1 {
 		lines = append(lines, fmt.Sprintf("- A %d-step tool/result suffix pattern repeated %d times.", loop.PatternSize, loop.RepeatCount))
 	} else {

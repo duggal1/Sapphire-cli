@@ -2193,6 +2193,13 @@ func (a *sessionAgent) shouldActivateLongHorizon(call SessionAgentCall) bool {
 
 func buildTurnPolicy(call SessionAgentCall, currentSession session.Session, contextWindow int, longHorizonActive bool, postCompactionPending bool) tools.TurnPolicy {
 	policy := tools.DefaultTurnPolicy()
+	if isDirectReplyOnlyPrompt(call.Prompt, call.Attachments) {
+		policy.DirectResponseOnly = true
+		policy.AllowMemoryRead = false
+		policy.AllowMemoryWrite = false
+		policy.AllowAutoMemoryInjection = false
+		return policy
+	}
 
 	resumeOrPostCompaction := postCompactionPending || strings.TrimSpace(call.ResumePointID) != ""
 	contextStage := determineContextLoadStage(currentSession.PromptTokens+currentSession.CompletionTokens, contextWindow, resumeOrPostCompaction)
@@ -2204,6 +2211,38 @@ func buildTurnPolicy(call SessionAgentCall, currentSession session.Session, cont
 	policy.AllowMemoryWrite = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryWrite
 	policy.AllowAutoMemoryInjection = resumeOrPostCompaction || longHorizonActive || contextStage >= pmem.ContextLoadStage50 || explicitMemoryRead || explicitContinuity
 	return policy
+}
+
+func isDirectReplyOnlyPrompt(prompt string, attachments []message.Attachment) bool {
+	if len(attachments) > 0 {
+		return false
+	}
+	switch normalizePromptForPolicy(prompt) {
+	case "hi",
+		"hello",
+		"hello there",
+		"hey",
+		"hey there",
+		"thanks",
+		"thank you",
+		"thank you so much",
+		"thx",
+		"ok",
+		"okay",
+		"cool",
+		"nice",
+		"sounds good",
+		"got it",
+		"understood",
+		"good morning",
+		"good afternoon",
+		"good evening",
+		"how are you",
+		"what s up":
+		return true
+	default:
+		return false
+	}
 }
 
 func promptExplicitlyRequestsDurableMemory(prompt string) bool {

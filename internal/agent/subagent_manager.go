@@ -106,18 +106,24 @@ type subAgentRunner struct {
 	staleMisses          int
 	firstStaleObservedAt time.Time
 	lastPersistedAt      time.Time
+	lastPersistedStatus  subAgentStatus
 	turnTimeout          time.Duration
 	freshLaunch          bool
 	mu                   sync.Mutex
+	activeCount          int // cached active count for O(1) lookups
 }
 
 type subAgentRegistry struct {
-	mu     sync.Mutex
-	agents map[string]*subAgentRunner
+	mu          sync.Mutex
+	agents      map[string]*subAgentRunner
+	taskKeyIndex map[string]map[string]struct{} // parentSession -> set of taskKeys
 }
 
 func newSubAgentRegistry() *subAgentRegistry {
-	return &subAgentRegistry{agents: make(map[string]*subAgentRunner)}
+	return &subAgentRegistry{
+		agents:       make(map[string]*subAgentRunner),
+		taskKeyIndex: make(map[string]map[string]struct{}),
+	}
 }
 
 func (r *subAgentRegistry) upsert(agentID string, runner *subAgentRunner) {
@@ -129,6 +135,17 @@ func (r *subAgentRegistry) upsert(agentID string, runner *subAgentRunner) {
 		r.agents = make(map[string]*subAgentRunner)
 	}
 	r.agents[agentID] = runner
+	// Update task key index
+	runner.mu.Lock()
+	parentSession := runner.parentSession
+	taskKey := runner.assignment.TaskKey
+	runner.mu.Unlock()
+	if parentSession != "" && taskKey != "" {
+		if r.taskKeyIndex[parentSession] == nil {
+			r.taskKeyIndex[parentSession] = make(map[string]struct{})
+		}
+		r.taskKeyIndex[parentSession][taskKey] = struct{}{}
+	}
 	r.mu.Unlock()
 }
 
@@ -146,6 +163,21 @@ func (r *subAgentRegistry) delete(agentID string) {
 		return
 	}
 	r.mu.Lock()
+	// Clean task key index before removing agent
+	if runner, ok := r.agents[agentID]; ok {
+		runner.mu.Lock()
+		parentSession := runner.parentSession
+		taskKey := runner.assignment.TaskKey
+		runner.mu.Unlock()
+		if parentSession != "" && taskKey != "" {
+			if keys, ok := r.taskKeyIndex[parentSession]; ok {
+				delete(keys, taskKey)
+				if len(keys) == 0 {
+					delete(r.taskKeyIndex, parentSession)
+				}
+			}
+		}
+	}
 	delete(r.agents, agentID)
 	r.mu.Unlock()
 }
@@ -319,6 +351,7 @@ func (c *coordinator) transitionSubAgentSubmission(runner *subAgentRunner, submi
 	}
 	now := time.Now().UTC()
 	runner.mu.Lock()
+	wasActive := isSubAgentActiveStatus(runner.status)
 	submission := runner.submissions[submissionID]
 	if submission == nil {
 		submission = &subAgentSubmission{ID: submissionID}
@@ -340,9 +373,17 @@ func (c *coordinator) transitionSubAgentSubmission(runner *subAgentRunner, submi
 	runner.lastHeartbeat = now
 	runner.heartbeatContext = heartbeatContext
 	runner.assignment.UpdatedAt = now
+	parentSession := runner.parentSession
 	broker := runner.statusBroker
 	payload := runner.lifecycleEventLocked(submissionID, stage, "")
 	runner.mu.Unlock()
+
+	// Update active count cache on state transitions
+	if !wasActive && isSubAgentActiveStatus(status) {
+		c.adjustActiveSubAgentCount(parentSession, 1)
+	} else if wasActive && !isSubAgentActiveStatus(status) {
+		c.adjustActiveSubAgentCount(parentSession, -1)
+	}
 
 	publishSubAgentStatus(broker, status)
 	c.syncRunnerOrchestrationState(context.Background(), runner)
@@ -397,7 +438,6 @@ func (r *subAgentRunner) enqueue(prompt string, items []string) string {
 	r.staleMisses = 0
 	r.firstStaleObservedAt = time.Time{}
 	r.lastHeartbeat = time.Now().UTC()
-	r.lastPersistedAt = r.lastHeartbeat
 	r.heartbeatContext = "queued for execution"
 	r.assignment.UpdatedAt = time.Now()
 	broker := r.statusBroker
@@ -783,64 +823,83 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	}
 
 	writeScope := tools.NewWriteScope(workDir, normalizedManifest)
-	var agent SessionAgent
-	var err error
-	if c.subAgentFactory != nil {
-		stepStarted := time.Now()
-		agent, err = c.subAgentFactory(ctx, workDir, normalizedManifest, opts)
-		c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
-		if err != nil {
-			cleanup()
-			return "", "", err
-		}
-	} else {
-		agentKey := config.AgentCoder
-		if opts.AgentID != "" {
-			agentKey = opts.AgentID
-		}
-		agentCfg, ok := c.cfg.Agents[agentKey]
-		if !ok {
-			cleanup()
-			return "", "", fmt.Errorf("agent %q not configured", agentKey)
-		}
 
-		promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
-		if err != nil {
-			cleanup()
-			return "", "", err
-		}
-
-		override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort, promptText, decision)
-		if err != nil {
-			cleanup()
-			return "", "", err
-		}
-		stepStarted := time.Now()
-		agent, err = c.buildAgentWithWorkingDirOverrides(ctx, promptTemplate, agentCfg, true, workDir, override, writeScope)
-		c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
-		if err != nil {
-			cleanup()
-			return "", "", err
-		}
-		if len(opts.CustomTools) > 0 {
-			agent.SetTools(opts.CustomTools)
-		}
+	// Parallelize CPU-bound agent build with DB-bound session creation
+	type buildResult struct {
+		agent SessionAgent
+		err   error
 	}
+	buildCh := make(chan buildResult, 1)
+	go func() {
+		var agent SessionAgent
+		var err error
+		if c.subAgentFactory != nil {
+			stepStarted := time.Now()
+			agent, err = c.subAgentFactory(ctx, workDir, normalizedManifest, opts)
+			c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
+		} else {
+			agentKey := config.AgentCoder
+			if opts.AgentID != "" {
+				agentKey = opts.AgentID
+			}
+			agentCfg, ok := c.cfg.Agents[agentKey]
+			if !ok {
+				c.observeSubAgentLaunchStep("spawn.build_agent", time.Now())
+				buildCh <- buildResult{nil, fmt.Errorf("agent %q not configured", agentKey)}
+				return
+			}
+
+			promptTemplate, err := coderPrompt(promptpkg.WithWorkingDir(workDir))
+			if err != nil {
+				c.observeSubAgentLaunchStep("spawn.build_agent", time.Now())
+				buildCh <- buildResult{nil, err}
+				return
+			}
+
+			override, err := c.resolveSubAgentModelOverride(opts.Model, opts.ReasoningEffort, promptText, decision)
+			if err != nil {
+				c.observeSubAgentLaunchStep("spawn.build_agent", time.Now())
+				buildCh <- buildResult{nil, err}
+				return
+			}
+			stepStarted := time.Now()
+			agent, err = c.buildAgentWithWorkingDirOverrides(ctx, promptTemplate, agentCfg, true, workDir, override, writeScope)
+			c.observeSubAgentLaunchStep("spawn.build_agent", stepStarted)
+			if err != nil {
+				buildCh <- buildResult{nil, err}
+				return
+			}
+			if len(opts.CustomTools) > 0 {
+				agent.SetTools(opts.CustomTools)
+			}
+		}
+		buildCh <- buildResult{agent, err}
+	}()
 
 	title := opts.Title
 	if title == "" {
 		title = "Sub-Agent Session"
 	}
 
+	// Session creation runs in parallel with agent build
 	stepStarted := time.Now()
 	createCtx, cancel := context.WithTimeout(ctx, subAgentSessionCreateTimeout)
-	session, err := c.sessions.CreateTaskSession(createCtx, agentID, parentSessionID, title)
+	session, sessionErr := c.sessions.CreateTaskSession(createCtx, agentID, parentSessionID, title)
 	cancel()
 	c.observeSubAgentLaunchStep("spawn.create_session", stepStarted)
-	if err != nil {
+
+	// Wait for agent build to complete
+	buildRes := <-buildCh
+	if buildRes.err != nil {
 		cleanup()
-		return "", "", fmt.Errorf("create sub-agent session: %w", err)
+		return "", "", buildRes.err
 	}
+	if sessionErr != nil {
+		cleanup()
+		return "", "", fmt.Errorf("create sub-agent session: %w", sessionErr)
+	}
+
+	agent := buildRes.agent
 	meta := subAgentMetadata{
 		AssignmentID:     assignment.ID,
 		WriteManifest:    normalizedManifest,
@@ -886,6 +945,7 @@ func (c *coordinator) spawnSubAgent(ctx context.Context, parentSessionID string,
 	}
 
 	c.ensureSubAgentRegistry().upsert(agentID, runner)
+	c.adjustActiveSubAgentCount(parentSessionID, 1)
 	c.assignRunnerHook(context.Background(), runner)
 	if c.supervisor != nil {
 		if snapshot, ok := c.supervisorRuntimeSnapshot(runner.id); ok {
@@ -1018,7 +1078,7 @@ func (c *coordinator) runSubAgentLoop(runner *subAgentRunner) {
 
 			var validationReport string
 			if workDir != "" && isSubAgentWorktree(workDir) {
-				vCtx, vCancel := context.WithTimeout(context.Background(), validationBuildTimeout+validationTestTimeout+validationLintTimeout+validationSecurityTimeout+validationGateTimeout)
+				vCtx, vCancel := context.WithTimeout(context.Background(), validationTestTimeout)
 				vResult := validateWorktreeResult(vCtx, workDir, branch, testCommand)
 				vCancel()
 				validationReport = formatValidationReport(vResult)
@@ -1616,6 +1676,8 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 	workDir := runner.workDir
 	taskSlug := runner.assignment.TaskKey
 	status := runner.status
+	parentSession := runner.parentSession
+	wasActive := isSubAgentActiveStatus(status)
 	runner.mu.Unlock()
 
 	if workDir != "" && isSubAgentWorktree(workDir) {
@@ -1634,6 +1696,9 @@ func (c *coordinator) closeSubAgent(agentID string) error {
 	}
 
 	runner.close()
+	if wasActive {
+		c.adjustActiveSubAgentCount(parentSession, -1)
+	}
 	c.syncRunnerOrchestrationState(context.Background(), runner)
 	if status == subAgentStatusCompleted || status == subAgentStatusClosed {
 		c.clearRunnerHook(context.Background(), runner)
@@ -1684,14 +1749,17 @@ func (c *coordinator) forkSubAgentContext(ctx context.Context, parentSessionID, 
 		return err
 	}
 
-	_, _ = c.messages.Create(forkCtx, childSessionID, message.CreateMessageParams{
+	// Build all messages first, then batch-insert
+	var batchParams []message.CreateMessageParams
+
+	batchParams = append(batchParams, message.CreateMessageParams{
 		Role: message.System,
 		Parts: []message.ContentPart{
 			message.TextContent{Text: "Forked context snapshot from parent session. Tool history and reasoning state are intentionally excluded to keep the fork isolated."},
 		},
 	})
 	if rules := persistmemory.RenderPreventionRulesBlock(c.cfg.WorkingDir(), 12); rules != "" {
-		_, _ = c.messages.Create(forkCtx, childSessionID, message.CreateMessageParams{
+		batchParams = append(batchParams, message.CreateMessageParams{
 			Role: message.System,
 			Parts: []message.ContentPart{
 				message.TextContent{Text: rules},
@@ -1729,13 +1797,44 @@ func (c *coordinator) forkSubAgentContext(ctx context.Context, parentSessionID, 
 	}
 
 	for _, msg := range preload {
-		if err := c.copyMessageTextParts(forkCtx, childSessionID, msg); err != nil {
-			return err
+		parts := extractMessageTextParts(msg)
+		if len(parts) == 0 {
+			continue
 		}
+		batchParams = append(batchParams, message.CreateMessageParams{
+			Role:             msg.Role,
+			Parts:            parts,
+			Model:            msg.Model,
+			Provider:         msg.Provider,
+			IsSummaryMessage: msg.IsSummaryMessage,
+		})
 	}
 	for _, msg := range filtered {
-		if err := c.copyMessageTextParts(forkCtx, childSessionID, msg); err != nil {
-			return err
+		parts := extractMessageTextParts(msg)
+		if len(parts) == 0 {
+			continue
+		}
+		batchParams = append(batchParams, message.CreateMessageParams{
+			Role:             msg.Role,
+			Parts:            parts,
+			Model:            msg.Model,
+			Provider:         msg.Provider,
+			IsSummaryMessage: msg.IsSummaryMessage,
+		})
+	}
+
+	// Batch insert all messages in a single transaction
+	if len(batchParams) > 0 {
+		if batcher, ok := c.messages.(interface {
+			CreateBatch(ctx context.Context, sessionID string, params []message.CreateMessageParams) error
+		}); ok {
+			return batcher.CreateBatch(forkCtx, childSessionID, batchParams)
+		}
+		// Fallback: sequential insert if batch not supported
+		for _, params := range batchParams {
+			if _, err := c.messages.Create(forkCtx, childSessionID, params); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

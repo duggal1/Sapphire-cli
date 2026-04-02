@@ -47,6 +47,21 @@ func makeEmptyStep() fantasy.StepResult {
 	}
 }
 
+func makeReasoningStep(reasoning, text string) fantasy.StepResult {
+	var content fantasy.ResponseContent
+	if reasoning != "" {
+		content = append(content, fantasy.ReasoningContent{Text: reasoning})
+	}
+	if text != "" {
+		content = append(content, fantasy.TextContent{Text: text})
+	}
+	return fantasy.StepResult{
+		Response: fantasy.Response{
+			Content: content,
+		},
+	}
+}
+
 func TestHasRepeatedToolCalls(t *testing.T) {
 	t.Run("no steps", func(t *testing.T) {
 		result := hasRepeatedToolCalls(nil, 10, 5)
@@ -250,6 +265,80 @@ func TestDetectRepeatedToolCallsSkipsPartialSuffixPattern(t *testing.T) {
 
 	if loop, ok := detectRepeatedToolCalls(steps, 10, 5); ok {
 		t.Fatalf("did not expect partial suffix pattern loop, got %#v", loop)
+	}
+}
+
+func TestDetectRepeatedToolCallsDetectsRepeatedReasoning(t *testing.T) {
+	t.Parallel()
+
+	reasoning := "We should keep the same architecture because it looks balanced across migration cost, simplicity, and validation burden, even though we have not gathered new evidence from the repo."
+	text := "The current best option is still the same architecture because the tradeoffs still appear favorable without any new repository evidence."
+	steps := []fantasy.StepResult{
+		makeReasoningStep(reasoning, text),
+		makeReasoningStep(reasoning, text),
+		makeReasoningStep(reasoning, text),
+		makeReasoningStep(reasoning, text),
+	}
+
+	loop, ok := detectRepeatedToolCalls(steps, 10, 5)
+	if !ok {
+		t.Fatal("expected repeated reasoning loop")
+	}
+	if loop.LoopSource != "reasoning" {
+		t.Fatalf("unexpected loop source: %q", loop.LoopSource)
+	}
+	if loop.RepeatCount != 4 {
+		t.Fatalf("unexpected repeat count: %d", loop.RepeatCount)
+	}
+	if loop.Summary == "" {
+		t.Fatal("expected reasoning loop summary")
+	}
+}
+
+func TestDetectRepeatedToolCallsDetectsReasoningSuffixPattern(t *testing.T) {
+	t.Parallel()
+
+	reasoningA := "We should preserve the current event pipeline because it minimizes surface-area change, but we still need stronger repo evidence and should stop restating this point without new proof."
+	textA := "Option A still looks safer because it keeps the existing event flow and avoids widening the blast radius before validation."
+	reasoningB := "We should instead replace the current path with a narrower architecture because the previous design keeps failing, but we still need real evidence and should not keep recycling this conclusion."
+	textB := "Option B still looks cleaner because it simplifies the path, but repeating this conclusion without new evidence is not progress."
+
+	steps := []fantasy.StepResult{
+		makeReasoningStep(reasoningA, textA),
+		makeReasoningStep(reasoningB, textB),
+		makeReasoningStep(reasoningA, textA),
+		makeReasoningStep(reasoningB, textB),
+		makeReasoningStep(reasoningA, textA),
+		makeReasoningStep(reasoningB, textB),
+	}
+
+	loop, ok := detectRepeatedToolCalls(steps, 10, 5)
+	if !ok {
+		t.Fatal("expected reasoning suffix pattern loop")
+	}
+	if loop.LoopSource != "reasoning" {
+		t.Fatalf("unexpected loop source: %q", loop.LoopSource)
+	}
+	if loop.PatternSize != 2 {
+		t.Fatalf("unexpected pattern size: %d", loop.PatternSize)
+	}
+	if loop.RepeatCount != 3 {
+		t.Fatalf("unexpected repeat count: %d", loop.RepeatCount)
+	}
+}
+
+func TestDetectRepeatedToolCallsSkipsShortReasoning(t *testing.T) {
+	t.Parallel()
+
+	steps := []fantasy.StepResult{
+		makeReasoningStep("", "same thought"),
+		makeReasoningStep("", "same thought"),
+		makeReasoningStep("", "same thought"),
+		makeReasoningStep("", "same thought"),
+	}
+
+	if loop, ok := detectRepeatedToolCalls(steps, 10, 5); ok {
+		t.Fatalf("did not expect short reasoning loop, got %#v", loop)
 	}
 }
 

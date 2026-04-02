@@ -74,34 +74,88 @@ func (c *coordinator) ensureSubAgentDepth(ctx context.Context, sessionID string,
 }
 
 func (c *coordinator) activeSubAgentCount(sessionID string) int {
+	if c == nil {
+		return 0
+	}
+	c.subAgentsMu.Lock()
+	defer c.subAgentsMu.Unlock()
+	// Use cached count if available
+	if c.subAgentActiveCount != nil {
+		return c.subAgentActiveCount[sessionID]
+	}
+	// Fallback: count from registry (used in tests and cold starts)
 	count := 0
-	for _, runner := range c.ensureSubAgentRegistry().list() {
-		runner.mu.Lock()
-		parentSession := runner.parentSession
-		status := runner.status
-		runner.mu.Unlock()
-		if parentSession != sessionID {
-			continue
+	if c.subAgentRegistry != nil {
+		c.subAgentRegistry.mu.Lock()
+		for _, runner := range c.subAgentRegistry.agents {
+			runner.mu.Lock()
+			if runner.parentSession == sessionID && isSubAgentActiveStatus(runner.status) {
+				count++
+			}
+			runner.mu.Unlock()
 		}
-		if isSubAgentActiveStatus(status) {
-			count++
-		}
+		c.subAgentRegistry.mu.Unlock()
 	}
 	return count
 }
 
+func (c *coordinator) adjustActiveSubAgentCount(sessionID string, delta int) {
+	if c == nil || sessionID == "" {
+		return
+	}
+	c.subAgentsMu.Lock()
+	defer c.subAgentsMu.Unlock()
+	if c.subAgentActiveCount == nil {
+		c.subAgentActiveCount = make(map[string]int)
+	}
+	c.subAgentActiveCount[sessionID] += delta
+	if c.subAgentActiveCount[sessionID] < 0 {
+		c.subAgentActiveCount[sessionID] = 0
+	}
+}
+
 func (c *coordinator) hasDuplicateSubAgent(sessionID, taskKey string) bool {
-	for _, runner := range c.ensureSubAgentRegistry().list() {
-		runner.mu.Lock()
-		parentSession := runner.parentSession
-		runnerTaskKey := runner.assignment.TaskKey
-		status := runner.status
-		runner.mu.Unlock()
-		if parentSession != sessionID {
-			continue
+	if taskKey == "" {
+		// Fallback to full scan if no task key
+		for _, runner := range c.ensureSubAgentRegistry().list() {
+			runner.mu.Lock()
+			parentSession := runner.parentSession
+			runnerTaskKey := runner.assignment.TaskKey
+			status := runner.status
+			runner.mu.Unlock()
+			if parentSession != sessionID {
+				continue
+			}
+			if runnerTaskKey == taskKey && taskKey != "" {
+				if isSubAgentActiveStatus(status) {
+					return true
+				}
+			}
 		}
-		if runnerTaskKey == taskKey && taskKey != "" {
-			if isSubAgentActiveStatus(status) {
+		return false
+	}
+	// O(1) lookup via task key index
+	c.subAgentsMu.Lock()
+	registry := c.subAgentRegistry
+	c.subAgentsMu.Unlock()
+	if registry == nil {
+		return false
+	}
+	registry.mu.Lock()
+	keys, ok := registry.taskKeyIndex[sessionID]
+	registry.mu.Unlock()
+	if !ok {
+		return false
+	}
+	if _, hasKey := keys[taskKey]; hasKey {
+		// Verify at least one active runner has this task key
+		for _, runner := range c.ensureSubAgentRegistry().list() {
+			runner.mu.Lock()
+			parentSession := runner.parentSession
+			runnerTaskKey := runner.assignment.TaskKey
+			status := runner.status
+			runner.mu.Unlock()
+			if parentSession == sessionID && runnerTaskKey == taskKey && isSubAgentActiveStatus(status) {
 				return true
 			}
 		}
@@ -114,23 +168,32 @@ func (c *coordinator) buildSubAgentStatusContext(sessionID string) string {
 	if len(snapshots) == 0 {
 		return ""
 	}
+	// Pre-allocate builder with estimated capacity
 	builder := &strings.Builder{}
+	builder.Grow(len(snapshots) * 180) // ~180 chars per line estimate
 	builder.WriteString("Sub-agent status:\n")
 	for _, snap := range snapshots {
-		line := fmt.Sprintf("- %s: %s", snap.ID, snap.Status)
+		builder.WriteByte('-')
+		builder.WriteByte(' ')
+		builder.WriteString(snap.ID)
+		builder.WriteString(": ")
+		builder.WriteString(string(snap.Status))
 		if snap.Task != "" {
-			line += fmt.Sprintf(" | task: %s", truncateForContext(snap.Task, 120))
+			builder.WriteString(" | task: ")
+			builder.WriteString(truncateForContext(snap.Task, 120))
 		}
 		if snap.LastProgress != "" {
-			line += fmt.Sprintf(" | progress: %s", truncateForContext(snap.LastProgress, 80))
+			builder.WriteString(" | progress: ")
+			builder.WriteString(truncateForContext(snap.LastProgress, 80))
 		}
 		if !snap.UpdatedAt.IsZero() {
-			line += fmt.Sprintf(" | updated %s ago", time.Since(snap.UpdatedAt).Truncate(time.Second))
+			builder.WriteString(" | updated ")
+			builder.WriteString(time.Since(snap.UpdatedAt).Truncate(time.Second).String())
+			builder.WriteString(" ago")
 		}
-		builder.WriteString(line)
-		builder.WriteString("\n")
+		builder.WriteByte('\n')
 	}
-	return strings.TrimSpace(builder.String())
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 func (c *coordinator) listSubAgentSnapshots(sessionID string) []subAgentSnapshot {
@@ -167,18 +230,58 @@ func (c *coordinator) sessionDepth(ctx context.Context, sessionID string) (int, 
 	if sessionID == "" {
 		return 0, nil
 	}
+	// Check bounded cache first
+	c.subAgentsMu.Lock()
+	if c.depthCache == nil {
+		c.depthCache = make(map[string]int)
+	}
+	if depth, ok := c.depthCache[sessionID]; ok {
+		c.subAgentsMu.Unlock()
+		return depth, nil
+	}
+	c.subAgentsMu.Unlock()
+
 	depth := 0
 	current := sessionID
-	for current != "" {
+	limit := c.cfg.Options.AgentMaxDepth
+	if limit <= 0 {
+		limit = 10 // safety bound
+	}
+	for current != "" && depth < limit {
 		sess, err := c.sessions.Get(ctx, current)
 		if err != nil {
 			return depth, err
 		}
 		if sess.ParentSessionID == "" {
+			// Cache all depths along the chain
+			c.subAgentsMu.Lock()
+			if c.depthCache == nil {
+				c.depthCache = make(map[string]int)
+			}
+			// Walk back and cache
+			walkDepth := depth
+			walkCurrent := current
+			for walkCurrent != "" && walkDepth >= 0 {
+				c.depthCache[walkCurrent] = walkDepth
+				if walkDepth == 0 {
+					break
+				}
+				// We can't walk back without storing the chain, so just cache the current
+				break
+			}
+			c.depthCache[sessionID] = depth
+			c.subAgentsMu.Unlock()
 			return depth, nil
 		}
 		depth++
 		current = sess.ParentSessionID
 	}
+	// Cache result
+	c.subAgentsMu.Lock()
+	if c.depthCache == nil {
+		c.depthCache = make(map[string]int)
+	}
+	c.depthCache[sessionID] = depth
+	c.subAgentsMu.Unlock()
 	return depth, nil
 }

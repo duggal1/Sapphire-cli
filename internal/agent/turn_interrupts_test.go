@@ -46,6 +46,21 @@ func TestRepeatedToolLoopErrorDescribesSuffixPattern(t *testing.T) {
 	}
 }
 
+func TestRepeatedToolLoopErrorDescribesReasoningLoop(t *testing.T) {
+	t.Parallel()
+
+	err := &repeatedToolLoopError{loop: repeatedToolLoop{
+		RepeatCount: 4,
+		WindowSize:  4,
+		LoopSource:  "reasoning",
+		Summary:     "the current best option is still the same architecture because the tradeoffs still appear favorable without any new repository evidence.",
+	}}
+
+	if got := err.Error(); got == "" || !strings.Contains(got, "repeated reasoning-path loop detected") || !strings.Contains(got, "repeated analysis sample") {
+		t.Fatalf("unexpected reasoning-loop error: %q", got)
+	}
+}
+
 func TestMaxStepsPerTurn(t *testing.T) {
 	t.Parallel()
 

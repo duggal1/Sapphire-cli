@@ -1860,6 +1860,33 @@ func TestPrepareToolCallRejectsBareRepoMemoryAliasPaths(t *testing.T) {
 	require.Contains(t, err.Error(), ".sapphire-memory/memory_summary.md")
 }
 
+func TestPrepareToolCallBlocksToolsWhenTurnIsDirectResponseOnly(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
+		DirectResponseOnly:       true,
+		AllowMemoryRead:          false,
+		AllowMemoryWrite:         false,
+		AllowAutoMemoryInjection: false,
+	})
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "casual-1",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":"README.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: viewTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "casual conversation only")
+}
+
 func TestPrepareToolCallDoesNotRewriteSingleAgenticViewToView(t *testing.T) {
 	t.Parallel()
 

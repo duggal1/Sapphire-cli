@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,8 +34,9 @@ type validationResult struct {
 }
 
 // validateWorktreeResult runs the validation gate on a completed sub-agent worktree.
-// It diffs against the base branch, runs build, and optionally runs a test command.
-// Validation is best-effort and never blocks — it returns a report even on failure.
+// It diffs against the base branch, then runs build, test, lint, and security checks
+// in parallel (they are independent). Validation is best-effort and never blocks —
+// it returns a report even on failure.
 func validateWorktreeResult(ctx context.Context, worktreeDir, baseBranch, testCommand string) validationResult {
 	result := validationResult{Passed: true}
 
@@ -62,88 +66,176 @@ func validateWorktreeResult(ctx context.Context, worktreeDir, baseBranch, testCo
 		}
 	}
 
+	// Early exit: zero changes means no further validation needed
+	if !result.HasChanges {
+		result.BuildOutput = "no build command detected"
+		result.TestOutput = "no test command detected"
+		result.LintOutput = "no lint command detected"
+		result.SecurityOutput = "no security command detected"
+		return result
+	}
+
+	// Phases 2-5: Run build, test, lint, security in parallel
+	// Use max individual timeout since they run concurrently
+	vCtx, vCancel := context.WithTimeout(ctx, validationTestTimeout)
+	defer vCancel()
+	type checkResult struct {
+		passed bool
+		output string
+		errMsg string
+		check  string // "build", "test", "lint", "security"
+	}
+	checkCh := make(chan checkResult, 4)
+	var checkWg sync.WaitGroup
+
 	// Phase 2: Build verification
 	buildCmd := detectBuildCommand(worktreeDir)
 	if buildCmd != "" {
-		buildCtx, buildCancel := context.WithTimeout(ctx, validationBuildTimeout)
-		defer buildCancel()
-		buildOut, buildErr := runWorktreeShellCommand(buildCtx, worktreeDir, buildCmd)
-		if buildErr != nil {
-			result.Passed = false
-			result.BuildOutput = truncateOutput(buildOut, 2000)
-			if result.Errors == "" {
-				result.Errors = fmt.Sprintf("build failed: %s", buildErr)
+		checkWg.Add(1)
+		go func() {
+			defer checkWg.Done()
+			buildCtx, buildCancel := context.WithTimeout(vCtx, validationBuildTimeout)
+			defer buildCancel()
+			buildOut, buildErr := runWorktreeShellCommand(buildCtx, worktreeDir, buildCmd)
+			checkCh <- checkResult{
+				passed: buildErr == nil,
+				output: firstNonEmptyString(buildOut, "build passed"),
+				errMsg: func() string {
+					if buildErr != nil {
+						return fmt.Sprintf("build failed: %s", buildErr)
+					}
+					return ""
+				}(),
+				check: "build",
 			}
-		} else {
-			result.BuildOutput = "build passed"
-		}
-	} else {
-		result.BuildOutput = "no build command detected"
+		}()
 	}
 
-	// Phase 3: Test verification (optional)
-	testCmd := strings.TrimSpace(testCommand)
-	if testCmd == "" {
-		testCmd = detectTestCommand(worktreeDir)
+	// Phase 3: Test verification
+	effectiveTestCmd := strings.TrimSpace(testCommand)
+	if effectiveTestCmd == "" {
+		effectiveTestCmd = detectTestCommand(worktreeDir)
 	}
-	if testCmd != "" {
-		testCtx, testCancel := context.WithTimeout(ctx, validationTestTimeout)
-		defer testCancel()
-		testOut, testErr := runWorktreeShellCommand(testCtx, worktreeDir, testCmd)
-		if testErr != nil {
-			result.Passed = false
-			result.TestOutput = truncateOutput(testOut, 2000)
-			if result.Errors == "" {
-				result.Errors = fmt.Sprintf("tests failed: %s", testErr)
-			} else {
-				result.Errors += fmt.Sprintf("; tests failed: %s", testErr)
+	if effectiveTestCmd != "" {
+		checkWg.Add(1)
+		go func() {
+			defer checkWg.Done()
+			testCtx, testCancel := context.WithTimeout(vCtx, validationTestTimeout)
+			defer testCancel()
+			testOut, testErr := runWorktreeShellCommand(testCtx, worktreeDir, effectiveTestCmd)
+			checkCh <- checkResult{
+				passed: testErr == nil,
+				output: firstNonEmptyString(testOut, "tests passed"),
+				errMsg: func() string {
+					if testErr != nil {
+						return fmt.Sprintf("tests failed: %s", testErr)
+					}
+					return ""
+				}(),
+				check: "test",
 			}
-		} else {
-			result.TestOutput = "tests passed"
-		}
-	} else {
-		result.TestOutput = "no test command detected"
+		}()
 	}
 
-	// Phase 4: Lint verification (optional)
+	// Phase 4: Lint verification
 	lintCmd := detectLintCommand(worktreeDir)
 	if lintCmd != "" {
-		lintCtx, lintCancel := context.WithTimeout(ctx, validationLintTimeout)
-		defer lintCancel()
-		lintOut, lintErr := runWorktreeShellCommand(lintCtx, worktreeDir, lintCmd)
-		if lintErr != nil {
-			result.Passed = false
-			result.LintOutput = truncateOutput(lintOut, 2000)
-			if result.Errors == "" {
-				result.Errors = fmt.Sprintf("lint failed: %s", lintErr)
-			} else {
-				result.Errors += fmt.Sprintf("; lint failed: %s", lintErr)
+		checkWg.Add(1)
+		go func() {
+			defer checkWg.Done()
+			lintCtx, lintCancel := context.WithTimeout(vCtx, validationLintTimeout)
+			defer lintCancel()
+			lintOut, lintErr := runWorktreeShellCommand(lintCtx, worktreeDir, lintCmd)
+			checkCh <- checkResult{
+				passed: lintErr == nil,
+				output: firstNonEmptyString(lintOut, "lint passed"),
+				errMsg: func() string {
+					if lintErr != nil {
+						return fmt.Sprintf("lint failed: %s", lintErr)
+					}
+					return ""
+				}(),
+				check: "lint",
 			}
-		} else {
-			result.LintOutput = "lint passed"
-		}
-	} else {
-		result.LintOutput = "no lint command detected"
+		}()
 	}
 
-	// Phase 5: Security verification (optional)
+	// Phase 5: Security verification
 	securityCmd := detectSecurityCommand(worktreeDir)
 	if securityCmd != "" {
-		secCtx, secCancel := context.WithTimeout(ctx, validationSecurityTimeout)
-		defer secCancel()
-		secOut, secErr := runWorktreeShellCommand(secCtx, worktreeDir, securityCmd)
-		if secErr != nil {
-			result.Passed = false
-			result.SecurityOutput = truncateOutput(secOut, 2000)
-			if result.Errors == "" {
-				result.Errors = fmt.Sprintf("security scan failed: %s", secErr)
-			} else {
-				result.Errors += fmt.Sprintf("; security scan failed: %s", secErr)
+		checkWg.Add(1)
+		go func() {
+			defer checkWg.Done()
+			secCtx, secCancel := context.WithTimeout(vCtx, validationSecurityTimeout)
+			defer secCancel()
+			secOut, secErr := runWorktreeShellCommand(secCtx, worktreeDir, securityCmd)
+			checkCh <- checkResult{
+				passed: secErr == nil,
+				output: firstNonEmptyString(secOut, "security scan passed"),
+				errMsg: func() string {
+					if secErr != nil {
+						return fmt.Sprintf("security scan failed: %s", secErr)
+					}
+					return ""
+				}(),
+				check: "security",
 			}
-		} else {
-			result.SecurityOutput = "security scan passed"
+		}()
+	}
+
+	// Close channel when all checks complete
+	go func() {
+		checkWg.Wait()
+		close(checkCh)
+	}()
+
+	// Collect results
+	var errors []string
+	for cr := range checkCh {
+		switch cr.check {
+		case "build":
+			result.BuildOutput = truncateOutput(cr.output, 2000)
+			if !cr.passed {
+				result.Passed = false
+				errors = append(errors, cr.errMsg)
+			}
+		case "test":
+			result.TestOutput = truncateOutput(cr.output, 2000)
+			if !cr.passed {
+				result.Passed = false
+				errors = append(errors, cr.errMsg)
+			}
+		case "lint":
+			result.LintOutput = truncateOutput(cr.output, 2000)
+			if !cr.passed {
+				result.Passed = false
+				errors = append(errors, cr.errMsg)
+			}
+		case "security":
+			result.SecurityOutput = truncateOutput(cr.output, 2000)
+			if !cr.passed {
+				result.Passed = false
+				errors = append(errors, cr.errMsg)
+			}
 		}
-	} else {
+	}
+	if result.Errors == "" && len(errors) > 0 {
+		result.Errors = strings.Join(errors, "; ")
+	} else if len(errors) > 0 {
+		result.Errors += "; " + strings.Join(errors, "; ")
+	}
+
+	// Set defaults for checks that had no command
+	if result.BuildOutput == "" {
+		result.BuildOutput = "no build command detected"
+	}
+	if result.TestOutput == "" {
+		result.TestOutput = "no test command detected"
+	}
+	if result.LintOutput == "" {
+		result.LintOutput = "no lint command detected"
+	}
+	if result.SecurityOutput == "" {
 		result.SecurityOutput = "no security command detected"
 	}
 
@@ -284,10 +376,10 @@ func detectSecurityCommand(worktreeDir string) string {
 	return ""
 }
 
-// fileExists checks if a file exists in the given directory.
+// fileExists checks if a file exists in the given directory using os.Stat
+// instead of spawning a subprocess (much faster).
 func fileExists(dir, name string) bool {
-	info, err := exec.Command("test", "-f", dir+"/"+name).CombinedOutput()
-	_ = info
+	_, err := os.Stat(filepath.Join(dir, name))
 	return err == nil
 }
 

@@ -46,3 +46,15 @@ func TestBuildTurnPolicyKeepsMemoryOffOnNormalShortHorizonTurn(t *testing.T) {
 		t.Fatalf("expected durable memory to stay off on a normal short-horizon turn, got %+v", policy)
 	}
 }
+
+func TestBuildTurnPolicyMarksTrivialSocialTurnsDirectResponseOnly(t *testing.T) {
+	t.Parallel()
+
+	policy := buildTurnPolicy(SessionAgentCall{Prompt: "hi"}, session.Session{}, 100000, false, false)
+	if !policy.DirectResponseOnly {
+		t.Fatalf("expected trivial social turn to be direct-response-only, got %+v", policy)
+	}
+	if policy.AllowMemoryRead || policy.AllowMemoryWrite || policy.AllowAutoMemoryInjection {
+		t.Fatalf("expected trivial social turn to keep memory disabled, got %+v", policy)
+	}
+}

@@ -28,6 +28,7 @@ const (
 	maxStructuredEntries    = 6
 	maxLongHorizonChars     = 2800
 	subAgentLaunchMemoryTTL = 5 * time.Second
+	orchestrationSyncDebounce = 2 * time.Second // debounce rapid state transitions
 )
 
 type subAgentLaunchMemoryCacheEntry struct {
@@ -99,9 +100,17 @@ func (c *coordinator) syncRunnerOrchestrationState(ctx context.Context, runner *
 		return
 	}
 	runner.mu.Lock()
+	now := time.Now().UTC()
+	// Debounce: skip only if we persisted recently AND status hasn't changed
+	if !runner.lastPersistedAt.IsZero() && now.Sub(runner.lastPersistedAt) < orchestrationSyncDebounce && runner.status == runner.lastPersistedStatus {
+		runner.mu.Unlock()
+		return
+	}
+	runner.lastPersistedAt = now
+	runner.lastPersistedStatus = runner.status
 	lastHeartbeat := runner.lastHeartbeat
 	if lastHeartbeat.IsZero() {
-		lastHeartbeat = time.Now().UTC()
+		lastHeartbeat = now
 	}
 	state := orchestrationdb.AgentState{
 		AgentID:       runner.id,

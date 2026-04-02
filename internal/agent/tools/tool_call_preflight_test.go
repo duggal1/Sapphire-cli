@@ -1435,6 +1435,28 @@ func TestPrepareToolCallRewritesLateBroadImplementationDiscoveryToVerificationRe
 	require.Contains(t, prepared.Input, `"/repo/internal/platform/runtime.go"`)
 }
 
+func TestShouldForceLateImplementationExecutionFocusWithoutWrites(t *testing.T) {
+	t.Parallel()
+
+	usage := NewToolUsageState()
+	usage.MarkReadEvidence("/repo/internal/platform/runtime.go")
+	usage.MarkPlanPublished()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.Increment(UpdatePlanToolName)
+	usage.Increment(GrepToolName)
+	usage.RecordDeterministicToolCall(ToolSearchToolName)
+	usage.RecordDeterministicToolCall(AgenticViewToolName)
+	usage.RecordDeterministicRead("/repo/internal/platform/runtime.go")
+	usage.RecordDeterministicRead("/repo/internal/platform/runtime.go")
+
+	ctx := context.WithValue(context.Background(), TurnStepOrdinalContextKey, 9)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	require.True(t, shouldForceLateImplementationExecutionFocus(ctx, usage))
+}
+
 func TestPrepareToolCallRewritesLateBroadImplementationEditChurnToVerificationRead(t *testing.T) {
 	t.Parallel()
 

@@ -317,9 +317,6 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 				}
 				return fmt.Errorf("agent processing failed: %w", result.err)
 			}
-			if !printed {
-				fmt.Fprint(output, "Done.")
-			}
 			return nil
 
 		case event := <-messageEvents:

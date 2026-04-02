@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
@@ -189,7 +190,7 @@ func loginCopilot(cfg *config.Config) error {
 }
 
 func getLoginContext() context.Context {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ctx.Done()
 		cancel()

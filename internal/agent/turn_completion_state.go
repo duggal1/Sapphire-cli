@@ -9,6 +9,7 @@ const (
 	headlessClosureModeNormal                   = "normal"
 	headlessClosureModeForcedFinalize           = "forced_finalize"
 	headlessClosureModeSalvagedGroundedAnalysis = "salvaged_grounded_analysis"
+	headlessClosureModeWatchdogRejected         = "watchdog_rejected"
 )
 
 type turnCompletionMetadata struct {

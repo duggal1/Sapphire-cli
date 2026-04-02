@@ -789,6 +789,9 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if learnedFamily.ID == "" {
 		learnedFamily = classifyLearnedTaskFamily(env.userPrompt)
 	}
+	if strings.TrimSpace(learnedToolPolicy.TaskFamily) == "" {
+		learnedToolPolicy.TaskFamily = learnedFamily.ID
+	}
 	if shouldInjectSingularityCognitiveContract(env.userPrompt, learnedFamily) {
 		skillContext = appendSkillContext(skillContext, renderSingularityCognitiveContract(buildSingularityCognitiveProfile(env.userPrompt, learnedFamily)))
 	}
@@ -909,26 +912,136 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if c.singularity != nil {
 		c.singularity.StartTurnWithModeAndModel(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode, env.model.ModelCfg)
 	}
-	result, err := agent.Run(ctx, call)
+	finishTrackedTurnSync := func(status, resultSummary string, meta turnCompletionMetadata) {
+		if c.singularity == nil {
+			return
+		}
+		trace := c.singularity.FinishTurnWithMetadata(env.sessionID, status, resultSummary, meta)
+		if trace == nil {
+			return
+		}
+		if err := c.singularity.CompileTurnSync(context.WithoutCancel(ctx), trace); err != nil {
+			slog.Warn("Failed to persist singularity turn audit", "session_id", env.sessionID, "status", status, "error", err)
+		}
+	}
+	finalizeHeadlessWatchdogOutcome := func(reason string, canceled bool) (*fantasy.AgentResult, error) {
+		c.Cancel(env.sessionID)
+		auditCtx := context.WithoutCancel(ctx)
+		resultText := c.extractSingularityResultText(auditCtx, env.sessionID, nil)
+		taskFamily := strings.TrimSpace(call.LearnedToolPolicy.TaskFamily)
+		phase := inferHeadlessWatchdogPhase(taskFamily, resultText)
+		switch {
+		case canceled:
+			summary := "headless turn canceled before terminalization; Sapphire persisted a rejected audit instead of allowing the turn to disappear without evidence"
+			meta := turnCompletionMetadata{
+				ClosureMode:      headlessClosureModeWatchdogRejected,
+				PhaseAtInterrupt: phase,
+			}
+			finishTrackedTurnSync("error", summary, meta)
+			if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+				c.worktreeManager.MarkStatusByPath(auditCtx, workingDir, "broken")
+			}
+			c.recordOrchestrationActivity(auditCtx, mainAgentID, "main_turn_error", map[string]any{
+				"session_id": env.sessionID,
+				"error":      summary,
+			})
+			c.writeSessionCheckpoint(auditCtx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, summary, "error", nil))
+			return nil, ErrRequestCancelled
+		case shouldWatchdogFinalizeAnalysis(taskFamily, resultText):
+			meta := turnCompletionMetadata{
+				ClosureMode:      headlessClosureModeForcedFinalize,
+				PhaseAtInterrupt: phase,
+			}
+			finishTrackedTurnSync("completed", resultText, meta)
+			c.mainWorktreeBranch = branch
+			if c.pmem != nil {
+				c.pmem.RecordAssistantTurn(auditCtx, env.sessionID, resultText)
+			}
+			if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+				c.worktreeManager.MarkStatusByPath(auditCtx, workingDir, "ready")
+			}
+			c.recordOrchestrationActivity(auditCtx, mainAgentID, "main_turn_completed", map[string]any{
+				"session_id": env.sessionID,
+				"forced":     true,
+				"reason":     reason,
+			})
+			c.writeSessionCheckpoint(auditCtx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, resultText, "completed", map[string]any{
+				"forced": true,
+				"reason": reason,
+			}))
+			return buildHeadlessWatchdogResult(resultText), nil
+		default:
+			summary := fmt.Sprintf("%s; Sapphire canceled the turn and persisted a rejected audit instead of allowing the run to hang without evidence", reason)
+			meta := turnCompletionMetadata{
+				ClosureMode:      headlessClosureModeWatchdogRejected,
+				PhaseAtInterrupt: phase,
+			}
+			finishTrackedTurnSync("error", summary, meta)
+			if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+				c.worktreeManager.MarkStatusByPath(auditCtx, workingDir, "broken")
+			}
+			c.recordOrchestrationActivity(auditCtx, mainAgentID, "main_turn_error", map[string]any{
+				"session_id": env.sessionID,
+				"error":      summary,
+			})
+			c.writeSessionCheckpoint(auditCtx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, summary, "error", map[string]any{
+				"forced": true,
+				"reason": reason,
+			}))
+			return nil, &headlessWatchdogTimeoutError{
+				TaskFamily: taskFamily,
+				Timeout:    buildHeadlessWatchdogBudget(sessionMode, call).Timeout,
+			}
+		}
+	}
+
+	type runOutcome struct {
+		result *fantasy.AgentResult
+		err    error
+	}
+	runDone := make(chan runOutcome, 1)
+	go func() {
+		result, err := agent.Run(ctx, call)
+		runDone <- runOutcome{result: result, err: err}
+	}()
+
+	var (
+		result *fantasy.AgentResult
+		runErr error
+	)
+	watchdogBudget := buildHeadlessWatchdogBudget(sessionMode, call)
+	if watchdogBudget.Enabled {
+		timer := time.NewTimer(watchdogBudget.Timeout)
+		defer timer.Stop()
+		select {
+		case outcome := <-runDone:
+			result, runErr = outcome.result, outcome.err
+		case <-ctx.Done():
+			return finalizeHeadlessWatchdogOutcome("headless run canceled before the model emitted a terminal result", true)
+		case <-timer.C:
+			timeoutReason := fmt.Sprintf("headless watchdog timeout reached for %s after %s without terminalization", watchdogBudget.TaskFamily, watchdogBudget.Timeout.Round(time.Second))
+			return finalizeHeadlessWatchdogOutcome(timeoutReason, false)
+		}
+	} else {
+		outcome := <-runDone
+		result, runErr = outcome.result, outcome.err
+	}
+
 	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
-		if err != nil {
+		if runErr != nil {
 			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "broken")
 		} else {
 			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "ready")
 		}
 	}
-	if err != nil {
-		if c.singularity != nil {
-			if trace := c.singularity.FinishTurnWithMetadata(env.sessionID, "error", err.Error(), takeTurnCompletionMetadata(env.sessionID)); trace != nil {
-				go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
-			}
-		}
+	if runErr != nil {
+		finishTrackedTurnSync("error", runErr.Error(), takeTurnCompletionMetadata(env.sessionID))
 		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
 			"session_id": env.sessionID,
-			"error":      err.Error(),
+			"error":      runErr.Error(),
 		})
-		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, err.Error(), "error", nil))
-		return nil, err
+		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, runErr.Error(), "error", nil))
+		return nil, runErr
 	}
 	c.mainWorktreeBranch = branch
 	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
@@ -938,11 +1051,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if c.pmem != nil {
 		c.pmem.RecordAssistantTurn(ctx, env.sessionID, resultText)
 	}
-	if c.singularity != nil {
-		if trace := c.singularity.FinishTurnWithMetadata(env.sessionID, "completed", resultText, takeTurnCompletionMetadata(env.sessionID)); trace != nil {
-			go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
-		}
-	}
+	finishTrackedTurnSync("completed", resultText, takeTurnCompletionMetadata(env.sessionID))
 	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, resultText, "completed", nil))
 	return result, nil
 }

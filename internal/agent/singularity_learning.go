@@ -654,11 +654,15 @@ func (m *singularityManager) FinishTurnWithMetadata(sessionID, status, resultSum
 }
 
 func (m *singularityManager) CompileTurn(_ context.Context, trace *completedTurnTrace) {
+	_ = m.CompileTurnSync(context.Background(), trace)
+}
+
+func (m *singularityManager) CompileTurnSync(_ context.Context, trace *completedTurnTrace) error {
 	if m == nil || trace == nil {
-		return
+		return nil
 	}
 	if !shouldTrackLearnedTurn(trace.Prompt, trace.Family) {
-		return
+		return nil
 	}
 
 	m.mu.Lock()
@@ -672,8 +676,13 @@ func (m *singularityManager) CompileTurn(_ context.Context, trace *completedTurn
 		}
 	}
 	m.store.Policies[trace.Family.ID] = policy
-	_ = m.persistLocked()
-	_ = m.appendTurnAuditLocked(trace, policy)
+	if err := m.persistLocked(); err != nil {
+		return err
+	}
+	if err := m.appendTurnAuditLocked(trace, policy); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (m *singularityManager) persistLocked() error {

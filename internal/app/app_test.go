@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -8,7 +9,19 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/fantasy"
+	"github.com/duggal1/Sapphire-cli/internal/agent"
+	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
+	agentformula "github.com/duggal1/Sapphire-cli/internal/agent/formula"
+	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
+	"github.com/duggal1/Sapphire-cli/internal/codeindex"
+	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/message"
+	orchestrationdb "github.com/duggal1/Sapphire-cli/internal/orchestration/db"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/duggal1/Sapphire-cli/internal/pubsub"
+	"github.com/duggal1/Sapphire-cli/internal/session"
+	"github.com/duggal1/Sapphire-cli/internal/worktreepolicy"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -169,6 +182,169 @@ func TestIsNonInteractiveRuntime(t *testing.T) {
 
 	t.Setenv("SAPPHIRE_NON_INTERACTIVE", "1")
 	require.True(t, isNonInteractiveRuntime())
+}
+
+type sessionServiceStub struct {
+	nextID int
+}
+
+func (s *sessionServiceStub) Subscribe(context.Context) <-chan pubsub.Event[session.Session] {
+	return nil
+}
+
+func (s *sessionServiceStub) Create(context.Context, string) (session.Session, error) {
+	s.nextID++
+	return session.Session{ID: "session-test"}, nil
+}
+
+func (s *sessionServiceStub) CreateTitleSession(context.Context, string) (session.Session, error) {
+	return session.Session{}, nil
+}
+
+func (s *sessionServiceStub) CreateTaskSession(context.Context, string, string, string) (session.Session, error) {
+	return session.Session{}, nil
+}
+
+func (s *sessionServiceStub) Get(context.Context, string) (session.Session, error) {
+	return session.Session{}, nil
+}
+func (s *sessionServiceStub) List(context.Context) ([]session.Session, error) { return nil, nil }
+func (s *sessionServiceStub) Save(context.Context, session.Session) (session.Session, error) {
+	return session.Session{}, nil
+}
+func (s *sessionServiceStub) UpdateTitleAndUsage(context.Context, string, string, int64, int64, float64) error {
+	return nil
+}
+func (s *sessionServiceStub) Delete(context.Context, string) error { return nil }
+func (s *sessionServiceStub) CreateAgentToolSessionID(messageID, toolCallID string) string {
+	return messageID + ":" + toolCallID
+}
+func (s *sessionServiceStub) ParseAgentToolSessionID(sessionID string) (string, string, bool) {
+	return "", "", false
+}
+func (s *sessionServiceStub) IsAgentToolSession(string) bool { return false }
+func (s *sessionServiceStub) SetMode(context.Context, string, planmode.SessionMode) error {
+	return nil
+}
+func (s *sessionServiceStub) GetMode(context.Context, string) (planmode.SessionMode, error) {
+	return "", nil
+}
+func (s *sessionServiceStub) SetWorktreePolicy(context.Context, string, worktreepolicy.Policy) error {
+	return nil
+}
+func (s *sessionServiceStub) GetWorktreePolicy(context.Context, string) (worktreepolicy.Policy, error) {
+	return "", nil
+}
+
+type messageServiceStub struct{}
+
+func (s *messageServiceStub) Subscribe(context.Context) <-chan pubsub.Event[message.Message] {
+	return nil
+}
+
+func (s *messageServiceStub) Create(context.Context, string, message.CreateMessageParams) (message.Message, error) {
+	return message.Message{}, nil
+}
+func (s *messageServiceStub) Update(context.Context, message.Message) error { return nil }
+func (s *messageServiceStub) Get(context.Context, string) (message.Message, error) {
+	return message.Message{}, nil
+}
+func (s *messageServiceStub) List(context.Context, string) ([]message.Message, error) {
+	return nil, nil
+}
+func (s *messageServiceStub) ListUserMessages(context.Context, string) ([]message.Message, error) {
+	return nil, nil
+}
+func (s *messageServiceStub) ListAllUserMessages(context.Context) ([]message.Message, error) {
+	return nil, nil
+}
+func (s *messageServiceStub) Delete(context.Context, string) error                { return nil }
+func (s *messageServiceStub) DeleteSessionMessages(context.Context, string) error { return nil }
+
+type runOnlyCoordinatorStub struct{}
+
+func (s *runOnlyCoordinatorStub) Run(context.Context, string, string, ...message.Attachment) (*fantasy.AgentResult, error) {
+	return &fantasy.AgentResult{}, nil
+}
+func (s *runOnlyCoordinatorStub) Submit(context.Context, string, string, ...message.Attachment) (agent.SubmissionResult, error) {
+	return agent.SubmissionResult{}, nil
+}
+func (s *runOnlyCoordinatorStub) OrchestrateWorktrees(context.Context, string, agent.OrchestrateWorktreesParams) (agent.OrchestrateWorktreesResult, error) {
+	return agent.OrchestrateWorktreesResult{}, nil
+}
+func (s *runOnlyCoordinatorStub) ResumeWorktree(context.Context, string, string, string, string, string, string) (agent.OrchestrationAgentRef, error) {
+	return agent.OrchestrationAgentRef{}, nil
+}
+func (s *runOnlyCoordinatorStub) Cancel(string)             {}
+func (s *runOnlyCoordinatorStub) CancelAll()                {}
+func (s *runOnlyCoordinatorStub) IsSessionBusy(string) bool { return false }
+func (s *runOnlyCoordinatorStub) IsBusy() bool              { return false }
+func (s *runOnlyCoordinatorStub) QueuedPrompts(string) int  { return 0 }
+func (s *runOnlyCoordinatorStub) QueuedPromptsList(string) []string {
+	return nil
+}
+func (s *runOnlyCoordinatorStub) ClearQueue(string) {}
+func (s *runOnlyCoordinatorStub) Summarize(context.Context, string) error {
+	return nil
+}
+func (s *runOnlyCoordinatorStub) Model() agent.Model { return agent.Model{} }
+func (s *runOnlyCoordinatorStub) UpdateModels(context.Context) error {
+	return nil
+}
+func (s *runOnlyCoordinatorStub) MemoryPipe() interface{} { return nil }
+func (s *runOnlyCoordinatorStub) ConsolidateMemory(context.Context, string) error {
+	return nil
+}
+func (s *runOnlyCoordinatorStub) DispatchBackground(context.Context, agentbackground.TaskSpec) (string, error) {
+	return "", nil
+}
+func (s *runOnlyCoordinatorStub) GetBackgroundStatus(string) (agentbackground.SubAgent, bool) {
+	return agentbackground.SubAgent{}, false
+}
+func (s *runOnlyCoordinatorStub) ListBackgroundAgents() []agentbackground.SubAgent { return nil }
+func (s *runOnlyCoordinatorStub) WaitForCompletion(context.Context, []string) ([]agentbackground.SubAgent, error) {
+	return nil, nil
+}
+func (s *runOnlyCoordinatorStub) IndexCodebase(context.Context, bool) (codeindex.Stats, error) {
+	return codeindex.Stats{}, nil
+}
+func (s *runOnlyCoordinatorStub) ListWorktrees(context.Context, string, []string, int) ([]orchestrationdb.WorktreeRun, error) {
+	return nil, nil
+}
+func (s *runOnlyCoordinatorStub) LandWorktree(context.Context, string, string) (orchestrationdb.WorktreeRun, error) {
+	return orchestrationdb.WorktreeRun{}, nil
+}
+func (s *runOnlyCoordinatorStub) RepairWorktree(context.Context, string) (orchestrationdb.WorktreeRun, error) {
+	return orchestrationdb.WorktreeRun{}, nil
+}
+func (s *runOnlyCoordinatorStub) RemoveManagedWorktree(context.Context, string, bool) (orchestrationdb.WorktreeRun, error) {
+	return orchestrationdb.WorktreeRun{}, nil
+}
+func (s *runOnlyCoordinatorStub) GetLongHorizonState(string) string          { return "" }
+func (s *runOnlyCoordinatorStub) GetLongHorizonAuditTail(string, int) string { return "" }
+func (s *runOnlyCoordinatorStub) RunPlanMode(context.Context, string, string, string) (*agentformula.ExecutionState, error) {
+	return nil, nil
+}
+func (s *runOnlyCoordinatorStub) ResolvePlanApproval(context.Context, string, bool) error {
+	return nil
+}
+
+func TestRunNonInteractiveDoesNotPrintSyntheticFallback(t *testing.T) {
+	progress := false
+	app := &App{
+		Sessions:         &sessionServiceStub{},
+		Messages:         &messageServiceStub{},
+		Permissions:      permission.NewPermissionService(t.TempDir(), true, nil),
+		AgentCoordinator: &runOnlyCoordinatorStub{},
+		config: &config.Config{
+			Options: &config.Options{Progress: &progress},
+		},
+	}
+
+	var output bytes.Buffer
+	err := app.RunNonInteractive(t.Context(), &output, "hi", "", "", "", true)
+	require.NoError(t, err)
+	require.Equal(t, "\n", output.String())
 }
 
 type subscriberFixture struct {

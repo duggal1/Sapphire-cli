@@ -1265,14 +1265,21 @@ func shouldForceLateImplementationExecutionFocus(ctx context.Context, usage *Too
 		return false
 	}
 	metrics := usage.SnapshotDeterministicLoopMetrics()
-	if totalDeterministicWrites(metrics) == 0 {
-		return false
-	}
+	hasVerification := usage.VerificationEvidenceCount() > 0 || len(usage.PendingArtifactVerificationPaths()) > 0
 	remaining := GetRemainingTurnStepsFromContext(ctx)
-	if remaining > 0 && remaining <= 3 {
+	if remaining > 0 && remaining <= 4 {
 		return true
 	}
-	if metrics.TotalCalls >= 9 {
+	if metrics.TotalCalls >= 7 {
+		return true
+	}
+	if usage.Total(ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName, AgenticViewToolName, ViewToolName, SingleViewToolName, UpdatePlanToolName) >= 5 {
+		return true
+	}
+	if !hasVerification && maxDeterministicReadCount(metrics) >= 2 {
+		return true
+	}
+	if !hasVerification && totalDeterministicWrites(metrics) > 0 {
 		return true
 	}
 	return maxDeterministicWriteCount(metrics) >= 3
@@ -1618,6 +1625,16 @@ func totalDeterministicWrites(metrics DeterministicLoopMetrics) int {
 func maxDeterministicWriteCount(metrics DeterministicLoopMetrics) int {
 	maxCount := 0
 	for _, count := range metrics.WriteCounts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+	return maxCount
+}
+
+func maxDeterministicReadCount(metrics DeterministicLoopMetrics) int {
+	maxCount := 0
+	for _, count := range metrics.ReadCounts {
 		if count > maxCount {
 			maxCount = count
 		}

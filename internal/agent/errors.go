@@ -12,4 +12,5 @@ var (
 	ErrRepeatedToolLoopDetected        = errors.New("repeated tool-call loop detected")
 	ErrDeterministicDoomLoop           = errors.New("deterministic doom loop detected")
 	ErrHeadlessCompletionBudgetReached = errors.New("headless completion budget reached")
+	ErrHeadlessWatchdogTimeout         = errors.New("headless watchdog timeout reached")
 )

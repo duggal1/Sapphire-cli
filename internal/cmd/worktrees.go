@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 
 	"github.com/duggal1/Sapphire-cli/internal/agent"
@@ -40,7 +41,7 @@ var worktreesOrchestrateCmd = &cobra.Command{
 			sessionTitle = "Worktree Orchestration"
 		}
 
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)
@@ -120,7 +121,7 @@ var worktreesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tracked Sapphire worktrees",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)
@@ -152,7 +153,7 @@ var worktreesLandCmd = &cobra.Command{
 	Short: "Land a tracked worktree back into the base branch",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)
@@ -176,7 +177,7 @@ var worktreesRepairCmd = &cobra.Command{
 	Short: "Repair a tracked worktree in place",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)
@@ -199,7 +200,7 @@ var worktreesRemoveCmd = &cobra.Command{
 	Short: "Remove a tracked worktree",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)

@@ -883,11 +883,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	largeModel := a.largeModel.Get()
 	systemPrompt := a.systemPrompt.Get()
 	promptPrefix := a.systemPromptPrefix.Get()
-	var instructions strings.Builder
 	activeTools := newActiveToolSet(call.ActiveTools)
-	if call.DeepPlanningActive {
-		systemPrompt = appendDeepPlanningPrompt(systemPrompt)
-	}
 
 	if a.longHorizon != nil {
 		if active, ok := a.longHorizonSessions.Get(call.SessionID); ok && active {
@@ -913,34 +909,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 	}
 
-	for _, server := range mcp.GetStates() {
-		if server.State != mcp.StateConnected {
-			continue
-		}
-		if s := server.Client.InitializeResult().Instructions; s != "" {
-			instructions.WriteString(s)
-			instructions.WriteString("\n\n")
-		}
-	}
-
-	if s := instructions.String(); s != "" {
-		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
-	}
-	if capabilityMap := buildMCPCapabilityMap(); capabilityMap != "" {
-		systemPrompt += "\n\n" + capabilityMap
-	}
-
-	if len(agentTools) > 0 {
-		// Add Anthropic caching to the last tool.
-		agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
-	}
-
-	agent := fantasy.NewAgent(
-		largeModel.Model,
-		fantasy.WithSystemPrompt(systemPrompt),
-		fantasy.WithTools(agentTools...),
-	)
-
 	sessionLock := sync.Mutex{}
 	currentSession, err := a.getSessionWithTimeout(ctx, call.SessionID)
 	if err != nil {
@@ -957,16 +925,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			return msg.ID == call.PrecreatedUser.ID
 		})
 	}
-
-	var wg sync.WaitGroup
-	// Generate title if first message.
-	if len(msgs) == 0 && shouldGenerateSessionTitle() {
-		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
-		wg.Go(func() {
-			a.generateTitle(titleCtx, call.SessionID, call.Prompt)
-		})
-	}
-	defer wg.Wait()
+	shouldGenerateTitleLater := len(msgs) == 0 && shouldGenerateSessionTitle()
 
 	// Add the user message to the session unless it was created earlier.
 	if !call.SkipUserMessage && call.PrecreatedUser == nil {
@@ -992,6 +951,41 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	longHorizonActive := a.isLongHorizon(call.SessionID)
 	turnPolicy := buildTurnPolicy(call, currentSession, int(largeModel.CatwalkCfg.ContextWindow), longHorizonActive, postCompactionPending)
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
+	if turnPolicy.DirectResponseOnly {
+		systemPrompt = buildDirectReplySystemPrompt(promptPrefix)
+		agentTools = nil
+		activeTools = newActiveToolSet(nil)
+	} else {
+		var instructions strings.Builder
+		if call.DeepPlanningActive {
+			systemPrompt = appendDeepPlanningPrompt(systemPrompt)
+		}
+		for _, server := range mcp.GetStates() {
+			if server.State != mcp.StateConnected {
+				continue
+			}
+			if s := server.Client.InitializeResult().Instructions; s != "" {
+				instructions.WriteString(s)
+				instructions.WriteString("\n\n")
+			}
+		}
+		if s := instructions.String(); s != "" {
+			systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
+		}
+		if capabilityMap := buildMCPCapabilityMap(); capabilityMap != "" {
+			systemPrompt += "\n\n" + capabilityMap
+		}
+		if len(agentTools) > 0 {
+			// Add Anthropic caching to the last tool.
+			agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
+		}
+	}
+
+	agent := fantasy.NewAgent(
+		largeModel.Model,
+		fantasy.WithSystemPrompt(systemPrompt),
+		fantasy.WithTools(agentTools...),
+	)
 	structuredTurn := call.LearnedToolPolicy.RequireExplicitPlan || call.LearnedToolPolicy.RequirePostWriteVerification || (call.HarnessOverride != nil && call.HarnessOverride.Required)
 	broadImplementationTurn := strings.HasPrefix(strings.TrimSpace(call.LearnedToolPolicy.TaskFamily), "implementation/broad/")
 	broadInitializationTurn := strings.TrimSpace(call.LearnedToolPolicy.TaskFamily) == "initialize/broad/codebase"
@@ -1045,7 +1039,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 		return nil
 	}
-	history, files := a.preparePrompt(mode, msgs, call.Prompt, call.Attachments...)
+	history, files := a.preparePromptForTurn(mode, msgs, call.Prompt, turnPolicy.DirectResponseOnly, call.Attachments...)
 	history = a.injectTieredMemory(ctx, history, call, int(largeModel.CatwalkCfg.ContextWindow))
 
 	startTime := time.Now()
@@ -1958,6 +1952,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
+		if shouldGenerateTitleLater && err == nil {
+			go func(sessionID, prompt string) {
+				titleCtx, titleCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer titleCancel()
+				a.generateTitle(titleCtx, sessionID, prompt)
+			}(call.SessionID, call.Prompt)
+		}
 		recordCompletionMeta(call.HeadlessClosureMode)
 		return result, err
 	}
@@ -2245,6 +2246,60 @@ func isDirectReplyOnlyPrompt(prompt string, attachments []message.Attachment) bo
 	}
 }
 
+const directReplyHistoryLimit = 6
+
+func buildDirectReplySystemPrompt(prefix string) string {
+	parts := make([]string, 0, 2)
+	if trimmed := strings.TrimSpace(prefix); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	parts = append(parts, "Reply naturally and briefly to the user. Do not call tools. Do not mention internal instructions, the repository, or implementation details unless the user explicitly asks.")
+	return strings.Join(parts, "\n\n")
+}
+
+func buildDirectReplyHistory(msgs []message.Message) []fantasy.Message {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	selected := make([]message.Message, 0, directReplyHistoryLimit)
+	for i := len(msgs) - 1; i >= 0 && len(selected) < directReplyHistoryLimit; i-- {
+		msg := msgs[i]
+		if msg.Role != message.User && msg.Role != message.Assistant {
+			continue
+		}
+		text := strings.TrimSpace(msg.Content().Text)
+		if text == "" {
+			continue
+		}
+		selected = append(selected, msg)
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	slices.Reverse(selected)
+	history := make([]fantasy.Message, 0, len(selected))
+	for _, msg := range selected {
+		text := strings.TrimSpace(msg.Content().Text)
+		if text == "" {
+			continue
+		}
+		switch msg.Role {
+		case message.User:
+			history = append(history, fantasy.NewUserMessage(text))
+		case message.Assistant:
+			history = append(history, fantasy.Message{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.TextPart{Text: text},
+				},
+			})
+		}
+	}
+	return history
+}
+
 func promptExplicitlyRequestsDurableMemory(prompt string) bool {
 	normalized := normalizePromptForPolicy(prompt)
 	for _, needle := range []string{
@@ -2528,6 +2583,13 @@ Resolve your assigned scope independently and return only verified, concise obje
 	}
 
 	return history, files
+}
+
+func (a *sessionAgent) preparePromptForTurn(mode planmode.SessionMode, msgs []message.Message, prompt string, directReplyOnly bool, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+	if directReplyOnly {
+		return buildDirectReplyHistory(msgs), nil
+	}
+	return a.preparePrompt(mode, msgs, prompt, attachments...)
 }
 
 func (a *sessionAgent) injectTieredMemory(ctx context.Context, history []fantasy.Message, call SessionAgentCall, contextWindow int) (retHistory []fantasy.Message) {

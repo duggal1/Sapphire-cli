@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"charm.land/log/v2"
 	"github.com/duggal1/Sapphire-cli/internal/event"
@@ -49,7 +50,7 @@ crush run --verbose "Generate a README for this project"
 		reasoningEffort, _ := cmd.Flags().GetString("reasoning-effort")
 
 		// Cancel on SIGINT or SIGTERM.
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		app, err := setupApp(cmd)

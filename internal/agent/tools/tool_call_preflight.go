@@ -1872,6 +1872,9 @@ func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]an
 	if policy.DirectResponseOnly {
 		return errors.New("tool use blocked: this turn is casual conversation only. Reply directly without tools.")
 	}
+	if err := enforceDeepPlanningTransition(ctx, toolName); err != nil {
+		return err
+	}
 	if err := enforceHarnessRequirement(ctx, toolName); err != nil {
 		return err
 	}
@@ -1879,6 +1882,45 @@ func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]an
 		return err
 	}
 	return enforceMemoryAccessPolicy(ctx, policy, toolName, input)
+}
+
+func enforceDeepPlanningTransition(ctx context.Context, toolName string) error {
+	if !GetDeepPlanningActiveFromContext(ctx) {
+		return nil
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage != nil && usage.HasPublishedPlan() {
+		return nil
+	}
+	canonical := canonicalToolNameForModePolicy(toolName)
+	if canonical == "" {
+		canonical = normalizeToolName(toolName)
+	}
+	if canonical == "" || isDeepPlanningAllowedTool(canonical) {
+		return nil
+	}
+	return NewToolGuidanceError(
+		toolName,
+		"deep_planning_active",
+		"Complete deep planning before execution.",
+		fmt.Sprintf(
+			"Deep planning is active for this turn. Stay in planning until you publish the first `update_plan`: use fast repository discovery (`tool_search`, `rg_files`, `rg`, `ls`, `wc`, `wc_l`), inspect real code (`agentic_view`, `view`, `single_view`), optionally use `run_harness` or `request_user_input`, then call `update_plan`. Editing, execution, delegation, and MCP mutation are blocked before that planning transition. Blocked tool: %s.",
+			canonical,
+		),
+	)
+}
+
+func isDeepPlanningAllowedTool(toolName string) bool {
+	switch toolName {
+	case UpdatePlanToolName, RunHarnessToolName, RequestUserInputToolName,
+		ToolSearchToolName, RGFilesToolName, RGToolName, LSToolName, GlobToolName, GrepToolName,
+		WCToolName, WCLToolName, IndexCodebaseToolName,
+		AgenticViewToolName, ViewToolName, SingleViewToolName,
+		ListAvailableMCPsToolName, ListMCPResourcesToolName, ReadMCPResourceToolName:
+		return true
+	default:
+		return false
+	}
 }
 
 func enforceHarnessRequirement(ctx context.Context, toolName string) error {

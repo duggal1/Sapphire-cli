@@ -978,6 +978,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	// Add the session to the context.
 	ctx = context.WithValue(ctx, tools.SessionIDContextKey, call.SessionID)
 	ctx = context.WithValue(ctx, tools.SessionModeContextKey, mode)
+	ctx = context.WithValue(ctx, tools.DeepPlanningContextKey, call.DeepPlanningActive)
 	runtimeControl := newRuntimeControl(call.MistakeSelfHealTry > 0)
 	ctx = context.WithValue(ctx, tools.RuntimeControlContextKey, runtimeControl)
 	postCompactionPending := false

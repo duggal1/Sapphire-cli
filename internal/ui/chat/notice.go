@@ -4,11 +4,13 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/duggal1/Sapphire-cli/internal/deepplanning"
 	"github.com/duggal1/Sapphire-cli/internal/ui/styles"
 )
 
 const InterruptNoticeID = "local:interrupt-notice"
 const LocalErrorNoticeID = "local:error-notice"
+const PlanPendingNoticeID = "local:plan-pending-notice"
 const PlanSuccessNoticeID = "local:plan-success-notice"
 
 const interruptNoticeText = "Conversation interrupted — tell the agent what to do differently. Did something go wrong? Please hit `/feedback` to report the issue."
@@ -24,6 +26,7 @@ type NoticeMessageItem struct {
 	details string
 	sty     *styles.Styles
 	isError bool
+	shimmer bool
 }
 
 func NewInterruptNoticeMessageItem(sty *styles.Styles) MessageItem {
@@ -65,6 +68,18 @@ func NewPlanSuccessNoticeMessageItem(sty *styles.Styles) MessageItem {
 	}
 }
 
+func NewPlanPendingNoticeMessageItem(sty *styles.Styles) MessageItem {
+	return &NoticeMessageItem{
+		highlightableMessageItem: defaultHighlighter(sty),
+		cachedMessageItem:        &cachedMessageItem{},
+		focusableMessageItem:     &focusableMessageItem{},
+		id:                       PlanPendingNoticeID,
+		text:                     deepplanning.PlanningStatusText,
+		sty:                      sty,
+		shimmer:                  true,
+	}
+}
+
 func (n *NoticeMessageItem) ID() string {
 	return n.id
 }
@@ -96,9 +111,20 @@ func (n *NoticeMessageItem) Render(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (n *NoticeMessageItem) OnShimmerTick() bool {
+	if !n.shimmer {
+		return false
+	}
+	n.clearCache()
+	return true
+}
+
 func (n *NoticeMessageItem) renderContent(width int) string {
 	if n.id == InterruptNoticeID {
 		return renderInterruptNotice(n.sty, n.text, width)
+	}
+	if n.id == PlanPendingNoticeID {
+		return renderPlanPendingNotice(n.sty, n.text, width)
 	}
 	if n.id == PlanSuccessNoticeID {
 		return renderPlanSuccessNotice(n.sty, n.label, n.text, width)
@@ -146,4 +172,14 @@ func renderPlanSuccessNotice(sty *styles.Styles, label, text string, width int) 
 	}
 	prefix := sty.Base.Foreground(sty.Blue).Bold(true).Render(label)
 	return prefixRenderedBlock(prefix, strings.Join(body, "\n"))
+}
+
+func renderPlanPendingNotice(sty *styles.Styles, text string, width int) string {
+	contentWidth := max(0, width-4)
+	lines := wrapPrefixedText(strings.TrimSpace(text), max(1, contentWidth), "", "")
+	body := make([]string, 0, len(lines))
+	for _, line := range lines {
+		body = append(body, styles.ShimmerTextPlan(sty, line, 0))
+	}
+	return strings.Join(body, "\n")
 }

@@ -247,6 +247,79 @@ func TestPrepareToolCallAllowsBashInArchitectMode(t *testing.T) {
 	require.Equal(t, BashToolName, prepared.Name)
 }
 
+func TestPrepareToolCallBlocksExecutionDuringDeepPlanningBeforePlanPublished(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), DeepPlanningContextKey, true)
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "deep-plan-edit-1",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Deep planning is active")
+	require.Contains(t, err.Error(), "`update_plan`")
+}
+
+func TestPrepareToolCallAllowsStructuredReadDuringDeepPlanningBeforePlanPublished(t *testing.T) {
+	t.Parallel()
+
+	viewTool := fantasy.NewAgentTool(
+		SingleViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), DeepPlanningContextKey, true)
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "deep-plan-view-1",
+		Name:  SingleViewToolName,
+		Input: `{"file_path":"README.md"}`,
+	}, map[string]fantasy.AgentTool{SingleViewToolName: viewTool})
+	require.NoError(t, err)
+	require.Equal(t, SingleViewToolName, prepared.Name)
+}
+
+func TestPrepareToolCallAllowsExecutionAfterDeepPlanningPlanPublished(t *testing.T) {
+	t.Parallel()
+
+	editTool := fantasy.NewAgentTool(
+		EditToolName,
+		"",
+		func(ctx context.Context, params EditParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.MarkPlanPublished()
+
+	ctx := context.WithValue(context.Background(), DeepPlanningContextKey, true)
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "deep-plan-edit-2",
+		Name:  EditToolName,
+		Input: `{"file_path":"README.md","old_string":"old","new_string":"new"}`,
+	}, map[string]fantasy.AgentTool{EditToolName: editTool})
+	require.NoError(t, err)
+	require.Equal(t, EditToolName, prepared.Name)
+}
+
 func TestPrepareToolCallRejectsDirectEditToolsInSecurityMode(t *testing.T) {
 	t.Parallel()
 

@@ -18,6 +18,7 @@ type (
 	turnPolicyKey         string
 	turnStepOrdinalKey    string
 	turnStepBudgetKey     string
+	deepPlanningKey       string
 )
 
 const (
@@ -43,6 +44,8 @@ const (
 	TurnStepOrdinalContextKey turnStepOrdinalKey = "turn_step_ordinal"
 	// TurnStepBudgetContextKey is the maximum step budget for the turn.
 	TurnStepBudgetContextKey turnStepBudgetKey = "turn_step_budget"
+	// DeepPlanningContextKey marks turns that are in the deep-planning phase.
+	DeepPlanningContextKey deepPlanningKey = "deep_planning_active"
 
 	// LoadSkillToolName is the name of the tool used to load skills.
 	LoadSkillToolName = "load_skill"
@@ -177,4 +180,8 @@ func GetRemainingTurnStepsFromContext(ctx context.Context) int {
 		return 0
 	}
 	return remaining
+}
+
+func GetDeepPlanningActiveFromContext(ctx context.Context) bool {
+	return getContextValue(ctx, DeepPlanningContextKey, false)
 }

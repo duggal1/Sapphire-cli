@@ -819,6 +819,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.assistantFooter != nil && m.assistantFooter.OnShimmerTick() {
 			activeShimmer = true
 		}
+		if tickable, ok := m.fixedTailNotice.(chat.ShimmerTickable); ok && tickable.OnShimmerTick() {
+			activeShimmer = true
+		}
 		if activeShimmer {
 			if cmd := shimmer.ShimmerTickCmd(); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -3822,7 +3825,11 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 
 func (m *UI) showPendingAssistantPlaceholder(sessionID string, planning bool) tea.Cmd {
 	m.clearPendingAssistantPlaceholder()
-	m.fixedTailNotice = nil
+	if planning {
+		m.fixedTailNotice = chat.NewPlanPendingNoticeMessageItem(m.com.Styles)
+	} else {
+		m.fixedTailNotice = nil
+	}
 	if sessionID == "" {
 		return nil
 	}
@@ -3939,7 +3946,11 @@ func (m *UI) clearDeepPlanningState(showSuccess bool) {
 	sessionID := m.deepPlanningSessionID
 	m.deepPlanningPending = false
 	m.deepPlanningSessionID = ""
-	if !showSuccess || sessionID == "" || m.session == nil || m.session.ID != sessionID {
+	if !showSuccess {
+		m.fixedTailNotice = nil
+		return
+	}
+	if sessionID == "" || m.session == nil || m.session.ID != sessionID {
 		return
 	}
 	m.fixedTailNotice = chat.NewPlanSuccessNoticeMessageItem(m.com.Styles)
@@ -3954,6 +3965,7 @@ func (m *UI) maybeCompleteDeepPlanning(msg *message.Message) {
 	}
 	for _, tc := range msg.ToolCalls() {
 		if tc.Name == agenttools.UpdatePlanToolName && tc.Finished {
+			m.clearPendingAssistantPlaceholder()
 			m.clearDeepPlanningState(true)
 			m.updateLayoutAndSize()
 			return

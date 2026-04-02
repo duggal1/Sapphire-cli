@@ -956,6 +956,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		promptPrefix = ""
 		call.SkillContext = ""
 		call.ActiveSkills = nil
+		if call.ProviderOptions == nil {
+			call.ProviderOptions = fantasy.ProviderOptions{}
+		}
+		if strings.EqualFold(largeModel.ModelCfg.Provider, openrouter.Name) {
+			options := &openrouter.ProviderOptions{}
+			if existing, ok := call.ProviderOptions[openrouter.Name].(*openrouter.ProviderOptions); ok && existing != nil {
+				copied := *existing
+				options = &copied
+			}
+			options.Reasoning = &openrouter.ReasoningOptions{
+				Enabled: fantasy.Opt(true),
+				Effort:  openrouter.ReasoningEffortOption(openrouter.ReasoningEffortLow),
+			}
+			call.ProviderOptions[openrouter.Name] = options
+		}
 		agentTools = nil
 		activeTools = newActiveToolSet(nil)
 	} else {

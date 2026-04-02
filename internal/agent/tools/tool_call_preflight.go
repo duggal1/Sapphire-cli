@@ -2193,7 +2193,8 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 
 func isLearnedContextProtectedTool(toolName string) bool {
 	switch toolName {
-	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName:
+	case BashToolName, "python", EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName, DownloadToolName,
+		"spawn_agent", "resume_agent", "send_input", "collect_result", "agent":
 		return true
 	default:
 		return false

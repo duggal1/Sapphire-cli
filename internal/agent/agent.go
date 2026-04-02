@@ -1114,7 +1114,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			var systemMessages []fantasy.Message
-			if systemPrompt != "" {
+			if systemPrompt != "" && !turnPolicy.DirectResponseOnly {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(systemPrompt))
 			}
 			if !turnPolicy.DirectResponseOnly {

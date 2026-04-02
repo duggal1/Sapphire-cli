@@ -115,6 +115,7 @@ func TestSessionAgentDirectReplyUsesLeanPromptAndNoTools(t *testing.T) {
 
 	text := promptText(calls[0].Prompt)
 	require.Contains(t, text, "Reply naturally and briefly to the user.")
+	require.Equal(t, 1, strings.Count(text, "Reply naturally and briefly to the user."))
 	require.NotContains(t, text, "Complexity mode:")
 	require.NotContains(t, text, "update_plan checklist")
 	require.NotContains(t, text, "active_skill_context")

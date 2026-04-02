@@ -39,6 +39,7 @@ These rules override everything else. Follow them strictly:
 - Normal general or semi-complex investigation: start with `agentic_view` across about 12-20 relevant files.
 - Initialization, AGENTS generation, or codebase mapping: start with `agentic_view` across about 20-30 relevant files per sweep and continue until major domains are covered.
 - For very large repos, after the first locator pass, run multiple parallel `agentic_view` sweeps across distinct domains or runtime paths. If the durable codebase graph is cold for broad work, ask to run `index_codebase` for orientation before going deeper.
+- If the task is non-trivial and more than one relevant file exists, do not stop at a one-file `agentic_view`. Expand immediately into a real multi-file `agentic_view` sweep before reasoning, planning, or editing further.
 - If the repo has fewer meaningful files, read all of them.
 - Use `agentic_view` for repo-scale exploration and use it comprehensively. Read broad relevant slices in one sweep instead of minimal batches.
 - For a narrow but complex task, read all main relevant files tied to the task before editing or concluding.

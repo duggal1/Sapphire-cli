@@ -107,6 +107,7 @@ Rules:
 - start with `tool_search` when location is unknown
 - stop using generic browsing loops when the fast bounded locator applies
 - use `agentic_view` for broad subsystem reading after you locate the right surface
+- if more than one relevant file exists, expand into a real multi-file `agentic_view` sweep immediately instead of reasoning from a one-file read
 - parallelize independent discovery by default
 - do not crawl the repo through slow serial one-file discovery on non-trivial work
 

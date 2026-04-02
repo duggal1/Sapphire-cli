@@ -2159,14 +2159,33 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 }
 
 func (a *sessionAgent) shouldActivateLongHorizon(call SessionAgentCall) bool {
+	normalized := normalizePromptForPolicy(call.Prompt)
+	if normalized == "" {
+		return false
+	}
+	if hasAnySignal(normalized, []string{
+		"long horizon",
+		"long-horizon",
+		"multi-session",
+		"across sessions",
+		"resume later",
+		"resume this later",
+		"milestone",
+		"milestones",
+		"epic",
+		"roadmap",
+		"multi-stage rollout",
+		"phased rollout",
+		"long running task",
+		"long-running task",
+	}) {
+		return true
+	}
 	wordCount := len(strings.Fields(call.Prompt))
-	if wordCount >= 80 {
+	if call.DeepPlanningActive && shouldDelegateToSubAgents(call.Prompt) && wordCount >= 80 {
 		return true
 	}
-	if shouldDelegateToSubAgents(call.Prompt) {
-		return true
-	}
-	if len(call.Attachments) > 2 {
+	if len(call.Attachments) > 4 && (call.DeepPlanningActive || shouldDelegateToSubAgents(call.Prompt)) {
 		return true
 	}
 	return false

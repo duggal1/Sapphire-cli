@@ -1535,6 +1535,85 @@ func TestPrepareToolCallRewritesLateBroadInitializationGitLogBashToUpdatePlan(t 
 	require.Contains(t, prepared.Input, `"Write or refine AGENTS.md only"`)
 }
 
+func TestPrepareToolCallRewritesBroadDesignSkillDetourToStructuredDiscovery(t *testing.T) {
+	t.Parallel()
+
+	searchSkillsTool := fantasy.NewAgentTool(
+		"search_skills",
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "design/broad/backend",
+		Reason:             "learned route policy for recurring design/broad/backend turns",
+		RequireContextRead: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, NewToolUsageState())
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Architecture-only task: compare two designs for the singularity benchmark lane.",
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "design-skill-detour-1",
+		Name:  "search_skills",
+		Input: `{"query":"architect"}`,
+	}, map[string]fantasy.AgentTool{"search_skills": searchSkillsTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, "Architecture-only task")
+}
+
+func TestPrepareToolCallRewritesSecondBroadDesignReadDetourToStructuredDiscovery(t *testing.T) {
+	t.Parallel()
+
+	agenticViewTool := fantasy.NewAgentTool(
+		AgenticViewToolName,
+		"",
+		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	toolSearchTool := fantasy.NewAgentTool(
+		ToolSearchToolName,
+		"",
+		func(ctx context.Context, params map[string]any, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.MarkReadEvidence("/repo/internal/agent/singularity_learning.go")
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:         "design/broad/backend",
+		Reason:             "learned route policy for recurring design/broad/backend turns",
+		RequireContextRead: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, HarnessRequirementContextKey, HarnessRequirement{
+		Task: "Architecture-only task: compare two designs for the singularity benchmark lane.",
+	})
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "design-read-detour-1",
+		Name:  AgenticViewToolName,
+		Input: `{"file_paths":["internal/agent/singularity_admin.go"]}`,
+	}, map[string]fantasy.AgentTool{AgenticViewToolName: agenticViewTool, ToolSearchToolName: toolSearchTool})
+	require.NoError(t, err)
+	require.Equal(t, ToolSearchToolName, prepared.Name)
+	require.Contains(t, prepared.Input, "Architecture-only task")
+}
+
 func TestWrapRuntimePreflightToolsAppliesHarnessGuardrail(t *testing.T) {
 	t.Parallel()
 

@@ -85,6 +85,7 @@ func TestProviders_Integration_AutoUpdateDisabled(t *testing.T) {
 	}
 	require.Contains(t, providerIDs, "zai")
 	require.Contains(t, providerIDs, "cerebras")
+	require.Contains(t, providerIDs, "aihubmix")
 
 	var miniMaxFree *catwalk.Model
 	for i := range openRouter.Models {
@@ -195,6 +196,27 @@ func TestAugmentProviderCatalog_AddsMissingProviders(t *testing.T) {
 	for _, provider := range providers {
 		byID[string(provider.ID)] = provider
 	}
+
+	aihubmixProvider, ok := byID["aihubmix"]
+	require.True(t, ok)
+	require.Equal(t, "https://aihubmix.com/v1", aihubmixProvider.APIEndpoint)
+	require.Equal(t, "$AIHUBMIX_API_KEY", aihubmixProvider.APIKey)
+	require.Equal(t, "coding-glm-5.1-free", aihubmixProvider.DefaultLargeModelID)
+	require.Equal(t, "coding-glm-5-turbo-free", aihubmixProvider.DefaultSmallModelID)
+	require.Len(t, aihubmixProvider.Models, 5)
+	require.Equal(t, []string{
+		"coding-glm-5.1-free",
+		"coding-minimax-m2.7-free",
+		"coding-glm-5-free",
+		"coding-glm-5-turbo-free",
+		"crush-glm-5.1-free",
+	}, []string{
+		aihubmixProvider.Models[0].ID,
+		aihubmixProvider.Models[1].ID,
+		aihubmixProvider.Models[2].ID,
+		aihubmixProvider.Models[3].ID,
+		aihubmixProvider.Models[4].ID,
+	})
 
 	zaiProvider, ok := byID["zai"]
 	require.True(t, ok)

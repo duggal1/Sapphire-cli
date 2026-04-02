@@ -125,6 +125,26 @@ func TestCanForceHeadlessFinalizationAllowsAnalysisClosureWithEvidence(t *testin
 	require.True(t, canForceHeadlessFinalization("design/broad/backend", assistant, state))
 }
 
+func TestShouldSalvageHeadlessResultRequiresAnalysisRetryAndSubstantialDraft(t *testing.T) {
+	t.Parallel()
+
+	shortAssistant := &message.Message{
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "too short"},
+		},
+	}
+	require.False(t, shouldSalvageHeadlessResult("design/broad/backend", 1, shortAssistant))
+
+	longAssistant := &message.Message{
+		Parts: []message.ContentPart{
+			message.TextContent{Text: stringsOfLength(950) + "\n\nA\nB\nC\nD\nE\nF\n"},
+		},
+	}
+	require.True(t, shouldSalvageHeadlessResult("design/broad/backend", 1, longAssistant))
+	require.False(t, shouldSalvageHeadlessResult("implementation/broad/backend", 1, longAssistant))
+	require.False(t, shouldSalvageHeadlessResult("design/broad/backend", 0, longAssistant))
+}
+
 func TestTranslateStreamErrorConvertsHardTimeoutToReject(t *testing.T) {
 	t.Parallel()
 

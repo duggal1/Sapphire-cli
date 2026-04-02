@@ -332,3 +332,21 @@ func buildHeadlessCompletionResult(assistant *message.Message) *fantasy.AgentRes
 		},
 	}
 }
+
+func shouldSalvageHeadlessResult(taskFamily string, attempt int, assistant *message.Message) bool {
+	if attempt <= 0 || assistant == nil {
+		return false
+	}
+	taskFamily = strings.TrimSpace(taskFamily)
+	if !strings.HasPrefix(taskFamily, "design/") &&
+		!strings.HasPrefix(taskFamily, "research/") &&
+		!strings.HasPrefix(taskFamily, "review/") &&
+		!strings.HasPrefix(taskFamily, "migration/") {
+		return false
+	}
+	text := strings.TrimSpace(assistant.Content().Text)
+	if len(text) < 900 {
+		return false
+	}
+	return strings.Count(text, "\n") >= 6
+}

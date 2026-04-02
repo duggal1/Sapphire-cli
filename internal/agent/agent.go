@@ -1650,7 +1650,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
 		}
-		return a.Run(ctx, followUp)
+		return a.Run(context.WithoutCancel(ctx), followUp)
 	}
 
 	if followUp, ok := buildCompletionGuardrailRecoveryCall(mode, call, err, currentAssistant); ok {
@@ -1666,7 +1666,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
 		}
-		return a.Run(ctx, followUp)
+		return a.Run(context.WithoutCancel(ctx), followUp)
 	}
 
 	if followUp, ok := buildHeadlessCompletionRecoveryCall(mode, call, err, currentAssistant); ok {
@@ -1682,7 +1682,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "continued", true)
 		}
-		return a.Run(ctx, followUp)
+		return a.Run(context.WithoutCancel(ctx), followUp)
+	}
+
+	if err != nil && errors.Is(err, ErrHeadlessCompletionBudgetReached) && shouldSalvageHeadlessResult(call.LearnedToolPolicy.TaskFamily, call.HeadlessCompletionTry, currentAssistant) {
+		currentAssistant.FinishThinking()
+		currentAssistant.AddFinish(message.FinishReasonEndTurn, "Headless partial closure", "Sapphire finalized the strongest grounded analysis available when the runtime budget expired.")
+		if updateErr := updateAssistant(ctx, currentAssistant, messageFinalUpdateTimeout, true); updateErr != nil {
+			return nil, updateErr
+		}
+		a.activeRequests.Del(call.SessionID)
+		cancel()
+		if a.checkpointTurn != nil {
+			a.checkpointTurn(ctx, call.SessionID, call.Prompt, "salvaged grounded partial analysis after headless budget", "completed", true)
+		}
+		return buildHeadlessCompletionResult(currentAssistant), nil
 	}
 
 	if err != nil {

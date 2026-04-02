@@ -89,6 +89,8 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	call, tool, input = rewriteToHarnessWhenRequired(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToStructuredDiscoveryWhenPreferred(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToContextReadWhenRequired(ctx, call, tool, input, tools)
+	call, tool, input = rewriteBroadReadDetourToStructuredDiscovery(ctx, call, tool, input, tools)
+	call, tool, input = rewriteBroadSkillDetourToDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationSkillDetourToDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteRepeatedInitializationSkillDetour(ctx, call, tool, input, tools)
 	call, tool, input = rewriteInitializationArtifactWriteDetour(ctx, call, tool, input, tools)
@@ -839,6 +841,106 @@ func rewriteInitializationSkillDetourToDiscovery(
 	return call, tool, input
 }
 
+func rewriteBroadSkillDetourToDiscovery(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	taskFamily := strings.TrimSpace(policy.TaskFamily)
+	if taskFamily == "" || !policy.RequireContextRead {
+		return call, tool, input
+	}
+	if !strings.HasPrefix(taskFamily, "design/") &&
+		!strings.HasPrefix(taskFamily, "research/") &&
+		!strings.HasPrefix(taskFamily, "review/") &&
+		!strings.HasPrefix(taskFamily, "migration/") &&
+		!strings.HasPrefix(taskFamily, "implementation/") {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isInitializationSkillDetourTool(canonical) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if HasRequiredContextReadEvidence(usage) {
+		return call, tool, input
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
+func rewriteBroadReadDetourToStructuredDiscovery(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	policy := GetLearnedToolPolicyFromContext(ctx)
+	taskFamily := strings.TrimSpace(policy.TaskFamily)
+	if taskFamily == "" || !policy.RequireContextRead {
+		return call, tool, input
+	}
+	if !strings.HasPrefix(taskFamily, "design/") &&
+		!strings.HasPrefix(taskFamily, "research/") &&
+		!strings.HasPrefix(taskFamily, "review/") &&
+		!strings.HasPrefix(taskFamily, "migration/") &&
+		!strings.HasPrefix(taskFamily, "implementation/") {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage == nil || usage.ReadEvidenceCount() < 1 || usage.StructuredEvidenceCount() > 0 {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if !isBroadReadDetourTool(canonical, input) {
+		return call, tool, input
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryQuery(ctx, policy),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": preferredStructuredDiscoveryFileQuery(ctx, policy),
+			"limit": 40,
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
 func rewriteRepeatedInitializationSkillDetour(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -1143,6 +1245,22 @@ func isLateImplementationExecutionFocusTool(toolName string, input map[string]an
 		return looksLikeDiscoveryShellCommand(command)
 	case EditToolName, SingleEditToolName, AgenticEditToolName, ApplyPatchToolName, WriteToolName:
 		return true
+	default:
+		return false
+	}
+}
+
+func isBroadReadDetourTool(toolName string, input map[string]any) bool {
+	switch toolName {
+	case AgenticViewToolName, ViewToolName, SingleViewToolName, LSToolName:
+		return true
+	case BashToolName:
+		command, _ := input["command"].(string)
+		return looksLikeDiscoveryShellCommand(command)
+	case RGToolName:
+		pattern, _ := input["pattern"].(string)
+		query, _ := input["query"].(string)
+		return strings.TrimSpace(pattern) == "" && strings.TrimSpace(query) == ""
 	default:
 		return false
 	}

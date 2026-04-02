@@ -241,13 +241,11 @@ func TestGetTurnPolicyFromContext(t *testing.T) {
 		{
 			name: "returns policy when present",
 			ctx: context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
-				DirectResponseOnly:       true,
 				AllowMemoryRead:          false,
 				AllowMemoryWrite:         false,
 				AllowAutoMemoryInjection: false,
 			}),
 			want: TurnPolicy{
-				DirectResponseOnly:       true,
 				AllowMemoryRead:          false,
 				AllowMemoryWrite:         false,
 				AllowAutoMemoryInjection: false,

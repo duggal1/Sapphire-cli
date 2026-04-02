@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"strings"
 
 	"charm.land/fantasy"
 )
@@ -11,6 +12,7 @@ import (
 const (
 	loopDetectionWindowSize = 10
 	loopDetectionMaxRepeats = 5
+	loopPatternMinRepeats   = 3
 )
 
 type repeatedToolLoop struct {
@@ -18,6 +20,7 @@ type repeatedToolLoop struct {
 	RepeatCount int
 	WindowSize  int
 	ToolNames   []string
+	PatternSize int
 }
 
 // hasRepeatedToolCalls checks whether the agent is stuck in a loop by looking
@@ -29,18 +32,23 @@ func hasRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats int
 }
 
 func detectRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats int) (repeatedToolLoop, bool) {
-	if len(steps) < windowSize {
+	if len(steps) == 0 {
 		return repeatedToolLoop{}, false
 	}
 
-	window := steps[len(steps)-windowSize:]
+	window := steps
+	if windowSize > 0 && len(window) > windowSize {
+		window = steps[len(steps)-windowSize:]
+	}
 	counts := make(map[string]int)
+	interactions := make([]repeatedToolLoop, 0, len(window))
 
 	for _, step := range window {
 		loop, ok := summarizeToolInteraction(step.Content)
 		if !ok || loop.Signature == "" {
 			continue
 		}
+		interactions = append(interactions, loop)
 		counts[loop.Signature]++
 		if counts[loop.Signature] > maxRepeats {
 			loop.RepeatCount = counts[loop.Signature]
@@ -49,7 +57,105 @@ func detectRepeatedToolCalls(steps []fantasy.StepResult, windowSize, maxRepeats 
 		}
 	}
 
+	if loop, ok := detectRepeatedToolSuffixPattern(interactions, loopPatternMinRepeats); ok {
+		return loop, true
+	}
+
 	return repeatedToolLoop{}, false
+}
+
+func detectRepeatedToolSuffixPattern(sequence []repeatedToolLoop, minRepeats int) (repeatedToolLoop, bool) {
+	if minRepeats < 2 || len(sequence) < minRepeats*2 {
+		return repeatedToolLoop{}, false
+	}
+
+	best := repeatedToolLoop{}
+	bestCoverage := 0
+	maxPatternSize := len(sequence) / minRepeats
+	for patternSize := 2; patternSize <= maxPatternSize; patternSize++ {
+		pattern := sequence[len(sequence)-patternSize:]
+		if !patternHasDiversity(pattern) {
+			continue
+		}
+
+		repeatCount := 1
+		for pos := len(sequence) - patternSize; pos >= patternSize; pos -= patternSize {
+			chunk := sequence[pos-patternSize : pos]
+			if !sameToolInteractionPattern(chunk, pattern) {
+				break
+			}
+			repeatCount++
+		}
+		if repeatCount < minRepeats {
+			continue
+		}
+
+		coverage := repeatCount * patternSize
+		if coverage < bestCoverage || (coverage == bestCoverage && patternSize <= best.PatternSize) {
+			continue
+		}
+		bestCoverage = coverage
+		best = repeatedToolLoop{
+			Signature:   getToolPatternSignature(pattern),
+			RepeatCount: repeatCount,
+			WindowSize:  coverage,
+			ToolNames:   collectPatternToolNames(pattern),
+			PatternSize: patternSize,
+		}
+	}
+
+	return best, bestCoverage > 0
+}
+
+func patternHasDiversity(pattern []repeatedToolLoop) bool {
+	if len(pattern) < 2 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(pattern))
+	for _, interaction := range pattern {
+		if interaction.Signature == "" {
+			continue
+		}
+		seen[interaction.Signature] = struct{}{}
+		if len(seen) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func sameToolInteractionPattern(a, b []repeatedToolLoop) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Signature != b[i].Signature {
+			return false
+		}
+	}
+	return true
+}
+
+func collectPatternToolNames(pattern []repeatedToolLoop) []string {
+	names := make([]string, 0, len(pattern))
+	for _, interaction := range pattern {
+		names = append(names, interaction.ToolNames...)
+	}
+	return uniqueNonEmptyStrings(names)
+}
+
+func getToolPatternSignature(pattern []repeatedToolLoop) string {
+	if len(pattern) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for _, interaction := range pattern {
+		io.WriteString(h, interaction.Signature)
+		io.WriteString(h, "\x00")
+		io.WriteString(h, strings.Join(interaction.ToolNames, ","))
+		io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // getToolInteractionSignature computes a hash signature for the tool

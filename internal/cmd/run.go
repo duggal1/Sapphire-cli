@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"charm.land/log/v2"
-	"github.com/duggal1/Sapphire-cli/internal/agent"
 	"github.com/duggal1/Sapphire-cli/internal/event"
 	"github.com/spf13/cobra"
 )
@@ -77,11 +76,6 @@ crush run --verbose "Generate a README for this project"
 
 		if prompt == "" {
 			return fmt.Errorf("no prompt provided")
-		}
-
-		if reply, ok := agent.DirectReplyForPrompt(prompt, nil); ok {
-			_, _ = fmt.Fprintln(os.Stdout, reply)
-			return nil
 		}
 
 		event.AppInitialized()

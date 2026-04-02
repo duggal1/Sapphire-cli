@@ -95,6 +95,9 @@ func (e *repeatedToolLoopError) Error() string {
 	if windowSize < repeatCount {
 		windowSize = repeatCount
 	}
+	if e.loop.PatternSize > 1 {
+		return fmt.Sprintf("repeated tool-call loop detected: %s repeated as a %d-step suffix pattern %d times within the last %d steps; stop replaying the same sequence and change tactics", toolSummary, e.loop.PatternSize, repeatCount, windowSize)
+	}
 	return fmt.Sprintf("repeated tool-call loop detected: %s repeated %d times within the last %d steps; stop retrying the same interaction and change tactics", toolSummary, repeatCount, windowSize)
 }
 

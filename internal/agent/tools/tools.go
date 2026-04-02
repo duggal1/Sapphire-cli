@@ -67,7 +67,6 @@ type RuntimeControl interface {
 }
 
 type TurnPolicy struct {
-	DirectResponseOnly       bool
 	AllowMemoryRead          bool
 	AllowMemoryWrite         bool
 	AllowAutoMemoryInjection bool

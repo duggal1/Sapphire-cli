@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -27,6 +28,21 @@ func TestRepeatedToolLoopErrorMatchesSentinel(t *testing.T) {
 	}}
 	if !errors.Is(err, ErrRepeatedToolLoopDetected) {
 		t.Fatal("expected repeated loop error to match sentinel")
+	}
+}
+
+func TestRepeatedToolLoopErrorDescribesSuffixPattern(t *testing.T) {
+	t.Parallel()
+
+	err := &repeatedToolLoopError{loop: repeatedToolLoop{
+		RepeatCount: 3,
+		WindowSize:  9,
+		ToolNames:   []string{"read", "write", "patch"},
+		PatternSize: 3,
+	}}
+
+	if got := err.Error(); got == "" || !strings.Contains(got, "3-step suffix pattern 3 times") {
+		t.Fatalf("unexpected suffix-pattern error: %q", got)
 	}
 }
 

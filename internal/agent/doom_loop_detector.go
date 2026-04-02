@@ -178,12 +178,47 @@ func renderDeterministicDoomLoopReminder(loop deterministicDoomLoop) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+func renderRepeatedToolLoopReminder(loop repeatedToolLoop) string {
+	consecutive := loop.WindowSize
+	if consecutive < loop.RepeatCount {
+		consecutive = loop.RepeatCount
+	}
+	if consecutive < 1 {
+		consecutive = 1
+	}
+	body := strings.ReplaceAll(string(doomLoopReminderTemplate), "{{consecutive_calls}}", strconv.Itoa(consecutive))
+
+	lines := []string{strings.TrimSpace(body), "", "## Detected Repeated Interaction Loop"}
+	if loop.PatternSize > 1 {
+		lines = append(lines, fmt.Sprintf("- A %d-step tool/result suffix pattern repeated %d times.", loop.PatternSize, loop.RepeatCount))
+	} else {
+		lines = append(lines, fmt.Sprintf("- The same tool/result interaction repeated %d times.", loop.RepeatCount))
+	}
+	if len(loop.ToolNames) > 0 {
+		lines = append(lines, "- Repeating tools: "+strings.Join(loop.ToolNames, ", ")+".")
+	}
+	lines = append(lines, "", "## Immediate Execution Constraints")
+	lines = append(lines, "- Stop replaying the same suffix pattern or tool/result interaction.")
+	lines = append(lines, "- Change the architecture, execution order, or evidence path before the next step.")
+	lines = append(lines, "- If the pattern came from narrow serial file reads, widen to structured discovery before acting again.")
+	lines = append(lines, "- If the pattern came from edit-verify churn, replace the failing design instead of retrying it.")
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
 func buildDoomLoopRecoveryCall(mode planmode.SessionMode, call SessionAgentCall, err error, partialAssistant *message.Message) (SessionAgentCall, bool) {
 	if mode != planmode.DefaultSessionMode || call.DoomLoopRecoveryTry >= maxDoomLoopRecoveryAttempts {
 		return SessionAgentCall{}, false
 	}
 	var loopErr *deterministicDoomLoopError
-	if !errors.As(err, &loopErr) || loopErr == nil {
+	var repeatedErr *repeatedToolLoopError
+
+	reminder := ""
+	switch {
+	case errors.As(err, &loopErr) && loopErr != nil:
+		reminder = renderDeterministicDoomLoopReminder(loopErr.loop)
+	case errors.As(err, &repeatedErr) && repeatedErr != nil:
+		reminder = renderRepeatedToolLoopReminder(repeatedErr.loop)
+	default:
 		return SessionAgentCall{}, false
 	}
 
@@ -207,7 +242,7 @@ Original user request:
 		base += fmt.Sprintf("\n\nPrevious draft tail:\n%s", partialTail)
 	}
 
-	followUp.Prompt = strings.TrimSpace(base + "\n\n" + renderDeterministicDoomLoopReminder(loopErr.loop))
+	followUp.Prompt = strings.TrimSpace(base + "\n\n" + reminder)
 	return followUp, true
 }
 

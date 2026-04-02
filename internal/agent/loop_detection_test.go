@@ -126,7 +126,7 @@ func TestHasRepeatedToolCalls(t *testing.T) {
 	})
 
 	t.Run("multiple different patterns alternating", func(t *testing.T) {
-		// Two patterns alternating: each appears 5 times — not above threshold
+		// A,B repeated as a suffix pattern is a real loop and should be detected.
 		steps := make([]fantasy.StepResult, 10)
 		for i := range steps {
 			if i%2 == 0 {
@@ -136,8 +136,8 @@ func TestHasRepeatedToolCalls(t *testing.T) {
 			}
 		}
 		result := hasRepeatedToolCalls(steps, 10, 5)
-		if result {
-			t.Error("expected false: two patterns each appearing 5 times (not > 5)")
+		if !result {
+			t.Error("expected true: alternating suffix pattern should now be treated as a loop")
 		}
 	})
 }
@@ -168,6 +168,88 @@ func TestDetectRepeatedToolCallsReturnsLoopDetails(t *testing.T) {
 	}
 	if loop.Signature == "" {
 		t.Fatal("expected loop signature to be populated")
+	}
+}
+
+func TestDetectRepeatedToolCallsDetectsSuffixPattern(t *testing.T) {
+	t.Parallel()
+
+	steps := []fantasy.StepResult{
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+	}
+
+	loop, ok := detectRepeatedToolCalls(steps, 10, 5)
+	if !ok {
+		t.Fatal("expected suffix pattern loop")
+	}
+	if loop.PatternSize != 3 {
+		t.Fatalf("unexpected pattern size: %d", loop.PatternSize)
+	}
+	if loop.RepeatCount != 3 {
+		t.Fatalf("unexpected repeat count: %d", loop.RepeatCount)
+	}
+	if loop.WindowSize != 9 {
+		t.Fatalf("unexpected loop coverage: %d", loop.WindowSize)
+	}
+	if len(loop.ToolNames) != 3 {
+		t.Fatalf("unexpected tool names: %#v", loop.ToolNames)
+	}
+}
+
+func TestDetectRepeatedToolCallsDetectsRecentSuffixPattern(t *testing.T) {
+	t.Parallel()
+
+	steps := []fantasy.StepResult{
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+		makeToolStep("shell", `{"command":"ls"}`, "list"),
+		makeToolStep("grep", `{"pattern":"TODO"}`, "todo"),
+		makeToolStep("shell", `{"command":"ls"}`, "list"),
+		makeToolStep("grep", `{"pattern":"TODO"}`, "todo"),
+		makeToolStep("shell", `{"command":"ls"}`, "list"),
+		makeToolStep("grep", `{"pattern":"TODO"}`, "todo"),
+	}
+
+	loop, ok := detectRepeatedToolCalls(steps, 12, 5)
+	if !ok {
+		t.Fatal("expected recent suffix pattern loop")
+	}
+	if loop.PatternSize != 2 {
+		t.Fatalf("unexpected pattern size: %d", loop.PatternSize)
+	}
+	if loop.RepeatCount != 3 {
+		t.Fatalf("unexpected repeat count: %d", loop.RepeatCount)
+	}
+	if len(loop.ToolNames) != 2 {
+		t.Fatalf("unexpected tool names: %#v", loop.ToolNames)
+	}
+}
+
+func TestDetectRepeatedToolCallsSkipsPartialSuffixPattern(t *testing.T) {
+	t.Parallel()
+
+	steps := []fantasy.StepResult{
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+		makeToolStep("patch", `{"file":"c.go"}`, "content-c"),
+		makeToolStep("read", `{"file":"a.go"}`, "content-a"),
+		makeToolStep("write", `{"file":"b.go"}`, "content-b"),
+	}
+
+	if loop, ok := detectRepeatedToolCalls(steps, 10, 5); ok {
+		t.Fatalf("did not expect partial suffix pattern loop, got %#v", loop)
 	}
 }
 

@@ -437,33 +437,6 @@ func TestPrepareToolCallNormalizesSaveMemoryAliases(t *testing.T) {
 	require.IsType(t, map[string]any{}, input["content"])
 }
 
-func TestPrepareToolCallBlocksToolsOnDirectReplyOnlyTurn(t *testing.T) {
-	t.Parallel()
-
-	singleViewTool := fantasy.NewAgentTool(
-		SingleViewToolName,
-		"",
-		func(ctx context.Context, params ViewParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			return fantasy.ToolResponse{}, nil
-		},
-	)
-
-	ctx := context.WithValue(context.Background(), TurnPolicyContextKey, TurnPolicy{
-		DirectResponseOnly:       true,
-		AllowMemoryRead:          false,
-		AllowMemoryWrite:         false,
-		AllowAutoMemoryInjection: false,
-	})
-
-	_, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
-		ID:    "casual-1",
-		Name:  SingleViewToolName,
-		Input: `{"file_path":"README.md"}`,
-	}, map[string]fantasy.AgentTool{SingleViewToolName: singleViewTool})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "casual conversation only")
-}
-
 func TestPrepareToolCallBlocksProtectedToolsUntilHarnessRuns(t *testing.T) {
 	t.Parallel()
 

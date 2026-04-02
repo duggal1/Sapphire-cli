@@ -1967,9 +1967,6 @@ func extractWritePaths(toolName string, input map[string]any) []string {
 
 func enforceTurnPolicy(ctx context.Context, toolName string, input map[string]any) error {
 	policy := GetTurnPolicyFromContext(ctx)
-	if policy.DirectResponseOnly {
-		return errors.New("tool use blocked: this turn is casual conversation only. Reply directly without tools.")
-	}
 	if err := enforceDeepPlanningTransition(ctx, toolName); err != nil {
 		return err
 	}

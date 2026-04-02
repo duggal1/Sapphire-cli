@@ -3770,22 +3770,58 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
 	}
 
-	var cmds []tea.Cmd
+	// First session: create it asynchronously and kick off everything from there.
+	// This eliminates the synchronous DB write that was blocking the UI transition.
 	if !m.hasSession() {
-		newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
-		if err != nil {
-			return util.ReportError(err)
-		}
 		if m.forceCompactMode {
 			m.isCompact = true
 		}
-		if newSession.ID != "" {
-			m.session = &newSession
-			cmds = append(cmds, m.loadSession(newSession.ID))
-		}
 		m.setState(uiChat, m.focus)
+
+		// Show user message placeholder immediately so the UI feels instant.
+		m.showPendingUserPlaceholder("", content)
+		placeholderCmd := m.showPendingAssistantPlaceholder("", deepplanning.IsRequested(content))
+
+		// Create session, then run agent — all async so the UI transition is instant.
+		return tea.Batch(
+			func() tea.Msg {
+				newSession, err := m.com.App.Sessions.Create(context.Background(), "New Session")
+				if err != nil {
+					return util.ReportError(err)
+				}
+				if newSession.ID == "" {
+					return nil
+				}
+				m.session = &newSession
+				sessionID := newSession.ID
+
+				// Update placeholders with real session ID now that we have it.
+				m.showPendingUserPlaceholder(sessionID, content)
+
+				// Run the agent synchronously inside this tea.Cmd so error
+				// handling and cancellation flow through Bubble Tea's message
+				// loop. The UI already transitioned to chat mode above, so
+				// this does not block rendering.
+				_, runErr := m.com.App.AgentCoordinator.Run(context.Background(), sessionID, content, attachments...)
+				if runErr != nil {
+					isCancelErr := errors.Is(runErr, context.Canceled)
+					isPermissionErr := errors.Is(runErr, permission.ErrorPermissionDenied)
+					if isCancelErr || isPermissionErr {
+						return clearPendingAssistantPlaceholderMsg{}
+					}
+					return pendingAssistantErrorMsg{err: runErr.Error()}
+				}
+				return loadSessionMsg{
+					session:   &newSession,
+					files:     nil,
+					readFiles: nil,
+				}
+			},
+			placeholderCmd,
+		)
 	}
 
+	var cmds []tea.Cmd
 	ctx := context.Background()
 	cmds = append(cmds, func() tea.Msg {
 		for _, path := range m.sessionFileReads {

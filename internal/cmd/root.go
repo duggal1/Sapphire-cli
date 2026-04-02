@@ -40,6 +40,7 @@ func init() {
 	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 
 	rootCmd.AddCommand(
+		agentCmd,
 		runCmd,
 		stopCmd,
 		worktreesCmd,

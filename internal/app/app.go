@@ -200,14 +200,14 @@ func (app *App) Config() *config.Config {
 
 // RunNonInteractive executes the application in a headless mode using the provided prompt.
 // It streams agent responses directly to the output writer without a TUI.
-func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel string, hideSpinner bool) error {
+func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt, largeModel, smallModel, reasoningEffort string, hideSpinner bool) error {
 	slog.Info("Running in non-interactive mode")
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	if largeModel != "" || smallModel != "" {
-		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel); err != nil {
+	if largeModel != "" || smallModel != "" || strings.TrimSpace(reasoningEffort) != "" {
+		if err := app.overrideModelsForNonInteractive(ctx, largeModel, smallModel, reasoningEffort); err != nil {
 			return fmt.Errorf("failed to override models: %w", err)
 		}
 	}
@@ -376,8 +376,12 @@ func (app *App) UpdateAgentModel(ctx context.Context) error {
 // Model matching is case-insensitive.
 // If largeModel is provided but smallModel is not, the small model defaults to
 // the provider's default small model.
-func (app *App) overrideModelsForNonInteractive(ctx context.Context, largeModel, smallModel string) error {
+func (app *App) overrideModelsForNonInteractive(ctx context.Context, largeModel, smallModel, reasoningEffort string) error {
 	providers := app.config.Providers.Copy()
+	reasoningEffort = strings.ToLower(strings.TrimSpace(reasoningEffort))
+	if reasoningEffort != "" && !isSupportedReasoningEffort(reasoningEffort) {
+		return fmt.Errorf("invalid reasoning effort %q (expected low, medium, or high)", reasoningEffort)
+	}
 
 	largeMatches, smallMatches, err := findModels(providers, largeModel, smallModel)
 	if err != nil {
@@ -419,7 +423,48 @@ func (app *App) overrideModelsForNonInteractive(ctx context.Context, largeModel,
 		app.config.Models[config.SelectedModelTypeSmall] = smallCfg
 	}
 
+	if reasoningEffort != "" {
+		if err := applyReasoningOverrideToSelection(app.config, config.SelectedModelTypeLarge, reasoningEffort); err != nil {
+			return err
+		}
+		if err := applyReasoningOverrideToSelection(app.config, config.SelectedModelTypeSmall, reasoningEffort); err != nil {
+			return err
+		}
+	}
+
 	return app.AgentCoordinator.UpdateModels(ctx)
+}
+
+func isSupportedReasoningEffort(effort string) bool {
+	switch strings.TrimSpace(strings.ToLower(effort)) {
+	case "low", "medium", "high":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyReasoningOverrideToSelection(cfg *config.Config, modelType config.SelectedModelType, effort string) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	if !isSupportedReasoningEffort(effort) {
+		return fmt.Errorf("invalid reasoning effort %q", effort)
+	}
+	selected, ok := cfg.Models[modelType]
+	if !ok {
+		return fmt.Errorf("%s model is not configured", modelType)
+	}
+	model := cfg.GetModel(selected.Provider, selected.Model)
+	if model == nil {
+		return fmt.Errorf("%s model %s/%s is not available", modelType, selected.Provider, selected.Model)
+	}
+	cfg.Models[modelType] = config.ApplyReasoningSelection(model, selected, effort)
+	return nil
 }
 
 // GetDefaultSmallModel retrieves the default small model configuration for a specific provider.

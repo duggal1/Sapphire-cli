@@ -106,6 +106,28 @@ func TestBuildHeadlessCompletionRecoveryCallForExecute(t *testing.T) {
 	require.Contains(t, followUp.Prompt, "Move directly into the first minimal concrete implementation step")
 }
 
+func TestBuildHeadlessCompletionRecoveryCallForStructuredDiscovery(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{
+		Prompt: "Design the champion/challenger lane",
+		LearnedToolPolicy: tools.LearnedToolPolicy{
+			TaskFamily: "design/broad/backend",
+		},
+	}
+	followUp, ok := buildHeadlessCompletionRecoveryCall(planmode.DefaultSessionMode, call, &headlessCompletionBudgetError{
+		Action:     headlessCompletionActionStructure,
+		TaskFamily: "design/broad/backend",
+		Phase:      headlessPhaseStructure,
+		Elapsed:    35 * time.Second,
+	}, nil)
+
+	require.True(t, ok)
+	require.Equal(t, "structure", followUp.HeadlessPhaseAtInterrupt)
+	require.Contains(t, followUp.Prompt, "Perform exactly one targeted structured discovery step")
+	require.Contains(t, followUp.Prompt, "Do not load skills")
+}
+
 func TestCanForceHeadlessFinalizationAllowsAnalysisClosureWithEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -137,12 +159,21 @@ func TestShouldSalvageHeadlessResultRequiresAnalysisRetryAndSubstantialDraft(t *
 
 	longAssistant := &message.Message{
 		Parts: []message.ContentPart{
-			message.TextContent{Text: stringsOfLength(950) + "\n\nA\nB\nC\nD\nE\nF\n"},
+			message.TextContent{Text: "Option A keeps cmd/api thin while Option B rewrites the boundary directly. Compared against the current package structure, Option A is the better repo fit because it lowers migration cost and blast radius. I validated the recommendation against the current package structure and listed the trade-offs with rollback notes.\n\nA\nB\nC\nD\nE\nF\n"},
 		},
 	}
 	require.True(t, shouldSalvageHeadlessResult("design/broad/backend", 1, longAssistant))
 	require.False(t, shouldSalvageHeadlessResult("implementation/broad/backend", 1, longAssistant))
 	require.False(t, shouldSalvageHeadlessResult("design/broad/backend", 0, longAssistant))
+}
+
+func TestDetectHeadlessCompletionPhaseRequiresStructuredDiscoveryAfterRead(t *testing.T) {
+	t.Parallel()
+
+	state := tools.NewToolUsageState()
+	state.MarkReadEvidence("/repo/internal/platform/runtime.go")
+
+	require.Equal(t, headlessPhaseStructure, detectHeadlessCompletionPhase("design/broad/backend", nil, state))
 }
 
 func TestTranslateStreamErrorConvertsHardTimeoutToReject(t *testing.T) {

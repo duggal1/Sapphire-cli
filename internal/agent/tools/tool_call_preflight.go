@@ -99,6 +99,7 @@ func PrepareToolCall(ctx context.Context, call fantasy.ToolCall, tools map[strin
 	call, tool, input = rewriteRedundantInitializationDiscovery(ctx, call, tool, input, tools)
 	call, tool, input = rewriteForbiddenDiscoveryBash(ctx, call, tool, input, tools)
 	call, tool, input = rewriteToExplicitPlanWhenRequired(ctx, call, tool, input, tools)
+	call, tool, input = rewriteDeepPlanningTransition(ctx, call, tool, input, tools)
 	input = repairEmptyGuardrailedUpdatePlan(ctx, call.Name, input)
 
 	if err := enforceTurnPolicy(ctx, call.Name, input); err != nil {
@@ -799,6 +800,55 @@ func rewriteToExplicitPlanWhenRequired(
 	return call, tool, input
 }
 
+func rewriteDeepPlanningTransition(
+	ctx context.Context,
+	call fantasy.ToolCall,
+	tool fantasy.AgentTool,
+	input map[string]any,
+	tools map[string]fantasy.AgentTool,
+) (fantasy.ToolCall, fantasy.AgentTool, map[string]any) {
+	if !GetDeepPlanningActiveFromContext(ctx) {
+		return call, tool, input
+	}
+	usage := GetToolUsageStateFromContext(ctx)
+	if usage != nil && usage.HasPublishedPlan() {
+		return call, tool, input
+	}
+	canonical := canonicalToolNameForModePolicy(call.Name)
+	if canonical == "" {
+		canonical = normalizeToolName(call.Name)
+	}
+	if canonical == "" || isDeepPlanningAllowedTool(canonical) {
+		return call, tool, input
+	}
+	if hasStructuredDiscoveryOrReadContext(usage) {
+		if next, ok := tools[UpdatePlanToolName]; ok {
+			call.Name = UpdatePlanToolName
+			tool = next
+			input = buildDeepPlanningCheckpointPlanInput(ctx, canonical)
+			return call, tool, input
+		}
+	}
+	if next, ok := tools[ToolSearchToolName]; ok {
+		call.Name = ToolSearchToolName
+		tool = next
+		input = map[string]any{
+			"query": deepPlanningStructuredDiscoveryQuery(ctx),
+		}
+		return call, tool, input
+	}
+	if next, ok := tools[RGFilesToolName]; ok {
+		call.Name = RGFilesToolName
+		tool = next
+		input = map[string]any{
+			"query": deepPlanningStructuredDiscoveryFileQuery(ctx),
+			"limit": 40,
+		}
+		return call, tool, input
+	}
+	return call, tool, input
+}
+
 func rewriteInitializationSkillDetourToDiscovery(
 	ctx context.Context,
 	call fantasy.ToolCall,
@@ -1465,6 +1515,37 @@ func buildInitializationCheckpointPlanInput(ctx context.Context) map[string]any 
 	}
 }
 
+func buildDeepPlanningCheckpointPlanInput(ctx context.Context, blockedToolName string) map[string]any {
+	explanation := fmt.Sprintf(
+		"Deep planning evidence is sufficient. Lock the concrete execution checklist now before using %s or leaving the planning phase.",
+		blockedToolName,
+	)
+	firstStepStatus := StepStatusInProgress
+	if usage := GetToolUsageStateFromContext(ctx); hasStructuredDiscoveryOrReadContext(usage) {
+		firstStepStatus = StepStatusCompleted
+	}
+	args := NormalizeUpdatePlanArgs(UpdatePlanArgs{
+		Explanation: &explanation,
+		Plan: []PlanItem{
+			{Step: "Read AGENTS.md and the highest-signal files for the task", Status: firstStepStatus},
+			{Step: "Map the relevant architecture, constraints, and edge cases", Status: StepStatusInProgress},
+			{Step: "Execute the task against the published plan in small verified steps", Status: StepStatusPending},
+			{Step: "Verify the final result and report the outcome concisely", Status: StepStatusPending},
+		},
+	})
+	plan := make([]any, 0, len(args.Plan))
+	for _, item := range args.Plan {
+		plan = append(plan, map[string]any{
+			"step":   item.Step,
+			"status": item.Status,
+		})
+	}
+	return map[string]any{
+		"explanation": explanation,
+		"plan":        plan,
+	}
+}
+
 func isInitializationDiscoveryTool(toolName string) bool {
 	switch toolName {
 	case ToolSearchToolName, RGFilesToolName, RGToolName, GlobToolName, GrepToolName, LSToolName:
@@ -1472,6 +1553,23 @@ func isInitializationDiscoveryTool(toolName string) bool {
 	default:
 		return false
 	}
+}
+
+func deepPlanningStructuredDiscoveryQuery(ctx context.Context) string {
+	if task := strings.TrimSpace(GetHarnessRequirementFromContext(ctx).Task); task != "" {
+		return task
+	}
+	if family := strings.TrimSpace(GetLearnedToolPolicyFromContext(ctx).TaskFamily); family != "" {
+		return family
+	}
+	return "main relevant files, entrypoints, and architecture for the current task"
+}
+
+func deepPlanningStructuredDiscoveryFileQuery(ctx context.Context) string {
+	if task := strings.TrimSpace(GetHarnessRequirementFromContext(ctx).Task); task != "" {
+		return task
+	}
+	return "main relevant files for the current task"
 }
 
 func shouldRewriteRedundantInitializationDiscovery(toolName string, usage *ToolUsageState) bool {

@@ -25,12 +25,20 @@ const (
 )
 
 type headlessCompletionAction string
+type headlessCompletionPhase string
 
 const (
 	headlessCompletionActionNone     headlessCompletionAction = ""
+	headlessCompletionActionStructure headlessCompletionAction = "structure"
 	headlessCompletionActionExecute  headlessCompletionAction = "execute"
 	headlessCompletionActionFinalize headlessCompletionAction = "finalize"
 	headlessCompletionActionReject   headlessCompletionAction = "reject"
+
+	headlessPhaseRead      headlessCompletionPhase = "read"
+	headlessPhaseStructure headlessCompletionPhase = "structure"
+	headlessPhaseExecute   headlessCompletionPhase = "execute"
+	headlessPhaseSynthesis headlessCompletionPhase = "synthesis"
+	headlessPhaseClose     headlessCompletionPhase = "close"
 )
 
 type headlessCompletionBudget struct {
@@ -51,6 +59,7 @@ type headlessCompletionController struct {
 type headlessCompletionBudgetError struct {
 	Action     headlessCompletionAction
 	TaskFamily string
+	Phase      headlessCompletionPhase
 	Elapsed    time.Duration
 	SoftLimit  time.Duration
 	HardLimit  time.Duration
@@ -63,6 +72,11 @@ func (e *headlessCompletionBudgetError) Error() string {
 	}
 	taskFamily := strings.TrimSpace(e.TaskFamily)
 	switch e.Action {
+	case headlessCompletionActionStructure:
+		if taskFamily == "" {
+			return fmt.Sprintf("headless runtime phase budget reached after %s with grounded reads but no structured discovery; stop broad reading and perform one targeted structured discovery pass", e.Elapsed.Round(time.Second))
+		}
+		return fmt.Sprintf("headless runtime phase budget reached for %s after %s with grounded reads but no structured discovery; stop broad reading and perform one targeted structured discovery pass", taskFamily, e.Elapsed.Round(time.Second))
 	case headlessCompletionActionExecute:
 		if taskFamily == "" {
 			return fmt.Sprintf("headless runtime phase budget reached after %s with enough evidence; stop exploring and move directly into execution or explicit blockage reporting", e.Elapsed.Round(time.Second))
@@ -144,11 +158,25 @@ func (c *headlessCompletionController) MaybeForceFinalize(now time.Time, assista
 		return nil
 	}
 	elapsed := now.Sub(c.startedAt)
-	if !c.executePrompted && elapsed >= c.budget.SoftLimit/2 && canForceHeadlessExecutionKick(c.budget.TaskFamily, usage) {
+	phase := detectHeadlessCompletionPhase(c.budget.TaskFamily, assistant, usage)
+	if !c.executePrompted && elapsed >= c.budget.SoftLimit/2 && phase == headlessPhaseStructure && canForceStructuredDiscoveryKick(c.budget.TaskFamily, usage) {
+		c.executePrompted = true
+		return &headlessCompletionBudgetError{
+			Action:     headlessCompletionActionStructure,
+			TaskFamily: c.budget.TaskFamily,
+			Phase:      phase,
+			Elapsed:    elapsed,
+			SoftLimit:  c.budget.SoftLimit,
+			HardLimit:  c.budget.HardLimit,
+			Reason:     "structured discovery is overdue",
+		}
+	}
+	if !c.executePrompted && elapsed >= c.budget.SoftLimit/2 && phase == headlessPhaseExecute && canForceHeadlessExecutionKick(c.budget.TaskFamily, usage) {
 		c.executePrompted = true
 		return &headlessCompletionBudgetError{
 			Action:     headlessCompletionActionExecute,
 			TaskFamily: c.budget.TaskFamily,
+			Phase:      phase,
 			Elapsed:    elapsed,
 			SoftLimit:  c.budget.SoftLimit,
 			HardLimit:  c.budget.HardLimit,
@@ -165,6 +193,7 @@ func (c *headlessCompletionController) MaybeForceFinalize(now time.Time, assista
 	return &headlessCompletionBudgetError{
 		Action:     headlessCompletionActionFinalize,
 		TaskFamily: c.budget.TaskFamily,
+		Phase:      phase,
 		Elapsed:    now.Sub(c.startedAt),
 		SoftLimit:  c.budget.SoftLimit,
 		HardLimit:  c.budget.HardLimit,
@@ -188,12 +217,14 @@ func (c *headlessCompletionController) TranslateStreamError(genCtx context.Conte
 	}
 	c.hardTriggered = true
 	action := headlessCompletionActionReject
+	phase := detectHeadlessCompletionPhase(c.budget.TaskFamily, assistant, usage)
 	if canForceHeadlessFinalization(c.budget.TaskFamily, assistant, usage) {
 		action = headlessCompletionActionFinalize
 	}
 	return &headlessCompletionBudgetError{
 		Action:     action,
 		TaskFamily: c.budget.TaskFamily,
+		Phase:      phase,
 		Elapsed:    time.Since(c.startedAt),
 		SoftLimit:  c.budget.SoftLimit,
 		HardLimit:  c.budget.HardLimit,
@@ -219,7 +250,7 @@ func canForceHeadlessFinalization(taskFamily string, assistant *message.Message,
 		}
 		return hasWrites || hasVerification
 	}
-	if len(text) >= 80 {
+	if hasSubstantialAnalysisDraft(text) {
 		return true
 	}
 	return usage.Total(
@@ -261,6 +292,70 @@ func canForceHeadlessExecutionKick(taskFamily string, usage *tools.ToolUsageStat
 	) >= 3
 }
 
+func canForceStructuredDiscoveryKick(taskFamily string, usage *tools.ToolUsageState) bool {
+	if usage == nil {
+		return false
+	}
+	taskFamily = strings.TrimSpace(taskFamily)
+	if !strings.HasPrefix(taskFamily, "design/") &&
+		!strings.HasPrefix(taskFamily, "research/") &&
+		!strings.HasPrefix(taskFamily, "review/") &&
+		!strings.HasPrefix(taskFamily, "migration/") {
+		return false
+	}
+	return usage.ReadEvidenceCount() > 0 && usage.StructuredEvidenceCount() == 0
+}
+
+func detectHeadlessCompletionPhase(taskFamily string, assistant *message.Message, usage *tools.ToolUsageState) headlessCompletionPhase {
+	taskFamily = strings.TrimSpace(taskFamily)
+	if usage == nil || !tools.HasRequiredContextReadEvidence(usage) {
+		return headlessPhaseRead
+	}
+	if strings.HasPrefix(taskFamily, "implementation/") {
+		if !usage.HasPublishedPlan() {
+			return headlessPhaseStructure
+		}
+		metrics := usage.SnapshotDeterministicLoopMetrics()
+		hasWrites := len(metrics.ModifiedFiles) > 0 || len(metrics.CreatedFiles) > 0
+		hasVerification := usage.VerificationEvidenceCount() > 0 || len(usage.PendingArtifactVerificationPaths()) > 0
+		if !hasWrites && !hasVerification {
+			return headlessPhaseExecute
+		}
+		if assistant == nil || !hasSubstantialAnalysisDraft(strings.TrimSpace(assistant.Content().Text)) {
+			return headlessPhaseSynthesis
+		}
+		return headlessPhaseClose
+	}
+	if usage.StructuredEvidenceCount() == 0 {
+		return headlessPhaseStructure
+	}
+	if assistant == nil || !hasSubstantialAnalysisDraft(strings.TrimSpace(assistant.Content().Text)) {
+		return headlessPhaseSynthesis
+	}
+	return headlessPhaseClose
+}
+
+func hasSubstantialAnalysisDraft(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) < 320 {
+		return false
+	}
+	lower := strings.ToLower(text)
+	signals := 0
+	for _, needle := range []string{
+		"option a", "option b", "trade-off", "tradeoff", "repo fit", "migration cost",
+		"blast radius", "because", "recommend", "validate", "rollback", "risk",
+	} {
+		if strings.Contains(lower, needle) {
+			signals++
+		}
+	}
+	if signals >= 2 {
+		return true
+	}
+	return strings.Count(text, "\n") >= 4
+}
+
 func buildHeadlessCompletionRecoveryCall(mode planmode.SessionMode, call SessionAgentCall, err error, partialAssistant *message.Message) (SessionAgentCall, bool) {
 	if planmode.NormalizeMode(mode) != planmode.DefaultSessionMode || call.HeadlessCompletionTry >= maxHeadlessCompletionRecoveryAttempts {
 		return SessionAgentCall{}, false
@@ -290,6 +385,17 @@ Original user request:
 	}
 
 	switch budgetErr.Action {
+	case headlessCompletionActionStructure:
+		followUp.Prompt = strings.TrimSpace(base + `
+
+Sapphire interrupted the previous headless turn because you already have grounded reads but still have not done structured discovery.
+
+Required now:
+- Do not restart the task.
+- Do not load skills.
+- Do not do another broad read-first pass.
+- Perform exactly one targeted structured discovery step to map the concrete files, symbols, or boundaries that matter.
+- After that, move directly into the architecture answer using that structured evidence.`)
 	case headlessCompletionActionExecute:
 		followUp.Prompt = strings.TrimSpace(base + `
 
@@ -302,6 +408,7 @@ Required now:
 - If one final narrow file read is strictly required before editing, do exactly one and then execute.
 - If you are still blocked, state the exact blocker instead of continuing broad exploration.`)
 	case headlessCompletionActionFinalize:
+		followUp.HeadlessClosureMode = headlessClosureModeForcedFinalize
 		followUp.Prompt = strings.TrimSpace(base + `
 
 Sapphire interrupted the previous headless turn because the runtime budget was already spent and enough repository evidence exists.
@@ -316,6 +423,7 @@ If the task is still incomplete, say exactly what remains unresolved instead of 
 	default:
 		return SessionAgentCall{}, false
 	}
+	followUp.HeadlessPhaseAtInterrupt = string(budgetErr.Phase)
 	return followUp, true
 }
 
@@ -345,8 +453,8 @@ func shouldSalvageHeadlessResult(taskFamily string, attempt int, assistant *mess
 		return false
 	}
 	text := strings.TrimSpace(assistant.Content().Text)
-	if len(text) < 900 {
+	if !hasSubstantialAnalysisDraft(text) {
 		return false
 	}
-	return strings.Count(text, "\n") >= 6
+	return len(text) >= 450
 }

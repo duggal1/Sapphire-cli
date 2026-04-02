@@ -9,6 +9,7 @@ import (
 
 	"github.com/duggal1/Sapphire-cli/internal/agent/planmode"
 	agenttools "github.com/duggal1/Sapphire-cli/internal/agent/tools"
+	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/skills"
 	"github.com/stretchr/testify/require"
 )
@@ -531,6 +532,70 @@ func TestSingularityManagerAllowsStrongBroadDesignLearning(t *testing.T) {
 	require.Equal(t, 1, policy.ChallengerWins)
 	require.GreaterOrEqual(t, policy.LastPlanQualityConfidence, 70)
 	require.Equal(t, 95, policy.LastArchitectureConfidence)
+}
+
+func TestStartTurnWithModeAndModelTracksReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	prompt := "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit."
+
+	manager.StartTurnWithModeAndModel("reasoning-design", prompt, manager.repoRoot, nil, learnedRoutePolicy{}, planmode.DefaultSessionMode, config.SelectedModel{
+		Provider:        "openrouter",
+		Model:           "qwen/qwen3.6-plus-preview:free",
+		ReasoningEffort: "high",
+	})
+
+	trace := manager.FinishTurnWithMetadata("reasoning-design", "completed", "Option A keeps cmd/api thin by adding an adapter around internal/platform.RuntimeConfig, while Option B rewrites the boundary directly. Compared against the current package structure, Option A is the better repo fit because it reuses the existing boundaries and supports a gradual migration with lower blast radius, better compatibility, and lower rollout cost. I validated the recommendation against the current package structure and listed the trade-offs with pros and cons.", turnCompletionMetadata{
+		ClosureMode:      headlessClosureModeForcedFinalize,
+		PhaseAtInterrupt: string(headlessPhaseClose),
+	})
+	require.NotNil(t, trace)
+	require.Equal(t, "openrouter", trace.Provider)
+	require.Equal(t, "high", trace.ReasoningEffort)
+	require.Equal(t, headlessClosureModeForcedFinalize, trace.ClosureMode)
+	require.Equal(t, string(headlessPhaseClose), trace.PhaseAtInterrupt)
+}
+
+func TestForcedClosureQuarantinesWeakBroadDesignLearning(t *testing.T) {
+	t.Parallel()
+
+	manager := newTestSingularityManager(t)
+	trace := &completedTurnTrace{
+		Mode:            string(planmode.DefaultSessionMode),
+		Prompt:          "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit.",
+		Provider:        "openrouter",
+		ReasoningEffort: "high",
+		Family: learnedTaskFamily{
+			ID:       "design/broad/backend",
+			GoalType: "design",
+			Breadth:  "broad",
+		},
+		OrderedTools: []string{
+			agenttools.RunHarnessToolName,
+			agenttools.ToolSearchToolName,
+			agenttools.AgenticViewToolName,
+			agenttools.UpdatePlanToolName,
+		},
+		ToolCalls: map[string]int{
+			agenttools.RunHarnessToolName:  1,
+			agenttools.ToolSearchToolName:  1,
+			agenttools.AgenticViewToolName: 1,
+			agenttools.UpdatePlanToolName:  1,
+		},
+		StructuredEvidence: map[string]int{"backend": 1},
+		ReadEvidence:       map[string]int{"internal/platform/runtime.go": 1},
+		Status:             "completed",
+		ClosureMode:        headlessClosureModeForcedFinalize,
+		PhaseAtInterrupt:   string(headlessPhaseClose),
+		ResultText:         "Recommended the cleanest architecture.",
+		ResultSummary:      "Recommended the cleanest architecture.",
+	}
+
+	assessment := assessSingularityCognition(trace)
+	verdict := evaluateSingularityLearningVerdict(trace, assessment)
+	require.Equal(t, singularityLearningVerdictQuarantined, verdict.Decision)
+	require.Contains(t, verdict.Blockers, "recovery")
 }
 
 func TestSingularityManagerRequiresMultipleStrongArchitectureWinsBeforePromotion(t *testing.T) {

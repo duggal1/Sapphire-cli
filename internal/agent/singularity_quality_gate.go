@@ -104,6 +104,17 @@ func evaluateSingularityLearningVerdict(trace *completedTurnTrace, assessment si
 		}
 	}
 
+	if trace.ClosureMode != "" && trace.ClosureMode != headlessClosureModeNormal {
+		switch trace.Family.GoalType {
+		case "design", "research", "review", "migration":
+			if assessment.ArchitectureDiscipline != "strong" || assessment.ValidationDiscipline != "strong" || assessment.TradeoffDiscipline != "strong" {
+				addBlocker("recovery")
+			}
+		default:
+			addBlocker("recovery")
+		}
+	}
+
 	if assessment.RecoveryDiscipline == "weak" {
 		addBlocker("recovery")
 	}

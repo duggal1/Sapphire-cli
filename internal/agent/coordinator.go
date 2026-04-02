@@ -913,7 +913,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		"message_id": env.userMessage.ID,
 	}))
 	if c.singularity != nil {
-		c.singularity.StartTurnWithMode(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode)
+		c.singularity.StartTurnWithModeAndModel(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode, env.model.ModelCfg)
 	}
 	result, err := agent.Run(ctx, call)
 	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
@@ -925,7 +925,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	}
 	if err != nil {
 		if c.singularity != nil {
-			if trace := c.singularity.FinishTurn(env.sessionID, "error", err.Error()); trace != nil {
+			if trace := c.singularity.FinishTurnWithMetadata(env.sessionID, "error", err.Error(), takeTurnCompletionMetadata(env.sessionID)); trace != nil {
 				go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
 			}
 		}
@@ -945,7 +945,7 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		c.pmem.RecordAssistantTurn(ctx, env.sessionID, resultText)
 	}
 	if c.singularity != nil {
-		if trace := c.singularity.FinishTurn(env.sessionID, "completed", resultText); trace != nil {
+		if trace := c.singularity.FinishTurnWithMetadata(env.sessionID, "completed", resultText, takeTurnCompletionMetadata(env.sessionID)); trace != nil {
 			go c.singularity.CompileTurn(context.WithoutCancel(ctx), trace)
 		}
 	}

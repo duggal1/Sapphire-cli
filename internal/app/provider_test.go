@@ -215,3 +215,62 @@ func TestFindModels(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyReasoningOverrideToSelection(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Models: map[config.SelectedModelType]config.SelectedModel{
+			config.SelectedModelTypeLarge: {
+				Provider: "openrouter",
+				Model:    "qwen/qwen3.6-plus-preview:free",
+			},
+		},
+		Providers: config.ProviderConfigs{
+			"openrouter": {
+				ID: "openrouter",
+				Models: []catwalk.Model{
+					{
+						ID:                     "qwen/qwen3.6-plus-preview:free",
+						CanReason:              true,
+						ReasoningLevels:        []string{"low", "medium", "high"},
+						DefaultReasoningEffort: "medium",
+					},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, applyReasoningOverrideToSelection(cfg, config.SelectedModelTypeLarge, "high"))
+	require.Equal(t, "high", cfg.Models[config.SelectedModelTypeLarge].ReasoningEffort)
+}
+
+func TestApplyReasoningOverrideToSelectionRejectsInvalidEffort(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Models: map[config.SelectedModelType]config.SelectedModel{
+			config.SelectedModelTypeLarge: {
+				Provider: "openrouter",
+				Model:    "qwen/qwen3.6-plus-preview:free",
+			},
+		},
+		Providers: config.ProviderConfigs{
+			"openrouter": {
+				ID: "openrouter",
+				Models: []catwalk.Model{
+					{
+						ID:                     "qwen/qwen3.6-plus-preview:free",
+						CanReason:              true,
+						ReasoningLevels:        []string{"low", "medium", "high"},
+						DefaultReasoningEffort: "medium",
+					},
+				},
+			},
+		},
+	}
+
+	err := applyReasoningOverrideToSelection(cfg, config.SelectedModelTypeLarge, "maximum")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid reasoning effort")
+}

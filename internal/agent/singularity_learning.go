@@ -129,6 +129,8 @@ type turnLearningTrace struct {
 	SessionID            string
 	Mode                 string
 	WorkingDir           string
+	Provider             string
+	ReasoningEffort      string
 	Prompt               string
 	Family               learnedTaskFamily
 	StartedAt            time.Time
@@ -150,6 +152,8 @@ type completedTurnTrace struct {
 	SessionID            string
 	Mode                 string
 	WorkingDir           string
+	Provider             string
+	ReasoningEffort      string
 	Prompt               string
 	Family               learnedTaskFamily
 	StartedAt            time.Time
@@ -166,6 +170,9 @@ type completedTurnTrace struct {
 	BlockedBash          int
 	ValidationChecks     int
 	Status               string
+	ClosureMode          string
+	PhaseAtInterrupt     string
+	ProviderFallbackUsed bool
 	ResultText           string
 	ResultSummary        string
 	FinishedAt           time.Time
@@ -176,10 +183,15 @@ type singularityTurnAuditRecord struct {
 	SessionID                 string         `json:"session_id"`
 	WorkingDir                string         `json:"working_dir,omitempty"`
 	Mode                      string         `json:"mode,omitempty"`
+	Provider                  string         `json:"provider,omitempty"`
+	ReasoningEffort           string         `json:"reasoning_effort,omitempty"`
 	TaskFamily                string         `json:"task_family"`
 	GoalType                  string         `json:"goal_type"`
 	Breadth                   string         `json:"breadth"`
 	Status                    string         `json:"status"`
+	ClosureMode               string         `json:"closure_mode,omitempty"`
+	PhaseAtInterrupt          string         `json:"phase_at_interrupt,omitempty"`
+	ProviderFallbackUsed      bool           `json:"provider_fallback_used,omitempty"`
 	ActivePolicyID            string         `json:"active_policy_id,omitempty"`
 	AppliedPolicy             bool           `json:"applied_policy"`
 	PolicyState               string         `json:"policy_state,omitempty"`
@@ -377,10 +389,14 @@ func (m *singularityManager) LookupPolicy(prompt string) (learnedRoutePolicy, le
 }
 
 func (m *singularityManager) StartTurn(sessionID, prompt, workingDir string, loadedSkills []string, policy learnedRoutePolicy) learnedTaskFamily {
-	return m.StartTurnWithMode(sessionID, prompt, workingDir, loadedSkills, policy, planmode.DefaultSessionMode)
+	return m.StartTurnWithModeAndModel(sessionID, prompt, workingDir, loadedSkills, policy, planmode.DefaultSessionMode, config.SelectedModel{})
 }
 
 func (m *singularityManager) StartTurnWithMode(sessionID, prompt, workingDir string, loadedSkills []string, policy learnedRoutePolicy, mode planmode.SessionMode) learnedTaskFamily {
+	return m.StartTurnWithModeAndModel(sessionID, prompt, workingDir, loadedSkills, policy, mode, config.SelectedModel{})
+}
+
+func (m *singularityManager) StartTurnWithModeAndModel(sessionID, prompt, workingDir string, loadedSkills []string, policy learnedRoutePolicy, mode planmode.SessionMode, modelCfg config.SelectedModel) learnedTaskFamily {
 	family := classifyLearnedTaskFamily(prompt)
 	if m == nil || !shouldTrackLearnedTurn(prompt, family) {
 		return family
@@ -389,6 +405,8 @@ func (m *singularityManager) StartTurnWithMode(sessionID, prompt, workingDir str
 		SessionID:            strings.TrimSpace(sessionID),
 		Mode:                 string(planmode.NormalizeMode(mode)),
 		WorkingDir:           strings.TrimSpace(workingDir),
+		Provider:             strings.TrimSpace(modelCfg.Provider),
+		ReasoningEffort:      strings.TrimSpace(modelCfg.ReasoningEffort),
 		Prompt:               strings.TrimSpace(prompt),
 		Family:               family,
 		StartedAt:            time.Now().UTC(),
@@ -590,6 +608,10 @@ func adjustTraceEvidence(target map[string]int, values []string, delta int) {
 }
 
 func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string) *completedTurnTrace {
+	return m.FinishTurnWithMetadata(sessionID, status, resultSummary, turnCompletionMetadata{})
+}
+
+func (m *singularityManager) FinishTurnWithMetadata(sessionID, status, resultSummary string, meta turnCompletionMetadata) *completedTurnTrace {
 	if m == nil {
 		return nil
 	}
@@ -604,6 +626,8 @@ func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string)
 		SessionID:            trace.SessionID,
 		Mode:                 trace.Mode,
 		WorkingDir:           trace.WorkingDir,
+		Provider:             trace.Provider,
+		ReasoningEffort:      trace.ReasoningEffort,
 		Prompt:               trace.Prompt,
 		Family:               trace.Family,
 		StartedAt:            trace.StartedAt,
@@ -620,6 +644,9 @@ func (m *singularityManager) FinishTurn(sessionID, status, resultSummary string)
 		BlockedBash:          trace.BlockedBash,
 		ValidationChecks:     trace.ValidationChecks,
 		Status:               strings.TrimSpace(status),
+		ClosureMode:          strings.TrimSpace(meta.ClosureMode),
+		PhaseAtInterrupt:     strings.TrimSpace(meta.PhaseAtInterrupt),
+		ProviderFallbackUsed: meta.ProviderFallbackUsed,
 		ResultText:           compactLearnedText(strings.TrimSpace(resultSummary), 2400),
 		ResultSummary:        compactLearnedText(strings.TrimSpace(resultSummary), 600),
 		FinishedAt:           time.Now().UTC(),
@@ -1535,10 +1562,15 @@ func (m *singularityManager) appendTurnAuditLocked(trace *completedTurnTrace, po
 		SessionID:                 trace.SessionID,
 		WorkingDir:                trace.WorkingDir,
 		Mode:                      trace.Mode,
+		Provider:                  trace.Provider,
+		ReasoningEffort:           trace.ReasoningEffort,
 		TaskFamily:                trace.Family.ID,
 		GoalType:                  trace.Family.GoalType,
 		Breadth:                   trace.Family.Breadth,
 		Status:                    trace.Status,
+		ClosureMode:               trace.ClosureMode,
+		PhaseAtInterrupt:          trace.PhaseAtInterrupt,
+		ProviderFallbackUsed:      trace.ProviderFallbackUsed,
 		ActivePolicyID:            trace.ActivePolicyID,
 		AppliedPolicy:             strings.TrimSpace(trace.ActivePolicyID) == trace.Family.ID,
 		PolicyState:               normalizeLearnedPromotionState(policy.PromotionState, policy.Confidence, policy.EvidenceCount),

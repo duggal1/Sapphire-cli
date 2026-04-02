@@ -130,6 +130,8 @@ type SessionAgentCall struct {
 	CompletionGuardrailTry int
 	DoomLoopRecoveryTry    int
 	HeadlessCompletionTry  int
+	HeadlessClosureMode    string
+	HeadlessPhaseAtInterrupt string
 	SkillContext           string
 	ActiveSkills           []string
 	ActiveTools            []string
@@ -998,6 +1000,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	toolFailureTracker := newToolFailureTracker(maxToolFailuresPerTurn)
 	toolUsageState := prepareTurnToolUsageState(call)
 	defer tools.ClearSharedToolUsageState(call.SessionID)
+	recordCompletionMeta := func(closureMode string) {
+		closureMode = strings.TrimSpace(closureMode)
+		if closureMode == "" {
+			closureMode = headlessClosureModeNormal
+		}
+		recordTurnCompletionMetadata(call.SessionID, turnCompletionMetadata{
+			ClosureMode:      closureMode,
+			PhaseAtInterrupt: strings.TrimSpace(call.HeadlessPhaseAtInterrupt),
+		})
+	}
 
 	headlessCompletion := newHeadlessCompletionController(buildHeadlessCompletionBudget(mode, call))
 	genCtx, cancel := headlessCompletion.WrapContext(ctx)
@@ -1697,6 +1709,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, "salvaged grounded partial analysis after headless budget", "completed", true)
 		}
+		recordCompletionMeta(headlessClosureModeSalvagedGroundedAnalysis)
 		return buildHeadlessCompletionResult(currentAssistant), nil
 	}
 
@@ -1704,6 +1717,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		isCancelErr := errors.Is(err, context.Canceled)
 		isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
 		if currentAssistant == nil {
+			recordCompletionMeta(call.HeadlessClosureMode)
 			return result, err
 		}
 		// Ensure we finish thinking on error to close the reasoning state.
@@ -1833,6 +1847,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if a.checkpointTurn != nil {
 			a.checkpointTurn(ctx, call.SessionID, call.Prompt, err.Error(), "error", true)
 		}
+		recordCompletionMeta(call.HeadlessClosureMode)
 		queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 		if ok && len(queuedMessages) > 0 {
 			firstQueuedMessage := queuedMessages[0]
@@ -1943,6 +1958,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
 	if !ok || len(queuedMessages) == 0 {
+		recordCompletionMeta(call.HeadlessClosureMode)
 		return result, err
 	}
 	// There are queued messages restart the loop.

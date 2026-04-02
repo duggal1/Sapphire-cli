@@ -320,6 +320,41 @@ func TestPrepareToolCallAllowsExecutionAfterDeepPlanningPlanPublished(t *testing
 	require.Equal(t, EditToolName, prepared.Name)
 }
 
+func TestPrepareToolCallRewritesBlockedDeepPlanningToolToUpdatePlanAfterEvidence(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+
+	ctx := context.WithValue(context.Background(), DeepPlanningContextKey, true)
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "deep-plan-bash-1",
+		Name:  BashToolName,
+		Input: `{"command":"git diff --stat","description":"inspect recent changes"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Map the relevant architecture, constraints, and edge cases"`)
+}
+
 func TestPrepareToolCallRejectsDirectEditToolsInSecurityMode(t *testing.T) {
 	t.Parallel()
 

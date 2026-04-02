@@ -46,6 +46,7 @@ crush run --verbose "Generate a README for this project"
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		largeModel, _ := cmd.Flags().GetString("model")
 		smallModel, _ := cmd.Flags().GetString("small-model")
+		reasoningEffort, _ := cmd.Flags().GetString("reasoning-effort")
 
 		// Cancel on SIGINT or SIGTERM.
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
@@ -79,7 +80,7 @@ crush run --verbose "Generate a README for this project"
 
 		event.AppInitialized()
 
-		return app.RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, quiet || verbose)
+		return app.RunNonInteractive(ctx, os.Stdout, prompt, largeModel, smallModel, reasoningEffort, quiet || verbose)
 	},
 	PostRun: func(cmd *cobra.Command, args []string) {
 		event.AppExited()
@@ -92,4 +93,5 @@ func init() {
 	runCmd.Flags().BoolP("verbose", "v", false, "Show logs")
 	runCmd.Flags().StringP("model", "m", "", "Model to use. Accepts 'model' or 'provider/model' to disambiguate models with the same name across providers")
 	runCmd.Flags().String("small-model", "", "Small model to use. If not provided, uses the default small model for the provider")
+	runCmd.Flags().String("reasoning-effort", "", "Reasoning effort override for the selected models (low, medium, high)")
 }

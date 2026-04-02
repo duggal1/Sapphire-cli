@@ -2019,7 +2019,8 @@ func isDeepPlanningAllowedTool(toolName string) bool {
 		ToolSearchToolName, RGFilesToolName, RGToolName, LSToolName, GlobToolName, GrepToolName,
 		WCToolName, WCLToolName, IndexCodebaseToolName,
 		AgenticViewToolName, ViewToolName, SingleViewToolName,
-		ListAvailableMCPsToolName, ListMCPResourcesToolName, ReadMCPResourceToolName:
+		ListAvailableMCPsToolName, ListMCPResourcesToolName, ReadMCPResourceToolName,
+		"spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent":
 		return true
 	default:
 		return false

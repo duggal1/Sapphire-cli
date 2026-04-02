@@ -953,6 +953,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	ctx = context.WithValue(ctx, tools.TurnPolicyContextKey, turnPolicy)
 	if turnPolicy.DirectResponseOnly {
 		systemPrompt = buildDirectReplySystemPrompt(promptPrefix)
+		promptPrefix = ""
+		call.SkillContext = ""
+		call.ActiveSkills = nil
 		agentTools = nil
 		activeTools = newActiveToolSet(nil)
 	} else {
@@ -1114,22 +1117,23 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			if systemPrompt != "" {
 				systemMessages = append(systemMessages, fantasy.NewSystemMessage(systemPrompt))
 			}
-			if promptPrefix != "" {
-				systemMessages = append(systemMessages, fantasy.NewSystemMessage(promptPrefix))
-			}
-			if call.SkillContext != "" {
-				skillSystemMsg := "<active_skill_context>\n" + call.SkillContext + "\n</active_skill_context>"
-				systemMessages = append(systemMessages, fantasy.NewSystemMessage(skillSystemMsg))
-			}
-			if driftPrompt := buildWorkspaceDriftPrompt(callContext, a.filetracker, call.SessionID, a.workingDir.Get()); driftPrompt != "" {
-				systemMessages = append(systemMessages, fantasy.NewSystemMessage(driftPrompt))
-			}
-			if qualityPrompt := buildQualityAssessmentPrompt(callContext, a.filetracker, toolUsageState, call.SessionID, a.workingDir.Get(), call.LearnedToolPolicy.TaskFamily, prepared.ActiveTools); qualityPrompt != "" {
-				systemMessages = append(systemMessages, fantasy.NewSystemMessage(qualityPrompt))
-			}
-
-			if isGeminiCodeExecutionModel(largeModel) {
-				systemMessages = append(systemMessages, fantasy.NewSystemMessage(string(pythonCapabilitiesPrompt)))
+			if !turnPolicy.DirectResponseOnly {
+				if promptPrefix != "" {
+					systemMessages = append(systemMessages, fantasy.NewSystemMessage(promptPrefix))
+				}
+				if call.SkillContext != "" {
+					skillSystemMsg := "<active_skill_context>\n" + call.SkillContext + "\n</active_skill_context>"
+					systemMessages = append(systemMessages, fantasy.NewSystemMessage(skillSystemMsg))
+				}
+				if driftPrompt := buildWorkspaceDriftPrompt(callContext, a.filetracker, call.SessionID, a.workingDir.Get()); driftPrompt != "" {
+					systemMessages = append(systemMessages, fantasy.NewSystemMessage(driftPrompt))
+				}
+				if qualityPrompt := buildQualityAssessmentPrompt(callContext, a.filetracker, toolUsageState, call.SessionID, a.workingDir.Get(), call.LearnedToolPolicy.TaskFamily, prepared.ActiveTools); qualityPrompt != "" {
+					systemMessages = append(systemMessages, fantasy.NewSystemMessage(qualityPrompt))
+				}
+				if isGeminiCodeExecutionModel(largeModel) {
+					systemMessages = append(systemMessages, fantasy.NewSystemMessage(string(pythonCapabilitiesPrompt)))
+				}
 			}
 
 			if len(systemMessages) > 0 {

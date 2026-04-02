@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unsafe"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/fantasy"
 	"github.com/duggal1/Sapphire-cli/internal/agent"
 	agentbackground "github.com/duggal1/Sapphire-cli/internal/agent/background"
@@ -128,6 +129,45 @@ func TestCancelAgentInterruptsOnFirstPress(t *testing.T) {
 	ui.fixedTailNotice = nil
 
 	cmd := ui.cancelAgent()
+	require.Nil(t, cmd)
+	require.Equal(t, []string{"session-1"}, coord.cancelled)
+	require.False(t, ui.todoIsSpinning)
+	require.False(t, ui.deepPlanningPending)
+	require.Empty(t, ui.deepPlanningSessionID)
+	require.False(t, ui.isCanceling)
+	require.Nil(t, ui.fixedTailNotice)
+}
+
+func TestEscapeKeyCancelsAgentOnFirstPress(t *testing.T) {
+	workingDir, err := os.MkdirTemp("", "sapphire-ui-escape-working-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(workingDir) })
+	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "main.go"), []byte("package main\n"), 0o644))
+
+	dataDir, err := os.MkdirTemp("", "sapphire-ui-escape-data-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+
+	cfg, err := config.Load(workingDir, dataDir, false)
+	require.NoError(t, err)
+	cfg.Providers.Set("test", config.ProviderConfig{ID: "test"})
+
+	coord := &uiCoordinatorStub{}
+	a := &app.App{
+		Permissions:      permission.NewPermissionService(workingDir, true, nil),
+		AgentCoordinator: coord,
+	}
+	field := reflect.ValueOf(a).Elem().FieldByName("config")
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(cfg))
+
+	ui := New(common.DefaultCommon(a))
+	ui.session = &session.Session{ID: "session-1"}
+	ui.state = uiChat
+	ui.todoIsSpinning = true
+	ui.deepPlanningPending = true
+	ui.deepPlanningSessionID = "session-1"
+
+	_, cmd := ui.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.Nil(t, cmd)
 	require.Equal(t, []string{"session-1"}, coord.cancelled)
 	require.False(t, ui.todoIsSpinning)

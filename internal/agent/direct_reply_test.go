@@ -102,8 +102,10 @@ func TestSessionAgentDirectReplyUsesLeanPromptAndNoTools(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = agent.Run(t.Context(), SessionAgentCall{
-		SessionID: sess.ID,
-		Prompt:    "hi",
+		SessionID:    sess.ID,
+		Prompt:       "hi",
+		SkillContext: "inventory and orchestration state that must not leak into trivial turns",
+		ActiveSkills: []string{"debug"},
 	})
 	require.NoError(t, err)
 
@@ -115,6 +117,8 @@ func TestSessionAgentDirectReplyUsesLeanPromptAndNoTools(t *testing.T) {
 	require.Contains(t, text, "Reply naturally and briefly to the user.")
 	require.NotContains(t, text, "Complexity mode:")
 	require.NotContains(t, text, "update_plan checklist")
+	require.NotContains(t, text, "active_skill_context")
+	require.NotContains(t, text, "inventory and orchestration state")
 }
 
 func TestSessionAgentFirstTurnDoesNotWaitForTitleGeneration(t *testing.T) {

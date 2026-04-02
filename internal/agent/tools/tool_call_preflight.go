@@ -731,6 +731,12 @@ func rewriteToContextReadWhenRequired(
 	if !isLearnedContextProtectedTool(canonical) {
 		return call, tool, input
 	}
+	// Delegation tools must never be rewritten to discovery tools.
+	// Let them pass through so enforceLearnedRoutePolicy can return
+	// a proper block error instead of silently rewriting to tool_search.
+	if isDelegationTool(canonical) {
+		return call, tool, input
+	}
 	usage := GetToolUsageStateFromContext(ctx)
 	if hasBroadInitializationContext(usage) {
 		return call, tool, input
@@ -2189,6 +2195,15 @@ func enforceLearnedRoutePolicy(ctx context.Context, toolName string, input map[s
 			command,
 		),
 	)
+}
+
+func isDelegationTool(toolName string) bool {
+	switch toolName {
+	case "spawn_agent", "resume_agent", "send_input", "wait", "collect_result", "close_agent", "agent":
+		return true
+	default:
+		return false
+	}
 }
 
 func isLearnedContextProtectedTool(toolName string) bool {

@@ -5,6 +5,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/duggal1/Sapphire-cli/internal/config"
+	"github.com/duggal1/Sapphire-cli/internal/csync"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,7 +227,7 @@ func TestApplyReasoningOverrideToSelection(t *testing.T) {
 				Model:    "qwen/qwen3.6-plus-preview:free",
 			},
 		},
-		Providers: config.ProviderConfigs{
+		Providers: csync.NewMapFrom(map[string]config.ProviderConfig{
 			"openrouter": {
 				ID: "openrouter",
 				Models: []catwalk.Model{
@@ -238,7 +239,7 @@ func TestApplyReasoningOverrideToSelection(t *testing.T) {
 					},
 				},
 			},
-		},
+		}),
 	}
 
 	require.NoError(t, applyReasoningOverrideToSelection(cfg, config.SelectedModelTypeLarge, "high"))
@@ -255,7 +256,7 @@ func TestApplyReasoningOverrideToSelectionRejectsInvalidEffort(t *testing.T) {
 				Model:    "qwen/qwen3.6-plus-preview:free",
 			},
 		},
-		Providers: config.ProviderConfigs{
+		Providers: csync.NewMapFrom(map[string]config.ProviderConfig{
 			"openrouter": {
 				ID: "openrouter",
 				Models: []catwalk.Model{
@@ -267,7 +268,7 @@ func TestApplyReasoningOverrideToSelectionRejectsInvalidEffort(t *testing.T) {
 					},
 				},
 			},
-		},
+		}),
 	}
 
 	err := applyReasoningOverrideToSelection(cfg, config.SelectedModelTypeLarge, "maximum")

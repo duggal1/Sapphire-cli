@@ -560,7 +560,6 @@ func TestStartTurnWithModeAndModelTracksReasoningEffort(t *testing.T) {
 func TestForcedClosureQuarantinesWeakBroadDesignLearning(t *testing.T) {
 	t.Parallel()
 
-	manager := newTestSingularityManager(t)
 	trace := &completedTurnTrace{
 		Mode:            string(planmode.DefaultSessionMode),
 		Prompt:          "Architecture task only. Read the repository broadly, compare backend designs, and recommend the best fit.",

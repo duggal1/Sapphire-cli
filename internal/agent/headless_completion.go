@@ -28,11 +28,11 @@ type headlessCompletionAction string
 type headlessCompletionPhase string
 
 const (
-	headlessCompletionActionNone     headlessCompletionAction = ""
+	headlessCompletionActionNone      headlessCompletionAction = ""
 	headlessCompletionActionStructure headlessCompletionAction = "structure"
-	headlessCompletionActionExecute  headlessCompletionAction = "execute"
-	headlessCompletionActionFinalize headlessCompletionAction = "finalize"
-	headlessCompletionActionReject   headlessCompletionAction = "reject"
+	headlessCompletionActionExecute   headlessCompletionAction = "execute"
+	headlessCompletionActionFinalize  headlessCompletionAction = "finalize"
+	headlessCompletionActionReject    headlessCompletionAction = "reject"
 
 	headlessPhaseRead      headlessCompletionPhase = "read"
 	headlessPhaseStructure headlessCompletionPhase = "structure"
@@ -308,7 +308,7 @@ func canForceStructuredDiscoveryKick(taskFamily string, usage *tools.ToolUsageSt
 
 func detectHeadlessCompletionPhase(taskFamily string, assistant *message.Message, usage *tools.ToolUsageState) headlessCompletionPhase {
 	taskFamily = strings.TrimSpace(taskFamily)
-	if usage == nil || !tools.HasRequiredContextReadEvidence(usage) {
+	if usage == nil || usage.ReadEvidenceCount() == 0 {
 		return headlessPhaseRead
 	}
 	if strings.HasPrefix(taskFamily, "implementation/") {
@@ -456,5 +456,5 @@ func shouldSalvageHeadlessResult(taskFamily string, attempt int, assistant *mess
 	if !hasSubstantialAnalysisDraft(text) {
 		return false
 	}
-	return len(text) >= 450
+	return len(text) >= 320
 }

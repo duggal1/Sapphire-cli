@@ -119,34 +119,34 @@ var thinkTagRegex = regexp.MustCompile(`<think>.*?</think>`)
 var policyPromptSeparatorRegex = regexp.MustCompile(`[^a-z0-9./_]+`)
 
 type SessionAgentCall struct {
-	SessionID              string
-	Prompt                 string
-	SessionMode            planmode.SessionMode
-	DeepPlanningActive     bool
-	ResumePointID          string
-	TodoReconcileTry       int
-	StructuredTry          int
-	MistakeSelfHealTry     int
-	CompletionGuardrailTry int
-	DoomLoopRecoveryTry    int
-	HeadlessCompletionTry  int
-	HeadlessClosureMode    string
+	SessionID                string
+	Prompt                   string
+	SessionMode              planmode.SessionMode
+	DeepPlanningActive       bool
+	ResumePointID            string
+	TodoReconcileTry         int
+	StructuredTry            int
+	MistakeSelfHealTry       int
+	CompletionGuardrailTry   int
+	DoomLoopRecoveryTry      int
+	HeadlessCompletionTry    int
+	HeadlessClosureMode      string
 	HeadlessPhaseAtInterrupt string
-	SkillContext           string
-	ActiveSkills           []string
-	ActiveTools            []string
-	LearnedToolPolicy      tools.LearnedToolPolicy
-	HarnessOverride        *tools.HarnessRequirement
-	ProviderOptions        fantasy.ProviderOptions
-	Attachments            []message.Attachment
-	PrecreatedUser         *message.Message
-	SkipUserMessage        bool
-	MaxOutputTokens        int64
-	Temperature            *float64
-	TopP                   *float64
-	TopK                   *int64
-	FrequencyPenalty       *float64
-	PresencePenalty        *float64
+	SkillContext             string
+	ActiveSkills             []string
+	ActiveTools              []string
+	LearnedToolPolicy        tools.LearnedToolPolicy
+	HarnessOverride          *tools.HarnessRequirement
+	ProviderOptions          fantasy.ProviderOptions
+	Attachments              []message.Attachment
+	PrecreatedUser           *message.Message
+	SkipUserMessage          bool
+	MaxOutputTokens          int64
+	Temperature              *float64
+	TopP                     *float64
+	TopK                     *int64
+	FrequencyPenalty         *float64
+	PresencePenalty          *float64
 }
 
 func buildCompactionContinuationCall(call SessionAgentCall, partialAssistant *message.Message, resumePointID string) SessionAgentCall {

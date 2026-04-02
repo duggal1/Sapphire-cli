@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	headlessClosureModeNormal                  = "normal"
-	headlessClosureModeForcedFinalize          = "forced_finalize"
+	headlessClosureModeNormal                   = "normal"
+	headlessClosureModeForcedFinalize           = "forced_finalize"
 	headlessClosureModeSalvagedGroundedAnalysis = "salvaged_grounded_analysis"
 )
 
@@ -18,7 +18,7 @@ type turnCompletionMetadata struct {
 }
 
 var (
-	turnCompletionMetadataMu sync.Mutex
+	turnCompletionMetadataMu        sync.Mutex
 	turnCompletionMetadataBySession = map[string]turnCompletionMetadata{}
 )
 

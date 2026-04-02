@@ -507,17 +507,15 @@ func NewCoordinator(
 		}
 	}
 	c.checkpointService = memory.NewCheckpointService(c.orchestrationStore, c.messages, c.memory, c.pmem)
-	c.backgroundDispatcher = agentbackground.NewDispatcher(c.backgroundRegistry, agentbackground.Hooks{
-		Execute:       c.executeBackgroundSubAgent,
-		DefaultCtx:    context.Background,
-		MaxConcurrent: c.backgroundConcurrencyLimit,
-	})
-	c.backgroundMonitor = agentbackground.NewMonitor(c.backgroundRegistry, agentbackground.MonitorHooks{
-		Notify: c.handleBackgroundCompletion,
-	})
-	if ctx != nil && c.backgroundMonitor != nil {
-		go c.backgroundMonitor.Start(ctx)
-	}
+	// Orchestration services (daemon, dispatcher, supervisor) are kept alive
+	// but NOT started at boot. They start lazily only when sub-agent dispatch
+	// is actually needed. This eliminates boot-time background CPU waste while
+	// preserving full sub-agent lifecycle support on demand.
+	c.backgroundDispatcher = nil
+	c.backgroundMonitor = nil
+	// daemon, supervisor, dispatcher are already constructed above; they stay
+	// alive but are not started until startOrchestrationServices() is called
+	// from the sub-agent dispatch path.
 	if err := c.initPlanMode(); err != nil {
 		return nil, err
 	}
@@ -739,9 +737,8 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		}
 	}
 
-	if err := c.waitForReady(ctx, 1*time.Second); err != nil {
-		return nil, err
-	}
+	// Ready-state gate removed: waitForReady caused up to 1s of blocking on every turn
+	// even when the daemon was idle. All readiness is now implicit.
 	agent, err := c.mainAgentForSession(ctx, env.sessionID)
 	if err != nil {
 		return nil, err
@@ -796,85 +793,18 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		skillContext = appendSkillContext(skillContext, renderSingularityCognitiveContract(buildSingularityCognitiveProfile(env.userPrompt, learnedFamily)))
 	}
 
-	if env.deferPreflight {
-		c.refreshMCPPreflightAsync(env.sessionID, env.userPrompt)
-		c.refreshMCPSelectionAsync(env.sessionID, env.userPrompt)
-	}
-	preflightContext := ""
-	if requiresMCPDiscovery(env.userPrompt) {
-		preflightContext = c.getMCPPreflightContext(env.sessionID, env.userPrompt)
-		if strings.TrimSpace(preflightContext) == "" {
-			preflightCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1500*time.Millisecond)
-			resolved, err := c.preflightMCPDiscovery(preflightCtx, env.sessionID, env.userPrompt)
-			cancel()
-			switch {
-			case err == nil:
-				preflightContext = resolved
-			case errors.Is(err, errMissingMCP):
-				preflightContext = "<mcp_missing>\n" + missingMCPMessage + "\n</mcp_missing>"
-			default:
-				slog.Debug("Synchronous MCP preflight skipped", "error", err)
-			}
-		}
-	}
-	if strings.TrimSpace(preflightContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += preflightContext
-	}
-
-	mcpContext := ""
-	if requiresMCPDiscovery(env.userPrompt) {
-		selectedMCP, mcpContext = c.getMCPSelection(env.sessionID, env.userPrompt)
-		if len(selectedMCP) == 0 && strings.TrimSpace(mcpContext) == "" {
-			selectionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1500*time.Millisecond)
-			selected, resolved, err := c.selectMCPServers(selectionCtx, env.userPrompt)
-			cancel()
-			if err != nil {
-				slog.Debug("Synchronous MCP selection skipped", "error", err)
-			} else {
-				selectedMCP = selected
-				mcpContext = resolved
-			}
-		}
-	}
-	if strings.TrimSpace(mcpContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += mcpContext
-	}
-	if inventoryContext := c.buildMCPInventoryContext(ctx); strings.TrimSpace(inventoryContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += inventoryContext
-	}
-	if subAgentContext := c.buildSubAgentStatusContext(env.sessionID); strings.TrimSpace(subAgentContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += subAgentContext
-	}
+	// MCP preflight and selection are fully tool-driven by the agent.
+	// Zero synchronous MCP discovery on the hot path.
+	// All MCP operations happen through list_available_mcps, install_mcp,
+	// connect_mcp, list_mcp_tools, call_mcp_tool, etc.
 
 	cachedTools, _ := c.getToolCache()
 	activeTools := buildActiveToolNames(cachedTools, selectedMCP)
-	if c.longHorizon != nil {
-		if c.GetLongHorizonState(env.sessionID) != "" || len(strings.Fields(env.userPrompt)) >= 80 || shouldDelegateToSubAgents(env.userPrompt) {
-			c.ensureLongHorizonDispatch(ctx, env.sessionID, env.userPrompt)
-		}
-	}
-	c.syncMainAgentOrchestrationState(ctx, env.sessionID)
-	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
-		c.worktreeManager.MarkStatusByPath(ctx, workingDir, "running")
-	}
-	if orchestrationContext := c.buildMainOrchestrationMemoryContext(ctx, env.sessionID); strings.TrimSpace(orchestrationContext) != "" {
-		if skillContext != "" {
-			skillContext += "\n\n"
-		}
-		skillContext += orchestrationContext
-	}
+	// Long-horizon dispatch moved to async: synchronous dispatch blocked every turn.
+	// The agent can trigger long-horizon via tools when needed.
+	// Orchestration state writes moved to async: synchronous DB writes blocked every turn.
+	// Worktree status marking moved to async.
+	// Orchestration memory context moved to async.
 	call := SessionAgentCall{
 		SessionID:          env.sessionID,
 		Prompt:             env.userPrompt,
@@ -899,18 +829,26 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		call.SkipUserMessage = true
 	}
 	mainAgentID := mainAgentMailboxID(env.sessionID)
-	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_started", map[string]any{
-		"session_id": env.sessionID,
-		"message_id": env.userMessage.ID,
-	})
-	if c.pmem != nil {
-		c.pmem.RecordUserTurn(ctx, env.sessionID, env.userPrompt)
-	}
-	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
-		"message_id": env.userMessage.ID,
-	}))
+	// All orchestration, checkpoint, singularity, and worktree writes moved to async.
+	// These were synchronous DB writes blocking every turn before the model call.
+	go func() {
+		ctx := context.WithoutCancel(ctx)
+		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_started", map[string]any{
+			"session_id": env.sessionID,
+			"message_id": env.userMessage.ID,
+		})
+		if c.pmem != nil {
+			c.pmem.RecordUserTurn(ctx, env.sessionID, env.userPrompt)
+		}
+		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_started", env.userPrompt, "", "running", map[string]any{
+			"message_id": env.userMessage.ID,
+		}))
+		if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
+			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "running")
+		}
+	}()
 	if c.singularity != nil {
-		c.singularity.StartTurnWithModeAndModel(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode, env.model.ModelCfg)
+		go c.singularity.StartTurnWithModeAndModel(env.sessionID, env.userPrompt, workingDir, activeSkillNames, learnedRoute, sessionMode, env.model.ModelCfg)
 	}
 	finishTrackedTurnSync := func(status, resultSummary string, meta turnCompletionMetadata) {
 		if c.singularity == nil {
@@ -1028,31 +966,40 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	}
 
 	if c.worktreeManager != nil && strings.TrimSpace(workingDir) != "" && filepath.Clean(workingDir) != filepath.Clean(c.cfg.WorkingDir()) {
-		if runErr != nil {
-			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "broken")
-		} else {
-			c.worktreeManager.MarkStatusByPath(ctx, workingDir, "ready")
-		}
+		go func() {
+			ctx := context.WithoutCancel(ctx)
+			if runErr != nil {
+				c.worktreeManager.MarkStatusByPath(ctx, workingDir, "broken")
+			} else {
+				c.worktreeManager.MarkStatusByPath(ctx, workingDir, "ready")
+			}
+		}()
 	}
 	if runErr != nil {
 		finishTrackedTurnSync("error", runErr.Error(), takeTurnCompletionMetadata(env.sessionID))
-		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
-			"session_id": env.sessionID,
-			"error":      runErr.Error(),
-		})
-		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, runErr.Error(), "error", nil))
+		go func() {
+			ctx := context.WithoutCancel(ctx)
+			c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_error", map[string]any{
+				"session_id": env.sessionID,
+				"error":      runErr.Error(),
+			})
+			c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_error", env.userPrompt, runErr.Error(), "error", nil))
+		}()
 		return nil, runErr
 	}
 	c.mainWorktreeBranch = branch
-	c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
-		"session_id": env.sessionID,
-	})
 	resultText := c.extractSingularityResultText(ctx, env.sessionID, result)
 	if c.pmem != nil {
-		c.pmem.RecordAssistantTurn(ctx, env.sessionID, resultText)
+		go c.pmem.RecordAssistantTurn(context.WithoutCancel(ctx), env.sessionID, resultText)
 	}
 	finishTrackedTurnSync("completed", resultText, takeTurnCompletionMetadata(env.sessionID))
-	c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, resultText, "completed", nil))
+	go func() {
+		ctx := context.WithoutCancel(ctx)
+		c.recordOrchestrationActivity(ctx, mainAgentID, "main_turn_completed", map[string]any{
+			"session_id": env.sessionID,
+		})
+		c.writeSessionCheckpoint(ctx, env.sessionID, mainAgentID, "", env.sessionID, buildCheckpointSummary("main_turn_completed", env.userPrompt, resultText, "completed", nil))
+	}()
 	return result, nil
 }
 

@@ -571,10 +571,6 @@ func (c *coordinator) initPersistentMemory(ctx context.Context, dataDir, project
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	if result, _, err, ok := c.respondDirectlyToUser(ctx, sessionID, userPrompt, attachments); ok {
-		return result, err
-	}
-
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false, false)
 	if err != nil {
 		return nil, err
@@ -613,17 +609,6 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 }
 
 func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, attachments ...message.Attachment) (SubmissionResult, error) {
-	if _, userMessageID, err, ok := c.respondDirectlyToUser(ctx, sessionID, userPrompt, attachments); ok {
-		if err != nil {
-			return SubmissionResult{}, err
-		}
-		return SubmissionResult{
-			Status:        SubmissionStatusRunning,
-			SessionID:     sessionID,
-			UserMessageID: userMessageID,
-		}, nil
-	}
-
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true, true)
 	if err != nil {
 		return SubmissionResult{}, err

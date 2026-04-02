@@ -179,35 +179,49 @@ func TestCoordinatorSubmitStartsDetachedExecution(t *testing.T) {
 	}
 }
 
-func TestCoordinatorRunShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
+func TestCoordinatorRunUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
 	env := testEnv(t)
 	session, err := env.sessions.Create(t.Context(), "casual")
 	require.NoError(t, err)
 
 	coord := newTestCoordinator(t, env, "test-provider", config.ProviderConfig{ID: "test-provider"})
+	runCalls := make(chan SessionAgentCall, 1)
+	agent := newMockAgent("test-provider", 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		runCalls <- call
+		assert.Equal(t, "hi", call.Prompt)
+		return agentResultWithText("model hi"), nil
+	})
+	coord.currentAgent = agent
+	coord.mainAgents = map[string]SessionAgent{session.ID: agent}
 
 	result, err := coord.Run(t.Context(), session.ID, "hi")
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "Hi.", result.Response.Content[0].(fantasy.TextContent).Text)
+	assert.Equal(t, "model hi", result.Response.Content[0].(fantasy.TextContent).Text)
 
-	msgs, err := env.messages.List(t.Context(), session.ID)
-	require.NoError(t, err)
-	require.Len(t, msgs, 2)
-	assert.Equal(t, message.User, msgs[0].Role)
-	assert.Equal(t, "hi", msgs[0].Content().Text)
-	assert.Equal(t, message.Assistant, msgs[1].Role)
-	assert.Equal(t, "Hi.", msgs[1].Content().Text)
-	assert.True(t, msgs[1].IsFinished())
-	assert.Equal(t, message.FinishReasonEndTurn, msgs[1].FinishReason())
+	select {
+	case call := <-runCalls:
+		assert.Equal(t, "hi", call.Prompt)
+		assert.Nil(t, call.PrecreatedUser)
+		assert.False(t, call.SkipUserMessage)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for direct-reply prompt to reach the model")
+	}
 }
 
-func TestCoordinatorSubmitShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
+func TestCoordinatorSubmitUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
 	env := testEnv(t)
 	session, err := env.sessions.Create(t.Context(), "casual-submit")
 	require.NoError(t, err)
 
 	coord := newTestCoordinator(t, env, "test-provider", config.ProviderConfig{ID: "test-provider"})
+	runCalls := make(chan SessionAgentCall, 1)
+	agent := newMockAgent("test-provider", 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		runCalls <- call
+		return agentResultWithText("model hello"), nil
+	})
+	coord.currentAgent = agent
+	coord.mainAgents = map[string]SessionAgent{session.ID: agent}
 
 	result, err := coord.Submit(t.Context(), session.ID, "hello")
 	require.NoError(t, err)
@@ -215,13 +229,20 @@ func TestCoordinatorSubmitShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
 	assert.Equal(t, session.ID, result.SessionID)
 	assert.NotEmpty(t, result.UserMessageID)
 
+	select {
+	case call := <-runCalls:
+		assert.True(t, call.SkipUserMessage)
+		require.NotNil(t, call.PrecreatedUser)
+		assert.Equal(t, "hello", call.Prompt)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for direct-reply prompt to reach the model")
+	}
+
 	msgs, err := env.messages.List(t.Context(), session.ID)
 	require.NoError(t, err)
-	require.Len(t, msgs, 2)
+	require.Len(t, msgs, 1)
 	assert.Equal(t, result.UserMessageID, msgs[0].ID)
 	assert.Equal(t, "hello", msgs[0].Content().Text)
-	assert.Equal(t, "Hi.", msgs[1].Content().Text)
-	assert.True(t, msgs[1].IsFinished())
 }
 
 func TestRunSubAgent(t *testing.T) {

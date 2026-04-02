@@ -2042,6 +2042,11 @@ func looksLikeDiscoveryShellCommand(command string) bool {
 		"wc ",
 		"head ",
 		"tail ",
+		"git status",
+		"git log",
+		"git diff",
+		"git show",
+		"git ls-files",
 	} {
 		if hasShellCommandToken(command, token) {
 			return true

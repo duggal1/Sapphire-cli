@@ -136,6 +136,8 @@ func inferHarnessGoalType(task string, explicit string) string {
 	switch {
 	case isInitializationStylePrompt(normalized):
 		return "initialize"
+	case hasExplicitArchitectureOnlyIntent(normalized):
+		return "design"
 	case hasAnySignal(normalized, []string{"debug", "fix", "bug", "regression", "incident"}):
 		return "debug"
 	case hasAnySignal(normalized, []string{"migrate", "migration", "upgrade", "refactor"}) && !hasExplicitImplementationIntent(normalized):
@@ -182,6 +184,12 @@ func hasExplicitAnalysisOnlyDirective(task string) bool {
 		return false
 	}
 	return hasAnySignal(normalized, []string{
+		"architecture-only",
+		"architecture only",
+		"do not implement",
+		"don't implement",
+		"do not write code",
+		"don't write code",
 		"do not edit code",
 		"don't edit code",
 		"do not modify code",
@@ -191,6 +199,26 @@ func hasExplicitAnalysisOnlyDirective(task string) bool {
 		"analysis only",
 		"review only",
 		"task only",
+	})
+}
+
+func hasExplicitArchitectureOnlyIntent(task string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	if normalized == "" {
+		return false
+	}
+	if !hasExplicitAnalysisOnlyDirective(normalized) {
+		return false
+	}
+	return hasAnySignal(normalized, []string{
+		"architecture",
+		"architect",
+		"design ",
+		"design a ",
+		"compare two designs",
+		"repo fit",
+		"migration cost",
+		"rollback strategy",
 	})
 }
 

@@ -144,6 +144,14 @@ func TestClassifyLearnedTaskFamilyTreatsArchitecturePromptsAsDesign(t *testing.T
 	require.Equal(t, "broad", family.Breadth)
 }
 
+func TestClassifyLearnedTaskFamilyTreatsArchitectureOnlyBenchmarkPromptAsDesign(t *testing.T) {
+	t.Parallel()
+
+	family := classifyLearnedTaskFamily("Architecture-only task: design a champion versus challenger benchmark lane for Sapphire singularity policy promotion. Ground the answer in the current repo only. Compare at least two concrete designs, explain repo fit, migration cost, verifier strategy, rollback strategy, and which files should change first. Do not implement code and do not assume nonexistent APIs or symbols.")
+	require.Equal(t, "design", family.GoalType)
+	require.Equal(t, "broad", family.Breadth)
+}
+
 func TestClassifyLearnedTaskFamilyTreatsResearchPromptsAsResearch(t *testing.T) {
 	t.Parallel()
 

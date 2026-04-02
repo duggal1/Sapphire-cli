@@ -1492,6 +1492,49 @@ func TestPrepareToolCallRewritesLateBroadInitializationCompoundBashToUpdatePlanW
 	require.Contains(t, prepared.Input, `"Write or refine AGENTS.md only"`)
 }
 
+func TestPrepareToolCallRewritesLateBroadInitializationGitLogBashToUpdatePlan(t *testing.T) {
+	t.Parallel()
+
+	bashTool := fantasy.NewAgentTool(
+		BashToolName,
+		"",
+		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+	updatePlanTool := fantasy.NewAgentTool(
+		UpdatePlanToolName,
+		"",
+		func(ctx context.Context, params UpdatePlanArgs, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			return fantasy.ToolResponse{}, nil
+		},
+	)
+
+	usage := NewToolUsageState()
+	usage.Increment(ToolSearchToolName)
+	usage.Increment(AgenticViewToolName)
+	usage.MarkPlanPublished()
+
+	ctx := context.WithValue(context.Background(), LearnedToolPolicyContextKey, LearnedToolPolicy{
+		TaskFamily:                   "initialize/broad/codebase",
+		Reason:                       "learned route policy for recurring initialize/broad/codebase turns",
+		ForbidBashDiscovery:          true,
+		RequirePostWriteVerification: true,
+	})
+	ctx = context.WithValue(ctx, ToolUsageStateContextKey, usage)
+	ctx = context.WithValue(ctx, TurnStepOrdinalContextKey, 11)
+	ctx = context.WithValue(ctx, TurnStepBudgetContextKey, 12)
+
+	prepared, _, err := PrepareToolCall(ctx, fantasy.ToolCall{
+		ID:    "init-late-gitlog-1",
+		Name:  BashToolName,
+		Input: `{"command":"git log --oneline -5","description":"check recent changes"}`,
+	}, map[string]fantasy.AgentTool{BashToolName: bashTool, UpdatePlanToolName: updatePlanTool})
+	require.NoError(t, err)
+	require.Equal(t, UpdatePlanToolName, prepared.Name)
+	require.Contains(t, prepared.Input, `"Write or refine AGENTS.md only"`)
+}
+
 func TestWrapRuntimePreflightToolsAppliesHarnessGuardrail(t *testing.T) {
 	t.Parallel()
 

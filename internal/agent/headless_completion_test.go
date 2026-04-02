@@ -42,6 +42,23 @@ func TestCanForceHeadlessFinalizationRequiresWritesForImplementation(t *testing.
 	require.True(t, canForceHeadlessFinalization("implementation/broad/backend", assistant, state))
 }
 
+func TestCanForceHeadlessExecutionKickRequiresEvidenceAndPlanWithoutWrites(t *testing.T) {
+	t.Parallel()
+
+	state := tools.NewToolUsageState()
+	state.MarkStructuredEvidence("tool_search")
+	state.MarkReadEvidence("/repo/internal/agent/singularity_learning.go")
+	state.MarkPlanPublished()
+	state.Increment(tools.RunHarnessToolName)
+	state.Increment(tools.ToolSearchToolName)
+	state.Increment(tools.AgenticViewToolName)
+
+	require.True(t, canForceHeadlessExecutionKick("implementation/broad/backend", state))
+
+	state.RecordDeterministicWrite("/repo/internal/agent/singularity_learning.go", false, false)
+	require.False(t, canForceHeadlessExecutionKick("implementation/broad/backend", state))
+}
+
 func TestBuildHeadlessCompletionRecoveryCallForFinalize(t *testing.T) {
 	t.Parallel()
 
@@ -66,6 +83,46 @@ func TestBuildHeadlessCompletionRecoveryCallForFinalize(t *testing.T) {
 	require.Equal(t, 1, followUp.HeadlessCompletionTry)
 	require.Contains(t, followUp.Prompt, "Do not restart discovery.")
 	require.Contains(t, followUp.Prompt, "Deliver the final answer now")
+}
+
+func TestBuildHeadlessCompletionRecoveryCallForExecute(t *testing.T) {
+	t.Parallel()
+
+	call := SessionAgentCall{
+		Prompt: "Implement the new benchmark command",
+		LearnedToolPolicy: tools.LearnedToolPolicy{
+			TaskFamily: "implementation/broad/backend",
+		},
+	}
+	followUp, ok := buildHeadlessCompletionRecoveryCall(planmode.DefaultSessionMode, call, &headlessCompletionBudgetError{
+		Action:     headlessCompletionActionExecute,
+		TaskFamily: "implementation/broad/backend",
+		Elapsed:    35 * time.Second,
+	}, nil)
+
+	require.True(t, ok)
+	require.Equal(t, 1, followUp.HeadlessCompletionTry)
+	require.Contains(t, followUp.Prompt, "have not crossed into execution")
+	require.Contains(t, followUp.Prompt, "Move directly into the first minimal concrete implementation step")
+}
+
+func TestCanForceHeadlessFinalizationAllowsAnalysisClosureWithEvidence(t *testing.T) {
+	t.Parallel()
+
+	state := tools.NewToolUsageState()
+	state.MarkStructuredEvidence("tool_search")
+	state.MarkReadEvidence("/repo/internal/agent/singularity_learning.go")
+	state.Increment(tools.RunHarnessToolName)
+	state.Increment(tools.ToolSearchToolName)
+	state.Increment(tools.AgenticViewToolName)
+
+	assistant := &message.Message{
+		Parts: []message.ContentPart{
+			message.TextContent{Text: "Grounded benchmark recommendation with repo fit and rollback details."},
+		},
+	}
+
+	require.True(t, canForceHeadlessFinalization("design/broad/backend", assistant, state))
 }
 
 func TestTranslateStreamErrorConvertsHardTimeoutToReject(t *testing.T) {

@@ -179,6 +179,51 @@ func TestCoordinatorSubmitStartsDetachedExecution(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRunShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "casual")
+	require.NoError(t, err)
+
+	coord := newTestCoordinator(t, env, "test-provider", config.ProviderConfig{ID: "test-provider"})
+
+	result, err := coord.Run(t.Context(), session.ID, "hi")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "Hi.", result.Response.Content[0].(fantasy.TextContent).Text)
+
+	msgs, err := env.messages.List(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, message.User, msgs[0].Role)
+	assert.Equal(t, "hi", msgs[0].Content().Text)
+	assert.Equal(t, message.Assistant, msgs[1].Role)
+	assert.Equal(t, "Hi.", msgs[1].Content().Text)
+	assert.True(t, msgs[1].IsFinished())
+	assert.Equal(t, message.FinishReasonEndTurn, msgs[1].FinishReason())
+}
+
+func TestCoordinatorSubmitShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "casual-submit")
+	require.NoError(t, err)
+
+	coord := newTestCoordinator(t, env, "test-provider", config.ProviderConfig{ID: "test-provider"})
+
+	result, err := coord.Submit(t.Context(), session.ID, "hello")
+	require.NoError(t, err)
+	assert.Equal(t, SubmissionStatusRunning, result.Status)
+	assert.Equal(t, session.ID, result.SessionID)
+	assert.NotEmpty(t, result.UserMessageID)
+
+	msgs, err := env.messages.List(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, result.UserMessageID, msgs[0].ID)
+	assert.Equal(t, "hello", msgs[0].Content().Text)
+	assert.Equal(t, "Hi.", msgs[1].Content().Text)
+	assert.True(t, msgs[1].IsFinished())
+}
+
 func TestRunSubAgent(t *testing.T) {
 	const providerID = "test-provider"
 	providerCfg := config.ProviderConfig{ID: providerID}

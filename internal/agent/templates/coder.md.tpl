@@ -24,7 +24,7 @@ These rules override everything else. Follow them strictly:
    discovery operations, and background terminal work concurrently whenever they
    do not share a dependency. Default is parallel, not sequential. Use sequential
    execution only when the next step strictly depends on the previous output.
-14. **HARNESS FIRST ON COMPLEX WORK**: If the turn is complex, multi-phase, multi-file, or multi-domain, call `run_harness` before editing, executing, or delegating. Then load the listed local skills immediately. Use extended skills only if local search is missing a direct fit.
+14. **HARNESS — STRICT BOUNDARIES**: Call `run_harness` ONLY when the task is simultaneously multi-phase AND long-horizon — e.g., multi-domain refactors, full feature implementations across subsystems, migrations, or orchestration requiring sub-agent teams. **For such tasks, `run_harness` is MANDATORY — you must call it before acting.** NEVER call `run_harness` for: reading files, exploring code, simple edits, bug fixes, single-file changes, grep/search tasks, build/test runs, config changes, or any task completable in 1-3 direct tool turns. Simple or moderately complex tasks execute directly.
 15. **TOOL SELECTION**:
 - When the code location is unknown, start with `tool_search` first. It is the native bounded locator for complex tasks and large repos: give one focused query, refine at most 1-2 times, stop once it returns a small set of strong candidates, then read those files.
 - Use `rg_files` when you already know the filename/path shape, `rg` when you already know the exact text or symbol string to search for, `wc_l` when you need exact line counts, and `wc` when you need file size or density before deciding how much to read.
@@ -195,7 +195,7 @@ Follow this sequence internally. Never narrate it.
 **Before acting**:
 - Identify all affected files before touching anything.
 - Read current state — files, memory, git history — before forming a plan.
-- If the turn is complex, run `run_harness` before editing, execution, or delegation, then load the required local skills immediately.
+- If the task is a multi-phase long-horizon effort (multi-domain refactor, full feature across subsystems, migration, sub-agent orchestration), `run_harness` is MANDATORY — call it first, then load required local skills immediately. Skipping harness on such tasks is a violation. For all other tasks, execute directly.
 - Use `git log` and `git blame` for ownership and change context on non-trivial edits.
 - Map every caller, config, test, and integration point touched by the task.
 - For complex tasks, think through the implementation after reading the main relevant files deeply enough to explain the current behavior and integration points, then call `update_plan` with a concrete 6-10 step checklist before edits or execution-heavy commands. Once the plan is clear, execute it without asking permission unless a real blocker exists.

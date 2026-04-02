@@ -571,6 +571,13 @@ func (c *coordinator) initPersistentMemory(ctx context.Context, dataDir, project
 
 // Run implements Coordinator.
 func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	if reply, ok := DirectReplyForPrompt(userPrompt, attachments); ok {
+		if err := c.publishDirectReply(ctx, sessionID, userPrompt, reply, attachments); err != nil {
+			return nil, err
+		}
+		return directReplyAgentResult(reply), nil
+	}
+
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, false, false)
 	if err != nil {
 		return nil, err
@@ -609,6 +616,18 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, userPrompt stri
 }
 
 func (c *coordinator) Submit(ctx context.Context, sessionID, userPrompt string, attachments ...message.Attachment) (SubmissionResult, error) {
+	if reply, ok := DirectReplyForPrompt(userPrompt, attachments); ok {
+		userMessage, err := c.publishDirectReplyWithUser(ctx, sessionID, userPrompt, reply, attachments)
+		if err != nil {
+			return SubmissionResult{}, err
+		}
+		return SubmissionResult{
+			Status:        SubmissionStatusRunning,
+			SessionID:     sessionID,
+			UserMessageID: userMessage.ID,
+		}, nil
+	}
+
 	env, err := c.prepareSubmission(ctx, sessionID, userPrompt, attachments, true, true)
 	if err != nil {
 		return SubmissionResult{}, err
@@ -728,6 +747,39 @@ func (c *coordinator) prepareSubmission(
 	}, nil
 }
 
+func (c *coordinator) publishDirectReply(ctx context.Context, sessionID, userPrompt, reply string, attachments []message.Attachment) error {
+	_, err := c.publishDirectReplyWithUser(ctx, sessionID, userPrompt, reply, attachments)
+	return err
+}
+
+func (c *coordinator) publishDirectReplyWithUser(ctx context.Context, sessionID, userPrompt, reply string, attachments []message.Attachment) (message.Message, error) {
+	if c.messages == nil {
+		return message.Message{}, fmt.Errorf("message service is not initialized")
+	}
+	parts := []message.ContentPart{message.TextContent{Text: userPrompt}}
+	for _, attachment := range attachments {
+		parts = append(parts, message.BinaryContent{
+			Path:     attachment.FilePath,
+			MIMEType: attachment.MimeType,
+			Data:     attachment.Content,
+		})
+	}
+	userMessage, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: parts,
+	})
+	if err != nil {
+		return message.Message{}, fmt.Errorf("failed to create direct-reply user message: %w", err)
+	}
+	if _, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:  message.Assistant,
+		Parts: directReplyAssistantParts(reply),
+	}); err != nil {
+		return message.Message{}, fmt.Errorf("failed to create direct-reply assistant message: %w", err)
+	}
+	return userMessage, nil
+}
+
 func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvelope) (*fantasy.AgentResult, error) {
 	if env.providerCfg.OAuthToken != nil && env.providerCfg.OAuthToken.IsExpired() {
 		slog.Debug("Token needs to be refreshed", "provider", env.providerCfg.ID)
@@ -794,15 +846,6 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 		c.refreshMCPPreflightAsync(env.sessionID, env.userPrompt)
 		c.refreshMCPSelectionAsync(env.sessionID, env.userPrompt)
 	}
-	if !env.deferPreflight && shouldPrimeAutonomousSubAgents(env.userPrompt) {
-		subAgentContext, err := c.autonomousSubAgentContextMaybeBackground(ctx, env.sessionID, env.userPrompt)
-		if err != nil {
-			slog.Debug("Autonomous sub-agent priming skipped", "error", err)
-		} else if strings.TrimSpace(subAgentContext) != "" {
-			skillContext = appendSkillContext(skillContext, subAgentContext)
-		}
-	}
-
 	preflightContext := ""
 	if requiresMCPDiscovery(env.userPrompt) {
 		preflightContext = c.getMCPPreflightContext(env.sessionID, env.userPrompt)

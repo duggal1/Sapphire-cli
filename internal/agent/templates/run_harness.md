@@ -1,6 +1,8 @@
 Classify the current task and return a strict machine-readable harness execution contract.
 
-Use this tool before editing, executing, or delegating on non-trivial multi-phase work.
+Use this tool before editing, executing, or delegating on multi-phase long-horizon work. For such tasks — multi-domain refactors, full feature implementations across subsystems, migrations, sub-agent orchestration — `run_harness` is MANDATORY. Skipping it is a violation.
+
+Do NOT call `run_harness` for: reading files, exploring code, simple edits, bug fixes, single-file changes, search tasks, build/test runs, config changes, or any task completable in 1-3 direct tool turns. Execute those directly.
 
 Required input:
 - `task`: the exact current task

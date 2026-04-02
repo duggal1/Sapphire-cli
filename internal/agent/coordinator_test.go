@@ -13,6 +13,7 @@ import (
 	"github.com/duggal1/Sapphire-cli/internal/config"
 	"github.com/duggal1/Sapphire-cli/internal/lsp"
 	"github.com/duggal1/Sapphire-cli/internal/message"
+	"github.com/duggal1/Sapphire-cli/internal/permission"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/genai"
@@ -88,6 +89,7 @@ func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCf
 		cfg:                       cfg,
 		sessions:                  env.sessions,
 		messages:                  env.messages,
+		permissions:               permission.NewPermissionService(env.workingDir, true, nil),
 		backgroundSubAgentLimiter: make(chan struct{}, maxBackgroundSubAgents),
 	}
 }
@@ -179,7 +181,7 @@ func TestCoordinatorSubmitStartsDetachedExecution(t *testing.T) {
 	}
 }
 
-func TestCoordinatorRunUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
+func TestCoordinatorRunShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
 	env := testEnv(t)
 	session, err := env.sessions.Create(t.Context(), "casual")
 	require.NoError(t, err)
@@ -188,7 +190,6 @@ func TestCoordinatorRunUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
 	runCalls := make(chan SessionAgentCall, 1)
 	agent := newMockAgent("test-provider", 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
 		runCalls <- call
-		assert.Equal(t, "hi", call.Prompt)
 		return agentResultWithText("model hi"), nil
 	})
 	coord.currentAgent = agent
@@ -197,19 +198,24 @@ func TestCoordinatorRunUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
 	result, err := coord.Run(t.Context(), session.ID, "hi")
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "model hi", result.Response.Content[0].(fantasy.TextContent).Text)
+	assert.Equal(t, "Hey. What are we working on today?", result.Response.Content[0].(fantasy.TextContent).Text)
 
 	select {
 	case call := <-runCalls:
-		assert.Equal(t, "hi", call.Prompt)
-		assert.Nil(t, call.PrecreatedUser)
-		assert.False(t, call.SkipUserMessage)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for direct-reply prompt to reach the model")
+		t.Fatalf("direct reply should not reach model, got %#v", call)
+	default:
 	}
+
+	msgs, err := env.messages.List(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, message.User, msgs[0].Role)
+	assert.Equal(t, "hi", msgs[0].Content().Text)
+	assert.Equal(t, message.Assistant, msgs[1].Role)
+	assert.Equal(t, "Hey. What are we working on today?", msgs[1].Content().Text)
 }
 
-func TestCoordinatorSubmitUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
+func TestCoordinatorSubmitShortCircuitsDirectReplyOnlyPrompt(t *testing.T) {
 	env := testEnv(t)
 	session, err := env.sessions.Create(t.Context(), "casual-submit")
 	require.NoError(t, err)
@@ -231,18 +237,40 @@ func TestCoordinatorSubmitUsesAgentForDirectReplyOnlyPrompt(t *testing.T) {
 
 	select {
 	case call := <-runCalls:
-		assert.True(t, call.SkipUserMessage)
-		require.NotNil(t, call.PrecreatedUser)
-		assert.Equal(t, "hello", call.Prompt)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for direct-reply prompt to reach the model")
+		t.Fatalf("direct reply should not reach model, got %#v", call)
+	default:
 	}
 
 	msgs, err := env.messages.List(t.Context(), session.ID)
 	require.NoError(t, err)
-	require.Len(t, msgs, 1)
+	require.Len(t, msgs, 2)
 	assert.Equal(t, result.UserMessageID, msgs[0].ID)
 	assert.Equal(t, "hello", msgs[0].Content().Text)
+	assert.Equal(t, "Hey. What are we working on today?", msgs[1].Content().Text)
+}
+
+func TestCoordinatorRunDoesNotPrelaunchBackgroundSubAgents(t *testing.T) {
+	env := testEnv(t)
+	session, err := env.sessions.Create(t.Context(), "no-background-prelaunch")
+	require.NoError(t, err)
+
+	const providerID = "test-provider"
+	coord := newTestCoordinator(t, env, providerID, config.ProviderConfig{ID: providerID})
+	coord.backgroundIndicators = map[string]*backgroundIndicatorState{}
+	agent := newMockAgent(providerID, 4096, func(_ context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		return agentResultWithText("ok"), nil
+	})
+	coord.currentAgent = agent
+	coord.mainAgents = map[string]SessionAgent{session.ID: agent}
+
+	_, err = coord.Run(t.Context(), session.ID, "Investigate the root cause across the codebase, trace dependencies, and review risks before refactoring the architecture.")
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	msgs, err := env.messages.List(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 0)
 }
 
 func TestRunSubAgent(t *testing.T) {

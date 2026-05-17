@@ -228,6 +228,22 @@ func TestAssistantMessageItemRendersInlineLoaderWithVerticalSpacing(t *testing.T
 	}
 }
 
+func TestAssistantMessageItemRendersRetryingLoaderAfterProviderStall(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.DefaultStyles(false)
+	item := NewAssistantMessageItem(&sty, &message.Message{
+		ID:        "assistant-provider-stall",
+		Role:      message.Assistant,
+		CreatedAt: time.Now().Add(-11 * time.Second).Unix(),
+	})
+
+	rendered := ansi.Strip(item.Render(80))
+	if !strings.Contains(rendered, "Retrying provider stream...") {
+		t.Fatalf("expected provider retry loader, got %q", rendered)
+	}
+}
+
 func TestAssistantMessageItemRendersPlanningLoaderForDeepPlanningPlaceholder(t *testing.T) {
 	t.Parallel()
 

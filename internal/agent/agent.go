@@ -78,8 +78,10 @@ const (
 	memoryCallTimeout = 500 * time.Millisecond
 
 	// Stream retry tuning for transient failures.
-	maxStreamRetries   = 2
-	streamRetryBackoff = 500 * time.Millisecond
+	maxStreamRetries        = 2
+	streamRetryBackoff      = 500 * time.Millisecond
+	streamRetryNoticeAfter  = 10 * time.Second
+	streamFirstTokenTimeout = 30 * time.Second
 
 	// Codex-style compaction: max tokens for user messages in compacted history.
 	// Aligned with Codex's COMPACT_USER_MESSAGE_MAX_TOKENS = 20,000.
@@ -725,6 +727,8 @@ func looksLikeRetryableTransportError(raw string) bool {
 	}
 	return strings.Contains(lower, "connection reset by peer") ||
 		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "unexpected end of json input") ||
+		strings.Contains(lower, "invalid character") && strings.Contains(lower, "looking for beginning of value") ||
 		strings.Contains(lower, "eof") ||
 		strings.Contains(lower, "stream error") ||
 		strings.Contains(lower, "temporarily unavailable") ||
@@ -1072,6 +1076,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		stepStartTime    time.Time
 		stepOrdinal      int
 		firstTokenTime   time.Time
+		firstTokenSeen   atomic.Bool
 		firstToolName    string
 	)
 	streamCall := fantasy.AgentStreamCall{
@@ -1091,6 +1096,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			stepOrdinal++
 			stepStartTime = time.Now()
 			firstTokenTime = time.Time{}
+			firstTokenSeen.Store(false)
 			prepared.Messages = options.Messages
 			prepared.ActiveTools = activeTools.List()
 			for i := range prepared.Messages {
@@ -1225,6 +1231,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
+				firstTokenSeen.Store(true)
 			}
 			currentAssistant.AppendReasoningContent(reasoning.Text)
 			return updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false)
@@ -1234,6 +1241,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
+				firstTokenSeen.Store(true)
 			}
 			currentAssistant.AppendReasoningContent(text)
 			if err := updateAssistant(genCtx, currentAssistant, messageUpdateTimeout, false); err != nil {
@@ -1270,6 +1278,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			runtimeControl.NoteReasoning()
 			if firstTokenTime.IsZero() {
 				firstTokenTime = time.Now()
+				firstTokenSeen.Store(true)
 			}
 			// Strip leading newline from initial text content. This is is
 			// particularly important in non-interactive mode where leading
@@ -1289,6 +1298,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolInputStart: func(id string, toolName string) error {
 			markActivity()
+			firstTokenSeen.Store(true)
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
@@ -1318,6 +1328,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
 			markActivity()
+			firstTokenSeen.Store(true)
 			// Fast-path: immediate exit on context cancellation
 			if genCtx.Err() != nil {
 				return genCtx.Err()
@@ -1621,12 +1632,55 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 
 	var result *fantasy.AgentResult
 	for attempt := 0; attempt <= maxStreamRetries; attempt++ {
-		result, err = agent.Stream(genCtx, streamCall)
+		attemptCtx, attemptCancel := context.WithCancel(genCtx)
+		stalledBeforeFirstToken := atomic.Bool{}
+		monitorDone := make(chan struct{})
+		go func(attempt int) {
+			noticeTimer := time.NewTimer(streamRetryNoticeAfter)
+			timeoutTimer := time.NewTimer(streamFirstTokenTimeout)
+			defer noticeTimer.Stop()
+			defer timeoutTimer.Stop()
+			for {
+				select {
+				case <-noticeTimer.C:
+					if !firstTokenSeen.Load() {
+						stalledBeforeFirstToken.Store(true)
+						slog.Warn("Model provider has not produced stream output yet; retry notice active",
+							"session_id", call.SessionID,
+							"model", largeModel.ModelCfg.Model,
+							"provider", largeModel.ModelCfg.Provider,
+							"attempt", attempt+1,
+							"notice_after", streamRetryNoticeAfter,
+						)
+					}
+				case <-timeoutTimer.C:
+					if !firstTokenSeen.Load() {
+						stalledBeforeFirstToken.Store(true)
+						slog.Warn("Model provider stream stalled before first token; retrying request",
+							"session_id", call.SessionID,
+							"model", largeModel.ModelCfg.Model,
+							"provider", largeModel.ModelCfg.Provider,
+							"attempt", attempt+1,
+							"timeout", streamFirstTokenTimeout,
+						)
+						attemptCancel()
+					}
+				case <-monitorDone:
+					return
+				case <-genCtx.Done():
+					return
+				}
+			}
+		}(attempt)
+		result, err = agent.Stream(attemptCtx, streamCall)
+		close(monitorDone)
+		attemptCancel()
 		err = headlessCompletion.TranslateStreamError(genCtx, err, currentAssistant, toolUsageState)
 		if err == nil || genCtx.Err() != nil {
 			break
 		}
-		if attempt < maxStreamRetries && shouldRetryStreamError(err) && firstTokenTime.IsZero() {
+		retryableFirstTokenFailure := shouldRetryStreamError(err) || (stalledBeforeFirstToken.Load() && errors.Is(err, context.Canceled))
+		if attempt < maxStreamRetries && retryableFirstTokenFailure && firstTokenTime.IsZero() {
 			if currentAssistant != nil && len(currentAssistant.ToolCalls()) == 0 && currentAssistant.Content().Text == "" && currentAssistant.ReasoningContent().Thinking == "" {
 				_ = a.messages.Delete(ctx, currentAssistant.ID)
 				currentAssistant = nil
@@ -2007,6 +2061,13 @@ func classifyProviderTransportError(err error, linkStyle lipgloss.Style) (string
 		(strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "eof")) {
 		return "OpenRouter connection reset",
 			"The selected OpenRouter endpoint dropped the network connection. This is usually a transient provider routing failure; retry the request or switch to another model/provider.",
+			true
+	}
+
+	if strings.Contains(lower, "unexpected end of json input") ||
+		(strings.Contains(lower, "invalid character") && strings.Contains(lower, "looking for beginning of value")) {
+		return "Model provider returned an incomplete stream",
+			"Sapphire reached the selected model provider, but the provider stream ended with truncated or invalid JSON before a complete response was delivered. Sapphire retries this failure before surfacing it; if it persists, switch model/provider or retry later.",
 			true
 	}
 

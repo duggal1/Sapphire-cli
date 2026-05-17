@@ -789,6 +789,12 @@ func (c *coordinator) executeSubmission(ctx context.Context, env submissionEnvel
 	if strings.TrimSpace(learnedToolPolicy.TaskFamily) == "" {
 		learnedToolPolicy.TaskFamily = learnedFamily.ID
 	}
+	if !shouldRequireRepositoryEvidence(env.userPrompt, learnedFamily) {
+		learnedToolPolicy.RequireContextRead = false
+		learnedToolPolicy.RequireExplicitPlan = false
+		learnedToolPolicy.PreferStructuredDiscovery = false
+		learnedHarness = nil
+	}
 	if shouldInjectSingularityCognitiveContract(env.userPrompt, learnedFamily) {
 		skillContext = appendSkillContext(skillContext, renderSingularityCognitiveContract(buildSingularityCognitiveProfile(env.userPrompt, learnedFamily)))
 	}

@@ -169,6 +169,28 @@ func TestClassifyLearnedTaskFamilyTreatsBroadImplementationPromptsAsImplementati
 	require.Equal(t, "broad", family.Breadth)
 }
 
+func TestColdStartRoutePolicyDoesNotRequireRepoEvidenceForGeneralComplexAnswer(t *testing.T) {
+	t.Parallel()
+
+	policy, family, ok := coldStartRoutePolicy("Write a concise but nontrivial engineering plan for a CLI streaming bug. Include root-cause hypotheses, instrumentation points, retry policy, UI loading behavior, tests, and rollout risks.")
+	require.True(t, ok)
+	require.NotEqual(t, "implementation", family.GoalType)
+	require.False(t, policy.RequireContextRead)
+	require.False(t, policy.RequireExplicitPlan)
+	require.False(t, policy.RequireHarness)
+}
+
+func TestColdStartRoutePolicyRequiresRepoEvidenceForRepoDesign(t *testing.T) {
+	t.Parallel()
+
+	policy, family, ok := coldStartRoutePolicy("Architecture task only. Read the repository and compare two designs for evolving cmd/api into a real HTTP server.")
+	require.True(t, ok)
+	require.Equal(t, "design", family.GoalType)
+	require.True(t, policy.RequireContextRead)
+	require.True(t, policy.RequireExplicitPlan)
+	require.True(t, policy.RequireHarness)
+}
+
 func TestBuildHarnessRequirementRequiresHarnessBeforeBroadDesignDiscovery(t *testing.T) {
 	t.Parallel()
 

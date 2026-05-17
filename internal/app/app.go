@@ -235,6 +235,17 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 		spinner = format.NewSpinner(ctx, cancel, "Generating", t.Base.Foreground(defaultFG))
 		spinner.Start()
 	}
+	if spinner != nil {
+		go func() {
+			timer := time.NewTimer(10 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				spinner.SetLabel("Retrying provider stream")
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	// Helper function to stop spinner once.
 	stopSpinner := func() {

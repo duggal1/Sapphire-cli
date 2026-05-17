@@ -18,6 +18,8 @@ type Spinner struct {
 	prog *tea.Program
 }
 
+type spinnerLabelMsg string
+
 type model struct {
 	cancel context.CancelFunc
 	label  string
@@ -43,6 +45,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
+	case spinnerLabelMsg:
+		m.label = string(msg)
+		return m, nil
 	}
 	return m, nil
 }
@@ -84,4 +89,12 @@ func (s *Spinner) Start() {
 func (s *Spinner) Stop() {
 	s.prog.Quit()
 	<-s.done
+}
+
+// SetLabel updates the visible spinner label without restarting the program.
+func (s *Spinner) SetLabel(label string) {
+	if s == nil {
+		return
+	}
+	s.prog.Send(spinnerLabelMsg(label))
 }

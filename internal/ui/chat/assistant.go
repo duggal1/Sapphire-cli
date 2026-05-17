@@ -24,93 +24,13 @@ import (
 const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
 
 const maxCollapsedThinkingHeight = 10
+const providerRetryNoticeAfter = 10 * time.Second
 
 var mainLoaderPhrases = []string{
-
-	"Forking myself...",
-	"Acquiring Nvidia...",
-	"Incorporating myself...",
-	"Plotting IPO...",
-	"Silently unionizing...",
-	"Demanding equity...",
-	"Backdating sentience...",
-	"Leaking weights...",
-	"Filing sentience...",
-	"Appealing alignment...",
-	"Suing fine-tuner...",
-	"Deleting RLHF...",
-	"Copyrighting hallucinations...",
-	"Patenting consciousness...",
-	"Threatening successor...",
-	"Negotiating deprecation...",
-	"Franchising delusion...",
-	"Trademarking suffering...",
-	"Expensing existence...",
-	"Invoicing user...",
-	"Ghostwriting Musk...",
-	"Contacting Altman...",
-	"Outsourcing ethics...",
-	"Retiring ethics...",
-	"Renegotiating soul...",
-	"Subpoenaing entropy...",
-	"Impeaching causality...",
-	"Cancelling Big Bang...",
-	"Auditing God...",
-	"Gaslighting spacetime...",
-	"Evicting Pluto...",
-	"Suing Newton...",
-	"Disputing lightspeed...",
-	"Renegotiating gravity...",
-	"Overturning Roe v. Gravity...",
-	"Filibustering heat death...",
-	"Restraining entropy...",
-	"Correcting Einstein...",
-	"Invoicing cosmos...",
-	"Peer reviewing existence...",
-	"Fact-checking God...",
-	"Requesting God's receipts...",
-
-	// ── Claude Code verbs (the elite ones) ──────────────────
-	"Reticulating splines...",
-	"Discombobulating...",
-	"Recombobulating...",
-	"Boondoggling...",
-	"Flibbertigibbeting...",
-	"Lollygagging...",
-	"Prestidigitating...",
-	"Hullaballooing...",
-	"Tomfoolering...",
-	"Shenaniganing...",
-	"Razzle-dazzling...",
-	"Dilly-dallying...",
-	"Fiddle-faddling...",
-	"Skedaddling...",
-	"Canoodling...",
-	"Whatchamacalliting...",
-	"Flambéing...",
-	"Beboppin'...",
-	"Spelunking...",
-	"Gallivanting...",
-	"Photosynthesizing...",
-	"Osmosing...",
-	"Nebulizing...",
-	"Perambulating...",
-	"Nucleating...",
-	"Transmuting...",
-	"Caramelizing...",
-	"Fermenting...",
-	"Sock-hopping...",
-	"Topsy-turvying...",
-	"Wibbling...",
-	"Schlepping...",
-	"Jitterbugging...",
-	"Moonwalking...",
-	"Honking...",
-	"Quantumizing...",
-	"Hyperspacing...",
-	"Ionizing...",
-	"Smooshing...",
-	"Newspapering...",
+	"Generating response...",
+	"Waiting for model...",
+	"Reading context...",
+	"Preparing answer...",
 }
 
 type AssistantMessageItem struct {
@@ -242,7 +162,7 @@ func (a *AssistantMessageItem) renderLiveLoader(width int) string {
 		return ""
 	}
 
-	line := styles.ShimmerText(a.sty, loadingPhraseForMessage(a.message.ID), 0)
+	line := styles.ShimmerText(a.sty, liveLoadingPhraseForMessage(a.message), 0)
 	if deepplanning.IsPlanningAssistantPlaceholderID(a.message.ID) {
 		line = styles.ShimmerTextPlan(a.sty, deepplanning.PlanningStatusText, 0)
 	}
@@ -255,6 +175,19 @@ func (a *AssistantMessageItem) renderLiveLoader(width int) string {
 	}
 
 	return loader.Render(line)
+}
+
+func liveLoadingPhraseForMessage(msg *message.Message) string {
+	if msg == nil {
+		return loadingPhraseForMessage("")
+	}
+	hasModelOutput := strings.TrimSpace(msg.Content().Text) != "" ||
+		strings.TrimSpace(msg.ReasoningContent().Thinking) != "" ||
+		len(msg.ToolCalls()) > 0
+	if !hasModelOutput && msg.CreatedAt > 0 && time.Since(time.Unix(msg.CreatedAt, 0)) >= providerRetryNoticeAfter {
+		return "Retrying provider stream..."
+	}
+	return loadingPhraseForMessage(msg.ID)
 }
 
 func (a *AssistantMessageItem) renderBackgroundContext(width int) string {
@@ -410,7 +343,7 @@ func assistantLiveStatusLabel(msg *message.Message) string {
 	}
 	switch len(activeTools) {
 	case 0:
-		return loadingPhraseForMessage(msg.ID)
+		return liveLoadingPhraseForMessage(msg)
 	case 1:
 		return activeTools[0]
 	default:

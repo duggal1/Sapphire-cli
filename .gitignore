@@ -162,3 +162,6 @@ codex-markodwn-orchestration-Explained/
 forge-code-real-code-snippets-official-dump.md
 sapphire-cli-perf
 test_subagent_perf.sh
+
+# Local build artifacts
+/Sapphire-cli

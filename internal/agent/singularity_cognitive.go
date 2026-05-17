@@ -121,6 +121,7 @@ func coldStartRoutePolicy(prompt string) (learnedRoutePolicy, learnedTaskFamily,
 	if family.Breadth == "broad" {
 		requireHarness := family.GoalType == "design" || family.GoalType == "research" || family.GoalType == "review" || family.GoalType == "migration" || decision.Parallelizable || decision.Complexity >= 4
 		requirePlan := family.GoalType == "design" || family.GoalType == "research" || family.GoalType == "review" || family.GoalType == "migration" || (family.GoalType == "implementation" && (decision.Parallelizable || decision.Complexity >= 3)) || decision.Complexity >= 4
+		requireRepositoryEvidence := shouldRequireRepositoryEvidence(prompt, family)
 		confidence := 62
 		if family.GoalType == "design" || family.GoalType == "research" {
 			confidence = 68
@@ -133,17 +134,53 @@ func coldStartRoutePolicy(prompt string) (learnedRoutePolicy, learnedTaskFamily,
 			Domains:                      append([]string{}, family.Domains...),
 			PreferredDiscovery:           []string{tools.ToolSearchToolName, tools.RGFilesToolName, tools.AgenticViewToolName, tools.RGToolName, tools.LSToolName},
 			PreferredVerification:        []string{tools.DiagnosticsToolName, tools.AgenticViewToolName, tools.ViewToolName, tools.SingleViewToolName},
-			RequireHarness:               requireHarness,
+			RequireHarness:               requireHarness && requireRepositoryEvidence,
 			PreferParallel:               decision.Parallelizable || family.GoalType == "design" || family.GoalType == "research",
 			ForbidBashDiscovery:          true,
-			RequireContextRead:           true,
-			RequireExplicitPlan:          requirePlan,
+			RequireContextRead:           requireRepositoryEvidence,
+			RequireExplicitPlan:          requirePlan && requireRepositoryEvidence,
 			RequirePostWriteVerification: promptMentionsAgentsArtifact(prompt),
 			Confidence:                   confidence,
 			PromotionState:               learnedPolicyStateCandidate,
 		}, family, true
 	}
 	return learnedRoutePolicy{}, family, false
+}
+
+func shouldRequireRepositoryEvidence(prompt string, family learnedTaskFamily) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if normalized == "" {
+		return false
+	}
+	if family.GoalType == "initialize" || family.GoalType == "implementation" || promptMentionsAgentsArtifact(prompt) {
+		return true
+	}
+	if hasAnySignal(normalized, []string{
+		"repository",
+		"repo",
+		"codebase",
+		"current code",
+		"current implementation",
+		"this implementation",
+		"local implementation",
+		"read the code",
+		"read code",
+		"read files",
+		"inspect files",
+		"inspect the files",
+		"existing files",
+		"actual files",
+		"source files",
+		"code file",
+		"code files",
+		"worktree",
+	}) {
+		return true
+	}
+	if hasAnySignal(normalized, subAgentCodebaseSignals) {
+		return true
+	}
+	return false
 }
 
 func promptMentionsAgentsArtifact(prompt string) bool {

@@ -30,3 +30,15 @@ func TestDisplay(t *testing.T) {
 		})
 	}
 }
+
+func TestCLI(t *testing.T) {
+	previous := Version
+	t.Cleanup(func() {
+		Version = previous
+	})
+
+	Version = "v1.1.7.main.421.20260517194324"
+	if got := CLI(); got != "1.1.7.main.421.20260517194324" {
+		t.Fatalf("CLI() = %q, want %q", got, "1.1.7.main.421.20260517194324")
+	}
+}

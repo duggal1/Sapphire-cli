@@ -26,3 +26,8 @@ func Display() string {
 		return v
 	}
 }
+
+// CLI returns the exact build version for command-line version output.
+func CLI() string {
+	return strings.TrimPrefix(strings.TrimSpace(Version), "v")
+}

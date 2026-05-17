@@ -380,6 +380,11 @@ func initMemoryTestGitRepo(t *testing.T, repoRoot string) {
 
 	run := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", repoRoot}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_TERMINAL_PROMPT=0",
+		)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
 	}
@@ -387,6 +392,8 @@ func initMemoryTestGitRepo(t *testing.T, repoRoot string) {
 	run("init")
 	run("config", "user.name", "Sapphire Tests")
 	run("config", "user.email", "sapphire-tests@example.com")
+	run("config", "commit.gpgsign", "false")
+	run("config", "core.hooksPath", "/dev/null")
 	run("add", ".")
-	run("commit", "-m", "initial")
+	run("commit", "--no-gpg-sign", "--no-verify", "-m", "initial")
 }

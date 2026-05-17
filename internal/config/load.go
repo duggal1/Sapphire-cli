@@ -85,6 +85,7 @@ func Load(workingDir, dataDir string, debug bool) (*Config, error) {
 	if err := cfg.configureProviders(env, valueResolver, cfg.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure providers: %w", err)
 	}
+	cfg.SetupAgents()
 
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured")

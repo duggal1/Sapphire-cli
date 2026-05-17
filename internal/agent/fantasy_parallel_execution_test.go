@@ -77,7 +77,7 @@ func (m *mockParallelExecutionModel) StreamObject(context.Context, fantasy.Objec
 	return nil, fmt.Errorf("not implemented")
 }
 
-func TestFantasyExecutesParallelToolBatchesWithoutFixedCap(t *testing.T) {
+func TestFantasyExecutesParallelToolBatchesWithBoundedConcurrency(t *testing.T) {
 	var (
 		active        atomic.Int32
 		maxConcurrent atomic.Int32
@@ -122,6 +122,6 @@ func TestFantasyExecutesParallelToolBatchesWithoutFixedCap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "done", result.Response.Content.Text())
-	require.GreaterOrEqual(t, maxConcurrent.Load(), int32(8))
-	require.Less(t, elapsed, time.Second)
+	require.Equal(t, int32(5), maxConcurrent.Load())
+	require.Less(t, elapsed, 1500*time.Millisecond)
 }

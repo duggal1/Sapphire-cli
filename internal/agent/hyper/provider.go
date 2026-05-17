@@ -51,6 +51,12 @@ var Embedded = sync.OnceValue(func() catwalk.Provider {
 	if err := json.Unmarshal(embedded, &provider); err != nil {
 		slog.Error("Could not use embedded provider data", "err", err)
 	}
+	if provider.ID == "" {
+		provider = catwalk.Provider{
+			Name: "Charm Hyper",
+			ID:   Name,
+		}
+	}
 	if e := os.Getenv("HYPER_URL"); e != "" {
 		provider.APIEndpoint = e + "/api/v1/fantasy"
 	}

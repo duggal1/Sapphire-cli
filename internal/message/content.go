@@ -678,15 +678,6 @@ func (m *Message) ToAIMessage() []fantasy.Message {
 				Input:            call.Input,
 				ProviderExecuted: call.ProviderExecuted,
 			}
-			// Attach Google thought signature to tool calls if available
-			if reasoning.ThoughtSignature != "" && (reasoning.ToolID == "" || reasoning.ToolID == call.ID) {
-				toolCallPart.ProviderOptions = fantasy.ProviderOptions{
-					google.Name: &google.ReasoningMetadata{
-						Signature: reasoning.ThoughtSignature,
-						ToolID:    call.ID,
-					},
-				}
-			}
 			parts = append(parts, toolCallPart)
 		}
 		messages = append(messages, fantasy.Message{
